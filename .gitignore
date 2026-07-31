@@ -1,0 +1,36 @@
+# Secrets and credentials — never commit
+.env
+.env.*
+*.pem
+*.key
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Rust / Go
+target/
+
+# Logs
+*.log
+
+# NOTE: memory-store artifacts (databases, indexes, session transcripts) are
+# deliberately NOT ignored yet. Zikaron's stores are the product, and whether
+# they should be committed — diffable and reviewable — or kept local is an open
+# design question (see FINDINGS.md). Add rules once that is decided, rather
+# than silently excluding our own output.
