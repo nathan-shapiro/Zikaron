@@ -1,0 +1,9 @@
+{
+  "span": 3,
+  "n_stubs": 64,
+  "n_memories": 187,
+  "corpus_ngrams": 11170,
+  "violations": [],
+  "n_violations": 0,
+  "situation_over_15_words": []
+}

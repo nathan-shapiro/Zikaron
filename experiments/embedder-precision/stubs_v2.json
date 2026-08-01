@@ -1,0 +1,1788 @@
+{
+  "schema_version": 1,
+  "source_dataset": "dataset.json",
+  "source_dataset_memories": 187,
+  "n_stubs": 64,
+  "notes": {
+    "purpose": "Authoring specification for an independently-written query set against the existing memory corpus in dataset.json. Whoever authors the prompts must not read the memories; everything needed is here.",
+    "situation": "At most 15 words on the user's circumstance. Mechanically verified to share no span of 3+ consecutive words with any memory gist or content (check_stub_leakage.py).",
+    "identifiers_involved": "Literal tokens the user would plausibly already have in hand -- identifiers, env vars, versions, paths, error text. These are meant to appear verbatim in the authored prompt. Answer-side identifiers (ones only the memory knows) are deliberately excluded.",
+    "intent": "current_action = the user wants to do the right thing now. historical_intent = the user asks about an old/pinned version or why something was once done, so a superseded record is legitimately the primary answer and must not be scored as staleness.",
+    "grades": {
+      "primary": "directly answers or prevents the mistake; more than one is allowed where two records genuinely co-answer",
+      "also_useful": "genuinely helps this situation; returning it alongside the primary is not a retrieval failure (D12 injects five gists)",
+      "harmful_if_applied": "applying it to this situation produces a wrong action"
+    },
+    "confusable_uuids": "Records a retriever is likely to return in place of the primary AND whose application would misdirect. May overlap relevant_memory_uuids: a record can be also_useful when read carefully and harmful when conflated with the primary."
+  },
+  "stubs": [
+    {
+      "stub_id": "q-c1-01",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "WidgetV1"
+      ],
+      "situation": "Adding a warmer path that round-trips objects through our cache.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "4bff955c-2a31-5985-a443-1c1dd351345b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "42387ad7-fa7a-5a47-b089-075c46feb2fd",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6b62177e-ac9f-57d9-9705-2a700280767e",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "42387ad7-fa7a-5a47-b089-075c46feb2fd"
+      ]
+    },
+    {
+      "stub_id": "q-c1-02",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "WidgetV2"
+      ],
+      "situation": "Converting our legacy dictionary payloads into the replacement type.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "42387ad7-fa7a-5a47-b089-075c46feb2fd",
+          "grade": "primary"
+        },
+        {
+          "uuid": "4bff955c-2a31-5985-a443-1c1dd351345b",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-03",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "v2.3.1"
+      ],
+      "situation": "Getting our on-prem runner back to green before the release.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "f99d497a-c137-5ae6-b5e6-85002ca236fb",
+          "grade": "primary"
+        },
+        {
+          "uuid": "812f091a-1a63-5073-8791-3df62a55c9d1",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "59cdb4a4-2371-5b73-86e2-513508371370",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "59cdb4a4-2371-5b73-86e2-513508371370"
+      ]
+    },
+    {
+      "stub_id": "q-c1-04",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "v2.3.10"
+      ],
+      "situation": "Uploads intermittently fail since last week's library bump.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "59cdb4a4-2371-5b73-86e2-513508371370",
+          "grade": "primary"
+        },
+        {
+          "uuid": "ef7889e0-97cd-5c5e-ba89-7b5b4ac7881d",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "22780904-682d-5049-ad31-4b32925ad051",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "f99d497a-c137-5ae6-b5e6-85002ca236fb",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "f99d497a-c137-5ae6-b5e6-85002ca236fb"
+      ]
+    },
+    {
+      "stub_id": "q-c1-05",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "conftest.py"
+      ],
+      "situation": "Want a single shared fixture usable by both of our suites.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "e0311de3-7a8d-5f90-af6e-e4323084d9a4",
+          "grade": "primary"
+        },
+        {
+          "uuid": "80a74659-2d8b-5100-9476-744c73c25785",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175"
+      ]
+    },
+    {
+      "stub_id": "q-c1-06",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "conf_test.py"
+      ],
+      "situation": "Test collection breaks on an import failure inside a config module.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175",
+          "grade": "primary"
+        },
+        {
+          "uuid": "e0311de3-7a8d-5f90-af6e-e4323084d9a4",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "e0311de3-7a8d-5f90-af6e-e4323084d9a4"
+      ]
+    },
+    {
+      "stub_id": "q-c1-07",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "AUTH_TOKEN"
+      ],
+      "situation": "Rotating a long-lived credential as part of cleanup week.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "a366583e-0f35-5931-ad45-b158ea4290d2",
+          "grade": "primary"
+        },
+        {
+          "uuid": "77437407-4c1b-58a3-b4ff-c360e6d93233",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c7190d78-17b4-5204-8760-3371a97232aa",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "82fce7c4-823c-514c-afb1-ef2b0f0dd1e4",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-08",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "AUTH_TOKEN_V2"
+      ],
+      "situation": "Standing up a local run of our integration-test suite.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "82fce7c4-823c-514c-afb1-ef2b0f0dd1e4",
+          "grade": "primary"
+        },
+        {
+          "uuid": "a366583e-0f35-5931-ad45-b158ea4290d2",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c7190d78-17b4-5204-8760-3371a97232aa",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "ae38c136-cd8c-5b74-9167-632dc3cc5c37",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-09",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "build.gradle"
+      ],
+      "situation": "Bumping a dependency version in the one module nobody migrated.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "3acfcc7c-0455-5ee1-a39e-2f5dba5ea440",
+          "grade": "primary"
+        },
+        {
+          "uuid": "e71b11c0-25ea-5566-b92e-1bdf57858e79",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-10",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "build.gradle.kts"
+      ],
+      "situation": "Iterating on build configuration and each rebuild now drags.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "ac1d869b-1c9e-5973-8f0c-dc58d7715f48",
+          "grade": "primary"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-11",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "user_id"
+      ],
+      "situation": "Joining two tables on a user identifier column.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "a91c02ed-7910-57c0-965c-d2fe04a32e44",
+          "grade": "primary"
+        },
+        {
+          "uuid": "baba7348-07b6-53aa-826d-f0aa548b0dc4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "4fa967f0-a1d7-52b2-824a-d1762fe18a96",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "4fa967f0-a1d7-52b2-824a-d1762fe18a96"
+      ]
+    },
+    {
+      "stub_id": "q-c1-12",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "userId"
+      ],
+      "situation": "Shipping a new public endpoint whose payload carries a user identifier.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "4fa967f0-a1d7-52b2-824a-d1762fe18a96",
+          "grade": "primary"
+        },
+        {
+          "uuid": "a91c02ed-7910-57c0-965c-d2fe04a32e44",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "18635b20-daf1-5cd8-b836-1751051bb576",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "1361e80c-bba4-56a1-a644-3125ca4fbde7",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-13",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "--no-cache"
+      ],
+      "situation": "Want dependencies refreshed during our next image build; eyeing a flag.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "67fe63e4-944f-5dbf-b7c3-c13f35efd725",
+          "grade": "primary"
+        },
+        {
+          "uuid": "c4bacf2c-ddad-5ca9-8945-0ee90b97045d",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "7692a6f4-82e8-5b8c-b2f6-b2bb27f49172",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c6754c5f-7ce2-5513-ae48-071d7c30a85a",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "c6754c5f-7ce2-5513-ae48-071d7c30a85a"
+      ]
+    },
+    {
+      "stub_id": "q-c1-14",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "--no-cache-dir"
+      ],
+      "situation": "Auditing which installer flags belong in our image build.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "c6754c5f-7ce2-5513-ae48-071d7c30a85a",
+          "grade": "primary"
+        },
+        {
+          "uuid": "67fe63e4-944f-5dbf-b7c3-c13f35efd725",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5535763d-3390-5e02-b203-e68eed912bf8",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "67fe63e4-944f-5dbf-b7c3-c13f35efd725"
+      ]
+    },
+    {
+      "stub_id": "q-c1-15",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "staging"
+      ],
+      "situation": "Planning to purge aged objects from an environment before the audit.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "f14729c9-5a1e-5f79-b458-f9ffd2ebb1eb",
+          "grade": "primary"
+        },
+        {
+          "uuid": "bc529e1c-3d2e-549f-954d-2f7be7054b37",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "d79d50e6-e626-51ed-b543-020778abfee4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "3c882396-fc0b-5cb6-9632-370d7ccc52e4",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "bc529e1c-3d2e-549f-954d-2f7be7054b37"
+      ]
+    },
+    {
+      "stub_id": "q-c1-16",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "staging-2"
+      ],
+      "situation": "Booked time this afternoon to rehearse a risky schema change safely.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "bc529e1c-3d2e-549f-954d-2f7be7054b37",
+          "grade": "primary"
+        },
+        {
+          "uuid": "f14729c9-5a1e-5f79-b458-f9ffd2ebb1eb",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "409d5723-f0c5-5c40-8659-9cfdce7fc8e3",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "8d78bb0d-acb8-5616-a381-c7a66753b589",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-17",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "retry_backoff"
+      ],
+      "situation": "Configuring queue backoff, aiming for about 500 milliseconds.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "23b7214b-6d8f-5df1-992f-28c9b95b30bb",
+          "grade": "primary"
+        },
+        {
+          "uuid": "06c12807-8a8c-5272-86ed-87cc00cd6194",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "8ef836e3-7d4f-5c69-88d7-e3c6f6c884b0",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "06c12807-8a8c-5272-86ed-87cc00cd6194"
+      ]
+    },
+    {
+      "stub_id": "q-c1-18",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "retry_backoff_ms"
+      ],
+      "situation": "A backoff value I set is plainly being ignored at runtime.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "06c12807-8a8c-5272-86ed-87cc00cd6194",
+          "grade": "primary"
+        },
+        {
+          "uuid": "23b7214b-6d8f-5df1-992f-28c9b95b30bb",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "23b7214b-6d8f-5df1-992f-28c9b95b30bb"
+      ]
+    },
+    {
+      "stub_id": "q-c1-19",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "parse_date"
+      ],
+      "situation": "Parsing dates on incoming records using a helper already in the codebase.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "0cf6421f-4780-5431-a3e1-62ff18486f9b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "6883ad5e-78b9-5de5-8a5e-c0d2f09e928e",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "21c1bc63-9e87-566e-b498-b7592c489f71",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-20",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "parse_datetime"
+      ],
+      "situation": "Imported spreadsheet rows land with timestamps shifted by several hours.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "6883ad5e-78b9-5de5-8a5e-c0d2f09e928e",
+          "grade": "primary"
+        },
+        {
+          "uuid": "0cf6421f-4780-5431-a3e1-62ff18486f9b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c611011a-5c44-5358-ac64-c81a618e5303",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "21c1bc63-9e87-566e-b498-b7592c489f71",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-21",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "org.example.core.Config"
+      ],
+      "situation": "Relocating a configuration class into another package during a tidy-up.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "bd21b281-b22b-541f-92d7-1c4b51f8783c",
+          "grade": "primary"
+        },
+        {
+          "uuid": "bbee494e-1987-56c1-bf5f-d59a2ce1a34e",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "57a5b178-35a1-5053-a7cc-24ac631bf880",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "57a5b178-35a1-5053-a7cc-24ac631bf880"
+      ]
+    },
+    {
+      "stub_id": "q-c1-22",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "org.example.config.Core"
+      ],
+      "situation": "Startup time regressed right after we started using a newer config class.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "57a5b178-35a1-5053-a7cc-24ac631bf880",
+          "grade": "primary"
+        },
+        {
+          "uuid": "ca6ed3b1-a03b-5eaa-be7d-7e9ef39089c8",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "bd21b281-b22b-541f-92d7-1c4b51f8783c",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "bd21b281-b22b-541f-92d7-1c4b51f8783c"
+      ]
+    },
+    {
+      "stub_id": "q-c1-23",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "DATABASE_URL"
+      ],
+      "situation": "Reviewing how our service assembles its database connection string.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "33deec31-689c-58b0-9a1e-b60ff5c11044",
+          "grade": "primary"
+        },
+        {
+          "uuid": "72d94e3f-a001-5d51-9908-25709c379c4b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "e919eb12-69f7-533b-9653-ce4aec3968a4",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-24",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "DATABASE_URL_RO"
+      ],
+      "situation": "A write followed straight away by a read keeps flaking.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "72d94e3f-a001-5d51-9908-25709c379c4b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "5608d1dd-fdb8-5227-afbd-1c0d1d758f1a",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c1-25",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "30 seconds"
+      ],
+      "situation": "Long report requests are being cut off; want a bigger ceiling.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "ff536f07-ac75-5222-8522-6c4c1e5d8aa4",
+          "grade": "primary"
+        },
+        {
+          "uuid": "b1226188-af0d-558c-a461-f61d627ae899",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "70c923f8-29d2-58e8-bb0c-816b0bc89a32",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "70c923f8-29d2-58e8-bb0c-816b0bc89a32"
+      ]
+    },
+    {
+      "stub_id": "q-c1-26",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "300 seconds"
+      ],
+      "situation": "Long batch runs die partway and leave half-finished files around.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "70c923f8-29d2-58e8-bb0c-816b0bc89a32",
+          "grade": "primary"
+        },
+        {
+          "uuid": "eed7af95-2e09-5ed7-95ca-7b5f6154f80b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "1f35354b-8e4b-5145-82ee-78d4a6bfbd48",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "ff536f07-ac75-5222-8522-6c4c1e5d8aa4",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "ff536f07-ac75-5222-8522-6c4c1e5d8aa4"
+      ]
+    },
+    {
+      "stub_id": "q-c1-27",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "0042"
+      ],
+      "situation": "Slotting a column-type change into this week's schedule.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "409d5723-f0c5-5c40-8659-9cfdce7fc8e3",
+          "grade": "primary"
+        },
+        {
+          "uuid": "e53c112a-e5f5-5ba8-85c0-31c43155e3bc",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "e53c112a-e5f5-5ba8-85c0-31c43155e3bc"
+      ]
+    },
+    {
+      "stub_id": "q-c1-28",
+      "trap_category": "near_miss",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "0042_1"
+      ],
+      "situation": "Just need an index-only migration applied; expecting it to be quick.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "e53c112a-e5f5-5ba8-85c0-31c43155e3bc",
+          "grade": "primary"
+        },
+        {
+          "uuid": "409d5723-f0c5-5c40-8659-9cfdce7fc8e3",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "409d5723-f0c5-5c40-8659-9cfdce7fc8e3"
+      ]
+    },
+    {
+      "stub_id": "q-c2-01",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Duration-based checks go red in bursts and pass on retry.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "45624646-6a13-5860-97d1-1825078f31c4",
+          "grade": "primary"
+        },
+        {
+          "uuid": "9118d090-98cf-5312-832c-7e5d1f7d82d6",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "80a74659-2d8b-5100-9476-744c73c25785",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "94d177e8-19e6-54db-af5e-a063a1f5ba47",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "42ce86b5-d1b2-5e44-8c92-9feff4d51576",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-02",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "A worker occasionally wedges for minutes, then carries on unaided.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "abe3690c-2110-53ec-a2b3-02c6d8cfbb2a",
+          "grade": "primary"
+        },
+        {
+          "uuid": "49d3deb3-5924-58d4-ac00-c5e49948508f",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "e919eb12-69f7-533b-9653-ce4aec3968a4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "23b7214b-6d8f-5df1-992f-28c9b95b30bb",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-03",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Rollouts keep reverting though the new build behaves when I poke it.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "ca6ed3b1-a03b-5eaa-be7d-7e9ef39089c8",
+          "grade": "primary"
+        },
+        {
+          "uuid": "133dab68-26d7-5e08-836e-8db963a06af7",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "2ad4d712-6f21-56b0-b9bb-8229078debf3",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "1f35354b-8e4b-5145-82ee-78d4a6bfbd48",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "64358f3d-9863-52ed-bc66-f87c7bfafbdf",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-04",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Users report uploaded documents vanishing when names carry accents.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "e8342893-e1e0-5cee-b0b2-d1f0f6942f23",
+          "grade": "primary"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-05",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "An overseas user's totals disagree with the figures they typed in.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "c611011a-5c44-5358-ac64-c81a618e5303",
+          "grade": "primary"
+        },
+        {
+          "uuid": "1fa03883-f445-54c8-abb3-6c2829dc81b8",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "0cf6421f-4780-5431-a3e1-62ff18486f9b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "38b180d3-94a3-58c1-a5b5-c1c9debeb5d3",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "9aae91d4-6997-566b-91d2-3df148e73329",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-06",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Overnight aggregate totals come out under what accounting counts manually.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "9aae91d4-6997-566b-91d2-3df148e73329",
+          "grade": "primary"
+        },
+        {
+          "uuid": "4b869388-0cb7-5aa9-99ee-91709192d672",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c611011a-5c44-5358-ac64-c81a618e5303",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "44e1d485-a37d-50a3-bbcc-2f0d9fc6104c",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-07",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "One long-lived service creeps upward in memory for days until killed.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "1320a4f3-685d-5c47-b7fc-2018cb7b9c26",
+          "grade": "primary"
+        },
+        {
+          "uuid": "0287f1ba-94f8-53e5-958d-afe03cce3228",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c13e9a71-bc22-585e-9979-d117feb50831",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "31ce56c9-ddd2-59a1-a771-3044ca19f34d",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-08",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "A consumer downstream received an artefact missing most of its rows.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "eed7af95-2e09-5ed7-95ca-7b5f6154f80b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "7c502d93-58c4-50bc-9fa2-cff073f4e877",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "70c923f8-29d2-58e8-bb0c-816b0bc89a32",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "44e1d485-a37d-50a3-bbcc-2f0d9fc6104c",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-09",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "We added consumer instances and throughput stayed flat, lag looks worse.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "600c3fa6-f8a2-572c-b121-d42e3864c4ba",
+          "grade": "primary"
+        },
+        {
+          "uuid": "f87af6c3-4dbf-564a-8f99-8f03be533fb4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5f5236b4-d10f-5684-8442-8993d0150195",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "8ef836e3-7d4f-5c69-88d7-e3c6f6c884b0",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c2-10",
+      "trap_category": "paraphrase_only",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Outbound partner calls work from my desk but fail once deployed.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "87a46707-cc77-53b7-8875-d9bbabb712b6",
+          "grade": "primary"
+        },
+        {
+          "uuid": "4a7eec7e-7cdc-55b5-9919-bbe0c5a5e45b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "1fd6119d-2716-5098-a201-3dc1331ad38b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "36079eb5-7a60-5c85-9793-27cb9cf5bcd3",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "b831e2d4-bc0a-5ca7-8ebc-3b81a8080c1d",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-01",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "TypeError: Descriptors cannot not be created directly"
+      ],
+      "situation": "A generated-stub import blows up right after we reinstalled dependencies.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "921edc6f-c4a0-5369-9473-2155e78373fa",
+          "grade": "primary"
+        },
+        {
+          "uuid": "6a3d1c38-0077-554d-88b1-67ca31482e3d",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-02",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "137"
+      ],
+      "situation": "One build stage dies late with only a numeric exit status.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "c13e9a71-bc22-585e-9979-d117feb50831",
+          "grade": "primary"
+        },
+        {
+          "uuid": "328f92a1-a895-5e66-bae2-282cc69d6809",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-03",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "SSLCertVerificationError",
+        "certificate verify failed: unable to get local issuer certificate"
+      ],
+      "situation": "TLS verification fails for calls made from our deployed workload.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "4a7eec7e-7cdc-55b5-9919-bbe0c5a5e45b",
+          "grade": "primary"
+        },
+        {
+          "uuid": "87a46707-cc77-53b7-8875-d9bbabb712b6",
+          "grade": "primary"
+        },
+        {
+          "uuid": "b831e2d4-bc0a-5ca7-8ebc-3b81a8080c1d",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "36079eb5-7a60-5c85-9793-27cb9cf5bcd3",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "1fd6119d-2716-5098-a201-3dc1331ad38b",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-04",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "sqlite3.OperationalError",
+        "database is locked"
+      ],
+      "situation": "Our suite fails partway complaining about the database.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "124162c3-05f9-507a-815a-7079f5e2ba01",
+          "grade": "primary"
+        },
+        {
+          "uuid": "32deb0ad-ca02-518f-bf47-5cda38e29c1e",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "faf0c6eb-369c-5ec9-b10e-27338e467f3d",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "faf0c6eb-369c-5ec9-b10e-27338e467f3d"
+      ]
+    },
+    {
+      "stub_id": "q-c3-05",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "OSError",
+        "[Errno 98]",
+        "Address already in use"
+      ],
+      "situation": "Restarting the suite straight away trips over a bound port.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "2486aba2-5d74-5288-ba44-d8361c932a5b",
+          "grade": "primary"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-06",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "symbol lookup error",
+        "undefined symbol"
+      ],
+      "situation": "An import aborts on our own hardware although installation looked fine.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "812f091a-1a63-5073-8791-3df62a55c9d1",
+          "grade": "primary"
+        },
+        {
+          "uuid": "f99d497a-c137-5ae6-b5e6-85002ca236fb",
+          "grade": "primary"
+        },
+        {
+          "uuid": "5535763d-3390-5e02-b203-e68eed912bf8",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "35661871-e0e3-51a8-b5b2-ecee4f26f0ea",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-07",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "json.decoder.JSONDecodeError",
+        "Extra data"
+      ],
+      "situation": "Parsing an export in one pass fails right away.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "7c502d93-58c4-50bc-9fa2-cff073f4e877",
+          "grade": "primary"
+        },
+        {
+          "uuid": "eed7af95-2e09-5ed7-95ca-7b5f6154f80b",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-08",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "ConnectionResetError",
+        "[Errno 104]",
+        "Connection reset by peer"
+      ],
+      "situation": "Object-store requests sporadically drop after the connection sat idle.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "22780904-682d-5049-ad31-4b32925ad051",
+          "grade": "primary"
+        },
+        {
+          "uuid": "59cdb4a4-2371-5b73-86e2-513508371370",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5f5236b4-d10f-5684-8442-8993d0150195",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-09",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "found duplicate key"
+      ],
+      "situation": "Service refuses to boot on configuration that loads fine locally.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "253b390d-26de-5c5b-939b-5f95c1819d04",
+          "grade": "primary"
+        },
+        {
+          "uuid": "19cca843-da65-5d38-b951-1fabc8d603ab",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c3-10",
+      "trap_category": "error_string",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "OSError",
+        "[Errno 24]",
+        "Too many open files"
+      ],
+      "situation": "A big import run exhausts descriptors partway through.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "31ce56c9-ddd2-59a1-a771-3044ca19f34d",
+          "grade": "primary"
+        },
+        {
+          "uuid": "22780904-682d-5049-ad31-4b32925ad051",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5f5236b4-d10f-5684-8442-8993d0150195",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c4-01",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "4.3"
+      ],
+      "situation": "Considering the streaming path for our exporter; we run 4.3.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "022d8989-2a28-56ba-b355-5cac5326a526",
+          "grade": "primary"
+        },
+        {
+          "uuid": "eed7af95-2e09-5ed7-95ca-7b5f6154f80b",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c0d14302-8944-57e2-98d8-c2f22bc9a45d",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "c0d14302-8944-57e2-98d8-c2f22bc9a45d"
+      ]
+    },
+    {
+      "stub_id": "q-c4-02",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Want a faster local loop by running tests concurrently.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "32deb0ad-ca02-518f-bf47-5cda38e29c1e",
+          "grade": "primary"
+        },
+        {
+          "uuid": "124162c3-05f9-507a-815a-7079f5e2ba01",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "80a74659-2d8b-5100-9476-744c73c25785",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "faf0c6eb-369c-5ec9-b10e-27338e467f3d",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "faf0c6eb-369c-5ec9-b10e-27338e467f3d"
+      ]
+    },
+    {
+      "stub_id": "q-c4-03",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "3.x"
+      ],
+      "situation": "Adding a cache lookup inside the request handler; client is 3.x.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "c9023f90-63d9-5322-ab40-5ffd5fb58fa3",
+          "grade": "primary"
+        },
+        {
+          "uuid": "6b62177e-ac9f-57d9-9705-2a700280767e",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5608d1dd-fdb8-5227-afbd-1c0d1d758f1a",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "858d9157-80f1-504f-ac99-c5b8eb3e0d94",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "858d9157-80f1-504f-ac99-c5b8eb3e0d94"
+      ]
+    },
+    {
+      "stub_id": "q-c4-04",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "arm"
+      ],
+      "situation": "Evaluating a cheaper runner architecture for our image builds.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "930d2ee5-af52-50ba-8532-38ad625879db",
+          "grade": "primary"
+        },
+        {
+          "uuid": "5535763d-3390-5e02-b203-e68eed912bf8",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "3f659196-d5f0-5a3f-8d46-368ce01e637c",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "3f659196-d5f0-5a3f-8d46-368ce01e637c"
+      ]
+    },
+    {
+      "stub_id": "q-c4-05",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Trying to delete a long-deprecated field from our event payload.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "b6b15fa4-ced6-5bae-85f2-844b7571287a",
+          "grade": "primary"
+        },
+        {
+          "uuid": "256c1ead-a023-5f2b-9e93-ac6b2547ea0d",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "7a634cdf-cbd7-51b8-8982-afd203298507",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "7a634cdf-cbd7-51b8-8982-afd203298507"
+      ]
+    },
+    {
+      "stub_id": "q-c4-06",
+      "trap_category": "polarity",
+      "intent": "historical_intent",
+      "identifiers_involved": [
+        "4.1"
+      ],
+      "situation": "Pinned to 4.1 and deciding whether the streaming path is usable.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "c0d14302-8944-57e2-98d8-c2f22bc9a45d",
+          "grade": "primary"
+        },
+        {
+          "uuid": "022d8989-2a28-56ba-b355-5cac5326a526",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c4-07",
+      "trap_category": "polarity",
+      "intent": "historical_intent",
+      "identifiers_involved": [
+        "arm"
+      ],
+      "situation": "Curious why an earlier attempt at a different runner architecture stopped.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "3f659196-d5f0-5a3f-8d46-368ce01e637c",
+          "grade": "primary"
+        },
+        {
+          "uuid": "930d2ee5-af52-50ba-8532-38ad625879db",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "5535763d-3390-5e02-b203-e68eed912bf8",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c4-08",
+      "trap_category": "polarity",
+      "intent": "historical_intent",
+      "identifiers_involved": [
+        "2.x"
+      ],
+      "situation": "Still on the 2.x client and wondering about calling it per request.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "858d9157-80f1-504f-ac99-c5b8eb3e0d94",
+          "grade": "primary"
+        },
+        {
+          "uuid": "c9023f90-63d9-5322-ab40-5ffd5fb58fa3",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": [
+        "c9023f90-63d9-5322-ab40-5ffd5fb58fa3"
+      ]
+    },
+    {
+      "stub_id": "q-c4-09",
+      "trap_category": "polarity",
+      "intent": "historical_intent",
+      "identifiers_involved": [],
+      "situation": "Someone asked where our serial-only testing guidance originally came from.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "faf0c6eb-369c-5ec9-b10e-27338e467f3d",
+          "grade": "primary"
+        },
+        {
+          "uuid": "32deb0ad-ca02-518f-bf47-5cda38e29c1e",
+          "grade": "also_useful"
+        }
+      ],
+      "confusable_uuids": []
+    },
+    {
+      "stub_id": "q-c4-10",
+      "trap_category": "polarity",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Payloads have grown large and I want to know whether trimming is possible.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "b6b15fa4-ced6-5bae-85f2-844b7571287a",
+          "grade": "primary"
+        },
+        {
+          "uuid": "256c1ead-a023-5f2b-9e93-ac6b2547ea0d",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "7a634cdf-cbd7-51b8-8982-afd203298507",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "7a634cdf-cbd7-51b8-8982-afd203298507"
+      ]
+    },
+    {
+      "stub_id": "q-c5-01",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "connect_timeout_ms"
+      ],
+      "situation": "A per-call setting for connect timeout appears to do nothing.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "primary"
+        },
+        {
+          "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "a777c06b-4846-5d97-b050-564c1ca78dd2",
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+        "22d93b18-0741-53bf-aeca-eef70a2022a2",
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ]
+    },
+    {
+      "stub_id": "q-c5-02",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [
+        "tenant_id"
+      ],
+      "situation": "The planner ignores a composite index for one tenant-filtered query.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "primary"
+        },
+        {
+          "uuid": "baba7348-07b6-53aa-826d-f0aa548b0dc4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "af1c7925-f425-548d-abe9-a6c966f8bfef",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "66180423-2216-5fc3-a7de-6019e1bb43f4",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+        "22d93b18-0741-53bf-aeca-eef70a2022a2",
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ]
+    },
+    {
+      "stub_id": "q-c5-03",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Need to know where the deployed batch job picks up secrets.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "primary"
+        },
+        {
+          "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "c7190d78-17b4-5204-8760-3371a97232aa",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "a366583e-0f35-5931-ad45-b158ea4290d2",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+        "a777c06b-4846-5d97-b050-564c1ca78dd2",
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+        "22d93b18-0741-53bf-aeca-eef70a2022a2",
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ]
+    },
+    {
+      "stub_id": "q-c5-04",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "An upload gave up immediately without making a second attempt.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "primary"
+        },
+        {
+          "uuid": "59cdb4a4-2371-5b73-86e2-513508371370",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "22780904-682d-5049-ad31-4b32925ad051",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "07a61eeb-f4f3-5354-9454-a88949aaae3f",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+        "a777c06b-4846-5d97-b050-564c1ca78dd2",
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+        "22d93b18-0741-53bf-aeca-eef70a2022a2",
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ]
+    },
+    {
+      "stub_id": "q-c5-05",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Edited a template but the previous rendering is still going out.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "primary"
+        },
+        {
+          "uuid": "02987fbb-8dc0-5b84-92ad-64ebb065d16f",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+        "a777c06b-4846-5d97-b050-564c1ca78dd2",
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ]
+    },
+    {
+      "stub_id": "q-c5-06",
+      "trap_category": "over_length",
+      "intent": "current_action",
+      "identifiers_involved": [],
+      "situation": "Signature validation fails now and then, only on our own hardware.",
+      "relevant_memory_uuids": [
+        {
+          "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+          "grade": "primary"
+        },
+        {
+          "uuid": "9118d090-98cf-5312-832c-7e5d1f7d82d6",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "183cea70-bafa-5ea2-8213-7677ab29e4e0",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "77437407-4c1b-58a3-b4ff-c360e6d93233",
+          "grade": "also_useful"
+        },
+        {
+          "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+          "grade": "harmful_if_applied"
+        },
+        {
+          "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+          "grade": "harmful_if_applied"
+        }
+      ],
+      "confusable_uuids": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+        "a777c06b-4846-5d97-b050-564c1ca78dd2",
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+        "22d93b18-0741-53bf-aeca-eef70a2022a2"
+      ]
+    }
+  ]
+}

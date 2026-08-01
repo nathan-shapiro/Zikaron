@@ -1,0 +1,12 @@
+# Generated / local state. The dataset artefact and results JSON ARE checked in on purpose.
+.venv/
+logs/
+index.db
+__pycache__/
+_prefetch.py
+_cold_probe.py
+index_v2.db
+index_tie.db
+embcache/
+cost_base.db
+cost_tok.db

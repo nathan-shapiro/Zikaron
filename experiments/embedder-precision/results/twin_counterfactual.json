@@ -1,0 +1,2451 @@
+{
+  "seed": 20260801,
+  "n_blocks": 14,
+  "n_templates": 6,
+  "n_trials": 504,
+  "templates": [
+    "The team hit a problem with {ID} last quarter. Nobody wrote down why, so it was rediscovered the hard way. If you are touching {ID}, read the tracker notes first.",
+    "Note on {ID}: the behaviour is not what the documentation implies. We spent an afternoon on it before working that out. Treat {ID} as load-bearing until proven otherwise.",
+    "When the build failed the cause turned out to involve {ID}. The workaround is written down in the runbook. Do not change {ID} without telling whoever is on call.",
+    "{ID} was introduced during the migration and never revisited. It works, but the reasoning is undocumented. Anyone changing {ID} should expect surprises.",
+    "A previous attempt to simplify this removed {ID} and broke the nightly job. It was restored the next morning. Keep {ID} unless you have a replacement plan.",
+    "For historical reasons {ID} is special-cased in two places. The second one is easy to miss. Grep for {ID} before assuming there is a single site."
+  ],
+  "twin_sets": [
+    [
+      "widget",
+      "WidgetV1",
+      "WidgetV2"
+    ],
+    [
+      "version",
+      "v2.3.1",
+      "v2.3.10"
+    ],
+    [
+      "conftest",
+      "conftest.py",
+      "conf_test.py"
+    ],
+    [
+      "authtoken",
+      "AUTH_TOKEN",
+      "AUTH_TOKEN_V2"
+    ],
+    [
+      "gradle",
+      "build.gradle",
+      "build.gradle.kts"
+    ],
+    [
+      "userid",
+      "user_id",
+      "userId"
+    ],
+    [
+      "nocache",
+      "--no-cache",
+      "--no-cache-dir"
+    ],
+    [
+      "staging",
+      "staging",
+      "staging-2"
+    ],
+    [
+      "backoff",
+      "retry_backoff",
+      "retry_backoff_ms"
+    ],
+    [
+      "parsedate",
+      "parse_date",
+      "parse_datetime"
+    ],
+    [
+      "dotted",
+      "org.example.core.Config",
+      "org.example.config.Core"
+    ],
+    [
+      "dburl",
+      "DATABASE_URL",
+      "DATABASE_URL_RO"
+    ],
+    [
+      "timeout",
+      "30 seconds",
+      "300 seconds"
+    ],
+    [
+      "migration",
+      "migration 0042",
+      "migration 0042_1"
+    ]
+  ],
+  "exact_pairs": [
+    [
+      "KESTREL_MODE",
+      "MARMOT_MODE"
+    ],
+    [
+      "v9.9.9",
+      "v1.0.0"
+    ],
+    [
+      "alpha_probe.py",
+      "zulu_engine.rb"
+    ],
+    [
+      "QUILL_SECRET",
+      "TROMBONE_KEY"
+    ],
+    [
+      "pom.xml",
+      "Makefile.am"
+    ],
+    [
+      "tenant_slug",
+      "invoiceNumber"
+    ],
+    [
+      "--verbose",
+      "--quiet"
+    ],
+    [
+      "canary",
+      "obsidian"
+    ],
+    [
+      "cache_ttl",
+      "socket_linger"
+    ],
+    [
+      "render_pdf",
+      "compile_shader"
+    ],
+    [
+      "com.acme.billing.Ledger",
+      "net.zeta.render.Pipeline"
+    ],
+    [
+      "SMTP_HOST",
+      "REDIS_SENTINEL"
+    ],
+    [
+      "7 minutes",
+      "45 hours"
+    ],
+    [
+      "migration 0900",
+      "migration 0311"
+    ]
+  ],
+  "models": {
+    "bge-small": {
+      "model": "BAAI/bge-small-en-v1.5",
+      "bare": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0402,
+            "ci95": [
+              0.0281,
+              0.0552
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.040898,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9286,
+            "ci95": [
+              0.8452,
+              0.994
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9286,
+          "mean_cos_gold": 0.7795,
+          "per_block_margin": {
+            "authtoken": 0.03685,
+            "backoff": 0.035791,
+            "conftest": 0.118587,
+            "dburl": 0.033027,
+            "dotted": 0.003312,
+            "gradle": 0.051697,
+            "migration": 0.005547,
+            "nocache": 0.046904,
+            "parsedate": 0.048454,
+            "staging": 0.044789,
+            "timeout": 0.035957,
+            "userid": 0.038235,
+            "version": 0.022818,
+            "widget": 0.041449
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.5833,
+            "gradle": 1.0,
+            "migration": 0.5833,
+            "nocache": 0.9167,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 0.9167,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.1965,
+            "ci95": [
+              0.1546,
+              0.2366
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.196482,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7838,
+          "per_block_margin": {
+            "authtoken": 0.245497,
+            "backoff": 0.224331,
+            "conftest": 0.228051,
+            "dburl": 0.277666,
+            "dotted": 0.351674,
+            "gradle": 0.193306,
+            "migration": 0.058691,
+            "nocache": 0.163094,
+            "parsedate": 0.199628,
+            "staging": 0.229853,
+            "timeout": 0.099686,
+            "userid": 0.248798,
+            "version": 0.061262,
+            "widget": 0.16921
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.8169,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2048,
+            "ci95": [
+              0.1353,
+              0.2895
+            ],
+            "boot_mean": 0.2063
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2269,
+            "ci95": [
+              0.1622,
+              0.2958
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.1501,
+            "backoff": 0.1595,
+            "conftest": 0.52,
+            "dburl": 0.1189,
+            "dotted": 0.0094,
+            "gradle": 0.2674,
+            "migration": 0.0945,
+            "nocache": 0.2876,
+            "parsedate": 0.2427,
+            "staging": 0.1949,
+            "timeout": 0.3607,
+            "userid": 0.1537,
+            "version": 0.3725,
+            "widget": 0.245
+          },
+          "aggregate": 0.2048,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0362,
+          "ci95": [
+            0.0265,
+            0.0443
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0475,
+          "ci95": [
+            0.0179,
+            0.0864
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      },
+      "carrier": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0355,
+            "ci95": [
+              0.0249,
+              0.0487
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.036134,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9583,
+            "ci95": [
+              0.9048,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9583,
+          "mean_cos_gold": 0.8026,
+          "per_block_margin": {
+            "authtoken": 0.030938,
+            "backoff": 0.02928,
+            "conftest": 0.104746,
+            "dburl": 0.027034,
+            "dotted": 0.00283,
+            "gradle": 0.041537,
+            "migration": 0.008925,
+            "nocache": 0.044944,
+            "parsedate": 0.043794,
+            "staging": 0.044998,
+            "timeout": 0.029288,
+            "userid": 0.03304,
+            "version": 0.022942,
+            "widget": 0.032739
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.6667,
+            "gradle": 1.0,
+            "migration": 0.9167,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 0.8333,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.1829,
+            "ci95": [
+              0.1432,
+              0.2215
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.182879,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7969,
+          "per_block_margin": {
+            "authtoken": 0.232261,
+            "backoff": 0.223406,
+            "conftest": 0.219363,
+            "dburl": 0.258163,
+            "dotted": 0.326731,
+            "gradle": 0.173114,
+            "migration": 0.056172,
+            "nocache": 0.140618,
+            "parsedate": 0.171567,
+            "staging": 0.211485,
+            "timeout": 0.087759,
+            "userid": 0.243999,
+            "version": 0.059231,
+            "widget": 0.15644
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.8483,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.1941,
+            "ci95": [
+              0.128,
+              0.2766
+            ],
+            "boot_mean": 0.1957
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.222,
+            "ci95": [
+              0.1609,
+              0.2873
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.1332,
+            "backoff": 0.1311,
+            "conftest": 0.4775,
+            "dburl": 0.1047,
+            "dotted": 0.0087,
+            "gradle": 0.2399,
+            "migration": 0.1589,
+            "nocache": 0.3196,
+            "parsedate": 0.2553,
+            "staging": 0.2128,
+            "timeout": 0.3337,
+            "userid": 0.1354,
+            "version": 0.3873,
+            "widget": 0.2093
+          },
+          "aggregate": 0.1941,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0327,
+          "ci95": [
+            0.0248,
+            0.0398
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0405,
+          "ci95": [
+            0.0149,
+            0.0753
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      }
+    },
+    "bge-small-prefix": {
+      "model": "BAAI/bge-small-en-v1.5",
+      "bare": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.043,
+            "ci95": [
+              0.0294,
+              0.0597
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.043712,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9464,
+            "ci95": [
+              0.8869,
+              0.994
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9464,
+          "mean_cos_gold": 0.7867,
+          "per_block_margin": {
+            "authtoken": 0.040502,
+            "backoff": 0.03742,
+            "conftest": 0.129451,
+            "dburl": 0.034721,
+            "dotted": 0.002875,
+            "gradle": 0.056395,
+            "migration": 0.008867,
+            "nocache": 0.054343,
+            "parsedate": 0.051573,
+            "staging": 0.044512,
+            "timeout": 0.047219,
+            "userid": 0.034769,
+            "version": 0.014773,
+            "widget": 0.04444
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.6667,
+            "gradle": 0.9167,
+            "migration": 0.75,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 0.9167,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.2102,
+            "ci95": [
+              0.1651,
+              0.2521
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.210228,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7853,
+          "per_block_margin": {
+            "authtoken": 0.266826,
+            "backoff": 0.241617,
+            "conftest": 0.251329,
+            "dburl": 0.291354,
+            "dotted": 0.367237,
+            "gradle": 0.204376,
+            "migration": 0.072634,
+            "nocache": 0.189563,
+            "parsedate": 0.199881,
+            "staging": 0.247445,
+            "timeout": 0.114101,
+            "userid": 0.264871,
+            "version": 0.046728,
+            "widget": 0.18523
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.8261,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2045,
+            "ci95": [
+              0.1333,
+              0.2906
+            ],
+            "boot_mean": 0.2059
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2266,
+            "ci95": [
+              0.1621,
+              0.296
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.1518,
+            "backoff": 0.1549,
+            "conftest": 0.5151,
+            "dburl": 0.1192,
+            "dotted": 0.0078,
+            "gradle": 0.2759,
+            "migration": 0.1221,
+            "nocache": 0.2867,
+            "parsedate": 0.258,
+            "staging": 0.1799,
+            "timeout": 0.4138,
+            "userid": 0.1313,
+            "version": 0.3161,
+            "widget": 0.2399
+          },
+          "aggregate": 0.2045,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0381,
+          "ci95": [
+            0.0273,
+            0.0477
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0518,
+          "ci95": [
+            0.0201,
+            0.0941
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      },
+      "carrier": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0432,
+            "ci95": [
+              0.0309,
+              0.0586
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.043828,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9583,
+            "ci95": [
+              0.9167,
+              0.994
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9583,
+          "mean_cos_gold": 0.7626,
+          "per_block_margin": {
+            "authtoken": 0.039583,
+            "backoff": 0.035481,
+            "conftest": 0.123927,
+            "dburl": 0.034722,
+            "dotted": 0.002445,
+            "gradle": 0.053028,
+            "migration": 0.01153,
+            "nocache": 0.051933,
+            "parsedate": 0.051699,
+            "staging": 0.04762,
+            "timeout": 0.037573,
+            "userid": 0.034822,
+            "version": 0.034436,
+            "widget": 0.046475
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.75,
+            "gradle": 0.9167,
+            "migration": 0.8333,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 0.9167,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.2063,
+            "ci95": [
+              0.1642,
+              0.2474
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.206275,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7525,
+          "per_block_margin": {
+            "authtoken": 0.251289,
+            "backoff": 0.252492,
+            "conftest": 0.260921,
+            "dburl": 0.276602,
+            "dotted": 0.367131,
+            "gradle": 0.196877,
+            "migration": 0.074836,
+            "nocache": 0.17023,
+            "parsedate": 0.198309,
+            "staging": 0.222172,
+            "timeout": 0.103001,
+            "userid": 0.260797,
+            "version": 0.074925,
+            "widget": 0.178267
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.8052,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2096,
+            "ci95": [
+              0.1394,
+              0.2925
+            ],
+            "boot_mean": 0.2111
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2377,
+            "ci95": [
+              0.1719,
+              0.3064
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.1575,
+            "backoff": 0.1405,
+            "conftest": 0.475,
+            "dburl": 0.1255,
+            "dotted": 0.0067,
+            "gradle": 0.2693,
+            "migration": 0.1541,
+            "nocache": 0.3051,
+            "parsedate": 0.2607,
+            "staging": 0.2143,
+            "timeout": 0.3648,
+            "userid": 0.1335,
+            "version": 0.4596,
+            "widget": 0.2607
+          },
+          "aggregate": 0.2096,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.04,
+          "ci95": [
+            0.0313,
+            0.0474
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.049,
+          "ci95": [
+            0.0183,
+            0.0894
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      }
+    },
+    "bge-large-prefix": {
+      "model": "BAAI/bge-large-en-v1.5",
+      "bare": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0513,
+            "ci95": [
+              0.039,
+              0.0636
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.052849,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9226,
+            "ci95": [
+              0.8631,
+              0.9762
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9226,
+          "mean_cos_gold": 0.7385,
+          "per_block_margin": {
+            "authtoken": 0.052989,
+            "backoff": 0.042077,
+            "conftest": 0.091876,
+            "dburl": 0.051901,
+            "dotted": 0.005832,
+            "gradle": 0.095029,
+            "migration": 0.011351,
+            "nocache": 0.049287,
+            "parsedate": 0.052973,
+            "staging": 0.056219,
+            "timeout": 0.060092,
+            "userid": 0.052109,
+            "version": 0.044534,
+            "widget": 0.05223
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.6667,
+            "gradle": 1.0,
+            "migration": 0.8333,
+            "nocache": 0.8333,
+            "parsedate": 1.0,
+            "staging": 0.75,
+            "timeout": 1.0,
+            "userid": 0.8333,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.2202,
+            "ci95": [
+              0.1891,
+              0.2497
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.220154,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7378,
+          "per_block_margin": {
+            "authtoken": 0.247541,
+            "backoff": 0.208749,
+            "conftest": 0.247715,
+            "dburl": 0.267869,
+            "dotted": 0.311594,
+            "gradle": 0.260269,
+            "migration": 0.131035,
+            "nocache": 0.191322,
+            "parsedate": 0.242281,
+            "staging": 0.257709,
+            "timeout": 0.13997,
+            "userid": 0.28791,
+            "version": 0.13381,
+            "widget": 0.154384
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.785,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2331,
+            "ci95": [
+              0.1727,
+              0.2936
+            ],
+            "boot_mean": 0.2336
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2448,
+            "ci95": [
+              0.1865,
+              0.3022
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.2141,
+            "backoff": 0.2016,
+            "conftest": 0.3709,
+            "dburl": 0.1938,
+            "dotted": 0.0187,
+            "gradle": 0.3651,
+            "migration": 0.0866,
+            "nocache": 0.2576,
+            "parsedate": 0.2186,
+            "staging": 0.2181,
+            "timeout": 0.4293,
+            "userid": 0.181,
+            "version": 0.3328,
+            "widget": 0.3383
+          },
+          "aggregate": 0.2331,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0507,
+          "ci95": [
+            0.0376,
+            0.0648
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0524,
+          "ci95": [
+            0.0259,
+            0.076
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      },
+      "carrier": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0444,
+            "ci95": [
+              0.0338,
+              0.0554
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.045099,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9345,
+            "ci95": [
+              0.8631,
+              0.9881
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9345,
+          "mean_cos_gold": 0.7214,
+          "per_block_margin": {
+            "authtoken": 0.043467,
+            "backoff": 0.039336,
+            "conftest": 0.082817,
+            "dburl": 0.047266,
+            "dotted": 0.00529,
+            "gradle": 0.083956,
+            "migration": 0.011489,
+            "nocache": 0.048726,
+            "parsedate": 0.0444,
+            "staging": 0.050004,
+            "timeout": 0.041627,
+            "userid": 0.050685,
+            "version": 0.03571,
+            "widget": 0.037413
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.5833,
+            "gradle": 1.0,
+            "migration": 0.75,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 0.8333,
+            "timeout": 1.0,
+            "userid": 0.9167,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.1914,
+            "ci95": [
+              0.1605,
+              0.2212
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.191417,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7189,
+          "per_block_margin": {
+            "authtoken": 0.200397,
+            "backoff": 0.185707,
+            "conftest": 0.224727,
+            "dburl": 0.238738,
+            "dotted": 0.284817,
+            "gradle": 0.233652,
+            "migration": 0.10439,
+            "nocache": 0.147664,
+            "parsedate": 0.223478,
+            "staging": 0.229067,
+            "timeout": 0.106958,
+            "userid": 0.258215,
+            "version": 0.107686,
+            "widget": 0.134345
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.7778,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2322,
+            "ci95": [
+              0.1713,
+              0.2909
+            ],
+            "boot_mean": 0.2327
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2447,
+            "ci95": [
+              0.1895,
+              0.297
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.2169,
+            "backoff": 0.2118,
+            "conftest": 0.3685,
+            "dburl": 0.198,
+            "dotted": 0.0186,
+            "gradle": 0.3593,
+            "migration": 0.1101,
+            "nocache": 0.33,
+            "parsedate": 0.1987,
+            "staging": 0.2183,
+            "timeout": 0.3892,
+            "userid": 0.1963,
+            "version": 0.3316,
+            "widget": 0.2785
+          },
+          "aggregate": 0.2322,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0449,
+          "ci95": [
+            0.0336,
+            0.0573
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0436,
+          "ci95": [
+            0.0208,
+            0.0655
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      }
+    },
+    "nomic": {
+      "model": "nomic-ai/nomic-embed-text-v1.5",
+      "bare": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.049,
+            "ci95": [
+              0.0365,
+              0.0618
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.050486,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9167,
+            "ci95": [
+              0.875,
+              0.9583
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9167,
+          "mean_cos_gold": 0.7415,
+          "per_block_margin": {
+            "authtoken": 0.057332,
+            "backoff": 0.031359,
+            "conftest": 0.108191,
+            "dburl": 0.057784,
+            "dotted": 0.00183,
+            "gradle": 0.0518,
+            "migration": 0.012412,
+            "nocache": 0.045886,
+            "parsedate": 0.044534,
+            "staging": 0.064262,
+            "timeout": 0.056726,
+            "userid": 0.046636,
+            "version": 0.040713,
+            "widget": 0.067085
+          },
+          "per_block_win": {
+            "authtoken": 0.9167,
+            "backoff": 0.9167,
+            "conftest": 1.0,
+            "dburl": 0.8333,
+            "dotted": 0.8333,
+            "gradle": 0.75,
+            "migration": 1.0,
+            "nocache": 0.8333,
+            "parsedate": 1.0,
+            "staging": 0.8333,
+            "timeout": 0.9167,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.235,
+            "ci95": [
+              0.1927,
+              0.2774
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.23495,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.744,
+          "per_block_margin": {
+            "authtoken": 0.244922,
+            "backoff": 0.304819,
+            "conftest": 0.315861,
+            "dburl": 0.29404,
+            "dotted": 0.401713,
+            "gradle": 0.263149,
+            "migration": 0.11958,
+            "nocache": 0.197591,
+            "parsedate": 0.236774,
+            "staging": 0.228759,
+            "timeout": 0.097377,
+            "userid": 0.277743,
+            "version": 0.137574,
+            "widget": 0.169406
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.7451,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.2087,
+            "ci95": [
+              0.1432,
+              0.2768
+            ],
+            "boot_mean": 0.2098
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2375,
+            "ci95": [
+              0.168,
+              0.3119
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.2341,
+            "backoff": 0.1029,
+            "conftest": 0.3425,
+            "dburl": 0.1965,
+            "dotted": 0.0046,
+            "gradle": 0.1968,
+            "migration": 0.1038,
+            "nocache": 0.2322,
+            "parsedate": 0.1881,
+            "staging": 0.2809,
+            "timeout": 0.5825,
+            "userid": 0.1679,
+            "version": 0.2959,
+            "widget": 0.396
+          },
+          "aggregate": 0.2087,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0451,
+          "ci95": [
+            0.0349,
+            0.0541
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.0561,
+          "ci95": [
+            0.0238,
+            0.0876
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      },
+      "carrier": {
+        "near_miss": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0409,
+            "ci95": [
+              0.0298,
+              0.0526
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.041464,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.9226,
+            "ci95": [
+              0.881,
+              0.9643
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.9226,
+          "mean_cos_gold": 0.7871,
+          "per_block_margin": {
+            "authtoken": 0.04631,
+            "backoff": 0.026695,
+            "conftest": 0.097512,
+            "dburl": 0.050316,
+            "dotted": 0.001376,
+            "gradle": 0.053847,
+            "migration": 0.00913,
+            "nocache": 0.037227,
+            "parsedate": 0.033872,
+            "staging": 0.048381,
+            "timeout": 0.039663,
+            "userid": 0.039967,
+            "version": 0.032318,
+            "widget": 0.05647
+          },
+          "per_block_win": {
+            "authtoken": 0.9167,
+            "backoff": 0.9167,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 0.75,
+            "gradle": 0.8333,
+            "migration": 0.9167,
+            "nocache": 0.8333,
+            "parsedate": 1.0,
+            "staging": 0.8333,
+            "timeout": 0.9167,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "exact": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.2071,
+            "ci95": [
+              0.1639,
+              0.252
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.207144,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 1.0,
+            "ci95": [
+              1.0,
+              1.0
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 1.0,
+          "mean_cos_gold": 0.7799,
+          "per_block_margin": {
+            "authtoken": 0.217735,
+            "backoff": 0.279689,
+            "conftest": 0.304701,
+            "dburl": 0.261145,
+            "dotted": 0.37932,
+            "gradle": 0.248459,
+            "migration": 0.094675,
+            "nocache": 0.122313,
+            "parsedate": 0.202876,
+            "staging": 0.191892,
+            "timeout": 0.072591,
+            "userid": 0.251124,
+            "version": 0.114356,
+            "widget": 0.159144
+          },
+          "per_block_win": {
+            "authtoken": 1.0,
+            "backoff": 1.0,
+            "conftest": 1.0,
+            "dburl": 1.0,
+            "dotted": 1.0,
+            "gradle": 1.0,
+            "migration": 1.0,
+            "nocache": 1.0,
+            "parsedate": 1.0,
+            "staging": 1.0,
+            "timeout": 1.0,
+            "userid": 1.0,
+            "version": 1.0,
+            "widget": 1.0
+          }
+        },
+        "identity": {
+          "n_trials": 168,
+          "margin": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "abs_margin_mean": 0.0,
+          "win_rate_blockmean": {
+            "n_blocks": 14,
+            "point": 0.0,
+            "ci95": [
+              0.0,
+              0.0
+            ],
+            "blocks_positive": 0,
+            "blocks_zero": 14,
+            "blocks_negative": 0
+          },
+          "win_rate_trials": 0.0,
+          "mean_cos_gold": 0.8059,
+          "per_block_margin": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          },
+          "per_block_win": {
+            "authtoken": 0.0,
+            "backoff": 0.0,
+            "conftest": 0.0,
+            "dburl": 0.0,
+            "dotted": 0.0,
+            "gradle": 0.0,
+            "migration": 0.0,
+            "nocache": 0.0,
+            "parsedate": 0.0,
+            "staging": 0.0,
+            "timeout": 0.0,
+            "userid": 0.0,
+            "version": 0.0,
+            "widget": 0.0
+          }
+        },
+        "discrimination_index": {
+          "primary_estimand": "ratio_of_means",
+          "note": "RoM and MBR are different estimands (R3.1). RoM is what PREREGISTRATION 5.5 declared; MBR is what round 2 quoted for between-model contrasts.",
+          "ratio_of_means": {
+            "estimand": "ratio_of_means",
+            "n_blocks": 14,
+            "point": 0.1976,
+            "ci95": [
+              0.1335,
+              0.2632
+            ],
+            "boot_mean": 0.1989
+          },
+          "mean_block_ratio": {
+            "estimand": "mean_of_per_block_ratios",
+            "n_blocks": 14,
+            "point": 0.2289,
+            "ci95": [
+              0.1626,
+              0.2989
+            ],
+            "blocks_positive": 14,
+            "blocks_zero": 0,
+            "blocks_negative": 0
+          },
+          "per_block_values": {
+            "authtoken": 0.2127,
+            "backoff": 0.0954,
+            "conftest": 0.32,
+            "dburl": 0.1927,
+            "dotted": 0.0036,
+            "gradle": 0.2167,
+            "migration": 0.0964,
+            "nocache": 0.3044,
+            "parsedate": 0.167,
+            "staging": 0.2521,
+            "timeout": 0.5464,
+            "userid": 0.1592,
+            "version": 0.2826,
+            "widget": 0.3548
+          },
+          "aggregate": 0.1976,
+          "aggregate_definition": "ratio_of_means (identical to ratio_of_means.point)"
+        },
+        "nested_blocks": [
+          "authtoken",
+          "backoff",
+          "dburl",
+          "gradle",
+          "migration",
+          "nocache",
+          "parsedate",
+          "staging",
+          "version"
+        ],
+        "near_miss_nested": {
+          "n_blocks": 9,
+          "point": 0.0376,
+          "ci95": [
+            0.0284,
+            0.0457
+          ],
+          "blocks_positive": 9,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        },
+        "near_miss_disjoint": {
+          "n_blocks": 5,
+          "point": 0.047,
+          "ci95": [
+            0.0201,
+            0.0745
+          ],
+          "blocks_positive": 5,
+          "blocks_zero": 0,
+          "blocks_negative": 0
+        }
+      }
+    }
+  },
+  "model_comparisons": {
+    "bare|bge-large-prefix_vs_bge-small-prefix|DI_rom": {
+      "estimand": "difference_of_ratio_of_means",
+      "n_blocks": 14,
+      "point": 0.0286,
+      "ci95": [
+        -0.0162,
+        0.0617
+      ],
+      "excludes_zero": false,
+      "boot_mean": 0.0277,
+      "blocks_favouring_a": 10,
+      "blocks_favouring_b": 4,
+      "meets_prereg_capacity_bar": false
+    },
+    "bare|bge-large-prefix_vs_bge-small-prefix|DI_mbr": {
+      "estimand": "difference_of_mean_block_ratios",
+      "n_blocks": 14,
+      "point": 0.0181,
+      "ci95": [
+        -0.016,
+        0.0482
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 10,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 4
+    },
+    "bare|margin|bge-large-prefix_vs_bge-small-prefix": {
+      "estimand": "difference_of_mean_near_miss_margins",
+      "n_blocks": 14,
+      "point": 0.0083,
+      "ci95": [
+        -0.001,
+        0.0166
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 12,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 2
+    },
+    "bare|nomic_vs_bge-small-prefix|DI_rom": {
+      "estimand": "difference_of_ratio_of_means",
+      "n_blocks": 14,
+      "point": 0.0042,
+      "ci95": [
+        -0.0435,
+        0.0483
+      ],
+      "excludes_zero": false,
+      "boot_mean": 0.004,
+      "blocks_favouring_a": 6,
+      "blocks_favouring_b": 8,
+      "meets_prereg_capacity_bar": false
+    },
+    "bare|nomic_vs_bge-small-prefix|DI_mbr": {
+      "estimand": "difference_of_mean_block_ratios",
+      "n_blocks": 14,
+      "point": 0.0109,
+      "ci95": [
+        -0.0383,
+        0.0585
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 6,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 8
+    },
+    "bare|margin|nomic_vs_bge-small-prefix": {
+      "estimand": "difference_of_mean_near_miss_margins",
+      "n_blocks": 14,
+      "point": 0.006,
+      "ci95": [
+        -0.0015,
+        0.0133
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 8,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 6
+    },
+    "carrier|bge-large-prefix_vs_bge-small-prefix|DI_rom": {
+      "estimand": "difference_of_ratio_of_means",
+      "n_blocks": 14,
+      "point": 0.0226,
+      "ci95": [
+        -0.0191,
+        0.0541
+      ],
+      "excludes_zero": false,
+      "boot_mean": 0.0217,
+      "blocks_favouring_a": 10,
+      "blocks_favouring_b": 4,
+      "meets_prereg_capacity_bar": false
+    },
+    "carrier|bge-large-prefix_vs_bge-small-prefix|DI_mbr": {
+      "estimand": "difference_of_mean_block_ratios",
+      "n_blocks": 14,
+      "point": 0.007,
+      "ci95": [
+        -0.029,
+        0.0393
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 10,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 4
+    },
+    "carrier|margin|bge-large-prefix_vs_bge-small-prefix": {
+      "estimand": "difference_of_mean_near_miss_margins",
+      "n_blocks": 14,
+      "point": 0.0012,
+      "ci95": [
+        -0.0071,
+        0.0087
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 9,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 5
+    },
+    "carrier|nomic_vs_bge-small-prefix|DI_rom": {
+      "estimand": "difference_of_ratio_of_means",
+      "n_blocks": 14,
+      "point": -0.012,
+      "ci95": [
+        -0.0515,
+        0.0233
+      ],
+      "excludes_zero": false,
+      "boot_mean": -0.0122,
+      "blocks_favouring_a": 6,
+      "blocks_favouring_b": 8,
+      "meets_prereg_capacity_bar": false
+    },
+    "carrier|nomic_vs_bge-small-prefix|DI_mbr": {
+      "estimand": "difference_of_mean_block_ratios",
+      "n_blocks": 14,
+      "point": -0.0088,
+      "ci95": [
+        -0.0593,
+        0.0394
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 6,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 8
+    },
+    "carrier|margin|nomic_vs_bge-small-prefix": {
+      "estimand": "difference_of_mean_near_miss_margins",
+      "n_blocks": 14,
+      "point": -0.0023,
+      "ci95": [
+        -0.0083,
+        0.0032
+      ],
+      "excludes_zero": false,
+      "blocks_favouring_a": 7,
+      "blocks_tied": 0,
+      "blocks_favouring_b": 7
+    }
+  },
+  "estimand_note": "DI_rom is the preregistered estimand (PREREGISTRATION 5.5, pinned down in PREREGISTRATION-R3.md R3.1): difference of (mean near-miss margin / mean exact margin). DI_mbr is the difference of per-block ratio means, which is what round 2 quoted as '+0.0181'. They are not the same quantity and neither is a substitute for the other.",
+  "instrument_validation": {
+    "bge-small|bare": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "bge-small|carrier": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "bge-small-prefix|bare": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "bge-small-prefix|carrier": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "bge-large-prefix|bare": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "bge-large-prefix|carrier": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "nomic|bare": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    },
+    "nomic|carrier": {
+      "identity_margin_is_zero": true,
+      "identity_margin": 0.0,
+      "exact_win_rate": 1.0,
+      "exact_win_ge_090": true,
+      "exact_margin_gt_near_miss": true
+    }
+  }
+}

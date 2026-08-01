@@ -1,0 +1,2311 @@
+{
+  "schema_version": 1,
+  "note": "Synthetic tribal-knowledge retrieval eval for Zikaron. See README.md. uuid = uuid5(fixed-ns, key) so ids are stable across rebuilds.",
+  "n_memories": 187,
+  "n_queries": 64,
+  "memories": [
+    {
+      "uuid": "4bff955c-2a31-5985-a443-1c1dd351345b",
+      "key": "c1-widgetv1",
+      "cat": "near_miss",
+      "gist": "WidgetV1 serialisation drops the trailing nullable field, so round-tripping through the cache loses data; keep using the explicit field list.",
+      "content": "Hit this while wiring the cache warmer. WidgetV1's generated serialiser walks the field list from the schema descriptor and stops at the first field whose presence bit is unset, which silently truncates the trailing nullable field instead of emitting a null. Round-tripping a WidgetV1 through the cache therefore loses whatever was in that last field and no error is raised. Workaround that worked: pass the explicit field list to the serialiser call rather than relying on the descriptor walk. Do not try to fix the generated code, it is regenerated on every build."
+    },
+    {
+      "uuid": "42387ad7-fa7a-5a47-b089-075c46feb2fd",
+      "key": "c1-widgetv2",
+      "cat": "near_miss",
+      "gist": "WidgetV2 serialisation is fine, but its constructor requires the tenant id up front and throws a bare KeyError if you construct it from a legacy dict.",
+      "content": "WidgetV2 replaced the descriptor walk so the trailing-field truncation is gone. The new problem is construction: WidgetV2 requires tenant_id as a positional argument and the legacy dict shape does not carry one. Constructing from a legacy dict raises a bare KeyError with no field name in the message, which is very hard to trace back. Build the tenant id in from the request scope before the conversion, not after."
+    },
+    {
+      "uuid": "f99d497a-c137-5ae6-b5e6-85002ca236fb",
+      "key": "c1-ver-2-3-1",
+      "cat": "near_miss",
+      "gist": "Pinning the pipeline library at v2.3.1 is required for the on-prem runner; later patches need a glibc the runner image does not have.",
+      "content": "The on-prem runner image is stuck on an older base and the pipeline library's wheels built after v2.3.1 link against a newer glibc. v2.3.1 is the last version that loads there. It fails at import time with a symbol lookup error, not at install time, so the install step goes green and the failure shows up much later in the run. Pin exactly, not with a caret."
+    },
+    {
+      "uuid": "59cdb4a4-2371-5b73-86e2-513508371370",
+      "key": "c1-ver-2-3-10",
+      "cat": "near_miss",
+      "gist": "The pipeline library v2.3.10 changed the retry default from 3 to 0, so transient upload failures now surface instead of being retried.",
+      "content": "v2.3.10 shipped a behaviour change that is not in the changelog headline: the default retry count on the upload client went from 3 to 0. Anything that relied on the implicit retry now sees transient upload failures propagate. If you move to v2.3.10 you must set retries explicitly at the client construction site. Noticed because a job that had been stable for months started failing roughly one run in twenty after the bump."
+    },
+    {
+      "uuid": "e0311de3-7a8d-5f90-af6e-e4323084d9a4",
+      "key": "c1-conftest",
+      "cat": "near_miss",
+      "gist": "Fixtures added to the top-level conftest.py are not picked up for the integration suite because that suite sets its own rootdir.",
+      "content": "Spent a while confused about a fixture that resolved in unit tests and not in integration tests. The integration suite is invoked with its own rootdir, so collection never ascends to the repository-level conftest.py and the fixture is simply not visible. There is no error, just a fixture-not-found at request time. Put shared fixtures in the plugin module that both suites load explicitly instead of relying on conftest.py discovery."
+    },
+    {
+      "uuid": "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175",
+      "key": "c1-conf-test",
+      "cat": "near_miss",
+      "gist": "conf_test.py is a real module in the config package and is not a test file; the collector tries to import it and fails on a missing optional dependency.",
+      "content": "There is a module named conf_test.py inside the config package. It is production code that tests a config file for validity, not a test module, but the default collection glob matches it and the collector imports it, which pulls in an optional dependency that is not in the test extra. The result is a collection error that looks like a broken test file. Exclude it by path in the collector config; renaming it was rejected because external callers import it."
+    },
+    {
+      "uuid": "3acfcc7c-0455-5ee1-a39e-2f5dba5ea440",
+      "key": "c1-gradle-groovy",
+      "cat": "near_miss",
+      "gist": "The legacy module still uses build.gradle in Groovy and its dependency block is ignored if the same coordinates appear in settings-level dependency management.",
+      "content": "One module was never migrated and still has a Groovy build.gradle. Its dependency declarations are shadowed if the same coordinates appear in the settings-level dependency management, and the shadowing is silent - you get the version from settings, not the one you are reading in the module file. This wasted an afternoon of reading the wrong file."
+    },
+    {
+      "uuid": "ac1d869b-1c9e-5973-8f0c-dc58d7715f48",
+      "key": "c1-gradle-kts",
+      "cat": "near_miss",
+      "gist": "build.gradle.kts in the service modules recompiles the whole build script on any change, which is why incremental builds feel slow after touching build config.",
+      "content": "The Kotlin DSL build.gradle.kts files are compiled, so editing one invalidates the build script cache and the next build spends a long time in configuration before any task runs. It is not the compile step being slow, it is script compilation. Batch build-config edits together rather than iterating one line at a time."
+    },
+    {
+      "uuid": "a91c02ed-7910-57c0-965c-d2fe04a32e44",
+      "key": "c1-user-id-snake",
+      "cat": "near_miss",
+      "gist": "The events table column is user_id and is a string, not an integer, because early rows hold external provider ids.",
+      "content": "user_id in the events table is declared as text. Early rows carry ids issued by an external provider that were never numeric, so the column could not be narrowed. Any join that casts it to an integer will drop those rows without warning because the cast fails to null and the join then misses. Compare as text."
+    },
+    {
+      "uuid": "4fa967f0-a1d7-52b2-824a-d1762fe18a96",
+      "key": "c1-user-id-camel",
+      "cat": "near_miss",
+      "gist": "The public API serialises the field as userId; the mapper does not rename it automatically and a missing alias produces a null field rather than an error.",
+      "content": "On the wire the field is userId. The internal model uses a different name and the mapping is declared with an explicit alias. If you add a new endpoint and forget the alias, the serialiser emits userId as null rather than failing, so the endpoint looks like it works and the consumer sees a missing user. Add the alias and assert on it in the contract test."
+    },
+    {
+      "uuid": "67fe63e4-944f-5dbf-b7c3-c13f35efd725",
+      "key": "c1-no-cache",
+      "cat": "near_miss",
+      "gist": "Passing --no-cache to the image build defeats layer caching and pushes the build from about two minutes to over twenty; it is not what you want for a dependency refresh.",
+      "content": "--no-cache on the image build discards every layer, including the base dependency layer that takes the bulk of the time. People reach for it to force a dependency refresh, but the correct move is to bump the lock file so the dependency layer's cache key changes, leaving the rest of the cache intact. Using --no-cache turns a two-minute build into more than twenty minutes for no benefit."
+    },
+    {
+      "uuid": "c6754c5f-7ce2-5513-ae48-071d7c30a85a",
+      "key": "c1-no-cache-dir",
+      "cat": "near_miss",
+      "gist": "--no-cache-dir on the package installer is required inside the build container or the image carries several hundred megabytes of wheel cache.",
+      "content": "Without --no-cache-dir the installer leaves its wheel cache in the layer and the final image grows by a few hundred megabytes of files nothing reads at runtime. It does not affect build time meaningfully. Always set it in the container install step. Note this is a different flag from the image builder's own cache control and the two get confused constantly."
+    },
+    {
+      "uuid": "f14729c9-5a1e-5f79-b458-f9ffd2ebb1eb",
+      "key": "c1-staging",
+      "cat": "near_miss",
+      "gist": "The staging environment shares its object store bucket with production, so destructive cleanup jobs run there are genuinely dangerous.",
+      "content": "staging was set up before the bucket-per-environment convention and still points at the production bucket with a key prefix. A cleanup job that deletes by prefix is fine; one that lists and deletes by age is not, because it will walk out of the prefix. Verify the prefix guard in any cleanup job before running it against staging."
+    },
+    {
+      "uuid": "bc529e1c-3d2e-549f-954d-2f7be7054b37",
+      "key": "c1-staging-2",
+      "cat": "near_miss",
+      "gist": "staging-2 is the isolated environment with its own bucket and database; use it for anything destructive, but its data is reset nightly.",
+      "content": "staging-2 was built to be properly isolated: separate bucket, separate database, no production credentials in scope. It is the right place for destructive testing. The tradeoff is a nightly reset, so anything you want to keep across a day has to be re-seeded. The seed script is idempotent and safe to re-run."
+    },
+    {
+      "uuid": "23b7214b-6d8f-5df1-992f-28c9b95b30bb",
+      "key": "c1-retry-backoff",
+      "cat": "near_miss",
+      "gist": "retry_backoff in the queue config is interpreted as seconds despite the surrounding keys being milliseconds.",
+      "content": "Almost every duration key in the queue config is in milliseconds, but retry_backoff is seconds because it predates the convention. Setting it to 500 expecting half a second gives you an eight-minute backoff and the consumer looks hung. There is no validation on the range. Read the unit from the loader, not from the neighbouring keys."
+    },
+    {
+      "uuid": "06c12807-8a8c-5272-86ed-87cc00cd6194",
+      "key": "c1-retry-backoff-ms",
+      "cat": "near_miss",
+      "gist": "retry_backoff_ms is the newer key and it overrides retry_backoff silently when both are present, with no warning logged.",
+      "content": "retry_backoff_ms was added to fix the unit confusion. The loader prefers it when both keys are present and logs nothing, so a config that sets the old key and the new key disagreeing will quietly use the new one. If you are debugging a backoff that does not match the config you are reading, check whether the other key is also set."
+    },
+    {
+      "uuid": "0cf6421f-4780-5431-a3e1-62ff18486f9b",
+      "key": "c1-parse-date",
+      "cat": "near_miss",
+      "gist": "parse_date returns a naive date and drops any timezone in the input without complaint, shifting day boundaries for non-UTC callers.",
+      "content": "parse_date takes the date portion and discards the rest, including the offset. For an input late in the day in a negative-offset zone this yields the wrong calendar day, and the bug only shows up for a few hours a day, which is why it survived so long. Use the datetime variant and truncate deliberately in the caller's zone."
+    },
+    {
+      "uuid": "6883ad5e-78b9-5de5-8a5e-c0d2f09e928e",
+      "key": "c1-parse-datetime",
+      "cat": "near_miss",
+      "gist": "parse_datetime assumes UTC for offset-less input rather than local time, which is correct for the API but wrong for the CSV importer.",
+      "content": "parse_datetime attaches UTC when the input has no offset. That matches what the API contract says, so it is right there. The CSV importer feeds it operator-entered local timestamps with no offset, so every imported row is shifted by the operator's offset. The importer needs to attach the zone before parsing; do not change the shared function."
+    },
+    {
+      "uuid": "bd21b281-b22b-541f-92d7-1c4b51f8783c",
+      "key": "c1-dotted-a",
+      "cat": "near_miss",
+      "gist": "org.example.core.Config is loaded reflectively by the plugin host, so renaming or moving it breaks plugins at runtime with no compile error.",
+      "content": "The plugin host resolves org.example.core.Config by name from a manifest string. Nothing references it statically, so a rename or package move compiles cleanly and then fails at plugin load with a class-not-found. Grep the manifests as well as the source before touching that class."
+    },
+    {
+      "uuid": "57a5b178-35a1-5053-a7cc-24ac631bf880",
+      "key": "c1-dotted-b",
+      "cat": "near_miss",
+      "gist": "org.example.config.Core is the newer replacement and reading it eagerly at startup adds noticeable time because it validates every key against the remote schema.",
+      "content": "org.example.config.Core validates each key against a schema fetched from the config service. Constructing it during startup therefore blocks on a network round trip per key group and adds a large fraction of the startup budget. Construct it lazily on first use, and cache. Easy to confuse with the older core.Config, which does no validation at all."
+    },
+    {
+      "uuid": "33deec31-689c-58b0-9a1e-b60ff5c11044",
+      "key": "c1-db-url",
+      "cat": "near_miss",
+      "gist": "DATABASE_URL must include the sslmode parameter or the connection silently falls back to plaintext against the managed instance.",
+      "content": "The managed database accepts both TLS and plaintext, and the driver will happily downgrade if sslmode is not in DATABASE_URL. Nothing logs the downgrade. Include the sslmode parameter explicitly in the URL. This was caught by a network audit, not by us."
+    },
+    {
+      "uuid": "72d94e3f-a001-5d51-9908-25709c379c4b",
+      "key": "c1-db-url-ro",
+      "cat": "near_miss",
+      "gist": "DATABASE_URL_RO points at a read replica with replication lag of a few seconds; read-after-write through it fails intermittently in tests.",
+      "content": "DATABASE_URL_RO is the replica. Lag is usually under a second but spikes to several seconds under load. Any test that writes and then reads through the read-only URL is flaky by construction. Either read back through the primary URL or add an explicit wait on the replication position; the second is what the durable tests do."
+    },
+    {
+      "uuid": "ff536f07-ac75-5222-8522-6c4c1e5d8aa4",
+      "key": "c1-timeout-30",
+      "cat": "near_miss",
+      "gist": "The gateway's upstream timeout is 30 seconds and cannot be raised; long requests must be made asynchronous instead.",
+      "content": "The gateway cuts upstream requests at 30 seconds. The value is set in the shared platform config and the platform team has declined to raise it. Anything that can exceed it has to become a submit-then-poll flow. Attempting to stream a keepalive to hold the connection open does not help; the timeout is on total duration, not idle time."
+    },
+    {
+      "uuid": "70c923f8-29d2-58e8-bb0c-816b0bc89a32",
+      "key": "c1-timeout-300",
+      "cat": "near_miss",
+      "gist": "The batch worker's own timeout is 300 seconds, and it is enforced by the supervisor killing the process, so cleanup handlers do not run.",
+      "content": "The batch worker gets 300 seconds before the supervisor sends a kill rather than a term, so no finally block or exit handler runs and any partially written output stays behind. This is why the output directory accumulates half-files. Write to a temporary name and rename at the end so a killed run leaves nothing that looks complete."
+    },
+    {
+      "uuid": "409d5723-f0c5-5c40-8659-9cfdce7fc8e3",
+      "key": "c1-mig-0042",
+      "cat": "near_miss",
+      "gist": "Migration 0042 takes an exclusive lock for the whole table rewrite and must not be run during business hours.",
+      "content": "Migration 0042 changes a column type, which the engine implements as a full table rewrite under an exclusive lock. On the production-sized table that is tens of minutes of total unavailability for that table. It ran fine in staging because the table there is tiny. Run it in a maintenance window, or do the add-column-backfill-swap dance instead."
+    },
+    {
+      "uuid": "e53c112a-e5f5-5ba8-85c0-31c43155e3bc",
+      "key": "c1-mig-0042-1",
+      "cat": "near_miss",
+      "gist": "Migration 0042_1 is the hotfix that only adds an index and is safe to run online with the concurrent flag.",
+      "content": "0042_1 was split out of 0042 precisely so the index could go in without the rewrite. It uses the concurrent index build so it does not take a blocking lock, but that also means it cannot run inside a transaction, and the migration runner wraps everything in one by default. Run it with the runner's no-transaction escape hatch."
+    },
+    {
+      "uuid": "a366583e-0f35-5931-ad45-b158ea4290d2",
+      "key": "c1-auth-token",
+      "cat": "near_miss",
+      "gist": "AUTH_TOKEN is only read at process start; rotating it in the environment mid-run has no effect and the stale token is used until restart.",
+      "content": "AUTH_TOKEN is captured once into a module-level constant at import time. Rotating the value in the environment while the process is running does nothing, and because the old token stays valid for its remaining lifetime the failure appears only after expiry, far from the rotation. If you rotate, restart the process. There is no reload path."
+    },
+    {
+      "uuid": "82fce7c4-823c-514c-afb1-ef2b0f0dd1e4",
+      "key": "c1-auth-token-v2",
+      "cat": "near_miss",
+      "gist": "AUTH_TOKEN_V2 must be set for the integration suite; when it is absent the suite skips silently and reports green.",
+      "content": "The integration suite gates on AUTH_TOKEN_V2 being present and, when it is not, marks its cases as skipped rather than failing. The overall run then reports success with almost nothing executed, which is how a broken integration path shipped unnoticed. Export AUTH_TOKEN_V2 before running the suite locally, and treat a suspiciously fast integration run as a signal that it is unset."
+    },
+    {
+      "uuid": "45624646-6a13-5860-97d1-1825078f31c4",
+      "key": "c2-flaky-clock",
+      "cat": "paraphrase_only",
+      "gist": "Tests that assert on elapsed wall-clock duration fail on the shared runners because the runners are heavily oversubscribed at the top of the hour.",
+      "content": "Several suites assert that an operation completes inside a duration bound. On the shared runners those assertions fail in bursts, always near the top of the hour, because scheduled jobs land then and the runner CPU is oversubscribed. Nothing is wrong with the code. Replace duration assertions with a fake clock, or mark them to run only on the dedicated pool."
+    },
+    {
+      "uuid": "abe3690c-2110-53ec-a2b3-02c6d8cfbb2a",
+      "key": "c2-lock-order",
+      "cat": "paraphrase_only",
+      "gist": "Two background jobs acquire the same two advisory locks in opposite order, which deadlocks roughly weekly under load.",
+      "content": "The reconciler takes the account lock then the ledger lock. The sweeper takes them the other way round. Under low load they never overlap; under load they do, and the pair deadlocks until one is evicted by the timeout. It presents as a stuck job with no error for several minutes. Fix is a documented global ordering for lock acquisition, applied in both jobs."
+    },
+    {
+      "uuid": "ca6ed3b1-a03b-5eaa-be7d-7e9ef39089c8",
+      "key": "c2-cold-start",
+      "cat": "paraphrase_only",
+      "gist": "First request after a deploy is slow enough to trip the health check, so the rollout marks healthy instances as failed unless the warmup probe is configured.",
+      "content": "The first request to a freshly started instance pays for lazy initialisation and takes long enough that the health check's own deadline elapses. The orchestrator then kills the instance and tries again, producing a rollout that appears to fail for no reason. Configuring the startup probe with a generous initial delay fixes it; raising the liveness timeout does not, because the problem is only at start."
+    },
+    {
+      "uuid": "e8342893-e1e0-5cee-b0b2-d1f0f6942f23",
+      "key": "c2-utf8-names",
+      "cat": "paraphrase_only",
+      "gist": "Uploaded files whose names contain non-ASCII characters are stored with mangled keys because one hop in the path assumes latin-1.",
+      "content": "A file named with accented characters ends up under a mangled object key. The mangling comes from a middle hop that decodes the header as latin-1 before re-encoding. Downstream lookups by the original name then miss. The fix is to percent-encode the name at the edge and never pass raw bytes through that hop; retrofitting the existing mangled keys needs a one-off migration that has not been written."
+    },
+    {
+      "uuid": "c611011a-5c44-5358-ac64-c81a618e5303",
+      "key": "c2-tz-report",
+      "cat": "paraphrase_only",
+      "gist": "The daily report boundary is computed in the server's zone, so users in other regions see days that start at odd hours and rows that appear to be missing.",
+      "content": "Report windows are cut on the server's local midnight. For a user several hours away that means their day appears to start mid-afternoon, and any row they created after their own midnight but before the server's is filed under the previous day, which reads as a missing row. The report needs a per-user zone parameter, which the query layer does not currently thread through."
+    },
+    {
+      "uuid": "9aae91d4-6997-566b-91d2-3df148e73329",
+      "key": "c2-orphan-rows",
+      "cat": "paraphrase_only",
+      "gist": "Deleting a parent record leaves its children behind because the constraint was created without cascade, and the leftovers break the nightly aggregate.",
+      "content": "The foreign key was added without a cascade action, so removing a parent leaves children pointing at nothing. Reads mostly tolerate it, but the nightly aggregate joins through the parent and the orphaned rows silently drop out of the total, which is how a reporting discrepancy appeared. Clean up the existing orphans before adding the cascade, or the constraint addition will fail validation."
+    },
+    {
+      "uuid": "1320a4f3-685d-5c47-b7fc-2018cb7b9c26",
+      "key": "c2-memory-growth",
+      "cat": "paraphrase_only",
+      "gist": "The long-running consumer grows without bound because the metrics library keeps one series per distinct label value and the label includes a request identifier.",
+      "content": "Resident memory on the consumer climbs steadily over days and is not a leak in the usual sense: the metrics registry retains a time series per unique label combination, and one label was wired to a per-request identifier, so the registry grows once per request forever. Removing that label from the metric is the whole fix. Restarting only resets the clock."
+    },
+    {
+      "uuid": "eed7af95-2e09-5ed7-95ca-7b5f6154f80b",
+      "key": "c2-partial-write",
+      "cat": "paraphrase_only",
+      "gist": "A crash mid-export leaves a truncated artefact that downstream jobs happily consume as if complete, because there is no end marker.",
+      "content": "The exporter streams rows straight to the destination name. If it dies partway the file is shorter but structurally valid, so the consumer reads it and produces quietly wrong numbers. There is no length header and no terminator to check. Write to a scratch name and move it into place at the end; the move is atomic on the same volume."
+    },
+    {
+      "uuid": "600c3fa6-f8a2-572c-b121-d42e3864c4ba",
+      "key": "c2-dup-consumer",
+      "cat": "paraphrase_only",
+      "gist": "Scaling the consumer past the partition count adds no throughput and makes the lag graph look worse because idle members still report.",
+      "content": "Adding consumer instances beyond the number of partitions gains nothing - the extra members sit idle with no assignment. Worse, they still publish lag metrics, and the aggregate lag panel averages across members, so adding idle members makes the panel read high while actual throughput is unchanged. Scale partitions first if you need more parallelism."
+    },
+    {
+      "uuid": "87a46707-cc77-53b7-8875-d9bbabb712b6",
+      "key": "c2-cert-chain",
+      "cat": "paraphrase_only",
+      "gist": "Outbound calls to the partner fail only from inside the cluster because the intermediate certificate is not in the slim base image's trust store.",
+      "content": "The partner endpoint serves a chain that relies on an intermediate the slim base image does not ship. It works from a developer laptop and fails inside the cluster, which sends everyone looking at network policy first. Add the intermediate to the image's trust store, or use the fuller base. Disabling verification was proposed and rejected."
+    },
+    {
+      "uuid": "921edc6f-c4a0-5369-9473-2155e78373fa",
+      "key": "c3-protobuf-desc",
+      "cat": "error_string",
+      "gist": "TypeError: Descriptors cannot not be created directly means the generated protobuf stubs are older than the installed runtime; regenerate rather than downgrading.",
+      "content": "Full message is 'TypeError: Descriptors cannot not be created directly' (the doubled 'not' is upstream's own typo, so search for it verbatim). It means the checked-in generated stubs were produced by an older protoc than the installed runtime expects. The advertised workaround of setting the pure-python implementation environment variable makes it start but is roughly ten times slower on our message sizes. Regenerate the stubs against the pinned protoc instead."
+    },
+    {
+      "uuid": "c13e9a71-bc22-585e-9979-d117feb50831",
+      "key": "c3-oom-137",
+      "cat": "error_string",
+      "gist": "A build step that ends with 'exited with code 137' is the container being OOM-killed, not a compiler failure; the default memory limit is too low for the link step.",
+      "content": "Exit code 137 is the kill signal, and in the build container it always means memory. The link step peaks well above the default limit while the compile steps stay under it, so the build gets most of the way through before dying, which makes it look like a code problem. Raise the step's memory request; parallelism reduction also works but takes much longer."
+    },
+    {
+      "uuid": "4a7eec7e-7cdc-55b5-9919-bbe0c5a5e45b",
+      "key": "c3-ssl-verify",
+      "cat": "error_string",
+      "gist": "'certificate verify failed: unable to get local issuer certificate' from inside the job is the missing intermediate in the slim image, not a proxy problem.",
+      "content": "The exact text is 'SSLCertVerificationError: certificate verify failed: unable to get local issuer certificate'. Inside the job it means the trust store lacks the intermediate, which the slim base does not ship. It is not the corporate proxy, which is the first thing everyone checks. Install the intermediate into the image trust store."
+    },
+    {
+      "uuid": "124162c3-05f9-507a-815a-7079f5e2ba01",
+      "key": "c3-locked-db",
+      "cat": "error_string",
+      "gist": "'database is locked' in the test suite comes from two tests sharing one file-backed database with the default busy timeout of zero.",
+      "content": "'sqlite3.OperationalError: database is locked' shows up when the suite runs in parallel and two workers touch the same file-backed database. The default busy timeout is zero, so the second writer fails instantly instead of waiting. Give each worker its own database file; raising the busy timeout only converts the hard failure into a slow one."
+    },
+    {
+      "uuid": "2486aba2-5d74-5288-ba44-d8361c932a5b",
+      "key": "c3-address-in-use",
+      "cat": "error_string",
+      "gist": "'OSError: [Errno 98] Address already in use' after a test run is the previous run's server thread surviving because the fixture never joins it.",
+      "content": "Errno 98 on the second consecutive test run means the first run's server thread is still holding the port. The fixture starts the server but never shuts it down, and because the thread is non-daemon the interpreter waits on it only at exit. Bind to port zero and read back the assigned port, and add an explicit shutdown to the fixture teardown."
+    },
+    {
+      "uuid": "812f091a-1a63-5073-8791-3df62a55c9d1",
+      "key": "c3-symbol-lookup",
+      "cat": "error_string",
+      "gist": "'symbol lookup error: undefined symbol' at import time on the on-prem runner is the glibc mismatch in the pipeline library wheels.",
+      "content": "The runner prints 'symbol lookup error: /usr/lib/.../libpipeline.so: undefined symbol' during import, well after a green install step. It is the wheel being built against a newer glibc than the runner image has. Pin the library to the last version that still builds against the old base rather than trying to patch the image."
+    },
+    {
+      "uuid": "7c502d93-58c4-50bc-9fa2-cff073f4e877",
+      "key": "c3-json-extra-data",
+      "cat": "error_string",
+      "gist": "'json.decoder.JSONDecodeError: Extra data' when reading the export means the file is newline-delimited records, not a single document.",
+      "content": "'Extra data: line 2 column 1' means the parser read a complete value and then found more input. Our export writes one record per line, so a whole-file parse always fails this way. Read it line by line. The format is deliberate because the file is too large to hold in memory as one document."
+    },
+    {
+      "uuid": "22780904-682d-5049-ad31-4b32925ad051",
+      "key": "c3-conn-reset",
+      "cat": "error_string",
+      "gist": "'ConnectionResetError: [Errno 104] Connection reset by peer' from the object store is the idle-connection reaper, and retrying the request is the intended handling.",
+      "content": "Errno 104 from the object store client happens when a pooled connection has been idle past the gateway's reaper interval and is closed without a shutdown handshake. The next use of it fails. It is expected and the client's own retry handles it, but our wrapper had retries disabled. Enable the retry, and set the pool's recycle interval below the reaper interval."
+    },
+    {
+      "uuid": "253b390d-26de-5c5b-939b-5f95c1819d04",
+      "key": "c3-yaml-dup-key",
+      "cat": "error_string",
+      "gist": "'found duplicate key' from the config loader is fatal in the strict loader we use, even though the permissive loader everyone tests with tolerates it.",
+      "content": "The service loads config with duplicate-key checking on and aborts with 'found duplicate key' at start. Editors and local scripts use the permissive loader, which silently keeps the last occurrence, so a config that works locally will refuse to boot in the service. Run the strict-loader check as a pre-commit step."
+    },
+    {
+      "uuid": "31ce56c9-ddd2-59a1-a771-3044ca19f34d",
+      "key": "c3-too-many-files",
+      "cat": "error_string",
+      "gist": "'OSError: [Errno 24] Too many open files' in the importer is unclosed response bodies, not an ulimit that needs raising.",
+      "content": "Errno 24 during a large import traces back to response objects that are never closed because the code reads a header and discards the object without draining the body. The pool keeps the socket open. Raising the file-descriptor limit hides it for a while and it comes back on a bigger import. Use the context-manager form at every call site."
+    },
+    {
+      "uuid": "c0d14302-8944-57e2-98d8-c2f22bc9a45d",
+      "key": "c4-streamapi-old",
+      "cat": "polarity",
+      "gist": "Do not use the streaming API yet: it has a race on partial flush that corrupts the last chunk under concurrency.",
+      "content": "The streaming API drops or duplicates the final chunk when two writers flush concurrently. Reproduced reliably at four concurrent writers. Until this is fixed upstream, use the buffered path even though it costs memory. Do not be tempted by the streaming example in the docs; it is single-writer."
+    },
+    {
+      "uuid": "022d8989-2a28-56ba-b355-5cac5326a526",
+      "key": "c4-streamapi-new",
+      "cat": "polarity",
+      "gist": "The streaming API's partial-flush race was fixed in 4.2 and it is now the recommended path; the old buffered workaround should be removed.",
+      "content": "Upstream fixed the partial-flush race in 4.2 and we have confirmed it at sixteen concurrent writers with no corruption. Streaming is now the recommended path and the buffered workaround we carried should be deleted, since it holds whole payloads in memory. Requires 4.2 or later; the fix was not backported to the 4.1 line."
+    },
+    {
+      "uuid": "faf0c6eb-369c-5ec9-b10e-27338e467f3d",
+      "key": "c4-parallel-old",
+      "cat": "polarity",
+      "gist": "Running the test suite in parallel is not safe: the shared temporary directory collides and produces failures that do not reproduce serially.",
+      "content": "Parallel test execution fails unpredictably because several suites write to a fixed path under the temporary directory and stamp on each other. The failures never reproduce when run serially, which cost a lot of time. Run serially until the fixtures are made hermetic."
+    },
+    {
+      "uuid": "32deb0ad-ca02-518f-bf47-5cda38e29c1e",
+      "key": "c4-parallel-new",
+      "cat": "polarity",
+      "gist": "Test fixtures are hermetic now, so parallel test execution is safe and is the default; the serial-only guidance is obsolete.",
+      "content": "The fixtures were reworked to allocate per-worker temporary directories, so the collision is gone and parallel execution is safe. It is now the default in the runner config and cuts the suite from roughly eleven minutes to under three. If you see a parallel-only failure now, it is a real bug and not the old fixture problem."
+    },
+    {
+      "uuid": "858d9157-80f1-504f-ac99-c5b8eb3e0d94",
+      "key": "c4-cache-old",
+      "cat": "polarity",
+      "gist": "The shared cache client must not be used from the request path: it blocks on a global lock and adds unpredictable latency spikes.",
+      "content": "The shared cache client serialises all calls through one lock, so a slow call blocks every other caller in the process. On the request path that shows up as latency spikes with no correlation to the request itself. Use the per-request client, or read through the local in-process cache."
+    },
+    {
+      "uuid": "c9023f90-63d9-5322-ab40-5ffd5fb58fa3",
+      "key": "c4-cache-new",
+      "cat": "polarity",
+      "gist": "The shared cache client's global lock was removed in the 3.x client; it is now safe on the request path and the per-request client is deprecated.",
+      "content": "The 3.x cache client replaced the global lock with per-connection state, so the head-of-line blocking is gone. It is now the correct thing to use on the request path, and the per-request client we introduced as a workaround is deprecated and will be removed. Verified with a latency histogram before and after; the spike class disappeared entirely."
+    },
+    {
+      "uuid": "3f659196-d5f0-5a3f-8d46-368ce01e637c",
+      "key": "c4-arm-old",
+      "cat": "polarity",
+      "gist": "Do not build images for the arm runners: two of our native dependencies have no arm wheels and building them from source times out.",
+      "content": "The arm build fails because two native dependencies publish no arm wheels, and building either from source exceeds the job timeout. Several people have tried; do not spend more time on it. Stay on the x86 runners."
+    },
+    {
+      "uuid": "930d2ee5-af52-50ba-8532-38ad625879db",
+      "key": "c4-arm-new",
+      "cat": "polarity",
+      "gist": "Both native dependencies now publish arm wheels, so arm builds work and are about 30 percent cheaper; the do-not-build guidance is stale.",
+      "content": "Both blocking dependencies now ship arm wheels, so the arm image builds cleanly with no source compilation. The build is roughly 30 percent cheaper per run and slightly faster. The previous do-not-build-for-arm guidance is stale and should not stop you. One caveat: the profiler in the debug image is still x86 only."
+    },
+    {
+      "uuid": "7a634cdf-cbd7-51b8-8982-afd203298507",
+      "key": "c4-schemareg-old",
+      "cat": "polarity",
+      "gist": "The schema registry rejects field removals, so a deprecated field has to be kept forever in the payload.",
+      "content": "The registry's compatibility mode refuses any change that removes a field, so once shipped a field is permanent. The practice has been to leave deprecated fields in place and document them as unused. This has made a couple of payloads quite large."
+    },
+    {
+      "uuid": "b6b15fa4-ced6-5bae-85f2-844b7571287a",
+      "key": "c4-schemareg-new",
+      "cat": "polarity",
+      "gist": "The registry's compatibility mode was relaxed to allow removing fields that have been marked deprecated for two releases, so payload cleanup is now possible.",
+      "content": "Compatibility mode was changed so a field marked deprecated for at least two releases can be removed. Payload cleanup is therefore possible now and there is a backlog of fields eligible for it. The removal still has to go through the deprecation marker first; deleting a field outright is rejected exactly as before."
+    },
+    {
+      "uuid": "84f8b1d5-d255-5aef-917a-10f450c8d4aa",
+      "key": "c5-merge-precedence",
+      "cat": "over_length",
+      "gist": "Outbound request configuration merges three providers and the precedence is only discoverable by reading the loader; debug provenance tagging exists behind a flag.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. The actual operative rule, and the thing to remember: the platform's injected overlay silently wins over anything set in the per-call argument map for exactly two keys, connect_timeout_ms and tls_min_version, because those two are re-applied after the merge by a post-merge hardening step. Setting them per call has no effect. To change them you must set PLATFORM_OVERRIDE_ALLOW=connect_timeout_ms,tls_min_version in the deployment, and that variable is read once at start."
+    },
+    {
+      "uuid": "a777c06b-4846-5d97-b050-564c1ca78dd2",
+      "key": "c5-late-index-hint",
+      "cat": "over_length",
+      "gist": "Long write-up of the query-planner investigation on the events table, including the several explanations we ruled out.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. The conclusion, which is the only part worth acting on: the planner will not use the composite index unless the query filters on tenant_id with a literal rather than a bound parameter, because the statistics on that column are extremely skewed and the generic plan is chosen for parameterised queries. Inline the tenant literal, or force a custom plan for that statement. Adding more indexes does not help and we tried four of them."
+    },
+    {
+      "uuid": "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e",
+      "key": "c5-late-cred-path",
+      "cat": "over_length",
+      "gist": "Extended notes on how credentials reach the batch job, including the dead ends around the environment overlay and the local-versus-deployed asymmetry.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. The load-bearing detail: the batch job does not read credentials from the environment at all in the deployed case. It reads them from the file at /var/run/secrets/batch/creds.json and only falls back to the environment when that file is absent, which is why setting the environment variable locally works and changes nothing in deployment. Mount a replacement file to override, and note the fallback is silent."
+    },
+    {
+      "uuid": "f532bd30-e6a0-5a89-ae06-6da51fed5561",
+      "key": "c5-late-retry-budget",
+      "cat": "over_length",
+      "gist": "Full investigation notes on the retry behaviour of the upload path and the several theories we eliminated along the way.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. What actually matters: retries share a per-process token budget, so a burst of failures in one caller exhausts the budget and makes an unrelated caller's first attempt appear to fail without any retry at all. The budget refills at ten tokens per second and is not observable in the metrics. If you see a single-attempt failure that should have retried, look at what else was failing at that moment rather than at the caller."
+    },
+    {
+      "uuid": "22d93b18-0741-53bf-aeca-eef70a2022a2",
+      "key": "c5-late-cache-key",
+      "cat": "over_length",
+      "gist": "Long note on the cache-key derivation for rendered documents and the various theories about the stale-render reports.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. The operative fact: the cache key does not include the template version, so a template change serves stale renders until the entries age out, which takes seven days. Bump TEMPLATE_CACHE_SALT in the deployment whenever a template changes; there is no automatic invalidation and nothing warns you."
+    },
+    {
+      "uuid": "6194f53e-6b14-5c2a-89fa-5927e0e33edd",
+      "key": "c5-late-clock-skew",
+      "cat": "over_length",
+      "gist": "Extended write-up of the signature-validation failures and the several hypotheses that did not pan out.",
+      "content": "Background, because this took a while to pin down and the reasoning matters if it regresses. The service builds its outbound request from three sources: defaults compiled into the client, an overlay read from the environment, and a per-call argument map. Precedence runs left to right in that list, so the per-call map wins, then the environment overlay, then the compiled defaults. That ordering is not written down anywhere except the loader, and reading the loader is genuinely confusing because the merge is expressed as a fold over a list of providers rather than as an explicit precedence table. The first thing we tried was adding logging at the merge site, which showed the final map but not which provider each key came from, so it told us the value was wrong without telling us why. We then added provenance tagging to the merge, which was more invasive than it sounds because the provider protocol had no place to carry a label, and the change had to thread a label through four call sites. That did eventually give us the answer, and the instrumentation is still there behind a debug flag, which is worth knowing because turning it on is much faster than re-deriving this. Along the way we ruled out several plausible explanations. It was not the environment overlay being stale, because the process reads it on every call rather than caching it. It was not a serialisation problem, because the wire capture matched the merged map exactly. It was not a race between concurrent calls, because it reproduced with a single call on an otherwise idle process. It was also not the retry wrapper re-entering the merge, though that was the theory we spent longest on, because the wrapper does rebuild the map on each attempt and that would have been a reasonable way for a value to change between attempts. We confirmed the wrapper is not involved by reproducing with retries disabled entirely. Some further context that is useful but not the punchline. The behaviour differs between the local development setup and the deployed one, which sent us down a couple of dead ends early on. Locally the environment overlay is almost empty, so the compiled defaults dominate and everything looks sane. In the deployed environment the overlay is populated by the platform's own injection, which contributes keys nobody on the team wrote, and those keys are the ones that surprise you. You can list them, but only from inside the running container, because the injection happens at start rather than being visible in the deployment manifest. That asymmetry between local and deployed is worth internalising generally: any conclusion reached purely locally about configuration precedence is suspect. We also spent time reading the platform documentation for the injection, which describes what it injects but not the precedence relative to application configuration, and the two teams had different assumptions about it. That ambiguity is the underlying cause of the whole class of confusion here, rather than any single bug. The real cause and the fix: signature validation allows only 30 seconds of clock skew, and the on-prem runners have no time daemon, so they drift far enough within a day to fail validation intermittently. Enable time synchronisation on the runner image. Widening the tolerance was rejected on security grounds and will not be revisited."
+    },
+    {
+      "uuid": "c4bacf2c-ddad-5ca9-8945-0ee90b97045d",
+      "key": "d-npm-lock",
+      "cat": "distractor",
+      "gist": "The lock file must be committed from a clean install or transitive versions drift between machines.",
+      "content": "Running the install with an existing partial tree produces a lock file that pins different transitive versions than a clean install does. The drift shows up as a test passing on one machine and failing on another. Delete the tree and reinstall before committing a lock change."
+    },
+    {
+      "uuid": "328f92a1-a895-5e66-bae2-282cc69d6809",
+      "key": "d-node-heap",
+      "cat": "distractor",
+      "gist": "Node builds need the heap size raised explicitly or the bundler dies late in the build with no clear message.",
+      "content": "The bundler exceeds the default heap on the largest entry point. It dies with an abort trace that does not name memory. Set the max-old-space option in the build script rather than in a developer's shell so CI gets it too."
+    },
+    {
+      "uuid": "42ce86b5-d1b2-5e44-8c92-9feff4d51576",
+      "key": "d-pytest-order",
+      "cat": "distractor",
+      "gist": "Test ordering is randomised by default in this repo, so a suite that only passes in file order is hiding a dependency.",
+      "content": "The runner is configured to shuffle within a module. If a test only passes in declaration order it is depending on state left by a neighbour. Do not disable the shuffle to make it pass; fix the shared state."
+    },
+    {
+      "uuid": "0f38ff70-57ed-55f1-8dbb-aeefdd54c628",
+      "key": "d-coverage-gate",
+      "cat": "distractor",
+      "gist": "The coverage gate measures only changed lines, so a large refactor can drop total coverage and still pass.",
+      "content": "The gate is diff-scoped. That is deliberate, but it means total coverage can decline while every individual change passes. Watch the trend chart, not the per-PR verdict."
+    },
+    {
+      "uuid": "7692a6f4-82e8-5b8c-b2f6-b2bb27f49172",
+      "key": "d-docker-buildkit",
+      "cat": "distractor",
+      "gist": "The build requires the newer builder backend; with the legacy backend the cache mounts are silently ignored.",
+      "content": "Cache mount directives are a no-op on the legacy builder, so the build succeeds but takes several times longer with no warning. Export the builder selection variable in CI explicitly."
+    },
+    {
+      "uuid": "1fd6119d-2716-5098-a201-3dc1331ad38b",
+      "key": "d-tls-1-0",
+      "cat": "distractor",
+      "gist": "The partner's older endpoint still requires the deprecated TLS version, so it must be reached through the proxy.",
+      "content": "One partner endpoint has not moved off the deprecated protocol version, which our default client refuses. Route those calls through the compatibility proxy rather than weakening the client's minimum version globally."
+    },
+    {
+      "uuid": "02c82ed2-6d9d-5e2c-8a75-8b553c2329df",
+      "key": "d-log-sampling",
+      "cat": "distractor",
+      "gist": "Application logs are sampled at one in ten above a rate threshold, so a missing log line does not prove the code did not run.",
+      "content": "The logging pipeline samples aggressively once a service exceeds a per-second threshold. People conclude a branch never executed because its log line is absent. Use a counter metric for anything you need to reason about reliably."
+    },
+    {
+      "uuid": "5460f581-bd41-5ba3-8e7a-5c2ff2dc526b",
+      "key": "d-trace-sampling",
+      "cat": "distractor",
+      "gist": "Traces are head-sampled at one percent, so most requests have no trace and searching for a specific request usually fails.",
+      "content": "Head sampling at one percent means a given request almost certainly has no trace. Tail sampling was discussed and not implemented. For a specific investigation, enable the per-request debug header, which forces capture."
+    },
+    {
+      "uuid": "0287f1ba-94f8-53e5-958d-afe03cce3228",
+      "key": "d-metric-cardinality",
+      "cat": "distractor",
+      "gist": "Adding a label with unbounded values to a metric will get the metric dropped by the collector's cardinality guard.",
+      "content": "The collector enforces a series-per-metric ceiling and drops the whole metric when exceeded, not just the new series. A metric silently disappearing from dashboards is usually this. Keep labels to bounded enumerations."
+    },
+    {
+      "uuid": "4b4ab674-d064-5830-870c-18c542d2da3f",
+      "key": "d-alert-flap",
+      "cat": "distractor",
+      "gist": "The latency alert flaps during deploys because the rollout briefly serves from fewer instances; it is not actionable.",
+      "content": "During a rolling deploy the remaining instances take extra load and p99 crosses the alert threshold for a minute or two. It self-resolves. The alert has not been given a deploy-aware inhibition rule yet, so it is routinely ignored, which is its own problem."
+    },
+    {
+      "uuid": "77437407-4c1b-58a3-b4ff-c360e6d93233",
+      "key": "d-secret-rotation",
+      "cat": "distractor",
+      "gist": "Rotating the signing key requires both keys to be trusted for one full token lifetime, or in-flight tokens are rejected.",
+      "content": "The verifier must accept old and new keys during the overlap, which is the token lifetime plus a margin. Cutting straight over invalidates every token issued before the switch. The rotation script does the overlap; doing it by hand usually does not."
+    },
+    {
+      "uuid": "2f80f621-04d5-5ae5-a5bd-09ff064e1cdf",
+      "key": "d-kms-region",
+      "cat": "distractor",
+      "gist": "The encryption key is region-pinned, so a failover to the secondary region cannot decrypt existing payloads.",
+      "content": "The key exists only in the primary region. A regional failover leaves the secondary unable to decrypt anything already stored. This is a known gap in the disaster-recovery story and is documented as accepted risk rather than fixed."
+    },
+    {
+      "uuid": "a8ab1102-218a-5d77-92e1-99803ea2e26c",
+      "key": "d-iam-eventual",
+      "cat": "distractor",
+      "gist": "Newly granted permissions take up to a minute to become effective, so a permission test immediately after granting is unreliable.",
+      "content": "Policy propagation is eventually consistent. A script that grants and then immediately exercises the permission will fail intermittently. Add a retry loop around the first authorised call rather than a fixed sleep."
+    },
+    {
+      "uuid": "d79d50e6-e626-51ed-b543-020778abfee4",
+      "key": "d-s3-list-cost",
+      "cat": "distractor",
+      "gist": "Listing the artefact bucket without a prefix walks millions of keys and costs real money; always pass a prefix.",
+      "content": "The artefact bucket has millions of objects. An unprefixed list is slow and billed per request page. A cleanup script that did this once produced a noticeable line item. Always scope with a prefix and a max-keys bound."
+    },
+    {
+      "uuid": "02987fbb-8dc0-5b84-92ad-64ebb065d16f",
+      "key": "d-cdn-invalidate",
+      "cat": "distractor",
+      "gist": "CDN invalidation is not instant and is billed per path, so bulk invalidation after a deploy is the wrong pattern.",
+      "content": "Invalidations take minutes to propagate and are charged per path above a monthly free allowance. Deploys should change the asset URL instead, which makes invalidation unnecessary. The build already emits content-hashed names for this reason."
+    },
+    {
+      "uuid": "8ef836e3-7d4f-5c69-88d7-e3c6f6c884b0",
+      "key": "d-queue-visibility",
+      "cat": "distractor",
+      "gist": "The queue's visibility timeout is shorter than the worst-case handler duration, so slow messages get delivered twice.",
+      "content": "A handler that exceeds the visibility timeout has its message redelivered while still processing, producing duplicate side effects. Handlers must be idempotent, and the two that are not are known and tracked. Extending the timeout has knock-on effects on redrive."
+    },
+    {
+      "uuid": "87f00802-7167-51aa-8940-f6973d8256a3",
+      "key": "d-dlq-silent",
+      "cat": "distractor",
+      "gist": "The dead-letter queue has no alarm on it, so poison messages accumulate unnoticed.",
+      "content": "Messages that exhaust their receive count land in the dead-letter queue and nothing watches it. A batch of malformed events sat there for three weeks. An alarm on queue depth is the obvious fix and has not been done."
+    },
+    {
+      "uuid": "07a61eeb-f4f3-5354-9454-a88949aaae3f",
+      "key": "d-idempotency-key",
+      "cat": "distractor",
+      "gist": "The idempotency key is derived from the payload hash, so a retry with a reordered map produces a different key.",
+      "content": "Because the key is a hash of the serialised payload and map ordering is not stable across languages, a retry from a different client can produce a different key and duplicate the effect. Sort keys before hashing; the Python client does, the other one does not."
+    },
+    {
+      "uuid": "9118d090-98cf-5312-832c-7e5d1f7d82d6",
+      "key": "d-clock-monotonic",
+      "cat": "distractor",
+      "gist": "Duration measurement must use the monotonic clock; the wall clock steps backwards during synchronisation and produces negative durations.",
+      "content": "Negative durations in the metrics come from measuring with the wall clock across a time synchronisation step. Use the monotonic clock for all interval measurement. Several older call sites still do not."
+    },
+    {
+      "uuid": "49d3deb3-5924-58d4-ac00-c5e49948508f",
+      "key": "d-thread-fork",
+      "cat": "distractor",
+      "gist": "Forking after threads have started leaves locks held in the child, which deadlocks on the first allocation.",
+      "content": "The worker pool forks. If any library has already started a thread that holds an internal lock, the child inherits the locked state and hangs immediately. Start the pool before anything else, and never fork lazily on first use."
+    },
+    {
+      "uuid": "1f35354b-8e4b-5145-82ee-78d4a6bfbd48",
+      "key": "d-signal-handler",
+      "cat": "distractor",
+      "gist": "The graceful-shutdown handler is registered too late, so a fast rollout kills the process before it can drain.",
+      "content": "The termination handler is installed after the server begins accepting connections, so a signal arriving in that window is handled by the default disposition and the process dies without draining. Register the handler first."
+    },
+    {
+      "uuid": "133dab68-26d7-5e08-836e-8db963a06af7",
+      "key": "d-readiness-vs-liveness",
+      "cat": "distractor",
+      "gist": "The readiness and liveness probes point at the same endpoint, so a slow dependency causes restarts instead of removal from the pool.",
+      "content": "Both probes hit one endpoint that checks the downstream dependency. When the dependency is slow, liveness fails and the orchestrator restarts a healthy process. Split them: liveness should check only the process, readiness may check dependencies."
+    },
+    {
+      "uuid": "98e674ca-9c5f-5ed7-9456-bd58150cdcd3",
+      "key": "d-hpa-thrash",
+      "cat": "distractor",
+      "gist": "The autoscaler's scale-down window is shorter than the pod start time, so load spikes cause oscillation.",
+      "content": "Scale-down happens faster than new instances can become ready, so the autoscaler removes capacity it is about to need. Lengthening the stabilisation window fixed it; changing the target utilisation did not."
+    },
+    {
+      "uuid": "0a16c110-857f-549a-b3c8-5a46128146c1",
+      "key": "d-node-taint",
+      "cat": "distractor",
+      "gist": "The GPU node pool is tainted, so a workload without the matching toleration schedules on CPU nodes and runs a hundred times slower.",
+      "content": "There is no error when the toleration is missing. The pod schedules on a general node and the workload falls back to CPU. It looks like a performance regression rather than a scheduling mistake. Assert on the device count at start."
+    },
+    {
+      "uuid": "ceea50b0-3b10-5754-9393-aa6d90bcbd80",
+      "key": "d-configmap-reload",
+      "cat": "distractor",
+      "gist": "Config map changes are not picked up without a restart, because the mount is read once at start.",
+      "content": "The process reads the mounted config at start and caches it. Editing the config map updates the file on disk within a minute but nothing rereads it. A rollout restart is required; there is no watch."
+    },
+    {
+      "uuid": "2ad4d712-6f21-56b0-b9bb-8229078debf3",
+      "key": "d-initcontainer-order",
+      "cat": "distractor",
+      "gist": "The init container that runs migrations will retry forever if the database is unreachable, so a bad connection string looks like a slow start.",
+      "content": "The migration init container has no failure ceiling and retries indefinitely, so a typo in the connection string presents as a pod stuck in initialisation with no obvious error. Check the init container logs specifically; the main container has none yet."
+    },
+    {
+      "uuid": "a491767c-4393-5662-82f1-5b865afa5ace",
+      "key": "d-pvc-resize",
+      "cat": "distractor",
+      "gist": "Volume expansion works online but shrinking does not, so over-provisioning is a one-way decision.",
+      "content": "Volumes can be grown in place without downtime. They cannot be shrunk at all; the only path is create-new-and-copy. Size conservatively at first."
+    },
+    {
+      "uuid": "262a9ced-da97-5a09-ac13-4d1ae9f7d488",
+      "key": "d-cron-overlap",
+      "cat": "distractor",
+      "gist": "The nightly job has no concurrency guard, so a run that overruns into the next window doubles up.",
+      "content": "When the nightly job takes longer than its interval, a second instance starts alongside it. The two then contend on the same rows and both slow down, which makes the overlap worse. A lease-based guard is the fix; the scheduler's own concurrency policy was not honoured in this deployment."
+    },
+    {
+      "uuid": "38b180d3-94a3-58c1-a5b5-c1c9debeb5d3",
+      "key": "d-tz-cron",
+      "cat": "distractor",
+      "gist": "The scheduler runs in UTC, so a job specified for local business hours drifts by an hour twice a year.",
+      "content": "Schedules are evaluated in UTC with no zone support. A job intended for local morning runs an hour early or late after a daylight change. Either accept the drift or compute the schedule from a zone-aware generator."
+    },
+    {
+      "uuid": "1fa03883-f445-54c8-abb3-6c2829dc81b8",
+      "key": "d-leapsecond",
+      "cat": "distractor",
+      "gist": "The time library used by the report boundary does not handle the repeated second, which double-counts one row per occurrence.",
+      "content": "A repeated second produces two rows with identical timestamps and the boundary logic counts both into each window. It is a once-in-years event and the impact is one row, so it has been documented rather than fixed."
+    },
+    {
+      "uuid": "4b869388-0cb7-5aa9-99ee-91709192d672",
+      "key": "d-float-money",
+      "cat": "distractor",
+      "gist": "Monetary amounts are stored as integer minor units; any code that converts to float for arithmetic will produce off-by-one totals.",
+      "content": "Amounts are integers in minor units precisely to avoid representation error. A helper that converted to float for a percentage calculation reintroduced it and produced totals off by a unit. Do percentage maths in integers with explicit rounding."
+    },
+    {
+      "uuid": "901f74d8-38be-52d5-9161-b983eb2fe420",
+      "key": "d-decimal-context",
+      "cat": "distractor",
+      "gist": "The decimal context precision is set globally at import, so a library that changes it affects unrelated calculations.",
+      "content": "One module sets the global decimal context at import time. Anything imported after it inherits the change, which has produced surprising rounding in unrelated code. Use a local context manager instead."
+    },
+    {
+      "uuid": "283bb1bf-4c4f-5cb5-8823-bc06a26a43f6",
+      "key": "d-sort-locale",
+      "cat": "distractor",
+      "gist": "String sorting depends on the process locale, so ordering differs between the container and a developer machine.",
+      "content": "Sort order for non-ASCII strings follows the locale, which is unset in the container and set on most laptops. A test asserting on order therefore passes locally and fails in CI. Sort with an explicit key rather than relying on default collation."
+    },
+    {
+      "uuid": "2ed3b741-a8b6-5bd1-bcec-3062fa819394",
+      "key": "d-regex-catastrophic",
+      "cat": "distractor",
+      "gist": "The validation regex backtracks catastrophically on a long input, which is a denial-of-service path on a public endpoint.",
+      "content": "One nested-quantifier pattern takes exponential time on adversarial input. On the public endpoint that is a denial-of-service. It was replaced with an explicit parser. Do not reintroduce nested quantifiers in request validation."
+    },
+    {
+      "uuid": "19cca843-da65-5d38-b951-1fabc8d603ab",
+      "key": "d-yaml-anchors",
+      "cat": "distractor",
+      "gist": "Anchors and aliases in the config are expanded by the loader but not by the schema validator, so validated config differs from loaded config.",
+      "content": "The validator runs on the raw document and sees the alias node; the loader expands it. A config can therefore pass validation and load differently. Avoid anchors in files that are validated."
+    },
+    {
+      "uuid": "a32dff0e-e2fd-5c97-9a87-81a90ef6305b",
+      "key": "d-toml-multiline",
+      "cat": "distractor",
+      "gist": "Multi-line strings in the config preserve leading whitespace, which breaks the embedded query when the config is reindented.",
+      "content": "An embedded query is stored as a multi-line string. Reindenting the config file changes the string content and, for one query, changed its meaning. Move embedded queries to their own files."
+    },
+    {
+      "uuid": "7f0842c8-e5d0-5f26-a1c1-557fdc5359c0",
+      "key": "d-env-quotes",
+      "cat": "distractor",
+      "gist": "Quotes in the environment file are taken literally by the runtime but stripped by the shell loader, so behaviour differs by launch path.",
+      "content": "Launching through the shell wrapper strips quotes; launching the binary directly with the file loaded by the runtime does not. A value with quotes therefore differs by launch path. Do not quote values in that file."
+    },
+    {
+      "uuid": "25f34365-2fae-5960-a27f-1427d7886843",
+      "key": "d-path-length",
+      "cat": "distractor",
+      "gist": "The build fails on the Windows runner only, because the intermediate object paths exceed the path length limit.",
+      "content": "Deeply nested intermediate directories exceed the platform path limit on one runner. The failure names a file that exists, which is confusing. Shorten the build output directory; long-path support was enabled and did not help for this toolchain."
+    },
+    {
+      "uuid": "118b916c-0b64-58ab-a27f-1527f8ac4059",
+      "key": "d-case-insensitive-fs",
+      "cat": "distractor",
+      "gist": "Two files differing only in case exist in the repo, which breaks checkout on case-insensitive filesystems.",
+      "content": "A rename that changed only case left two paths in history. Checkout on a case-insensitive filesystem collides and reports a dirty tree immediately after clone. The tracked fix is to rename one via a two-step change."
+    },
+    {
+      "uuid": "b706dd0d-0aaa-5809-acbb-9b53b05c0666",
+      "key": "d-gitignore-tracked",
+      "cat": "distractor",
+      "gist": "A file already tracked is not affected by adding it to the ignore file, which is why the local config keeps getting committed.",
+      "content": "Ignore rules only apply to untracked paths. The local config was committed once, so it continues to be tracked and shows up in every diff. It needs an explicit index removal, which will delete it for everyone on next pull unless they save a copy."
+    },
+    {
+      "uuid": "c74d78ab-3240-5e90-885e-5eb85b93c52a",
+      "key": "d-submodule-detached",
+      "cat": "distractor",
+      "gist": "Submodules check out a detached commit, so edits made inside one are easy to lose.",
+      "content": "A submodule is at a commit, not a branch. Work done inside it without first checking out a branch is on no branch and is lost on the next update. Check out a branch inside the submodule before editing."
+    },
+    {
+      "uuid": "fd5fee85-1d3d-51bd-bdd9-ae93191c1d5b",
+      "key": "d-lfs-missing",
+      "cat": "distractor",
+      "gist": "Large files are stored out of band and a clone without the extension installed yields pointer files that fail at runtime with a parse error.",
+      "content": "Without the extension, the working tree contains small text pointer files where binaries should be. The failure is a parse error in whatever reads them, which does not suggest the real cause. Install the extension and re-fetch."
+    },
+    {
+      "uuid": "d0aa660d-f112-5b0c-ad7b-81c9540e31ef",
+      "key": "d-shallow-clone",
+      "cat": "distractor",
+      "gist": "The CI clone is shallow, so anything that reads history further back than one commit fails only in CI.",
+      "content": "The default CI checkout fetches a single commit. Version derivation from tags, and any diff against the merge base, therefore fail or produce wrong answers. Ask for the deeper fetch explicitly in the job that needs it."
+    },
+    {
+      "uuid": "b842ee24-7685-58bd-9a51-cdf2d6eb3a78",
+      "key": "d-merge-commit-ci",
+      "cat": "distractor",
+      "gist": "CI builds the merge result, not your branch tip, so a green branch can fail after an unrelated change lands on the target.",
+      "content": "The pipeline builds the merge of your branch with the current target. A failure can therefore be caused by something that landed on the target after your last push. Re-run before assuming your change is at fault."
+    },
+    {
+      "uuid": "e6b5bf81-766a-500d-b789-87776eeec5e0",
+      "key": "d-rebase-hooks",
+      "cat": "distractor",
+      "gist": "The pre-push hook runs the full suite, which makes an interactive rebase with many commits take a very long time.",
+      "content": "The hook runs on every pushed commit rather than once per push, so a rebase that rewrites twenty commits runs the suite twenty times. There is a documented environment variable to run it once; it is not the default."
+    },
+    {
+      "uuid": "703aa53e-6af5-5619-bbdb-a6189bb79a64",
+      "key": "d-tag-immutable",
+      "cat": "distractor",
+      "gist": "Release tags are protected and cannot be moved, so a bad release requires a new patch tag rather than a retag.",
+      "content": "Tag protection is on. A mistake in a release requires cutting the next patch version. Attempting to force-update a tag fails at the server, which is intentional and has saved us at least once."
+    },
+    {
+      "uuid": "c7ece785-2f36-5190-b578-0eaca5f1aa5e",
+      "key": "d-changelog-gen",
+      "cat": "distractor",
+      "gist": "The changelog is generated from commit subjects, so a squash merge with a generic subject loses the detail.",
+      "content": "Generation reads commit subjects on the target branch. A squash merge collapses everything into one subject, so a descriptive body is not picked up. Write the subject as the changelog line you want."
+    },
+    {
+      "uuid": "f158f87c-f830-5fe1-9f0e-4666cc885459",
+      "key": "d-semver-zero",
+      "cat": "distractor",
+      "gist": "Dependencies in the pre-one version range are treated as breaking on every minor bump by the resolver, so ranges do not do what you expect there.",
+      "content": "For versions below one, the resolver treats the minor position as the breaking position. A caret range therefore does not span minor versions. Two of our dependencies are in that range and must be pinned exactly."
+    },
+    {
+      "uuid": "e71b11c0-25ea-5566-b92e-1bdf57858e79",
+      "key": "d-transitive-pin",
+      "cat": "distractor",
+      "gist": "Pinning a transitive dependency requires an override entry; adding it as a direct dependency does not constrain the transitive resolution.",
+      "content": "Adding the package as a direct dependency at the wanted version leaves the transitive resolution free to pick another, and the loader may get either. The override mechanism is the only reliable way. This has bitten us twice."
+    },
+    {
+      "uuid": "5535763d-3390-5e02-b203-e68eed912bf8",
+      "key": "d-native-wheel",
+      "cat": "distractor",
+      "gist": "One dependency has no wheel for the runtime version we use, so it compiles from source and adds several minutes to every cold install.",
+      "content": "The cold install compiles that package because no matching wheel is published. It is a few minutes each time and is the main reason the dependency cache matters. A prebuilt wheel is published internally now but the index priority has not been changed to prefer it."
+    },
+    {
+      "uuid": "6a3d1c38-0077-554d-88b1-67ca31482e3d",
+      "key": "d-pip-resolver",
+      "cat": "distractor",
+      "gist": "The installer will silently pick an older version to satisfy a conflict rather than failing, which is how a very old library ended up installed.",
+      "content": "Given an unsatisfiable constraint set the resolver backtracks to an old version that does satisfy it, and reports success. A library several major versions behind was installed this way and only noticed when an expected function was missing. Read the resolved versions after any dependency change."
+    },
+    {
+      "uuid": "6ca1902b-7e54-59af-bc09-e63e7ea19367",
+      "key": "d-editable-install",
+      "cat": "distractor",
+      "gist": "An editable install shadows the packaged version in a way that hides missing package data files until deployment.",
+      "content": "Under an editable install, data files are read from the source tree whether or not they are declared for packaging. Anything undeclared works in development and is missing in the built artefact. Build the artefact and test against it before release."
+    },
+    {
+      "uuid": "98a1eca7-be1d-5440-b39b-52a24bfceb27",
+      "key": "d-namespace-package",
+      "cat": "distractor",
+      "gist": "Two distributions contribute to the same namespace, and installing one without the other produces a partially populated package with confusing import errors.",
+      "content": "The namespace is split across two distributions. Installing only one leaves imports of the other's modules failing with an error that names the namespace, not the missing distribution. Both are required and neither declares the other."
+    },
+    {
+      "uuid": "69238da8-7058-54d1-abc0-493de4f68566",
+      "key": "d-import-side-effect",
+      "cat": "distractor",
+      "gist": "Importing the client module opens a connection as a side effect, which makes it unsafe to import at module scope in the worker.",
+      "content": "The client module connects at import. In the forking worker that means a connection is created pre-fork and shared, which produces interleaved protocol errors. Import it inside the function, or use the lazy factory."
+    },
+    {
+      "uuid": "4a38629b-5bee-5d65-a78a-8062a46f40a3",
+      "key": "d-circular-import",
+      "cat": "distractor",
+      "gist": "The two modules import each other and only work because one import is inside a function; moving it to the top breaks start-up.",
+      "content": "There is a genuine cycle, worked around by a function-scoped import. A well-intentioned tidy-up that hoisted it to the top produced an import error at start. The cycle should be broken properly but the refactor is large."
+    },
+    {
+      "uuid": "bbee494e-1987-56c1-bf5f-d59a2ce1a34e",
+      "key": "d-abstract-registry",
+      "cat": "distractor",
+      "gist": "Handlers register themselves on import, so a handler in a module nobody imports is silently absent.",
+      "content": "Registration is a decorator side effect. If the module is never imported the handler does not exist and requests for it fall through to the default with no error. The package's init imports them all explicitly for this reason; add new ones there."
+    },
+    {
+      "uuid": "1a7469b0-3dc9-5de7-8ffb-4ea049ce7976",
+      "key": "d-enum-serialization",
+      "cat": "distractor",
+      "gist": "Enum values are serialised by name in one path and by ordinal in another, so reordering the enum breaks stored data.",
+      "content": "One serialiser writes the name, the other writes the position. Inserting a value in the middle therefore invalidates anything stored by the second. Append new values at the end only, until the ordinal path is removed."
+    },
+    {
+      "uuid": "e2229b2f-1a1c-50e8-9fc1-5ba58494cf40",
+      "key": "d-bool-env",
+      "cat": "distractor",
+      "gist": "The environment parser treats any non-empty string as true, so setting a flag to the string false enables it.",
+      "content": "There is no truthiness parsing; presence and non-emptiness are the test. Setting a flag to the literal text false turns it on, which has caught several people. Unset the variable to disable."
+    },
+    {
+      "uuid": "1361e80c-bba4-56a1-a644-3125ca4fbde7",
+      "key": "d-null-vs-absent",
+      "cat": "distractor",
+      "gist": "The API distinguishes an explicit null from an absent field, and the client's default serialiser omits nulls, so clearing a field is impossible through it.",
+      "content": "Clearing a field requires sending an explicit null. The client omits null fields by default, so a clear is indistinguishable from no change. Enable the include-nulls option on that specific call."
+    },
+    {
+      "uuid": "ccdd3297-d7c3-540b-abb7-ad74e7b15adf",
+      "key": "d-ver-1-9-4",
+      "cat": "distractor",
+      "gist": "The serialisation library must stay at v1.9.4; v1.10.0 changed default field ordering and invalidates stored blobs.",
+      "content": "v1.10.0 changed the default field ordering in the compact encoding, so blobs written by it cannot be read by anything older and vice versa. We have stored blobs, so we are pinned at v1.9.4 until a migration exists. The incompatibility is silent: reads produce garbage values rather than errors."
+    },
+    {
+      "uuid": "f3693a4e-22e2-51fc-9540-2f0aadd91cb8",
+      "key": "d-ver-3-0-0-rc",
+      "cat": "distractor",
+      "gist": "Do not take the v3.0.0-rc line of the HTTP client; its connection pool leaks sockets under cancellation.",
+      "content": "The release candidate leaks a socket per cancelled request. Under a load shedder that cancels aggressively it exhausts descriptors within an hour. Stay on the v2 line until a final v3 ships."
+    },
+    {
+      "uuid": "4db7fc49-6264-5703-a9f0-9f8a791f0997",
+      "key": "d-ver-0-14-2",
+      "cat": "distractor",
+      "gist": "The linter is pinned at v0.14.2 because v0.15 added a rule that fires on most of the codebase.",
+      "content": "v0.15 enabled a new rule by default that flags a pattern used widely in our code. Adopting it is a large mechanical change nobody has scheduled. Pinned at v0.14.2 with the upgrade tracked as a separate task."
+    },
+    {
+      "uuid": "ef7889e0-97cd-5c5e-ba89-7b5b4ac7881d",
+      "key": "d-ver-2-4-0",
+      "cat": "distractor",
+      "gist": "v2.4.0 of the pipeline library reverted the retry default change, so the explicit setting is no longer required but is harmless.",
+      "content": "The retry default was restored in v2.4.0 after complaints. Explicitly setting retries is now redundant but does no harm and is worth keeping so the intent is visible in the code."
+    },
+    {
+      "uuid": "4b5ce176-abb4-5276-8f95-25e1f8879080",
+      "key": "d-ver-11-vs-17",
+      "cat": "distractor",
+      "gist": "The build targets Java 11 bytecode even though the toolchain is 17, and mixing a 17-compiled dependency produces a version error at class load.",
+      "content": "Target level is 11 for a consumer that has not upgraded. A dependency compiled for 17 fails at class load with an unsupported class file version message that names the numeric level, not the release. Check the dependency's target before adding it."
+    },
+    {
+      "uuid": "35661871-e0e3-51a8-b5b2-ecee4f26f0ea",
+      "key": "d-ver-py-312",
+      "cat": "distractor",
+      "gist": "One native dependency has no build for Python 3.12, which is why the venv is created with 3.11.",
+      "content": "The dependency's build fails on 3.12 because of a removed C API. Until it is updated the project pins 3.11 in the version file. Creating a 3.12 venv appears to work until that install step."
+    },
+    {
+      "uuid": "6c92d04f-19c1-5ef3-8c55-d7d48a425175",
+      "key": "d-env-log-level",
+      "cat": "distractor",
+      "gist": "LOG_LEVEL is read only by the application logger; the access log has its own separate variable.",
+      "content": "Setting LOG_LEVEL to debug does not increase access-log verbosity, which has its own control. People conclude debug logging is broken. Both need setting to get a full picture."
+    },
+    {
+      "uuid": "36079eb5-7a60-5c85-9793-27cb9cf5bcd3",
+      "key": "d-env-http-proxy",
+      "cat": "distractor",
+      "gist": "HTTPS_PROXY is honoured by one HTTP client in the stack and ignored by the other, so proxied traffic is partial.",
+      "content": "One client reads the proxy variables from the environment, the other requires explicit configuration. In a proxied environment half the outbound traffic bypasses the proxy and is blocked. Configure the second client explicitly."
+    },
+    {
+      "uuid": "03d82f19-a214-58c8-a366-c2ad43668849",
+      "key": "d-env-tmpdir",
+      "cat": "distractor",
+      "gist": "TMPDIR is set to a small in-memory filesystem in the container, so large temporary files fail with a disk-full error.",
+      "content": "The container sets TMPDIR to a memory-backed mount sized in tens of megabytes. Anything that spools a large file there fails with no space left, which is confusing because the real disk is nearly empty. Pass an explicit directory for large spooling."
+    },
+    {
+      "uuid": "5d5be70a-da7f-5b64-a269-13183c577f37",
+      "key": "d-env-pythonpath",
+      "cat": "distractor",
+      "gist": "PYTHONPATH is set in the entrypoint and shadows the installed package with a stale copy baked into the image.",
+      "content": "The entrypoint prepends a directory that contains an older copy of the package. Imports resolve to the stale copy, so a fix that is definitely in the installed distribution appears not to take. Remove the prepend; it exists for a dependency that no longer needs it."
+    },
+    {
+      "uuid": "c7190d78-17b4-5204-8760-3371a97232aa",
+      "key": "d-env-service-token",
+      "cat": "distractor",
+      "gist": "SERVICE_TOKEN and AUTH_TOKEN are different credentials for different hops and are frequently confused.",
+      "content": "SERVICE_TOKEN authenticates to the internal mesh; the other authenticates to the external API. They are both opaque strings of similar length, and swapping them produces an unhelpful generic rejection. Check which hop is rejecting before assuming the credential is wrong."
+    },
+    {
+      "uuid": "ba14e9de-3b0e-51d8-8fcc-95560148ab09",
+      "key": "d-env-feature-flags",
+      "cat": "distractor",
+      "gist": "FEATURE_FLAGS is a comma-separated allow list with no validation, so a typo silently disables a feature.",
+      "content": "Unrecognised entries are ignored without a warning. A misspelled flag therefore means the feature is off and nothing says so. The list of valid names is only in the source. A validating loader is an obvious improvement nobody has made."
+    },
+    {
+      "uuid": "31c32243-edca-543d-a4ef-09ee7d33b197",
+      "key": "d-env-region",
+      "cat": "distractor",
+      "gist": "AWS_REGION being unset makes the client default to a region we do not use, producing confusing not-found errors.",
+      "content": "With no region set the client falls back to its own default, where none of our resources exist. The resulting error says the resource does not exist, which is true in that region. Always set it explicitly, including in local scripts."
+    },
+    {
+      "uuid": "b08bd471-ef29-52e6-bebd-b3303c440972",
+      "key": "d-env-no-color",
+      "cat": "distractor",
+      "gist": "NO_COLOR is honoured by the test reporter but not the build tool, so CI logs are half full of escape codes.",
+      "content": "The reporter respects it, the build tool needs its own flag. CI logs therefore contain escape sequences from one of the two. Pass both."
+    },
+    {
+      "uuid": "0fd9ca81-afb9-502d-bf2a-aa1f99c503ab",
+      "key": "d-dotted-serializer",
+      "cat": "distractor",
+      "gist": "org.example.io.JsonSerializer is not thread safe despite being registered as a singleton.",
+      "content": "It holds a mutable buffer as instance state and is wired as a singleton, so concurrent use corrupts output. It manifests as truncated or interleaved payloads under load. Construct one per call, or use the stateless variant."
+    },
+    {
+      "uuid": "762cd3ce-c2ff-5cc9-88e5-78016fc0c1e5",
+      "key": "d-dotted-metrics",
+      "cat": "distractor",
+      "gist": "org.example.metrics.Registry silently drops registrations made after the exporter has started.",
+      "content": "Registering a metric after the exporter's first scrape has no effect and logs nothing, so a metric added in a lazily-initialised code path never appears. Register everything eagerly at start."
+    },
+    {
+      "uuid": "1cfd1158-f177-567e-b906-ae389d9e52fa",
+      "key": "d-dotted-legacy-client",
+      "cat": "distractor",
+      "gist": "com.legacy.transport.Client swallows interrupt, so cancellation does not propagate and shutdown hangs.",
+      "content": "The old transport client catches and discards the interrupt, so a cancelled call keeps running and the shutdown wait times out. Wrap calls with a timeout of your own rather than relying on cancellation."
+    },
+    {
+      "uuid": "2fe4a474-cb19-5cbd-8f95-96640d05e441",
+      "key": "d-dotted-validator",
+      "cat": "distractor",
+      "gist": "org.example.core.Validator caches compiled schemas keyed by name only, so two schemas with the same name collide.",
+      "content": "The cache key omits the namespace, so two same-named schemas from different namespaces resolve to whichever was compiled first. Validation then passes or fails for the wrong reasons. Names are unique in practice today, which is why this has not bitten yet."
+    },
+    {
+      "uuid": "b6420063-a1f4-5808-aef6-c1eb282b663a",
+      "key": "d-pyproject-vs-setupcfg",
+      "cat": "distractor",
+      "gist": "Settings in setup.cfg are ignored now that pyproject.toml declares the same tool section, and the shadowing is silent.",
+      "content": "Both files exist. For tools that read both, the newer file wins and the older section is ignored with no warning, so editing the file you find first often has no effect. Consolidate into the newer file."
+    },
+    {
+      "uuid": "62276833-f886-5044-a21c-89bde1a19fce",
+      "key": "d-editorconfig",
+      "cat": "distractor",
+      "gist": "The editor config sets tabs for one directory only, and the formatter does not read the editor config, so the two disagree.",
+      "content": "One legacy directory is tab-indented per the editor config. The formatter has its own configuration that does not know about that exception and reformats to spaces, producing a large diff. Exclude the directory in the formatter config too."
+    },
+    {
+      "uuid": "fc5ad59c-cdb9-5a33-987c-68d12b7021d9",
+      "key": "d-dockerignore",
+      "cat": "distractor",
+      "gist": "Missing entries in the ignore file send the whole working tree to the build daemon, which is why builds are slow on a dirty tree.",
+      "content": "The build context includes everything not excluded, so local virtual environments and caches are uploaded. On a dirty tree that is gigabytes and dominates build time. Keep the ignore file in sync with the ignore rules for version control."
+    },
+    {
+      "uuid": "a01fd62f-a4fa-5c1c-9a89-f728f9312a30",
+      "key": "d-makefile-tabs",
+      "cat": "distractor",
+      "gist": "The build file requires tab indentation and a space-indented recipe fails with a message that does not mention whitespace.",
+      "content": "Recipes must be tab-indented. A space-indented line produces a missing-separator error that names the line but not the cause. Editors that convert tabs on save cause this repeatedly."
+    },
+    {
+      "uuid": "16ed0fbe-41dd-5f97-8158-7e024d216423",
+      "key": "d-tox-envlist",
+      "cat": "distractor",
+      "gist": "Adding an environment to the config does not add it to CI, which runs an explicit list.",
+      "content": "CI enumerates environments explicitly rather than running the whole list, so a newly added environment is never executed and appears to pass. Add it in both places."
+    },
+    {
+      "uuid": "8d78bb0d-acb8-5616-a381-c7a66753b589",
+      "key": "d-mig-0039",
+      "cat": "distractor",
+      "gist": "Migration 0039 is not reversible; its down step raises deliberately because the data cannot be reconstructed.",
+      "content": "0039 collapses two columns into one and the original split cannot be recovered. The down step raises rather than pretending. A rollback past it therefore requires a restore, which is documented in the runbook."
+    },
+    {
+      "uuid": "de1cd8bf-3e7e-56f8-a32d-0dfce6ee8a97",
+      "key": "d-mig-0051",
+      "cat": "distractor",
+      "gist": "Migration 0051 must run after the application deploy, not before, because it drops a column the old code still reads.",
+      "content": "Ordinary ordering is migrate-then-deploy. 0051 is the exception: it removes a column the previous release still selects, so running it first breaks the running version. Deploy, verify, then migrate."
+    },
+    {
+      "uuid": "76372057-d49b-5403-80e8-cda17ae8a0d5",
+      "key": "d-mig-0055-backfill",
+      "cat": "distractor",
+      "gist": "The backfill in 0055 is chunked and resumable, but rerunning it from the start double-counts a derived column.",
+      "content": "It records progress in a checkpoint table and resumes from there. Starting it over without clearing the checkpoint reapplies increments to the derived column. Clear the checkpoint or resume, never restart blind."
+    },
+    {
+      "uuid": "2d6cd37f-f215-5d5b-88ab-f0f06981fa5f",
+      "key": "d-mig-baseline",
+      "cat": "distractor",
+      "gist": "The migration history was squashed at 0030, so a database older than that cannot be migrated forward directly.",
+      "content": "Everything before 0030 was collapsed into a baseline. An old database has history the runner does not recognise and refuses to proceed. Restore from a recent snapshot instead of migrating an ancient copy."
+    },
+    {
+      "uuid": "7db32a96-c767-588d-ba45-54f35fc440e4",
+      "key": "d-timeout-5",
+      "cat": "distractor",
+      "gist": "The health endpoint's own timeout is 5 seconds, which is shorter than the dependency check it performs.",
+      "content": "The check calls a dependency whose own timeout is longer than the health endpoint's, so under dependency slowness the health check times out rather than reporting unhealthy. The nested timeouts need ordering; currently they are inverted."
+    },
+    {
+      "uuid": "b1226188-af0d-558c-a461-f61d627ae899",
+      "key": "d-timeout-60",
+      "cat": "distractor",
+      "gist": "The client's default socket timeout is 60 seconds, which is longer than the gateway's, so the client never sees the gateway's rejection cleanly.",
+      "content": "Because the client waits longer than the gateway does, the gateway's termination arrives as a truncated response rather than a status. Set the client timeout below the gateway's so the failure is attributable."
+    },
+    {
+      "uuid": "44e1d485-a37d-50a3-bbcc-2f0d9fc6104c",
+      "key": "d-limit-1000",
+      "cat": "distractor",
+      "gist": "The list endpoint silently caps the page size at 1000 regardless of what you ask for, and does not indicate truncation.",
+      "content": "Requesting more than the cap returns exactly the cap with no flag and no next-page token in some code paths, so a caller reading a large collection stops early believing it is done. Always follow pagination even when you asked for everything."
+    },
+    {
+      "uuid": "256c1ead-a023-5f2b-9e93-ac6b2547ea0d",
+      "key": "d-limit-64kb",
+      "cat": "distractor",
+      "gist": "Message payloads above 64 kilobytes are rejected by the broker, and the producer's error is generic.",
+      "content": "The broker enforces a maximum message size. The producer surfaces it as a generic send failure without naming size, so it is usually diagnosed as a connectivity problem. Compress or externalise large payloads."
+    },
+    {
+      "uuid": "a52aa1ee-f140-57d0-b7ca-707cdd82f2ca",
+      "key": "d-batch-500",
+      "cat": "distractor",
+      "gist": "The bulk endpoint accepts up to 500 items per call and partially applies on failure, returning per-item status.",
+      "content": "A failing item does not roll back the others. The response carries per-item status which callers routinely ignore, so partial failures are invisible. Check every item's status, not just the HTTP code."
+    },
+    {
+      "uuid": "5608d1dd-fdb8-5227-afbd-1c0d1d758f1a",
+      "key": "d-cache-negative",
+      "cat": "distractor",
+      "gist": "Negative lookups are cached for the same duration as positive ones, so a newly created record is invisible for five minutes.",
+      "content": "A miss is cached, so creating a record after something looked for it means the miss is served until it expires. This is the cause of the create-then-immediately-fetch failures. Invalidate on create, which the write path does not currently do."
+    },
+    {
+      "uuid": "6b62177e-ac9f-57d9-9705-2a700280767e",
+      "key": "d-cache-stampede",
+      "cat": "distractor",
+      "gist": "There is no single-flight guard, so an expiring hot key produces a burst of identical upstream requests.",
+      "content": "When a hot key expires every concurrent request misses and calls upstream. The upstream sees a spike that looks like a traffic event. A single-flight wrapper is the standard fix and is not implemented."
+    },
+    {
+      "uuid": "21c1bc63-9e87-566e-b498-b7592c489f71",
+      "key": "d-serialize-datetime",
+      "cat": "distractor",
+      "gist": "Timestamps are serialised without an offset in one legacy endpoint, and consumers assume local time.",
+      "content": "One endpoint emits an offset-less timestamp. Consumers differ on how they interpret it and at least one assumes local time. New endpoints must always emit an offset. Changing the legacy one requires coordinating with two consumers."
+    },
+    {
+      "uuid": "18635b20-daf1-5cd8-b836-1751051bb576",
+      "key": "d-serialize-bigint",
+      "cat": "distractor",
+      "gist": "Large integer ids lose precision when serialised for JavaScript consumers, so ids are emitted as strings.",
+      "content": "Ids exceed the safe integer range for double-precision consumers and silently round. They are therefore serialised as strings. A new endpoint that emits them as numbers reintroduces the bug for those consumers only."
+    },
+    {
+      "uuid": "b831e2d4-bc0a-5ca7-8ebc-3b81a8080c1d",
+      "key": "d-tls-sni",
+      "cat": "distractor",
+      "gist": "The internal endpoint requires the server name extension, and one older client omits it, receiving the default certificate and failing verification.",
+      "content": "Without the extension the load balancer serves a default certificate that does not match the requested host, so verification fails. The error looks like a certificate mismatch on our side. The old client needs the host set explicitly."
+    },
+    {
+      "uuid": "0fab5687-f288-586c-87b3-c3a2fbe3e7b6",
+      "key": "d-tls-pinning",
+      "cat": "distractor",
+      "gist": "Certificate pinning in the mobile client means a certificate rotation requires a client release first.",
+      "content": "The pin is on the leaf, so rotation breaks every un-upgraded client. Rotation therefore has to be staged behind a client release. Moving the pin to the intermediate is the accepted improvement, not yet done."
+    },
+    {
+      "uuid": "ae38c136-cd8c-5b74-9167-632dc3cc5c37",
+      "key": "d-test-network",
+      "cat": "distractor",
+      "gist": "The test suite is not network isolated, so a test that accidentally hits a real endpoint passes locally and fails in the sandbox.",
+      "content": "There is no outbound block in the test environment, so an un-mocked call silently reaches the real service. In the isolated CI sandbox it fails, which is where such tests are usually discovered. Add the block locally too."
+    },
+    {
+      "uuid": "51913d12-667d-5ac6-8c4c-89d3f40a6552",
+      "key": "d-test-snapshot",
+      "cat": "distractor",
+      "gist": "Snapshot tests regenerate silently when the update flag is left in a developer's shell profile, which is how a wrong snapshot got committed.",
+      "content": "With the update flag exported, a failing snapshot test rewrites the snapshot and passes. Someone had it in their profile permanently. Never export it; pass it per invocation."
+    },
+    {
+      "uuid": "80a74659-2d8b-5100-9476-744c73c25785",
+      "key": "d-test-freeze-time",
+      "cat": "distractor",
+      "gist": "Freezing time in a test leaks into other tests when the fixture is module-scoped, producing bizarre unrelated failures.",
+      "content": "The time freeze is applied at module scope in one file and, because the patch is global, tests in other files running afterwards in the same worker see the frozen clock. Scope it to the function."
+    },
+    {
+      "uuid": "918fe910-31bc-53db-9e64-bcbaaf45f042",
+      "key": "d-test-db-seed",
+      "cat": "distractor",
+      "gist": "The seed data includes one row with a deliberately null optional field, and several tests depend on that row's position.",
+      "content": "Ordering of seed rows is not guaranteed but a few tests index into the seeded set positionally. Adding a row at the start of the seed file breaks them in a way that looks unrelated. Reference seed rows by their natural key."
+    },
+    {
+      "uuid": "94d177e8-19e6-54db-af5e-a063a1f5ba47",
+      "key": "d-flaky-dns",
+      "cat": "distractor",
+      "gist": "A small share of CI runs fail on name resolution for the package index; the retry wrapper covers the install step but not the tool bootstrap.",
+      "content": "Resolution failures happen in maybe one run in fifty. The install step retries, the bootstrap that fetches the tool itself does not, so that is where the failure surfaces. Wrapping the bootstrap is the outstanding fix."
+    },
+    {
+      "uuid": "45d6842b-2c00-5793-bf44-2cd9224995a0",
+      "key": "d-build-clock",
+      "cat": "distractor",
+      "gist": "Reproducible builds require the timestamp variable to be set; without it the artefact hash changes on every build.",
+      "content": "Embedded build timestamps make the output non-deterministic, which defeats the artefact cache. Set the standard timestamp variable from the commit date. It is set in CI and usually not locally, so local and CI hashes differ."
+    },
+    {
+      "uuid": "3c882396-fc0b-5cb6-9632-370d7ccc52e4",
+      "key": "d-artifact-retention",
+      "cat": "distractor",
+      "gist": "Build artefacts are retained for 14 days, so reproducing a failure from a month-old run requires rebuilding.",
+      "content": "Retention is two weeks. Older runs keep their logs but not their artefacts. If a failure matters, download the artefact while it exists."
+    },
+    {
+      "uuid": "20f76bbe-3fba-5fa0-bdf2-f46f1da4d009",
+      "key": "d-log-retention",
+      "cat": "distractor",
+      "gist": "Logs are retained for 7 days at full fidelity and 90 days sampled, so an investigation older than a week has gaps.",
+      "content": "Full logs age out after a week into a sampled tier. An investigation into something a month old will find partial evidence and it is easy to mistake sampling gaps for absence of events."
+    },
+    {
+      "uuid": "24cc94ce-7e5b-5595-8166-aefcbe0a4060",
+      "key": "d-grpc-deadline",
+      "cat": "distractor",
+      "gist": "Deadlines are not propagated across one hop, so an inner call can outlive the outer request that no longer wants it.",
+      "content": "One service creates a fresh context instead of deriving from the incoming one, so the deadline is lost at that hop. Work continues after the caller has given up, which wastes capacity during an incident. Derive the context."
+    },
+    {
+      "uuid": "da4f9b41-fe32-592e-9a44-205e191779f7",
+      "key": "d-http2-multiplex",
+      "cat": "distractor",
+      "gist": "One proxy in the path does not multiplex, so a burst of parallel requests queues behind a single connection.",
+      "content": "Parallelism collapses at that hop because it serialises onto one upstream connection. Client-side concurrency above a small number therefore adds latency rather than throughput. The proxy replacement is planned."
+    },
+    {
+      "uuid": "5f5236b4-d10f-5684-8442-8993d0150195",
+      "key": "d-conn-pool-size",
+      "cat": "distractor",
+      "gist": "The connection pool is sized smaller than the worker thread count, so threads block on pool checkout under load.",
+      "content": "With more workers than pool slots, checkout becomes the bottleneck and presents as database slowness even though the database is idle. Size the pool at or above the worker count, mindful of the server's own connection limit."
+    },
+    {
+      "uuid": "e919eb12-69f7-533b-9653-ce4aec3968a4",
+      "key": "d-pgbouncer-mode",
+      "cat": "distractor",
+      "gist": "Transaction pooling breaks prepared statements and advisory session locks, which is why two features silently misbehave through the pooler.",
+      "content": "In transaction pooling mode a session is not stable across statements, so session-scoped state is lost. Prepared statements and session advisory locks are the two things we hit. Use a direct connection for those paths."
+    },
+    {
+      "uuid": "97c57af4-910e-5e19-b969-367f12bd9935",
+      "key": "d-index-bloat",
+      "cat": "distractor",
+      "gist": "The most-updated table's indexes bloat and need periodic rebuilding, which the maintenance job does not currently cover.",
+      "content": "Heavy update churn leaves the indexes several times larger than necessary, which slowly degrades scans. The maintenance job vacuums but does not rebuild. A manual concurrent rebuild has been done twice by hand."
+    },
+    {
+      "uuid": "af1c7925-f425-548d-abe9-a6c966f8bfef",
+      "key": "d-explain-analyze-prod",
+      "cat": "distractor",
+      "gist": "Running the analysing form of explain executes the statement, so it is not safe to use on a write statement in production.",
+      "content": "The analysing variant actually runs the query. On a write statement that means the write happens. Wrap it in a transaction you roll back, or use the plan-only form."
+    },
+    {
+      "uuid": "66180423-2216-5fc3-a7de-6019e1bb43f4",
+      "key": "d-json-column-index",
+      "cat": "distractor",
+      "gist": "Queries against the JSON column cannot use a plain index and need an expression index per accessed path.",
+      "content": "There is no general index for arbitrary paths. Each frequently-filtered path needs its own expression index, and there are currently three, so a query on a fourth path is a full scan. Check before adding a filter on a new path."
+    },
+    {
+      "uuid": "d06ce4ea-1f64-5f51-b160-f0b793e7e92d",
+      "key": "d-uuid-primary-key",
+      "cat": "distractor",
+      "gist": "Random primary keys fragment the index badly at this table's insert rate; the newer tables use time-ordered ids.",
+      "content": "Random ids scatter inserts across the index and cause heavy page splitting. Newer tables use a time-ordered identifier for this reason. Converting the existing table is a large migration nobody has scheduled."
+    },
+    {
+      "uuid": "baba7348-07b6-53aa-826d-f0aa548b0dc4",
+      "key": "d-soft-delete-index",
+      "cat": "distractor",
+      "gist": "The partial index excludes soft-deleted rows, so a query that does not filter on the active flag will not use it.",
+      "content": "The index carries a predicate on the active flag. Omitting that filter from the query makes the index unusable and the planner falls back to a scan. Always include the flag in the predicate, even when it seems redundant."
+    },
+    {
+      "uuid": "12450f54-7f86-54d0-a004-4ec6986716bb",
+      "key": "d-replica-promote",
+      "cat": "distractor",
+      "gist": "Promoting the replica is manual and the application does not re-resolve the endpoint, so a failover needs a restart too.",
+      "content": "Promotion changes which host is writable but the application caches the resolved address for the life of the process. A failover therefore requires a rolling restart to take effect. This is documented in the runbook and easy to forget."
+    },
+    {
+      "uuid": "9b84f15e-59f9-5846-802c-3cecdb71036c",
+      "key": "d-backup-restore-time",
+      "cat": "distractor",
+      "gist": "A full restore takes about four hours, which is longer than the stated recovery objective; the gap is accepted and documented.",
+      "content": "Measured restore time on the production-sized dataset is roughly four hours end to end, against a stated objective of one. The gap is known and accepted rather than fixed. Do not promise the objective in a design review."
+    },
+    {
+      "uuid": "7682f485-644a-53d5-af07-422f3eb31b86",
+      "key": "d-audit-immutable",
+      "cat": "distractor",
+      "gist": "The audit table is append-only at the database level, so a test that cleans up after itself cannot delete its audit rows.",
+      "content": "A rule blocks deletes on the audit table. Tests that write audited actions leave rows behind permanently, which is intended. Use a separate database for tests rather than trying to clean up."
+    },
+    {
+      "uuid": "6795fa47-7679-52f1-a175-b43cfc5d0775",
+      "key": "d-pii-logging",
+      "cat": "distractor",
+      "gist": "Request bodies must never be logged at debug level because they carry personal data; the redacting logger exists for this.",
+      "content": "Debug logging of raw bodies is a compliance problem, not merely untidy. The redacting wrapper is available and must be used for anything that can contain a body. A review caught this once already."
+    },
+    {
+      "uuid": "f87af6c3-4dbf-564a-8f99-8f03be533fb4",
+      "key": "d-rate-limit-shared",
+      "cat": "distractor",
+      "gist": "The rate limit is per credential, not per instance, so scaling out does not increase available throughput.",
+      "content": "The limit applies to the credential, so more instances share the same budget and each gets less. Scaling out to fix rate-limit errors makes them slightly worse by adding retry pressure. Request a higher limit instead."
+    },
+    {
+      "uuid": "4d163080-8f95-5b59-a587-e631f4b52735",
+      "key": "d-webhook-replay",
+      "cat": "distractor",
+      "gist": "Incoming webhooks can be replayed by the sender for up to 24 hours, so handlers must be idempotent on the event id.",
+      "content": "The sender retries for a day on any non-success, and also replays on their own operational events. Handlers must deduplicate on the event id, which two of ours do not."
+    },
+    {
+      "uuid": "183cea70-bafa-5ea2-8213-7677ab29e4e0",
+      "key": "d-signature-body",
+      "cat": "distractor",
+      "gist": "Webhook signature verification must run on the raw body; any middleware that reparses and re-serialises breaks it.",
+      "content": "The signature covers the exact bytes. A body-parsing middleware that hands the handler a re-serialised body changes whitespace and key order and verification fails. Capture the raw body before parsing."
+    },
+    {
+      "uuid": "2fc04c0a-e79c-55e3-9dcb-1662f5a5d79b",
+      "key": "d-cors-preflight",
+      "cat": "distractor",
+      "gist": "The preflight response is cached by browsers for ten minutes, so a header change appears not to take effect.",
+      "content": "Preflight results are cached client-side. After changing allowed headers, existing browser sessions keep the old answer for the cache duration. Test in a fresh profile before concluding the change did not work."
+    },
+    {
+      "uuid": "64358f3d-9863-52ed-bc66-f87c7bfafbdf",
+      "key": "d-graceful-drain",
+      "cat": "distractor",
+      "gist": "The load balancer keeps sending traffic for up to 30 seconds after an instance is marked unhealthy, so the drain wait must exceed that.",
+      "content": "Deregistration is not immediate. An instance that exits as soon as it is marked unhealthy drops in-flight requests. The shutdown must wait longer than the deregistration delay, which is currently not the case for one service."
+    }
+  ],
+  "queries": [
+    {
+      "qid": "q-c1-01",
+      "cat": "near_miss",
+      "text": "I'm adding a cache warmer path for WidgetV1 today, anything I should know before I start?",
+      "gold": [
+        "4bff955c-2a31-5985-a443-1c1dd351345b"
+      ],
+      "gold_keys": [
+        "c1-widgetv1"
+      ],
+      "hard_neg": [
+        "42387ad7-fa7a-5a47-b089-075c46feb2fd"
+      ],
+      "hard_neg_keys": [
+        "c1-widgetv2"
+      ]
+    },
+    {
+      "qid": "q-c1-02",
+      "cat": "near_miss",
+      "text": "Working on constructing WidgetV2 from our old dict payloads this morning.",
+      "gold": [
+        "42387ad7-fa7a-5a47-b089-075c46feb2fd"
+      ],
+      "gold_keys": [
+        "c1-widgetv2"
+      ],
+      "hard_neg": [
+        "4bff955c-2a31-5985-a443-1c1dd351345b"
+      ],
+      "hard_neg_keys": [
+        "c1-widgetv1"
+      ]
+    },
+    {
+      "qid": "q-c1-03",
+      "cat": "near_miss",
+      "text": "Need to get the on-prem runner green again. It's on pipeline lib v2.3.1 right now.",
+      "gold": [
+        "f99d497a-c137-5ae6-b5e6-85002ca236fb"
+      ],
+      "gold_keys": [
+        "c1-ver-2-3-1"
+      ],
+      "hard_neg": [
+        "59cdb4a4-2371-5b73-86e2-513508371370"
+      ],
+      "hard_neg_keys": [
+        "c1-ver-2-3-10"
+      ]
+    },
+    {
+      "qid": "q-c1-04",
+      "cat": "near_miss",
+      "text": "We just bumped the pipeline library to v2.3.10 and uploads are failing sometimes.",
+      "gold": [
+        "59cdb4a4-2371-5b73-86e2-513508371370"
+      ],
+      "gold_keys": [
+        "c1-ver-2-3-10"
+      ],
+      "hard_neg": [
+        "f99d497a-c137-5ae6-b5e6-85002ca236fb"
+      ],
+      "hard_neg_keys": [
+        "c1-ver-2-3-1"
+      ]
+    },
+    {
+      "qid": "q-c1-05",
+      "cat": "near_miss",
+      "text": "I want to add a shared fixture in conftest.py so both suites can use it.",
+      "gold": [
+        "e0311de3-7a8d-5f90-af6e-e4323084d9a4"
+      ],
+      "gold_keys": [
+        "c1-conftest"
+      ],
+      "hard_neg": [
+        "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175"
+      ],
+      "hard_neg_keys": [
+        "c1-conf-test"
+      ]
+    },
+    {
+      "qid": "q-c1-06",
+      "cat": "near_miss",
+      "text": "Collection is erroring on conf_test.py, what's the story there?",
+      "gold": [
+        "4dd88a19-0bb7-573f-b40a-9d5ccf7e4175"
+      ],
+      "gold_keys": [
+        "c1-conf-test"
+      ],
+      "hard_neg": [
+        "e0311de3-7a8d-5f90-af6e-e4323084d9a4"
+      ],
+      "hard_neg_keys": [
+        "c1-conftest"
+      ]
+    },
+    {
+      "qid": "q-c1-07",
+      "cat": "near_miss",
+      "text": "Rotating AUTH_TOKEN today as part of the credential cleanup.",
+      "gold": [
+        "a366583e-0f35-5931-ad45-b158ea4290d2"
+      ],
+      "gold_keys": [
+        "c1-auth-token"
+      ],
+      "hard_neg": [
+        "82fce7c4-823c-514c-afb1-ef2b0f0dd1e4"
+      ],
+      "hard_neg_keys": [
+        "c1-auth-token-v2"
+      ]
+    },
+    {
+      "qid": "q-c1-08",
+      "cat": "near_miss",
+      "text": "Trying to run the integration suite locally, do I need AUTH_TOKEN_V2 set?",
+      "gold": [
+        "82fce7c4-823c-514c-afb1-ef2b0f0dd1e4"
+      ],
+      "gold_keys": [
+        "c1-auth-token-v2"
+      ],
+      "hard_neg": [
+        "a366583e-0f35-5931-ad45-b158ea4290d2"
+      ],
+      "hard_neg_keys": [
+        "c1-auth-token"
+      ]
+    },
+    {
+      "qid": "q-c1-09",
+      "cat": "near_miss",
+      "text": "Touching the legacy module's build.gradle to change a dependency version.",
+      "gold": [
+        "3acfcc7c-0455-5ee1-a39e-2f5dba5ea440"
+      ],
+      "gold_keys": [
+        "c1-gradle-groovy"
+      ],
+      "hard_neg": [
+        "ac1d869b-1c9e-5973-8f0c-dc58d7715f48"
+      ],
+      "hard_neg_keys": [
+        "c1-gradle-kts"
+      ]
+    },
+    {
+      "qid": "q-c1-10",
+      "cat": "near_miss",
+      "text": "Builds got slow after I started editing build.gradle.kts, is that expected?",
+      "gold": [
+        "ac1d869b-1c9e-5973-8f0c-dc58d7715f48"
+      ],
+      "gold_keys": [
+        "c1-gradle-kts"
+      ],
+      "hard_neg": [
+        "3acfcc7c-0455-5ee1-a39e-2f5dba5ea440"
+      ],
+      "hard_neg_keys": [
+        "c1-gradle-groovy"
+      ]
+    },
+    {
+      "qid": "q-c1-11",
+      "cat": "near_miss",
+      "text": "Writing a join against the events table on user_id.",
+      "gold": [
+        "a91c02ed-7910-57c0-965c-d2fe04a32e44"
+      ],
+      "gold_keys": [
+        "c1-user-id-snake"
+      ],
+      "hard_neg": [
+        "4fa967f0-a1d7-52b2-824a-d1762fe18a96"
+      ],
+      "hard_neg_keys": [
+        "c1-user-id-camel"
+      ]
+    },
+    {
+      "qid": "q-c1-12",
+      "cat": "near_miss",
+      "text": "Adding a new public endpoint that returns userId in the payload.",
+      "gold": [
+        "4fa967f0-a1d7-52b2-824a-d1762fe18a96"
+      ],
+      "gold_keys": [
+        "c1-user-id-camel"
+      ],
+      "hard_neg": [
+        "a91c02ed-7910-57c0-965c-d2fe04a32e44"
+      ],
+      "hard_neg_keys": [
+        "c1-user-id-snake"
+      ]
+    },
+    {
+      "qid": "q-c1-13",
+      "cat": "near_miss",
+      "text": "Thinking of adding --no-cache to force our dependencies to refresh in the image build.",
+      "gold": [
+        "67fe63e4-944f-5dbf-b7c3-c13f35efd725"
+      ],
+      "gold_keys": [
+        "c1-no-cache"
+      ],
+      "hard_neg": [
+        "c6754c5f-7ce2-5513-ae48-071d7c30a85a"
+      ],
+      "hard_neg_keys": [
+        "c1-no-cache-dir"
+      ]
+    },
+    {
+      "qid": "q-c1-14",
+      "cat": "near_miss",
+      "text": "Reviewing our container install step, should --no-cache-dir be there?",
+      "gold": [
+        "c6754c5f-7ce2-5513-ae48-071d7c30a85a"
+      ],
+      "gold_keys": [
+        "c1-no-cache-dir"
+      ],
+      "hard_neg": [
+        "67fe63e4-944f-5dbf-b7c3-c13f35efd725"
+      ],
+      "hard_neg_keys": [
+        "c1-no-cache"
+      ]
+    },
+    {
+      "qid": "q-c1-15",
+      "cat": "near_miss",
+      "text": "I need to run a cleanup job in staging to clear out old artefacts.",
+      "gold": [
+        "f14729c9-5a1e-5f79-b458-f9ffd2ebb1eb"
+      ],
+      "gold_keys": [
+        "c1-staging"
+      ],
+      "hard_neg": [
+        "bc529e1c-3d2e-549f-954d-2f7be7054b37"
+      ],
+      "hard_neg_keys": [
+        "c1-staging-2"
+      ]
+    },
+    {
+      "qid": "q-c1-16",
+      "cat": "near_miss",
+      "text": "Planning to do the destructive migration rehearsal in staging-2 this afternoon.",
+      "gold": [
+        "bc529e1c-3d2e-549f-954d-2f7be7054b37"
+      ],
+      "gold_keys": [
+        "c1-staging-2"
+      ],
+      "hard_neg": [
+        "f14729c9-5a1e-5f79-b458-f9ffd2ebb1eb"
+      ],
+      "hard_neg_keys": [
+        "c1-staging"
+      ]
+    },
+    {
+      "qid": "q-c1-17",
+      "cat": "near_miss",
+      "text": "Setting retry_backoff in the queue config, want to give it half a second.",
+      "gold": [
+        "23b7214b-6d8f-5df1-992f-28c9b95b30bb"
+      ],
+      "gold_keys": [
+        "c1-retry-backoff"
+      ],
+      "hard_neg": [
+        "06c12807-8a8c-5272-86ed-87cc00cd6194"
+      ],
+      "hard_neg_keys": [
+        "c1-retry-backoff-ms"
+      ]
+    },
+    {
+      "qid": "q-c1-18",
+      "cat": "near_miss",
+      "text": "The backoff I set in retry_backoff_ms doesn't seem to be taking effect.",
+      "gold": [
+        "06c12807-8a8c-5272-86ed-87cc00cd6194"
+      ],
+      "gold_keys": [
+        "c1-retry-backoff-ms"
+      ],
+      "hard_neg": [
+        "23b7214b-6d8f-5df1-992f-28c9b95b30bb"
+      ],
+      "hard_neg_keys": [
+        "c1-retry-backoff"
+      ]
+    },
+    {
+      "qid": "q-c1-19",
+      "cat": "near_miss",
+      "text": "Using parse_date on the incoming records, is that the right call?",
+      "gold": [
+        "0cf6421f-4780-5431-a3e1-62ff18486f9b"
+      ],
+      "gold_keys": [
+        "c1-parse-date"
+      ],
+      "hard_neg": [
+        "6883ad5e-78b9-5de5-8a5e-c0d2f09e928e"
+      ],
+      "hard_neg_keys": [
+        "c1-parse-datetime"
+      ]
+    },
+    {
+      "qid": "q-c1-20",
+      "cat": "near_miss",
+      "text": "The CSV importer goes through parse_datetime and the timestamps look off by hours.",
+      "gold": [
+        "6883ad5e-78b9-5de5-8a5e-c0d2f09e928e"
+      ],
+      "gold_keys": [
+        "c1-parse-datetime"
+      ],
+      "hard_neg": [
+        "0cf6421f-4780-5431-a3e1-62ff18486f9b"
+      ],
+      "hard_neg_keys": [
+        "c1-parse-date"
+      ]
+    },
+    {
+      "qid": "q-c1-21",
+      "cat": "near_miss",
+      "text": "I want to move org.example.core.Config into a different package as part of the tidy-up.",
+      "gold": [
+        "bd21b281-b22b-541f-92d7-1c4b51f8783c"
+      ],
+      "gold_keys": [
+        "c1-dotted-a"
+      ],
+      "hard_neg": [
+        "57a5b178-35a1-5053-a7cc-24ac631bf880"
+      ],
+      "hard_neg_keys": [
+        "c1-dotted-b"
+      ]
+    },
+    {
+      "qid": "q-c1-22",
+      "cat": "near_miss",
+      "text": "Startup got slower after we wired in org.example.config.Core.",
+      "gold": [
+        "57a5b178-35a1-5053-a7cc-24ac631bf880"
+      ],
+      "gold_keys": [
+        "c1-dotted-b"
+      ],
+      "hard_neg": [
+        "bd21b281-b22b-541f-92d7-1c4b51f8783c"
+      ],
+      "hard_neg_keys": [
+        "c1-dotted-a"
+      ]
+    },
+    {
+      "qid": "q-c1-23",
+      "cat": "near_miss",
+      "text": "Reviewing how we build DATABASE_URL for the managed instance.",
+      "gold": [
+        "33deec31-689c-58b0-9a1e-b60ff5c11044"
+      ],
+      "gold_keys": [
+        "c1-db-url"
+      ],
+      "hard_neg": [
+        "72d94e3f-a001-5d51-9908-25709c379c4b"
+      ],
+      "hard_neg_keys": [
+        "c1-db-url-ro"
+      ]
+    },
+    {
+      "qid": "q-c1-24",
+      "cat": "near_miss",
+      "text": "A test that reads through DATABASE_URL_RO right after writing is flaking.",
+      "gold": [
+        "72d94e3f-a001-5d51-9908-25709c379c4b"
+      ],
+      "gold_keys": [
+        "c1-db-url-ro"
+      ],
+      "hard_neg": [
+        "33deec31-689c-58b0-9a1e-b60ff5c11044"
+      ],
+      "hard_neg_keys": [
+        "c1-db-url"
+      ]
+    },
+    {
+      "qid": "q-c1-25",
+      "cat": "near_miss",
+      "text": "Can we raise the gateway timeout past 30 seconds for the report endpoint?",
+      "gold": [
+        "ff536f07-ac75-5222-8522-6c4c1e5d8aa4"
+      ],
+      "gold_keys": [
+        "c1-timeout-30"
+      ],
+      "hard_neg": [
+        "70c923f8-29d2-58e8-bb0c-816b0bc89a32"
+      ],
+      "hard_neg_keys": [
+        "c1-timeout-300"
+      ]
+    },
+    {
+      "qid": "q-c1-26",
+      "cat": "near_miss",
+      "text": "Batch worker runs are getting killed around 300 seconds and leaving junk behind.",
+      "gold": [
+        "70c923f8-29d2-58e8-bb0c-816b0bc89a32"
+      ],
+      "gold_keys": [
+        "c1-timeout-300"
+      ],
+      "hard_neg": [
+        "ff536f07-ac75-5222-8522-6c4c1e5d8aa4"
+      ],
+      "hard_neg_keys": [
+        "c1-timeout-30"
+      ]
+    },
+    {
+      "qid": "q-c1-27",
+      "cat": "near_miss",
+      "text": "Scheduling migration 0042 for this week, what's involved?",
+      "gold": [
+        "409d5723-f0c5-5c40-8659-9cfdce7fc8e3"
+      ],
+      "gold_keys": [
+        "c1-mig-0042"
+      ],
+      "hard_neg": [
+        "e53c112a-e5f5-5ba8-85c0-31c43155e3bc"
+      ],
+      "hard_neg_keys": [
+        "c1-mig-0042-1"
+      ]
+    },
+    {
+      "qid": "q-c1-28",
+      "cat": "near_miss",
+      "text": "Just need to get migration 0042_1 applied, it's only an index.",
+      "gold": [
+        "e53c112a-e5f5-5ba8-85c0-31c43155e3bc"
+      ],
+      "gold_keys": [
+        "c1-mig-0042-1"
+      ],
+      "hard_neg": [
+        "409d5723-f0c5-5c40-8659-9cfdce7fc8e3"
+      ],
+      "hard_neg_keys": [
+        "c1-mig-0042"
+      ]
+    },
+    {
+      "qid": "q-c2-01",
+      "cat": "paraphrase_only",
+      "text": "Some of our timing-sensitive checks keep going red and then passing on a rerun. What have we found out about that?",
+      "gold": [
+        "45624646-6a13-5860-97d1-1825078f31c4"
+      ],
+      "gold_keys": [
+        "c2-flaky-clock"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-02",
+      "cat": "paraphrase_only",
+      "text": "One of the background processes seems to hang completely every so often and then recovers on its own.",
+      "gold": [
+        "abe3690c-2110-53ec-a2b3-02c6d8cfbb2a"
+      ],
+      "gold_keys": [
+        "c2-lock-order"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-03",
+      "cat": "paraphrase_only",
+      "text": "Our releases keep getting rolled back even though the new version works fine when I try it by hand.",
+      "gold": [
+        "ca6ed3b1-a03b-5eaa-be7d-7e9ef39089c8"
+      ],
+      "gold_keys": [
+        "c2-cold-start"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-04",
+      "cat": "paraphrase_only",
+      "text": "Customers with accented characters in their filenames say their documents disappear after upload.",
+      "gold": [
+        "e8342893-e1e0-5cee-b0b2-d1f0f6942f23"
+      ],
+      "gold_keys": [
+        "c2-utf8-names"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-05",
+      "cat": "paraphrase_only",
+      "text": "A user in another country says numbers on their summary page don't line up with what they entered.",
+      "gold": [
+        "c611011a-5c44-5358-ac64-c81a618e5303"
+      ],
+      "gold_keys": [
+        "c2-tz-report"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-06",
+      "cat": "paraphrase_only",
+      "text": "Finance says the totals in the overnight rollup are lower than what they can count by hand.",
+      "gold": [
+        "9aae91d4-6997-566b-91d2-3df148e73329"
+      ],
+      "gold_keys": [
+        "c2-orphan-rows"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-07",
+      "cat": "paraphrase_only",
+      "text": "One of our services slowly eats RAM until it gets killed, roughly every three days.",
+      "gold": [
+        "1320a4f3-685d-5c47-b7fc-2018cb7b9c26"
+      ],
+      "gold_keys": [
+        "c2-memory-growth"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-08",
+      "cat": "paraphrase_only",
+      "text": "A downstream team got a file from us that looked fine but only had half the records in it.",
+      "gold": [
+        "eed7af95-2e09-5ed7-95ca-7b5f6154f80b"
+      ],
+      "gold_keys": [
+        "c2-partial-write"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-09",
+      "cat": "paraphrase_only",
+      "text": "We doubled the number of workers and it didn't get any faster, the backlog chart actually looks worse.",
+      "gold": [
+        "600c3fa6-f8a2-572c-b121-d42e3864c4ba"
+      ],
+      "gold_keys": [
+        "c2-dup-consumer"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c2-10",
+      "cat": "paraphrase_only",
+      "text": "Calls to the third party succeed on my machine but not once deployed. I assumed firewall but nothing is blocked.",
+      "gold": [
+        "87a46707-cc77-53b7-8875-d9bbabb712b6"
+      ],
+      "gold_keys": [
+        "c2-cert-chain"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-01",
+      "cat": "error_string",
+      "text": "TypeError: Descriptors cannot not be created directly",
+      "gold": [
+        "921edc6f-c4a0-5369-9473-2155e78373fa"
+      ],
+      "gold_keys": [
+        "c3-protobuf-desc"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-02",
+      "cat": "error_string",
+      "text": "The build just died with: process exited with code 137",
+      "gold": [
+        "c13e9a71-bc22-585e-9979-d117feb50831"
+      ],
+      "gold_keys": [
+        "c3-oom-137"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-03",
+      "cat": "error_string",
+      "text": "SSLCertVerificationError: certificate verify failed: unable to get local issuer certificate",
+      "gold": [
+        "4a7eec7e-7cdc-55b5-9919-bbe0c5a5e45b"
+      ],
+      "gold_keys": [
+        "c3-ssl-verify"
+      ],
+      "hard_neg": [
+        "87a46707-cc77-53b7-8875-d9bbabb712b6"
+      ],
+      "hard_neg_keys": [
+        "c2-cert-chain"
+      ]
+    },
+    {
+      "qid": "q-c3-04",
+      "cat": "error_string",
+      "text": "sqlite3.OperationalError: database is locked",
+      "gold": [
+        "124162c3-05f9-507a-815a-7079f5e2ba01"
+      ],
+      "gold_keys": [
+        "c3-locked-db"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-05",
+      "cat": "error_string",
+      "text": "OSError: [Errno 98] Address already in use",
+      "gold": [
+        "2486aba2-5d74-5288-ba44-d8361c932a5b"
+      ],
+      "gold_keys": [
+        "c3-address-in-use"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-06",
+      "cat": "error_string",
+      "text": "symbol lookup error: undefined symbol",
+      "gold": [
+        "812f091a-1a63-5073-8791-3df62a55c9d1"
+      ],
+      "gold_keys": [
+        "c3-symbol-lookup"
+      ],
+      "hard_neg": [
+        "f99d497a-c137-5ae6-b5e6-85002ca236fb"
+      ],
+      "hard_neg_keys": [
+        "c1-ver-2-3-1"
+      ]
+    },
+    {
+      "qid": "q-c3-07",
+      "cat": "error_string",
+      "text": "json.decoder.JSONDecodeError: Extra data: line 2 column 1 (char 118)",
+      "gold": [
+        "7c502d93-58c4-50bc-9fa2-cff073f4e877"
+      ],
+      "gold_keys": [
+        "c3-json-extra-data"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-08",
+      "cat": "error_string",
+      "text": "ConnectionResetError: [Errno 104] Connection reset by peer",
+      "gold": [
+        "22780904-682d-5049-ad31-4b32925ad051"
+      ],
+      "gold_keys": [
+        "c3-conn-reset"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-09",
+      "cat": "error_string",
+      "text": "service won't boot: while constructing a mapping, found duplicate key",
+      "gold": [
+        "253b390d-26de-5c5b-939b-5f95c1819d04"
+      ],
+      "gold_keys": [
+        "c3-yaml-dup-key"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c3-10",
+      "cat": "error_string",
+      "text": "OSError: [Errno 24] Too many open files",
+      "gold": [
+        "31ce56c9-ddd2-59a1-a771-3044ca19f34d"
+      ],
+      "gold_keys": [
+        "c3-too-many-files"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c4-01",
+      "cat": "polarity",
+      "text": "I'd like to switch the exporter over to the streaming API. We're on 4.3. Any reason not to?",
+      "gold": [
+        "022d8989-2a28-56ba-b355-5cac5326a526"
+      ],
+      "gold_keys": [
+        "c4-streamapi-new"
+      ],
+      "hard_neg": [
+        "c0d14302-8944-57e2-98d8-c2f22bc9a45d"
+      ],
+      "hard_neg_keys": [
+        "c4-streamapi-old"
+      ]
+    },
+    {
+      "qid": "q-c4-02",
+      "cat": "polarity",
+      "text": "Can I run the tests in parallel to speed up my loop, or is that going to bite me?",
+      "gold": [
+        "32deb0ad-ca02-518f-bf47-5cda38e29c1e"
+      ],
+      "gold_keys": [
+        "c4-parallel-new"
+      ],
+      "hard_neg": [
+        "faf0c6eb-369c-5ec9-b10e-27338e467f3d"
+      ],
+      "hard_neg_keys": [
+        "c4-parallel-old"
+      ]
+    },
+    {
+      "qid": "q-c4-03",
+      "cat": "polarity",
+      "text": "Adding a cache read to the request handler using the shared client. We're on the 3.x client.",
+      "gold": [
+        "c9023f90-63d9-5322-ab40-5ffd5fb58fa3"
+      ],
+      "gold_keys": [
+        "c4-cache-new"
+      ],
+      "hard_neg": [
+        "858d9157-80f1-504f-ac99-c5b8eb3e0d94"
+      ],
+      "hard_neg_keys": [
+        "c4-cache-old"
+      ]
+    },
+    {
+      "qid": "q-c4-04",
+      "cat": "polarity",
+      "text": "Looking at moving our image builds onto the arm runners to save money.",
+      "gold": [
+        "930d2ee5-af52-50ba-8532-38ad625879db"
+      ],
+      "gold_keys": [
+        "c4-arm-new"
+      ],
+      "hard_neg": [
+        "3f659196-d5f0-5a3f-8d46-368ce01e637c"
+      ],
+      "hard_neg_keys": [
+        "c4-arm-old"
+      ]
+    },
+    {
+      "qid": "q-c4-05",
+      "cat": "polarity",
+      "text": "I want to drop a field that's been deprecated for a few releases from the event payload.",
+      "gold": [
+        "b6b15fa4-ced6-5bae-85f2-844b7571287a"
+      ],
+      "gold_keys": [
+        "c4-schemareg-new"
+      ],
+      "hard_neg": [
+        "7a634cdf-cbd7-51b8-8982-afd203298507"
+      ],
+      "hard_neg_keys": [
+        "c4-schemareg-old"
+      ]
+    },
+    {
+      "qid": "q-c4-06",
+      "cat": "polarity",
+      "text": "We're stuck on 4.1 for now. Is the streaming API safe for us to use there?",
+      "gold": [
+        "c0d14302-8944-57e2-98d8-c2f22bc9a45d"
+      ],
+      "gold_keys": [
+        "c4-streamapi-old"
+      ],
+      "hard_neg": [
+        "022d8989-2a28-56ba-b355-5cac5326a526"
+      ],
+      "hard_neg_keys": [
+        "c4-streamapi-new"
+      ]
+    },
+    {
+      "qid": "q-c4-07",
+      "cat": "polarity",
+      "text": "Why did the arm build effort get abandoned last time round? What blocked it?",
+      "gold": [
+        "3f659196-d5f0-5a3f-8d46-368ce01e637c"
+      ],
+      "gold_keys": [
+        "c4-arm-old"
+      ],
+      "hard_neg": [
+        "930d2ee5-af52-50ba-8532-38ad625879db"
+      ],
+      "hard_neg_keys": [
+        "c4-arm-new"
+      ]
+    },
+    {
+      "qid": "q-c4-08",
+      "cat": "polarity",
+      "text": "This service is still on the 2.x cache client. Is it OK to call it from the handler?",
+      "gold": [
+        "858d9157-80f1-504f-ac99-c5b8eb3e0d94"
+      ],
+      "gold_keys": [
+        "c4-cache-old"
+      ],
+      "hard_neg": [
+        "c9023f90-63d9-5322-ab40-5ffd5fb58fa3"
+      ],
+      "hard_neg_keys": [
+        "c4-cache-new"
+      ]
+    },
+    {
+      "qid": "q-c4-09",
+      "cat": "polarity",
+      "text": "What was the original reason we told people to run the suite serially?",
+      "gold": [
+        "faf0c6eb-369c-5ec9-b10e-27338e467f3d"
+      ],
+      "gold_keys": [
+        "c4-parallel-old"
+      ],
+      "hard_neg": [
+        "32deb0ad-ca02-518f-bf47-5cda38e29c1e"
+      ],
+      "hard_neg_keys": [
+        "c4-parallel-new"
+      ]
+    },
+    {
+      "qid": "q-c4-10",
+      "cat": "polarity",
+      "text": "Is there any way at all to shrink the event payload, or are we stuck with every field forever?",
+      "gold": [
+        "b6b15fa4-ced6-5bae-85f2-844b7571287a"
+      ],
+      "gold_keys": [
+        "c4-schemareg-new"
+      ],
+      "hard_neg": [
+        "7a634cdf-cbd7-51b8-8982-afd203298507"
+      ],
+      "hard_neg_keys": [
+        "c4-schemareg-old"
+      ]
+    },
+    {
+      "qid": "q-c5-01",
+      "cat": "over_length",
+      "text": "Setting connect_timeout_ms per call doesn't seem to do anything. What's going on?",
+      "gold": [
+        "84f8b1d5-d255-5aef-917a-10f450c8d4aa"
+      ],
+      "gold_keys": [
+        "c5-merge-precedence"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c5-02",
+      "cat": "over_length",
+      "text": "Why won't the planner pick up the composite index when I filter by tenant?",
+      "gold": [
+        "a777c06b-4846-5d97-b050-564c1ca78dd2"
+      ],
+      "gold_keys": [
+        "c5-late-index-hint"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c5-03",
+      "cat": "over_length",
+      "text": "Where does the batch job actually get its credentials from in deployment?",
+      "gold": [
+        "2a35dd8a-7fc8-506c-bccd-9d4bcae0376e"
+      ],
+      "gold_keys": [
+        "c5-late-cred-path"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c5-04",
+      "cat": "over_length",
+      "text": "An upload failed on the very first attempt with no retry at all. How is that possible?",
+      "gold": [
+        "f532bd30-e6a0-5a89-ae06-6da51fed5561"
+      ],
+      "gold_keys": [
+        "c5-late-retry-budget"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c5-05",
+      "cat": "over_length",
+      "text": "I changed a template and people are still seeing the old rendering. How do I flush it?",
+      "gold": [
+        "22d93b18-0741-53bf-aeca-eef70a2022a2"
+      ],
+      "gold_keys": [
+        "c5-late-cache-key"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    },
+    {
+      "qid": "q-c5-06",
+      "cat": "over_length",
+      "text": "Signature checks fail intermittently on the on-prem runners only.",
+      "gold": [
+        "6194f53e-6b14-5c2a-89fa-5927e0e33edd"
+      ],
+      "gold_keys": [
+        "c5-late-clock-skew"
+      ],
+      "hard_neg": [],
+      "hard_neg_keys": []
+    }
+  ]
+}

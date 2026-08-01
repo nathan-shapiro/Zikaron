@@ -1,0 +1,86 @@
+{
+  "generated_utc": "2026-08-01T02:48:19Z",
+  "model": "BAAI/bge-reranker-base",
+  "cpu_count": 12,
+  "reps": 7,
+  "budget_p95_ms": 200,
+  "query": "the cache warmer path keeps returning stale objects after a write",
+  "results": {
+    "gist_content|5": {
+      "mode": "gist_content",
+      "n_pairs": 5,
+      "mean_passage_chars": 484.3,
+      "p50_ms": 502.5,
+      "p95_ms": 509.4,
+      "ms_per_pair": 100.5,
+      "within_200ms_budget": false
+    },
+    "gist_content|10": {
+      "mode": "gist_content",
+      "n_pairs": 10,
+      "mean_passage_chars": 484.3,
+      "p50_ms": 1057.5,
+      "p95_ms": 1153.7,
+      "ms_per_pair": 105.8,
+      "within_200ms_budget": false
+    },
+    "gist_content|25": {
+      "mode": "gist_content",
+      "n_pairs": 25,
+      "mean_passage_chars": 484.3,
+      "p50_ms": 3057.9,
+      "p95_ms": 3368.4,
+      "ms_per_pair": 122.3,
+      "within_200ms_budget": false
+    },
+    "gist_content|50": {
+      "mode": "gist_content",
+      "n_pairs": 50,
+      "mean_passage_chars": 484.3,
+      "p50_ms": 6591.5,
+      "p95_ms": 6746.7,
+      "ms_per_pair": 131.8,
+      "within_200ms_budget": false
+    },
+    "gist_only|5": {
+      "mode": "gist_only",
+      "n_pairs": 5,
+      "mean_passage_chars": 123.1,
+      "p50_ms": 183.6,
+      "p95_ms": 184.4,
+      "ms_per_pair": 36.7,
+      "within_200ms_budget": true
+    },
+    "gist_only|10": {
+      "mode": "gist_only",
+      "n_pairs": 10,
+      "mean_passage_chars": 123.1,
+      "p50_ms": 370.4,
+      "p95_ms": 373.1,
+      "ms_per_pair": 37.0,
+      "within_200ms_budget": false
+    },
+    "gist_only|25": {
+      "mode": "gist_only",
+      "n_pairs": 25,
+      "mean_passage_chars": 123.1,
+      "p50_ms": 888.3,
+      "p95_ms": 989.3,
+      "ms_per_pair": 35.5,
+      "within_200ms_budget": false
+    },
+    "gist_only|50": {
+      "mode": "gist_only",
+      "n_pairs": 50,
+      "mean_passage_chars": 123.1,
+      "p50_ms": 1907.9,
+      "p95_ms": 2181.0,
+      "ms_per_pair": 38.2,
+      "within_200ms_budget": false
+    }
+  },
+  "operating_points_within_budget": [
+    "gist_only|5"
+  ],
+  "conclusion_scope": "Measured for BAAI/bge-reranker-base on this CPU only. Operating points within the predeclared 200 ms p95 push-path budget: gist_only|5. Nothing here measures a smaller reranker, a GPU, chunked passages, or the pull path, where a multi-second cost may well be acceptable."
+}

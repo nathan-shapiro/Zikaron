@@ -1,0 +1,155 @@
+{
+  "host": {
+    "python": "3.12.3",
+    "cpu_count": 12
+  },
+  "query": "Working on constructing WidgetV2 from our old dict payloads this morning.",
+  "reps": 60,
+  "cold_reps": 4,
+  "models": {
+    "bge-small": {
+      "model": "BAAI/bge-small-en-v1.5",
+      "query_prefix": "",
+      "warm_embed_ms": {
+        "p50": 5.45,
+        "p95": 6.17,
+        "p99": 6.67,
+        "mean": 5.57,
+        "min": 5.38
+      },
+      "warm_e2e_rrf_ms": {
+        "p50": 7.97,
+        "p95": 9.13,
+        "mean": 8.3
+      },
+      "cold_process_ms": {
+        "mean": 782.6,
+        "min": 755.2,
+        "max": 800.4,
+        "runs": [
+          755.2,
+          788.2,
+          786.6,
+          800.4
+        ]
+      },
+      "disk": {
+        "mb": 67.2,
+        "path": "/tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q",
+        "note": "measured with du -sb; earlier automatic matcher over-matched"
+      }
+    },
+    "bge-small-prefix": {
+      "model": "BAAI/bge-small-en-v1.5",
+      "query_prefix": "Represent this sentence for searching relevant passages: ",
+      "warm_embed_ms": {
+        "p50": 6.64,
+        "p95": 7.62,
+        "p99": 7.96,
+        "mean": 6.79,
+        "min": 6.55
+      },
+      "warm_e2e_rrf_ms": {
+        "p50": 9.14,
+        "p95": 10.13,
+        "mean": 9.32
+      },
+      "cold_process_ms": {
+        "mean": 777.6,
+        "min": 762.8,
+        "max": 791.4,
+        "runs": [
+          762.8,
+          782.1,
+          791.4,
+          774.2
+        ]
+      },
+      "disk": {
+        "mb": 67.2,
+        "path": "/tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q",
+        "note": "measured with du -sb; earlier automatic matcher over-matched"
+      }
+    },
+    "bge-large-prefix": {
+      "model": "BAAI/bge-large-en-v1.5",
+      "query_prefix": "Represent this sentence for searching relevant passages: ",
+      "warm_embed_ms": {
+        "p50": 72.41,
+        "p95": 74.4,
+        "p99": 75.09,
+        "mean": 72.62,
+        "min": 70.2
+      },
+      "warm_e2e_rrf_ms": {
+        "p50": 77.93,
+        "p95": 79.48,
+        "mean": 77.94
+      },
+      "cold_process_ms": {
+        "mean": 3197.8,
+        "min": 3180.2,
+        "max": 3219.9,
+        "runs": [
+          3219.9,
+          3210.1,
+          3180.9,
+          3180.2
+        ]
+      },
+      "disk": {
+        "mb": 1337.6,
+        "path": "/tmp/fastembed_cache/models--qdrant--bge-large-en-v1.5-onnx",
+        "note": "measured with du -sb; earlier automatic matcher over-matched"
+      }
+    },
+    "nomic": {
+      "model": "nomic-ai/nomic-embed-text-v1.5",
+      "query_prefix": "search_query: ",
+      "warm_embed_ms": {
+        "p50": 27.01,
+        "p95": 29.0,
+        "p99": 29.6,
+        "mean": 27.17,
+        "min": 26.04
+      },
+      "warm_e2e_rrf_ms": {
+        "p50": 31.18,
+        "p95": 32.84,
+        "mean": 31.82
+      },
+      "cold_process_ms": {
+        "mean": 1715.6,
+        "min": 1677.6,
+        "max": 1742.5,
+        "runs": [
+          1740.6,
+          1677.6,
+          1701.6,
+          1742.5
+        ]
+      },
+      "disk": {
+        "mb": 548.0,
+        "path": "/tmp/fastembed_cache/models--nomic-ai--nomic-embed-text-v1.5",
+        "note": "measured with du -sb; earlier automatic matcher over-matched"
+      }
+    }
+  },
+  "bm25_only_ms": {
+    "p50": 0.259,
+    "p95": 0.327
+  },
+  "cold_interpreter_plus_sqlitevec_ms": 149.4,
+  "reranker_bge_reranker_base": {
+    "pairs": 50,
+    "p50": 6069.3,
+    "p95": 6080.8,
+    "mean": 6056.5,
+    "n": 10,
+    "disk_mb": 1129.6,
+    "disk_path": "/tmp/fastembed_cache/models--BAAI--bge-reranker-base"
+  },
+  "fastembed_cache_total_mb": 3082.3,
+  "disk_free_gb": 1705.6
+}

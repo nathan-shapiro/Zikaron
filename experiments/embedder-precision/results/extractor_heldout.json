@@ -1,0 +1,1192 @@
+{
+  "frozen_sha256": "836dbd85ab63ea578eeacd1c0eb2ab9a6205aaf2769258157880dedd76b5b35f",
+  "frozen_matches_preregistration": true,
+  "n_cases": 52,
+  "n_classes": 8,
+  "summary": {
+    "expected_tokens": 43,
+    "extracted_expected": 18,
+    "recall": 0.4186,
+    "precision_lenient": 0.5362,
+    "precision_strict": 0.36,
+    "false_positives": 32,
+    "accepted_extra": 19,
+    "prose_plain_cases_with_fp": "0/7",
+    "prose_num_cases_with_fp": "6/7",
+    "collision_pairs": 12,
+    "collisions": 2,
+    "collision_pairs_with_an_empty_side": 2
+  },
+  "per_class": {
+    "url": {
+      "n": 7,
+      "expected": 6,
+      "found": 5,
+      "fp": 9,
+      "ok_extra": 7,
+      "parts": 51,
+      "cases_with_fp": 7,
+      "fp_examples": [
+        "github.com/qdrant/fastembed/issues/412",
+        "pypi.org/project/sqlite-vec/0.1.9",
+        "staging.internal.example.net",
+        "v2/health",
+        "settings/tokens",
+        "raw.githubusercontent.com/org/repo/main/conf/app.yaml",
+        "hooks.example.com/services/t024/b01/xyz9",
+        "xyz9"
+      ],
+      "recall": 0.8333,
+      "fp_per_case": 1.29,
+      "parts_per_case": 7.3
+    },
+    "winpath": {
+      "n": 6,
+      "expected": 5,
+      "found": 3,
+      "fp": 2,
+      "ok_extra": 3,
+      "parts": 19,
+      "cases_with_fp": 2,
+      "fp_examples": [
+        "bundle.crt",
+        "user_prompt_submit"
+      ],
+      "recall": 0.6,
+      "fp_per_case": 0.33,
+      "parts_per_case": 3.2
+    },
+    "npm": {
+      "n": 6,
+      "expected": 8,
+      "found": 1,
+      "fp": 2,
+      "ok_extra": 5,
+      "parts": 10,
+      "cases_with_fp": 1,
+      "fp_examples": [
+        "11",
+        "20"
+      ],
+      "recall": 0.125,
+      "fp_per_case": 0.33,
+      "parts_per_case": 1.7
+    },
+    "githash": {
+      "n": 6,
+      "expected": 8,
+      "found": 1,
+      "fp": 2,
+      "ok_extra": 0,
+      "parts": 6,
+      "cases_with_fp": 2,
+      "fp_examples": [
+        "2.7",
+        "v0.4.0"
+      ],
+      "recall": 0.125,
+      "fp_per_case": 0.33,
+      "parts_per_case": 1.0
+    },
+    "mixed": {
+      "n": 6,
+      "expected": 5,
+      "found": 4,
+      "fp": 0,
+      "ok_extra": 0,
+      "parts": 9,
+      "cases_with_fp": 0,
+      "fp_examples": [],
+      "recall": 0.8,
+      "fp_per_case": 0.0,
+      "parts_per_case": 1.5
+    },
+    "prose_num": {
+      "n": 7,
+      "expected": 0,
+      "found": 0,
+      "fp": 10,
+      "ok_extra": 1,
+      "parts": 11,
+      "cases_with_fp": 6,
+      "fp_examples": [
+        "200",
+        "30",
+        "15",
+        "12",
+        "47",
+        "1000",
+        "998",
+        "90"
+      ],
+      "recall": null,
+      "fp_per_case": 1.43,
+      "parts_per_case": 1.6
+    },
+    "shell": {
+      "n": 7,
+      "expected": 11,
+      "found": 4,
+      "fp": 7,
+      "ok_extra": 3,
+      "parts": 26,
+      "cases_with_fp": 5,
+      "fp_examples": [
+        "omit",
+        "rm",
+        "20",
+        "no-build-isolation",
+        "dev/null",
+        "api.example.com/v1/ping",
+        "ssf"
+      ],
+      "recall": 0.3636,
+      "fp_per_case": 1.0,
+      "parts_per_case": 3.7
+    },
+    "prose_plain": {
+      "n": 7,
+      "expected": 0,
+      "found": 0,
+      "fp": 0,
+      "ok_extra": 0,
+      "parts": 0,
+      "cases_with_fp": 0,
+      "fp_examples": [],
+      "recall": null,
+      "fp_per_case": 0.0,
+      "parts_per_case": 0.0
+    }
+  },
+  "collisions": [
+    {
+      "a": "setup.cfg",
+      "b": "setup_cfg.py",
+      "whole_a": [
+        "setup.cfg"
+      ],
+      "whole_b": [
+        "setup_cfg",
+        "setup_cfg.py"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "@types/node",
+      "b": "@types/nodemailer",
+      "whole_a": [
+        "node"
+      ],
+      "whole_b": [
+        "nodemailer"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "v1.10.0",
+      "b": "v1.1.0",
+      "whole_a": [
+        "10",
+        "v1.10.0"
+      ],
+      "whole_b": [
+        "v1.1.0"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "MAX_RETRIES",
+      "b": "MAX_RETRIES_TOTAL",
+      "whole_a": [
+        "max_retries"
+      ],
+      "whole_b": [
+        "max_retries_total"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "get_user",
+      "b": "get_users",
+      "whole_a": [
+        "get_user"
+      ],
+      "whole_b": [
+        "get_users"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "PayloadV10",
+      "b": "PayloadV1",
+      "whole_a": [
+        "payloadv10"
+      ],
+      "whole_b": [
+        "payloadv1"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "--dry-run",
+      "b": "--dry-run-only",
+      "whole_a": [
+        "dry-run"
+      ],
+      "whole_b": [
+        "dry-run-only"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "release/2.7",
+      "b": "release/2.70",
+      "whole_a": [
+        "2.7"
+      ],
+      "whole_b": [
+        "2.70",
+        "70"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "app.kubernetes.io",
+      "b": "app-kubernetes.io",
+      "whole_a": [
+        "app.kubernetes.io"
+      ],
+      "whole_b": [
+        "kubernetes.io"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "0042_add_index",
+      "b": "0042_add_indexes",
+      "whole_a": [],
+      "whole_b": [],
+      "distinct": false,
+      "a_empty": true,
+      "b_empty": true
+    },
+    {
+      "a": "Directory.Build.props",
+      "b": "Directory.Build.targets",
+      "whole_a": [
+        "directory.build.props"
+      ],
+      "whole_b": [
+        "directory.build.targets"
+      ],
+      "distinct": true,
+      "a_empty": false,
+      "b_empty": false
+    },
+    {
+      "a": "client-s3",
+      "b": "client-sts",
+      "whole_a": [],
+      "whole_b": [],
+      "distinct": false,
+      "a_empty": true,
+      "b_empty": true
+    }
+  ],
+  "cases": [
+    {
+      "cls": "url",
+      "text": "the fix is documented at https://github.com/qdrant/fastembed/issues/412",
+      "expected": [
+        "github.com"
+      ],
+      "got": [
+        "github.com/qdrant/fastembed/issues/412",
+        "github.com",
+        "412"
+      ],
+      "true_positive": [
+        "github.com"
+      ],
+      "missed": [],
+      "false_positive": [
+        "github.com/qdrant/fastembed/issues/412"
+      ],
+      "accepted_extra": [
+        "412"
+      ]
+    },
+    {
+      "cls": "url",
+      "text": "pull the wheel from https://pypi.org/project/sqlite-vec/0.1.9/",
+      "expected": [
+        "sqlite-vec"
+      ],
+      "got": [
+        "pypi.org/project/sqlite-vec/0.1.9",
+        "pypi.org",
+        "0.1.9"
+      ],
+      "true_positive": [],
+      "missed": [
+        "sqlite-vec"
+      ],
+      "false_positive": [
+        "pypi.org/project/sqlite-vec/0.1.9"
+      ],
+      "accepted_extra": [
+        "0.1.9",
+        "pypi.org"
+      ]
+    },
+    {
+      "cls": "url",
+      "text": "our staging host is https://api-staging.internal.example.net:8443/v2/health",
+      "expected": [
+        "api-staging.internal.example.net"
+      ],
+      "got": [
+        "api-staging.internal.example.net",
+        "v2/health",
+        "staging.internal.example.net",
+        "8443"
+      ],
+      "true_positive": [
+        "api-staging.internal.example.net"
+      ],
+      "missed": [],
+      "false_positive": [
+        "staging.internal.example.net",
+        "v2/health"
+      ],
+      "accepted_extra": [
+        "8443"
+      ]
+    },
+    {
+      "cls": "url",
+      "text": "see http://localhost:5173/#/settings/tokens for the dev console",
+      "expected": [],
+      "got": [
+        "localhost",
+        "settings/tokens",
+        "5173"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "settings/tokens"
+      ],
+      "accepted_extra": [
+        "5173",
+        "localhost"
+      ]
+    },
+    {
+      "cls": "url",
+      "text": "the raw file lives at https://raw.githubusercontent.com/org/repo/main/conf/app.yaml",
+      "expected": [
+        "app.yaml"
+      ],
+      "got": [
+        "raw.githubusercontent.com/org/repo/main/conf/app.yaml",
+        "raw.githubusercontent.com",
+        "app.yaml"
+      ],
+      "true_positive": [
+        "app.yaml"
+      ],
+      "missed": [],
+      "false_positive": [
+        "raw.githubusercontent.com/org/repo/main/conf/app.yaml"
+      ],
+      "accepted_extra": [
+        "raw.githubusercontent.com"
+      ]
+    },
+    {
+      "cls": "url",
+      "text": "webhook target is https://hooks.example.com/services/T024/B01/XyZ9",
+      "expected": [
+        "hooks.example.com"
+      ],
+      "got": [
+        "hooks.example.com/services/t024/b01/xyz9",
+        "hooks.example.com",
+        "xyz9"
+      ],
+      "true_positive": [
+        "hooks.example.com"
+      ],
+      "missed": [],
+      "false_positive": [
+        "hooks.example.com/services/t024/b01/xyz9",
+        "xyz9"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "url",
+      "text": "docs moved to https://docs.example.io/guides/retry-policy#exponential-backoff",
+      "expected": [
+        "docs.example.io"
+      ],
+      "got": [
+        "docs.example.io/guides/retry-policy",
+        "docs.example.io"
+      ],
+      "true_positive": [
+        "docs.example.io"
+      ],
+      "missed": [],
+      "false_positive": [
+        "docs.example.io/guides/retry-policy"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "winpath",
+      "text": "the agent writes to C:\\Users\\nathan\\AppData\\Local\\Zikaron\\store.db",
+      "expected": [
+        "store.db"
+      ],
+      "got": [
+        "store.db",
+        "appdata"
+      ],
+      "true_positive": [
+        "store.db"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": [
+        "appdata"
+      ]
+    },
+    {
+      "cls": "winpath",
+      "text": "copy the cert into C:\\ProgramData\\ssl\\ca-bundle.crt first",
+      "expected": [
+        "ca-bundle.crt"
+      ],
+      "got": [
+        "bundle.crt",
+        "programdata"
+      ],
+      "true_positive": [],
+      "missed": [
+        "ca-bundle.crt"
+      ],
+      "false_positive": [
+        "bundle.crt"
+      ],
+      "accepted_extra": [
+        "programdata"
+      ]
+    },
+    {
+      "cls": "winpath",
+      "text": "set PYTHONPATH=D:\\build\\out;D:\\build\\vendor before running",
+      "expected": [
+        "pythonpath"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "pythonpath"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "winpath",
+      "text": "it fails if the repo sits under \\\\fileserver\\shared\\team-docs",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "winpath",
+      "text": "the hook script is .kiro\\hooks\\user_prompt_submit.ps1",
+      "expected": [
+        "user_prompt_submit.ps1"
+      ],
+      "got": [
+        "user_prompt_submit.ps1",
+        "user_prompt_submit"
+      ],
+      "true_positive": [
+        "user_prompt_submit.ps1"
+      ],
+      "missed": [],
+      "false_positive": [
+        "user_prompt_submit"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "winpath",
+      "text": "MSBuild reads Directory.Build.props from the solution root",
+      "expected": [
+        "directory.build.props"
+      ],
+      "got": [
+        "directory.build.props",
+        "msbuild"
+      ],
+      "true_positive": [
+        "directory.build.props"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": [
+        "msbuild"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "install @aws-sdk/client-s3 rather than the v2 aws-sdk monolith",
+      "expected": [
+        "@aws-sdk/client-s3",
+        "aws-sdk"
+      ],
+      "got": [
+        "client-s3"
+      ],
+      "true_positive": [],
+      "missed": [
+        "@aws-sdk/client-s3",
+        "aws-sdk"
+      ],
+      "false_positive": [],
+      "accepted_extra": [
+        "client-s3"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "pin @types/node at 20.11.5 or the build breaks",
+      "expected": [
+        "20.11.5",
+        "@types/node"
+      ],
+      "got": [
+        "node",
+        "20.11.5",
+        "20",
+        "11"
+      ],
+      "true_positive": [
+        "20.11.5"
+      ],
+      "missed": [
+        "@types/node"
+      ],
+      "false_positive": [
+        "11",
+        "20"
+      ],
+      "accepted_extra": [
+        "node"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "we vendored @internal/ui-kit because the registry proxy drops scoped tarballs",
+      "expected": [
+        "@internal/ui-kit"
+      ],
+      "got": [
+        "ui-kit"
+      ],
+      "true_positive": [],
+      "missed": [
+        "@internal/ui-kit"
+      ],
+      "false_positive": [],
+      "accepted_extra": [
+        "ui-kit"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "run npx @modelcontextprotocol/inspector against the local server",
+      "expected": [
+        "@modelcontextprotocol/inspector"
+      ],
+      "got": [
+        "inspector"
+      ],
+      "true_positive": [],
+      "missed": [
+        "@modelcontextprotocol/inspector"
+      ],
+      "false_positive": [],
+      "accepted_extra": [
+        "inspector"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "eslint-plugin-import and @typescript-eslint/parser disagree on resolver order",
+      "expected": [
+        "@typescript-eslint/parser",
+        "eslint-plugin-import"
+      ],
+      "got": [
+        "parser"
+      ],
+      "true_positive": [],
+      "missed": [
+        "@typescript-eslint/parser",
+        "eslint-plugin-import"
+      ],
+      "false_positive": [],
+      "accepted_extra": [
+        "parser"
+      ]
+    },
+    {
+      "cls": "npm",
+      "text": "the workspace protocol dependency workspace:^ is not understood by npm 9",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "the regression landed in 4f9a2c1 and was reverted in 9b1e77d",
+      "expected": [
+        "4f9a2c1",
+        "9b1e77d"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "4f9a2c1",
+        "9b1e77d"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "bisect blames commit e3b0c44298fc1c149afbf4c8996fb92427ae41e4",
+      "expected": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "cherry-pick 1a2b3c4d from release/2.7 into main",
+      "expected": [
+        "1a2b3c4d",
+        "release/2.7"
+      ],
+      "got": [
+        "2.7"
+      ],
+      "true_positive": [],
+      "missed": [
+        "1a2b3c4d",
+        "release/2.7"
+      ],
+      "false_positive": [
+        "2.7"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "tag v0.4.0-rc2 points at a tree that no longer builds",
+      "expected": [
+        "v0.4.0-rc2"
+      ],
+      "got": [
+        "v0.4.0",
+        "v0.4.0-rc2"
+      ],
+      "true_positive": [
+        "v0.4.0-rc2"
+      ],
+      "missed": [],
+      "false_positive": [
+        "v0.4.0"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "the submodule is stuck at deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "expected": [
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "githash",
+      "text": "git diff HEAD~3..HEAD shows only whitespace",
+      "expected": [
+        "head~3"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "head~3"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "the field is called \u30e6\u30fc\u30b6\u30fcID and the getter is get\u30e6\u30fc\u30b6\u30fcID",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "German column names like Gr\u00f6\u00dfe_maximal survive the ORM but not the CSV export",
+      "expected": [
+        "gr\u00f6\u00dfe_maximal"
+      ],
+      "got": [],
+      "true_positive": [],
+      "missed": [
+        "gr\u00f6\u00dfe_maximal"
+      ],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "benutzerId maps to user_id in the legacy adapter",
+      "expected": [
+        "benutzerid",
+        "user_id"
+      ],
+      "got": [
+        "user_id",
+        "benutzerid"
+      ],
+      "true_positive": [
+        "benutzerid",
+        "user_id"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "the label key is app.kubernetes.io/\u540d\u524d which fails validation",
+      "expected": [
+        "app.kubernetes.io"
+      ],
+      "got": [
+        "app.kubernetes.io"
+      ],
+      "true_positive": [
+        "app.kubernetes.io"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "we normalise caf\u00e9_name to cafe_name before indexing",
+      "expected": [
+        "cafe_name"
+      ],
+      "got": [
+        "cafe_name"
+      ],
+      "true_positive": [
+        "cafe_name"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "mixed",
+      "text": "\u00dcnicode identifiers in the T\u00fcrk\u00e7e locale break the lowercase round-trip",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "we saw about 30 failures in the last 200 runs, mostly on Fridays",
+      "expected": [],
+      "got": [
+        "30",
+        "200"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "200",
+        "30"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "it took roughly 15 minutes and nobody noticed for 3 days",
+      "expected": [],
+      "got": [
+        "15"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "15"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "the team of 12 reviewed 47 pull requests that quarter",
+      "expected": [],
+      "got": [
+        "12",
+        "47"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "12",
+        "47"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "there were 1000 rows before the cleanup and 998 after",
+      "expected": [],
+      "got": [
+        "1000",
+        "998"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "1000",
+        "998"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "this has bitten us at least 4 times since 2024",
+      "expected": [],
+      "got": [
+        "2024"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": [
+        "2024"
+      ]
+    },
+    {
+      "cls": "prose_num",
+      "text": "budget is 90 percent spent and the deadline moved twice",
+      "expected": [],
+      "got": [
+        "90"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "90"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_num",
+      "text": "roughly 60 to 70 of the cases are duplicates",
+      "expected": [],
+      "got": [
+        "60",
+        "70"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "60",
+        "70"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "shell",
+      "text": "run: docker run --rm -v $(pwd):/w -w /w node:20 npm ci --omit=dev",
+      "expected": [
+        "--omit",
+        "--rm",
+        "npm"
+      ],
+      "got": [
+        "rm",
+        "omit",
+        "20"
+      ],
+      "true_positive": [],
+      "missed": [
+        "--omit",
+        "--rm",
+        "npm"
+      ],
+      "false_positive": [
+        "omit",
+        "rm"
+      ],
+      "accepted_extra": [
+        "20"
+      ]
+    },
+    {
+      "cls": "shell",
+      "text": "kubectl get pods -n prod -o jsonpath='{.items[*].metadata.name}'",
+      "expected": [
+        "jsonpath",
+        "kubectl"
+      ],
+      "got": [
+        "metadata.name"
+      ],
+      "true_positive": [],
+      "missed": [
+        "jsonpath",
+        "kubectl"
+      ],
+      "false_positive": [],
+      "accepted_extra": [
+        "metadata.name"
+      ]
+    },
+    {
+      "cls": "shell",
+      "text": "awk -F'\\t' '{print $2}' out.tsv | sort -u | head -n 20",
+      "expected": [
+        "out.tsv"
+      ],
+      "got": [
+        "out.tsv",
+        "20"
+      ],
+      "true_positive": [
+        "out.tsv"
+      ],
+      "missed": [],
+      "false_positive": [
+        "20"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "shell",
+      "text": "psql -c \"select * from mem where uuid='x' ;\" -h db.internal -p 5432",
+      "expected": [
+        "db.internal"
+      ],
+      "got": [
+        "db.internal",
+        "5432"
+      ],
+      "true_positive": [
+        "db.internal"
+      ],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": [
+        "5432"
+      ]
+    },
+    {
+      "cls": "shell",
+      "text": "export PIP_NO_CACHE_DIR=1 && pip install -e '.[dev,test]' --no-build-isolation",
+      "expected": [
+        "--no-build-isolation",
+        "pip_no_cache_dir"
+      ],
+      "got": [
+        "no-build-isolation",
+        "pip_no_cache_dir"
+      ],
+      "true_positive": [
+        "pip_no_cache_dir"
+      ],
+      "missed": [
+        "--no-build-isolation"
+      ],
+      "false_positive": [
+        "no-build-isolation"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "shell",
+      "text": "find . -name '*.pyc' -delete 2>/dev/null || true",
+      "expected": [],
+      "got": [
+        "dev/null"
+      ],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [
+        "dev/null"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "shell",
+      "text": "curl -sSf -H 'X-Api-Key: $KEY' https://api.example.com/v1/ping | jq -r .status",
+      "expected": [
+        "api.example.com",
+        "x-api-key"
+      ],
+      "got": [
+        "api.example.com/v1/ping",
+        "api.example.com",
+        "ssf"
+      ],
+      "true_positive": [
+        "api.example.com"
+      ],
+      "missed": [
+        "x-api-key"
+      ],
+      "false_positive": [
+        "api.example.com/v1/ping",
+        "ssf"
+      ],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "the previous attempt failed because nobody wrote down why it was abandoned",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "we agreed to revisit this once the migration settles down",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "the integration suite is flaky in a way that wastes an afternoon each time",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "do not trust the cached result after a schema change",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "this was a deliberate decision, not an oversight",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "reading the source is faster than asking, most of the time",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    },
+    {
+      "cls": "prose_plain",
+      "text": "the fix is obvious in hindsight and was not obvious at all beforehand",
+      "expected": [],
+      "got": [],
+      "true_positive": [],
+      "missed": [],
+      "false_positive": [],
+      "accepted_extra": []
+    }
+  ],
+  "posthoc_sensitivity": {
+    "note": "POST-HOC sensitivity, not a predeclared metric",
+    "normalisation": "strip leading/trailing -./@ from both expected and extracted",
+    "recall": 0.4884,
+    "precision_lenient": 0.5797,
+    "precision_strict": 0.42,
+    "false_positives": 29
+  }
+}

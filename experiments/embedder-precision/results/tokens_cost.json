@@ -1,0 +1,365 @@
+{
+  "generated_utc": "2026-08-01T03:04:54Z",
+  "n_memories": 187,
+  "reps_per_memory": 5,
+  "trials": 3,
+  "median_deltas": {
+    "insert_p50_ms": 0.0607,
+    "insert_p95_ms": 0.0215,
+    "amend_p50_ms": 0.215,
+    "amend_p95_ms": 0.3941,
+    "insert_p50_pct": 3.8,
+    "amend_p50_pct": 13.6,
+    "file_bytes": 86016,
+    "file_pct": 5.0,
+    "fts_bytes": 61440,
+    "fts_pct": 5.4
+  },
+  "delta_range_across_trials": {
+    "insert_p50_ms": [
+      0.0151,
+      0.1404
+    ],
+    "insert_p95_ms": [
+      -0.0055,
+      0.2905
+    ],
+    "amend_p50_ms": [
+      0.1694,
+      0.3078
+    ],
+    "amend_p95_ms": [
+      0.3902,
+      0.677
+    ],
+    "insert_p50_pct": [
+      0.9,
+      8.9
+    ],
+    "amend_p50_pct": [
+      10.5,
+      19.4
+    ],
+    "file_bytes": [
+      86016,
+      86016
+    ],
+    "file_pct": [
+      5.0,
+      5.0
+    ],
+    "fts_bytes": [
+      61440,
+      61440
+    ],
+    "fts_pct": [
+      5.4,
+      5.4
+    ]
+  },
+  "absolute_p50_across_trials": {
+    "baseline_insert_p50_ms": [
+      1.5752,
+      1.6712,
+      1.5798
+    ],
+    "baseline_amend_p50_ms": [
+      1.5811,
+      1.6184,
+      1.5847
+    ],
+    "tokens_insert_p50_ms": [
+      1.7156,
+      1.6863,
+      1.6405
+    ],
+    "tokens_amend_p50_ms": [
+      1.7961,
+      1.7878,
+      1.8925
+    ],
+    "extract_p50_ms": [
+      0.101,
+      0.101,
+      0.1016
+    ],
+    "extract_p95_ms": [
+      0.2578,
+      0.2415,
+      0.2906
+    ]
+  },
+  "per_trial": [
+    {
+      "trial": 0,
+      "baseline": {
+        "with_tokens": false,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.5752,
+          "p95": 2.4285,
+          "mean": 1.6873
+        },
+        "amend_ms": {
+          "p50": 1.5811,
+          "p95": 2.4006,
+          "mean": 1.7108
+        },
+        "extract_ms": null,
+        "file_bytes": 1712128,
+        "page_count": 418,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 561152,
+          "fts": 1146880,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 524288,
+            "fts_data": 598016,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 561152,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "with_tokens": {
+        "with_tokens": true,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.7156,
+          "p95": 2.423,
+          "mean": 1.7985
+        },
+        "amend_ms": {
+          "p50": 1.7961,
+          "p95": 2.7908,
+          "mean": 1.9174
+        },
+        "extract_ms": {
+          "p50": 0.101,
+          "p95": 0.2578,
+          "mean": 0.1393
+        },
+        "file_bytes": 1798144,
+        "page_count": 439,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 585728,
+          "fts": 1208320,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 544768,
+            "fts_data": 638976,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 585728,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "deltas": {
+        "insert_p50_ms": 0.1404,
+        "insert_p95_ms": -0.0055,
+        "amend_p50_ms": 0.215,
+        "amend_p95_ms": 0.3902,
+        "insert_p50_pct": 8.9,
+        "amend_p50_pct": 13.6,
+        "file_bytes": 86016,
+        "file_pct": 5.0,
+        "fts_bytes": 61440,
+        "fts_pct": 5.4
+      }
+    },
+    {
+      "trial": 1,
+      "baseline": {
+        "with_tokens": false,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.6712,
+          "p95": 2.5181,
+          "mean": 1.8006
+        },
+        "amend_ms": {
+          "p50": 1.6184,
+          "p95": 2.485,
+          "mean": 1.7519
+        },
+        "extract_ms": null,
+        "file_bytes": 1712128,
+        "page_count": 418,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 561152,
+          "fts": 1146880,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 524288,
+            "fts_data": 598016,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 561152,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "with_tokens": {
+        "with_tokens": true,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.6863,
+          "p95": 2.5396,
+          "mean": 1.7767
+        },
+        "amend_ms": {
+          "p50": 1.7878,
+          "p95": 2.8791,
+          "mean": 1.9458
+        },
+        "extract_ms": {
+          "p50": 0.101,
+          "p95": 0.2415,
+          "mean": 0.1386
+        },
+        "file_bytes": 1798144,
+        "page_count": 439,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 585728,
+          "fts": 1208320,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 544768,
+            "fts_data": 638976,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 585728,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "deltas": {
+        "insert_p50_ms": 0.0151,
+        "insert_p95_ms": 0.0215,
+        "amend_p50_ms": 0.1694,
+        "amend_p95_ms": 0.3941,
+        "insert_p50_pct": 0.9,
+        "amend_p50_pct": 10.5,
+        "file_bytes": 86016,
+        "file_pct": 5.0,
+        "fts_bytes": 61440,
+        "fts_pct": 5.4
+      }
+    },
+    {
+      "trial": 2,
+      "baseline": {
+        "with_tokens": false,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.5798,
+          "p95": 2.1804,
+          "mean": 1.6719
+        },
+        "amend_ms": {
+          "p50": 1.5847,
+          "p95": 2.326,
+          "mean": 1.704
+        },
+        "extract_ms": null,
+        "file_bytes": 1712128,
+        "page_count": 418,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 561152,
+          "fts": 1146880,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 524288,
+            "fts_data": 598016,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 561152,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "with_tokens": {
+        "with_tokens": true,
+        "n_writes": 935,
+        "reps": 5,
+        "insert_ms": {
+          "p50": 1.6405,
+          "p95": 2.4709,
+          "mean": 1.7675
+        },
+        "amend_ms": {
+          "p50": 1.8925,
+          "p95": 3.003,
+          "mean": 2.0484
+        },
+        "extract_ms": {
+          "p50": 0.1016,
+          "p95": 0.2906,
+          "mean": 0.1418
+        },
+        "file_bytes": 1798144,
+        "page_count": 439,
+        "page_size": 4096,
+        "table_bytes": {
+          "mem": 585728,
+          "fts": 1208320,
+          "_per_object": {
+            "fts_config": 4096,
+            "fts_content": 544768,
+            "fts_data": 638976,
+            "fts_docsize": 16384,
+            "fts_idx": 4096,
+            "mem": 585728,
+            "sqlite_schema": 4096
+          }
+        }
+      },
+      "deltas": {
+        "insert_p50_ms": 0.0607,
+        "insert_p95_ms": 0.2905,
+        "amend_p50_ms": 0.3078,
+        "amend_p95_ms": 0.677,
+        "insert_p50_pct": 3.8,
+        "amend_p50_pct": 19.4,
+        "file_bytes": 86016,
+        "file_pct": 5.0,
+        "fts_bytes": 61440,
+        "fts_pct": 5.4
+      }
+    }
+  ],
+  "token_text_volume": {
+    "source_chars": 90371,
+    "tokens_dup_chars": 4874,
+    "tokens_nodup_chars": 2968,
+    "dup_pct_of_source": 5.4,
+    "nodup_pct_of_source": 3.3
+  },
+  "factorial_index_bytes": {
+    "fx_text": 196608,
+    "fx_tokchar": 200704,
+    "fx_tok_dup": 212992,
+    "fx_tok_nodup": 204800,
+    "fx_tokonly": 28672,
+    "mem2": 131072
+  },
+  "notes": [
+    "One commit per memory: a Zikaron write is a transaction, not a bulk load.",
+    "Amend is delete+reinsert because FTS5 has no in-place update.",
+    "Sizes measured after VACUUM on a freshly built database; they are deterministic.",
+    "5 writes per memory, so each p95 is over 935 transactions.",
+    "TIMINGS ARE FSYNC-DOMINATED and move ~30% between runs. Quote the paired median delta and the across-trial range, never a single absolute figure."
+  ]
+}

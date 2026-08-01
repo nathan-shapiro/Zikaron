@@ -1,0 +1,1136 @@
+[
+  {
+    "key": "c1-widgetv1",
+    "cat": "near_miss",
+    "n_tokens": 161,
+    "over_512": false
+  },
+  {
+    "key": "c1-widgetv2",
+    "cat": "near_miss",
+    "n_tokens": 133,
+    "over_512": false
+  },
+  {
+    "key": "c1-ver-2-3-1",
+    "cat": "near_miss",
+    "n_tokens": 128,
+    "over_512": false
+  },
+  {
+    "key": "c1-ver-2-3-10",
+    "cat": "near_miss",
+    "n_tokens": 131,
+    "over_512": false
+  },
+  {
+    "key": "c1-conftest",
+    "cat": "near_miss",
+    "n_tokens": 129,
+    "over_512": false
+  },
+  {
+    "key": "c1-conf-test",
+    "cat": "near_miss",
+    "n_tokens": 143,
+    "over_512": false
+  },
+  {
+    "key": "c1-gradle-groovy",
+    "cat": "near_miss",
+    "n_tokens": 106,
+    "over_512": false
+  },
+  {
+    "key": "c1-gradle-kts",
+    "cat": "near_miss",
+    "n_tokens": 119,
+    "over_512": false
+  },
+  {
+    "key": "c1-user-id-snake",
+    "cat": "near_miss",
+    "n_tokens": 94,
+    "over_512": false
+  },
+  {
+    "key": "c1-user-id-camel",
+    "cat": "near_miss",
+    "n_tokens": 114,
+    "over_512": false
+  },
+  {
+    "key": "c1-no-cache",
+    "cat": "near_miss",
+    "n_tokens": 127,
+    "over_512": false
+  },
+  {
+    "key": "c1-no-cache-dir",
+    "cat": "near_miss",
+    "n_tokens": 111,
+    "over_512": false
+  },
+  {
+    "key": "c1-staging",
+    "cat": "near_miss",
+    "n_tokens": 94,
+    "over_512": false
+  },
+  {
+    "key": "c1-staging-2",
+    "cat": "near_miss",
+    "n_tokens": 99,
+    "over_512": false
+  },
+  {
+    "key": "c1-retry-backoff",
+    "cat": "near_miss",
+    "n_tokens": 103,
+    "over_512": false
+  },
+  {
+    "key": "c1-retry-backoff-ms",
+    "cat": "near_miss",
+    "n_tokens": 116,
+    "over_512": false
+  },
+  {
+    "key": "c1-parse-date",
+    "cat": "near_miss",
+    "n_tokens": 107,
+    "over_512": false
+  },
+  {
+    "key": "c1-parse-datetime",
+    "cat": "near_miss",
+    "n_tokens": 113,
+    "over_512": false
+  },
+  {
+    "key": "c1-dotted-a",
+    "cat": "near_miss",
+    "n_tokens": 108,
+    "over_512": false
+  },
+  {
+    "key": "c1-dotted-b",
+    "cat": "near_miss",
+    "n_tokens": 116,
+    "over_512": false
+  },
+  {
+    "key": "c1-db-url",
+    "cat": "near_miss",
+    "n_tokens": 87,
+    "over_512": false
+  },
+  {
+    "key": "c1-db-url-ro",
+    "cat": "near_miss",
+    "n_tokens": 108,
+    "over_512": false
+  },
+  {
+    "key": "c1-timeout-30",
+    "cat": "near_miss",
+    "n_tokens": 103,
+    "over_512": false
+  },
+  {
+    "key": "c1-timeout-300",
+    "cat": "near_miss",
+    "n_tokens": 99,
+    "over_512": false
+  },
+  {
+    "key": "c1-mig-0042",
+    "cat": "near_miss",
+    "n_tokens": 102,
+    "over_512": false
+  },
+  {
+    "key": "c1-mig-0042-1",
+    "cat": "near_miss",
+    "n_tokens": 100,
+    "over_512": false
+  },
+  {
+    "key": "c1-auth-token",
+    "cat": "near_miss",
+    "n_tokens": 104,
+    "over_512": false
+  },
+  {
+    "key": "c1-auth-token-v2",
+    "cat": "near_miss",
+    "n_tokens": 111,
+    "over_512": false
+  },
+  {
+    "key": "c2-flaky-clock",
+    "cat": "paraphrase_only",
+    "n_tokens": 107,
+    "over_512": false
+  },
+  {
+    "key": "c2-lock-order",
+    "cat": "paraphrase_only",
+    "n_tokens": 101,
+    "over_512": false
+  },
+  {
+    "key": "c2-cold-start",
+    "cat": "paraphrase_only",
+    "n_tokens": 118,
+    "over_512": false
+  },
+  {
+    "key": "c2-utf8-names",
+    "cat": "paraphrase_only",
+    "n_tokens": 120,
+    "over_512": false
+  },
+  {
+    "key": "c2-tz-report",
+    "cat": "paraphrase_only",
+    "n_tokens": 113,
+    "over_512": false
+  },
+  {
+    "key": "c2-orphan-rows",
+    "cat": "paraphrase_only",
+    "n_tokens": 102,
+    "over_512": false
+  },
+  {
+    "key": "c2-memory-growth",
+    "cat": "paraphrase_only",
+    "n_tokens": 106,
+    "over_512": false
+  },
+  {
+    "key": "c2-partial-write",
+    "cat": "paraphrase_only",
+    "n_tokens": 99,
+    "over_512": false
+  },
+  {
+    "key": "c2-dup-consumer",
+    "cat": "paraphrase_only",
+    "n_tokens": 95,
+    "over_512": false
+  },
+  {
+    "key": "c2-cert-chain",
+    "cat": "paraphrase_only",
+    "n_tokens": 97,
+    "over_512": false
+  },
+  {
+    "key": "c3-protobuf-desc",
+    "cat": "error_string",
+    "n_tokens": 142,
+    "over_512": false
+  },
+  {
+    "key": "c3-oom-137",
+    "cat": "error_string",
+    "n_tokens": 115,
+    "over_512": false
+  },
+  {
+    "key": "c3-ssl-verify",
+    "cat": "error_string",
+    "n_tokens": 103,
+    "over_512": false
+  },
+  {
+    "key": "c3-locked-db",
+    "cat": "error_string",
+    "n_tokens": 103,
+    "over_512": false
+  },
+  {
+    "key": "c3-address-in-use",
+    "cat": "error_string",
+    "n_tokens": 112,
+    "over_512": false
+  },
+  {
+    "key": "c3-symbol-lookup",
+    "cat": "error_string",
+    "n_tokens": 116,
+    "over_512": false
+  },
+  {
+    "key": "c3-json-extra-data",
+    "cat": "error_string",
+    "n_tokens": 107,
+    "over_512": false
+  },
+  {
+    "key": "c3-conn-reset",
+    "cat": "error_string",
+    "n_tokens": 125,
+    "over_512": false
+  },
+  {
+    "key": "c3-yaml-dup-key",
+    "cat": "error_string",
+    "n_tokens": 111,
+    "over_512": false
+  },
+  {
+    "key": "c3-too-many-files",
+    "cat": "error_string",
+    "n_tokens": 109,
+    "over_512": false
+  },
+  {
+    "key": "c4-streamapi-old",
+    "cat": "polarity",
+    "n_tokens": 87,
+    "over_512": false
+  },
+  {
+    "key": "c4-streamapi-new",
+    "cat": "polarity",
+    "n_tokens": 107,
+    "over_512": false
+  },
+  {
+    "key": "c4-parallel-old",
+    "cat": "polarity",
+    "n_tokens": 83,
+    "over_512": false
+  },
+  {
+    "key": "c4-parallel-new",
+    "cat": "polarity",
+    "n_tokens": 100,
+    "over_512": false
+  },
+  {
+    "key": "c4-cache-old",
+    "cat": "polarity",
+    "n_tokens": 88,
+    "over_512": false
+  },
+  {
+    "key": "c4-cache-new",
+    "cat": "polarity",
+    "n_tokens": 117,
+    "over_512": false
+  },
+  {
+    "key": "c4-arm-old",
+    "cat": "polarity",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "c4-arm-new",
+    "cat": "polarity",
+    "n_tokens": 105,
+    "over_512": false
+  },
+  {
+    "key": "c4-schemareg-old",
+    "cat": "polarity",
+    "n_tokens": 77,
+    "over_512": false
+  },
+  {
+    "key": "c4-schemareg-new",
+    "cat": "polarity",
+    "n_tokens": 96,
+    "over_512": false
+  },
+  {
+    "key": "c5-merge-precedence",
+    "cat": "over_length",
+    "n_tokens": 744,
+    "over_512": true,
+    "tokens_before_punchline": 629,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "c5-late-index-hint",
+    "cat": "over_length",
+    "n_tokens": 707,
+    "over_512": true,
+    "tokens_before_punchline": 619,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "c5-late-cred-path",
+    "cat": "over_length",
+    "n_tokens": 715,
+    "over_512": true,
+    "tokens_before_punchline": 626,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "c5-late-retry-budget",
+    "cat": "over_length",
+    "n_tokens": 716,
+    "over_512": true,
+    "tokens_before_punchline": 664,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "c5-late-cache-key",
+    "cat": "over_length",
+    "n_tokens": 676,
+    "over_512": true,
+    "tokens_before_punchline": 618,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "c5-late-clock-skew",
+    "cat": "over_length",
+    "n_tokens": 687,
+    "over_512": true,
+    "tokens_before_punchline": 619,
+    "punchline_visible_at_512": false
+  },
+  {
+    "key": "d-npm-lock",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-node-heap",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-pytest-order",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-coverage-gate",
+    "cat": "distractor",
+    "n_tokens": 62,
+    "over_512": false
+  },
+  {
+    "key": "d-docker-buildkit",
+    "cat": "distractor",
+    "n_tokens": 59,
+    "over_512": false
+  },
+  {
+    "key": "d-tls-1-0",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-log-sampling",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-trace-sampling",
+    "cat": "distractor",
+    "n_tokens": 68,
+    "over_512": false
+  },
+  {
+    "key": "d-metric-cardinality",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-alert-flap",
+    "cat": "distractor",
+    "n_tokens": 82,
+    "over_512": false
+  },
+  {
+    "key": "d-secret-rotation",
+    "cat": "distractor",
+    "n_tokens": 78,
+    "over_512": false
+  },
+  {
+    "key": "d-kms-region",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-iam-eventual",
+    "cat": "distractor",
+    "n_tokens": 62,
+    "over_512": false
+  },
+  {
+    "key": "d-s3-list-cost",
+    "cat": "distractor",
+    "n_tokens": 73,
+    "over_512": false
+  },
+  {
+    "key": "d-cdn-invalidate",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-queue-visibility",
+    "cat": "distractor",
+    "n_tokens": 83,
+    "over_512": false
+  },
+  {
+    "key": "d-dlq-silent",
+    "cat": "distractor",
+    "n_tokens": 64,
+    "over_512": false
+  },
+  {
+    "key": "d-idempotency-key",
+    "cat": "distractor",
+    "n_tokens": 84,
+    "over_512": false
+  },
+  {
+    "key": "d-clock-monotonic",
+    "cat": "distractor",
+    "n_tokens": 68,
+    "over_512": false
+  },
+  {
+    "key": "d-thread-fork",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-signal-handler",
+    "cat": "distractor",
+    "n_tokens": 63,
+    "over_512": false
+  },
+  {
+    "key": "d-readiness-vs-liveness",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-hpa-thrash",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-node-taint",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-configmap-reload",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-initcontainer-order",
+    "cat": "distractor",
+    "n_tokens": 84,
+    "over_512": false
+  },
+  {
+    "key": "d-pvc-resize",
+    "cat": "distractor",
+    "n_tokens": 60,
+    "over_512": false
+  },
+  {
+    "key": "d-cron-overlap",
+    "cat": "distractor",
+    "n_tokens": 83,
+    "over_512": false
+  },
+  {
+    "key": "d-tz-cron",
+    "cat": "distractor",
+    "n_tokens": 68,
+    "over_512": false
+  },
+  {
+    "key": "d-leapsecond",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-float-money",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-decimal-context",
+    "cat": "distractor",
+    "n_tokens": 58,
+    "over_512": false
+  },
+  {
+    "key": "d-sort-locale",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-regex-catastrophic",
+    "cat": "distractor",
+    "n_tokens": 89,
+    "over_512": false
+  },
+  {
+    "key": "d-yaml-anchors",
+    "cat": "distractor",
+    "n_tokens": 80,
+    "over_512": false
+  },
+  {
+    "key": "d-toml-multiline",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-env-quotes",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-path-length",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-case-insensitive-fs",
+    "cat": "distractor",
+    "n_tokens": 81,
+    "over_512": false
+  },
+  {
+    "key": "d-gitignore-tracked",
+    "cat": "distractor",
+    "n_tokens": 85,
+    "over_512": false
+  },
+  {
+    "key": "d-submodule-detached",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-lfs-missing",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-shallow-clone",
+    "cat": "distractor",
+    "n_tokens": 68,
+    "over_512": false
+  },
+  {
+    "key": "d-merge-commit-ci",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-rebase-hooks",
+    "cat": "distractor",
+    "n_tokens": 73,
+    "over_512": false
+  },
+  {
+    "key": "d-tag-immutable",
+    "cat": "distractor",
+    "n_tokens": 66,
+    "over_512": false
+  },
+  {
+    "key": "d-changelog-gen",
+    "cat": "distractor",
+    "n_tokens": 61,
+    "over_512": false
+  },
+  {
+    "key": "d-semver-zero",
+    "cat": "distractor",
+    "n_tokens": 77,
+    "over_512": false
+  },
+  {
+    "key": "d-transitive-pin",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-native-wheel",
+    "cat": "distractor",
+    "n_tokens": 85,
+    "over_512": false
+  },
+  {
+    "key": "d-pip-resolver",
+    "cat": "distractor",
+    "n_tokens": 87,
+    "over_512": false
+  },
+  {
+    "key": "d-editable-install",
+    "cat": "distractor",
+    "n_tokens": 75,
+    "over_512": false
+  },
+  {
+    "key": "d-namespace-package",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-import-side-effect",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-circular-import",
+    "cat": "distractor",
+    "n_tokens": 80,
+    "over_512": false
+  },
+  {
+    "key": "d-abstract-registry",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-enum-serialization",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-bool-env",
+    "cat": "distractor",
+    "n_tokens": 69,
+    "over_512": false
+  },
+  {
+    "key": "d-null-vs-absent",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-1-9-4",
+    "cat": "distractor",
+    "n_tokens": 106,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-3-0-0-rc",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-0-14-2",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-2-4-0",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-11-vs-17",
+    "cat": "distractor",
+    "n_tokens": 85,
+    "over_512": false
+  },
+  {
+    "key": "d-ver-py-312",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-env-log-level",
+    "cat": "distractor",
+    "n_tokens": 64,
+    "over_512": false
+  },
+  {
+    "key": "d-env-http-proxy",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-env-tmpdir",
+    "cat": "distractor",
+    "n_tokens": 90,
+    "over_512": false
+  },
+  {
+    "key": "d-env-pythonpath",
+    "cat": "distractor",
+    "n_tokens": 79,
+    "over_512": false
+  },
+  {
+    "key": "d-env-service-token",
+    "cat": "distractor",
+    "n_tokens": 77,
+    "over_512": false
+  },
+  {
+    "key": "d-env-feature-flags",
+    "cat": "distractor",
+    "n_tokens": 80,
+    "over_512": false
+  },
+  {
+    "key": "d-env-region",
+    "cat": "distractor",
+    "n_tokens": 75,
+    "over_512": false
+  },
+  {
+    "key": "d-env-no-color",
+    "cat": "distractor",
+    "n_tokens": 55,
+    "over_512": false
+  },
+  {
+    "key": "d-dotted-serializer",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-dotted-metrics",
+    "cat": "distractor",
+    "n_tokens": 62,
+    "over_512": false
+  },
+  {
+    "key": "d-dotted-legacy-client",
+    "cat": "distractor",
+    "n_tokens": 64,
+    "over_512": false
+  },
+  {
+    "key": "d-dotted-validator",
+    "cat": "distractor",
+    "n_tokens": 89,
+    "over_512": false
+  },
+  {
+    "key": "d-pyproject-vs-setupcfg",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-editorconfig",
+    "cat": "distractor",
+    "n_tokens": 86,
+    "over_512": false
+  },
+  {
+    "key": "d-dockerignore",
+    "cat": "distractor",
+    "n_tokens": 75,
+    "over_512": false
+  },
+  {
+    "key": "d-makefile-tabs",
+    "cat": "distractor",
+    "n_tokens": 69,
+    "over_512": false
+  },
+  {
+    "key": "d-tox-envlist",
+    "cat": "distractor",
+    "n_tokens": 55,
+    "over_512": false
+  },
+  {
+    "key": "d-mig-0039",
+    "cat": "distractor",
+    "n_tokens": 64,
+    "over_512": false
+  },
+  {
+    "key": "d-mig-0051",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-mig-0055-backfill",
+    "cat": "distractor",
+    "n_tokens": 73,
+    "over_512": false
+  },
+  {
+    "key": "d-mig-baseline",
+    "cat": "distractor",
+    "n_tokens": 62,
+    "over_512": false
+  },
+  {
+    "key": "d-timeout-5",
+    "cat": "distractor",
+    "n_tokens": 75,
+    "over_512": false
+  },
+  {
+    "key": "d-timeout-60",
+    "cat": "distractor",
+    "n_tokens": 80,
+    "over_512": false
+  },
+  {
+    "key": "d-limit-1000",
+    "cat": "distractor",
+    "n_tokens": 77,
+    "over_512": false
+  },
+  {
+    "key": "d-limit-64kb",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-batch-500",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-cache-negative",
+    "cat": "distractor",
+    "n_tokens": 82,
+    "over_512": false
+  },
+  {
+    "key": "d-cache-stampede",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-serialize-datetime",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-serialize-bigint",
+    "cat": "distractor",
+    "n_tokens": 69,
+    "over_512": false
+  },
+  {
+    "key": "d-tls-sni",
+    "cat": "distractor",
+    "n_tokens": 73,
+    "over_512": false
+  },
+  {
+    "key": "d-tls-pinning",
+    "cat": "distractor",
+    "n_tokens": 60,
+    "over_512": false
+  },
+  {
+    "key": "d-test-network",
+    "cat": "distractor",
+    "n_tokens": 76,
+    "over_512": false
+  },
+  {
+    "key": "d-test-snapshot",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-test-freeze-time",
+    "cat": "distractor",
+    "n_tokens": 65,
+    "over_512": false
+  },
+  {
+    "key": "d-test-db-seed",
+    "cat": "distractor",
+    "n_tokens": 72,
+    "over_512": false
+  },
+  {
+    "key": "d-flaky-dns",
+    "cat": "distractor",
+    "n_tokens": 81,
+    "over_512": false
+  },
+  {
+    "key": "d-build-clock",
+    "cat": "distractor",
+    "n_tokens": 80,
+    "over_512": false
+  },
+  {
+    "key": "d-artifact-retention",
+    "cat": "distractor",
+    "n_tokens": 55,
+    "over_512": false
+  },
+  {
+    "key": "d-log-retention",
+    "cat": "distractor",
+    "n_tokens": 62,
+    "over_512": false
+  },
+  {
+    "key": "d-grpc-deadline",
+    "cat": "distractor",
+    "n_tokens": 75,
+    "over_512": false
+  },
+  {
+    "key": "d-http2-multiplex",
+    "cat": "distractor",
+    "n_tokens": 63,
+    "over_512": false
+  },
+  {
+    "key": "d-conn-pool-size",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-pgbouncer-mode",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-index-bloat",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-explain-analyze-prod",
+    "cat": "distractor",
+    "n_tokens": 66,
+    "over_512": false
+  },
+  {
+    "key": "d-json-column-index",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-uuid-primary-key",
+    "cat": "distractor",
+    "n_tokens": 69,
+    "over_512": false
+  },
+  {
+    "key": "d-soft-delete-index",
+    "cat": "distractor",
+    "n_tokens": 77,
+    "over_512": false
+  },
+  {
+    "key": "d-replica-promote",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-backup-restore-time",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-audit-immutable",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-pii-logging",
+    "cat": "distractor",
+    "n_tokens": 74,
+    "over_512": false
+  },
+  {
+    "key": "d-rate-limit-shared",
+    "cat": "distractor",
+    "n_tokens": 70,
+    "over_512": false
+  },
+  {
+    "key": "d-webhook-replay",
+    "cat": "distractor",
+    "n_tokens": 78,
+    "over_512": false
+  },
+  {
+    "key": "d-signature-body",
+    "cat": "distractor",
+    "n_tokens": 71,
+    "over_512": false
+  },
+  {
+    "key": "d-cors-preflight",
+    "cat": "distractor",
+    "n_tokens": 67,
+    "over_512": false
+  },
+  {
+    "key": "d-graceful-drain",
+    "cat": "distractor",
+    "n_tokens": 84,
+    "over_512": false
+  }
+]

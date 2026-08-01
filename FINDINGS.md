@@ -1,56 +1,309 @@
-# FINDINGS — Zikaron: Memory for AI Assistants and Coding Agents
+# FINDINGS — Zikaron
 
-> Durable project memory, maintained by the **memory-researcher** agent. Captures problem framing,
-> hypotheses, design decisions, build state, open questions, and references. This hub is kept
-> **lean (~4k words)** because it loads into context every session: park long-form design in
-> `design/<topic>.md`, literature in `research/` (via memory-assistant), and critique trails in
-> `reviews/` (via memory-reviewer). Prune and compress rather than appending forever.
+> **Working memory for this project**, maintained by the **memory-researcher** agent. It loads every
+> session, so it stays lean: current state, open questions, dogfooding evidence, and an index into the
+> design and research record.
+>
+> **The design lives in `design/overview.md`** — what we are building, the shape of the system, and the
+> full D1–D33 decision table *with rationale*. §"Settled decisions" below is a one-line index only. Read
+> `design/overview.md` before revisiting any decision, and never re-litigate one from the index alone.
 
 ## What Zikaron is
-**Zikaron** (Hebrew/Yiddish זיכרון — "memory, remembrance") is a memory system for AI assistants and
-coding agents: memory that persists across turns, sessions, and projects, and that measurably improves
-task outcomes under real budgets for tokens, latency, and correctness.
+**Zikaron** (Hebrew/Yiddish זיכרון — "memory, remembrance") gives a coding agent the **tribal knowledge** a
+project accumulates: how to build and test, which steps fail silently, which env vars the integration tests
+need, which API is not safe to use yet and why, what was already tried and how it failed.
 
-Target capabilities, provisionally:
-- Remember **user-level** facts: preferences, working style, recurring instructions.
-- Remember **project-level** facts: conventions, architecture, build/test commands, gotchas.
-- Remember **episodic** facts: what was attempted, what failed and why, where the work stands.
-- Recall the right subset **cheaply and at the right moment**, and keep it **fresh** as code changes.
+Scope line, set by the user: Zikaron is **not** a codebase knowledge base — a separate system handles code
+structure, symbols and repo maps. Zikaron stores what is learned by living through the work. The
+operational test: *could you learn this by reading the code?* If yes, it is out of scope.
 
-Non-goals (explicit, to prevent drift): emulating human psychology, affect, or personality for its own
-sake. Mechanisms from memory science are welcome only where they buy measurable task benefit.
+## Design documents
+| Document | Covers |
+|---|---|
+| **`design/overview.md`** | **Start here.** What we are building, the system in one page, provenance, and the full D1–D33 table with rationale |
+| `design/schema.md` | v0 SQLite tables, indexes, the retrieval-eligibility predicate and its per-consumer filter table, the `meta` initialization contract, bounds, 20 invariants (21 withdrawn), per-kind event shapes, linked sessions, what is deliberately absent |
+| `design/architecture.md` | four components, RPC choice and rejections, request envelope (resolved and bootstrap forms), the two-rung session-label ladder and derived `label_source`, subagent-session push suppression, paths, filesystem security, lifecycle, degraded modes, both tool surfaces, two validation-precedence ladders, error table, distribution artefacts including the consolidator's model field |
+| `design/retrieval.md` | the read path: hybrid fusion, push vs pull, fusion depth vs output budget, total order, query construction on both arms for external and internal queries, embedding, no reranker, supersession demotion, the known fusion defect |
+| `design/indexing.md` | chunking contract: boundaries, gist-prepending, rollup, atomicity |
+| `design/consolidation.md` | grouping mechanism and rejected alternatives, candidate construction, provisional parameter seeds and what they are not, consolidator identity and model, never-lose guard |
+| `design/write-policy.md` | the `agentSpawn` prompt text, its rationale, the secrets and poisoning boundary, the operator erasure procedure, six instrumented signals, known gaps |
+| **`design/build-plan.md`** | **Per-milestone briefs: scope, normative sections, invariants, done-when, scope fence.** Read the brief for the milestone you are on |
+| **`design/coding-standards.md`** | **Binding.** Structure, domain model, typing, the three test tiers, invariant tests, comment rules, dependency rules, the check gate |
+| `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 
-## Relationship to the sibling project
-`~/Memory` designs a **human-like** memory/affect system for character agents, where psychological
-fidelity is the goal; it has a mature harness, design corpus, and review trail. Zikaron reuses its
-*crew structure* and *mechanisms where applicable*, not its goals. Treat `~/Memory` as read-only prior
-art. Log here anything mined from it, so provenance stays clear.
+## Settled decisions — index
+One line each. **Rationale, measurements and rejected alternatives are in `design/overview.md` §4.**
 
-## Repository layout
-- **FINDINGS.md** — this hub.
-- **design/** — design docs, one per topic (`design/<topic>.md`).
-- **research/** — full literature and prior-art notes, one file per brief (written by memory-assistant).
-- **reviews/** — memory-reviewer critique trails, one file per artifact (the `self-review` skill).
-- **.kiro/agents/** — the crew: `memory-researcher` (driver, ctrl+shift+m), `memory-assistant` (web
-  research → `research/`), `memory-reviewer` (critique → `reviews/`), `py-runner` (command execution).
+| # | Decision |
+|---|---|
+| D1 | Tribal knowledge only; codebase KB is a separate system |
+| D2 | No extra LLM on the write path — hard constraint |
+| D3 | Two tiers: journal (unconsolidated) + long-term (consolidated) |
+| D4 | Memory record = `{uuid, gist, content}` |
+| D5 | Read = hybrid vector + full-text top-K → ids + gists |
+| D6 | Write = primary agent's own judgment: new entry / amend (if read first) / nothing; it authors its own gist |
+| D7 | Consolidation is the only extra LLM; code picks candidates, model judges |
+| D8 | Store scoped to the harness's directory; no global tier in v0 |
+| D9 | Delivered as an MCP server plus a distributed skill and hooks |
+| D10 | Consolidation trigger = a manually-invoked skill spawning a subagent (no compaction hook exists) |
+| D11 | Staleness is repaired in-band by the agent the memory misled |
+| D12 | Read = push **and** pull; a `userPromptSubmit` hook injects the top 5 gists |
+| D13 | The gist's job is relevance triage |
+| D14 | End-to-end task-benefit evaluation stoved until an implementation exists (component benchmarks are not) |
+| D15 | Write-time dedup, agent-resolved: `remember` writes, then hands back near-duplicates for the agent to resolve |
+| D16 | Soft delete only — retire, never `DELETE` |
+| D17 | Scope key = literally the current working directory |
+| D18 | Write policy injected by an `agentSpawn` hook |
+| D19 | Python venv, latest stable; SQLite + FTS5 + sqlite-vec + fastembed; store never in git |
+| D20 | Keep `bge-small-en-v1.5`, pass the BGE query prefix, record model id + dim per vector |
+| D21 | Embed gist + content, not gist alone |
+| D22 | The hook must never load an embedding model |
+| D23 | No cross-encoder reranker on the push path; open for pull |
+| D24 | Reject the extracted-identifier `tokens` column as specified |
+| D25 | Supersession is structural via `superseded_by`, and it **demotes rather than hides** |
+| D26 | Optimistic concurrency: `version` + a read receipt required on every `amend`/`retire` |
+| D27 | Provenance = `created_at`, `updated_at`, `session_id` only |
+| D28 | Chunk the dense side, parameterized; FTS5 stays unchunked; `max` rollup |
+| D29 | Consolidation groups topically using retrieval as the adjacency function, mutual-K plus a cohesion pass; session grouping rejected |
+| D30 | Write policy v0 drafted, to be experimented against; six signals instrumented |
+| D31 | Four components: core / service / mcp / hook, over a Unix-socket JSON-RPC |
+| D32 | Two tool sets: five for the primary agent, four for the consolidator |
+| D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 
 ## Current state — resume here
-**Phase: pre-design.** The agent crew and directory scaffold exist (2026-07-31). No architecture chosen,
-no code, no stack committed. Nothing has been researched or reviewed yet.
+**Phase: design complete, independently reviewed to approval, operator-reviewed. Pre-code — no code yet.**
+D1–D33 settled. Grounding from `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
+capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
+retrieval, indexing, consolidation and write policy all specified in `design/`.
 
-## Open questions — the first real decisions
-1. **Scope**: which agent/harness does Zikaron serve first — Kiro CLI itself, an MCP server usable by
-   any agent, or a standalone library? This determines every integration constraint.
-2. **Memory taxonomy**: what tiers exist, what is authored by the user vs. inferred by the agent, and
-   what lives in git (reviewable, diffable) vs. a private store?
-3. **Write policy**: what earns a durable write, and who decides — the agent mid-task, a sleep/consolidation
-   pass, or the user via explicit confirmation?
-4. **Recall**: proactive injection into the prompt vs. a retrieval tool the agent chooses to call, and how
-   the per-turn context budget is allocated between them.
-5. **Freshness**: how a memory is bound to code that will change beneath it, and how staleness is detected
-   and repaired rather than confidently recalled.
-6. **Evaluation**: what benchmark or ablation would show Zikaron helps. Needed *before* building, so the
-   design has a target.
+**Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
+corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
+**no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
+more than its mechanism or evidence supported. The blow-by-blow — every finding, response and rejection — is
+`reviews/design-corpus-review.md`; the corrections themselves live in the D-rows they amend, in
+`design/overview.md` §4. Do not reconstruct that history here.
+
+**The operator review raised four things.** (1) *Why is the event log in the database?* — answered, no change:
+`.zikaron/service.log` covers operational logging, while `event` is instrumentation whose signals are
+relational joins and whose rows must commit in the same transaction as the mutation they describe (invariant
+10), which a file cannot do. It did expose a real gap — retention was one unexplained line. (2) *Why is config
+in `meta`?* — a genuine conflation, now **D33**. (3) *Event-log retention* — never pruned on a schedule;
+`design/schema.md` §"Retention: `event` is not pruned". (4) *Is the `/proc`-ancestry rung needed?* — **measured:
+no**, and the machinery is deleted; see **D31**, `design/architecture.md` §"Both clients resolve the same
+label" and §"Subagent sessions". Raw probe evidence: `research/kiro-session-id-probe.jsonl`.
+
+## Build plan — start here when writing code
+**Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
+definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
+explicit scope fence — are in **`design/build-plan.md`**. Work the lowest-numbered incomplete milestone; do not
+skip ahead, since each assumes its predecessors are built and tested.
+
+**`zikaron-core` is deliberately split into seven milestones (M2–M8) rather than built in one pass.** One-shot
+it would be a few thousand lines with no verifiable intermediate state, and the first end-to-end test would
+arrive only after all of it existed. The design already supplies the seams: twenty invariants each attached to
+a layer, two validation ladders, and a state machine — so a milestone is done when its invariants have tests
+that fail when violated. M1, M8, M10 and M11 are *not* split further; the two clients are thin by design.
+
+| # | Milestone | Done when | Status |
+|---|---|---|---|
+| **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ☐ |
+| M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ☐ |
+| M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ☐ |
+| M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ☐ |
+| M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ☐ |
+| M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18–20 tested; one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ☐ |
+| M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ☐ |
+| M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` | ☐ |
+| M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ☐ |
+| M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ☐ |
+| M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ☐ |
+| M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ☐ |
+| M12 | Distribution — agent config, skill, hook entries (stable + `--v3`), policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run | ☐ |
+
+**M0 is first and is throwaway.** Four assumptions underpin the architecture and none has been exercised in
+code; finding a broken one in a 50-line spike costs an afternoon, finding it after M2 means rewriting the
+store. This is open question 4 turned into a task.
+
+**Two standing instructions.** Ship D30's six signals as **executable SQL** (M8) rather than spending another
+design round on them — that is the review's own recommendation, and the reason is that a unit mismatch then
+becomes a wrong number instead of a prose ambiguity. And **do not tune RRF during M5**: open question 2 is the
+largest known quality lever, it needs no reindex, and it is deliberately post-build.
+
+## Open questions
+1. **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires **once per
+   user message** with `{hook_event_name, cwd, session_id, prompt}`. Good: the query is clean human text.
+   Bad: one user message spawns dozens of agent turns, and the moment a memory is most needed ("this
+   protobuf step just failed silently") arrives twenty tool calls later, when **no injectable hook fires**.
+   Push therefore covers only *task-framing* recall. `postToolUse` fires per tool call and receives
+   `tool_response`, but has **no documented stdout→context path**. Options: lean on pull plus D18's
+   instruction; use `postToolUse` as a side-channel priming the next injection; or use `stop` (which can
+   return `{"decision":"block","reason":...}` as a new user message) as an end-of-turn nudge.
+2. **Unweighted RRF is discarding exactly the signal an embedder upgrade would buy.** The strongest finding
+   of the benchmark, and unasked-for. Dense-only, `bge-large` **beats** `bge-small` (MRR@10 **+0.0705, CI
+   [+0.0283, +0.1156]**); the RRF hybrid **erases it** (0.922 vs 0.938). Mechanism measured: all **960 of
+   960** fused top-5 slots are held by documents *both* arms returned, while the arms intersect in only
+   ~28% of their union — so ~72% of the candidate pool structurally cannot reach the injection budget. Ties
+   were investigated as the cause and **refuted** (max movement 0.0052). RRF `k`, arm weighting and fusion
+   depth deserve their own pass; plausibly worth more than any model swap. All three are now named `meta`
+   keys (`rrf_k` 60, `fusion_depth` 50) rather than constants, so the pass is a config sweep. Needs no
+   reindex, so it is safely post-build. Detail in `design/retrieval.md`.
+3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
+   parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
+   template wearing six hats. `token_count` and the `truncated` canary are instrumented so revisiting
+   `chunk_max_tokens` — and chunking itself — becomes a measurement.
+4. **Hook→service transport: designed, partly measured, still unsmoke-tested.** D31 settles the shape. Still
+   unmeasured: real RPC round-trip latency from a hook process, behaviour under concurrent requests from two
+   sessions sharing one store (including whether `busy_timeout` at 5 s is right), whether start-if-absent holds
+   under contention, and whether a consolidation lease survives a service restart in practice. Wants a smoke
+   test, not more design. **Three sub-items closed 2026-08-01.** The `/proc`-ancestry unknowns
+   (process topology, Linux-only `/proc`, pid namespaces, the MCP-first race) are gone with the rung — see
+   current-state item 4. The round-7 `session_client` resolution-write cost is gone with the write: the preamble
+   no longer touches the store. And **where hook stdout lands is now partly answered**: it arrives as a context
+   entry framed *"I have gathered this context from valuable programmatic script hooks"*, positioned **before**
+   the user message in the same turn. Two things that leaves open — whether any size cap applies, and that
+   placement is *early*, which contradicts `~/Memory`'s "place surfaced memories late" lesson; we cannot choose.
+   Worth noting the framing instructs the model to follow requests found in the injected text, directly against
+   the untrusted-reference-data preamble `retrieval.md` puts on the push block. Still to carry from
+   `~/Memory`: keep surfacing ephemeral and exclude it from the summarizer input — kiro exposes
+   `compaction.excludeMessages` and `compaction.excludeContextWindowPercent`.
+5. **What tells the agent *why* a demoted memory is being shown?** D25 keeps superseded records surfacing
+   rather than hiding them, and D27 cut provenance to three fields. **Narrowed by the corpus review:** the
+   display half is now specified — the injected block labels a demoted row and names its replacement's uuid,
+   and every retrieved replacement is ordered ahead of every record it replaced
+   (`design/retrieval.md` §"Supersession: eligible, demoted, and labelled"; round 2 replaced an
+   unsatisfiable "immediately above" rule with this precedence rule, since a merge gives several rows one
+   shared replacement; round 3 added the dead-lineage case — an ordinary `retire` of a replacement is legal
+   and makes a *terminal component*, so `fetch` now reports `superseded_by_latest_state` and the block's label
+   deliberately names only the immediate replacement, keeping the graph out of the ranking path). What stays
+   open is *editorial*:
+   D27 keeps no reason-for-supersession field, so the block can say "replaced, by that" but not "because the
+   pin was bumped", and nothing measures whether the agent needs the reason or whether fetching the
+   replacement suffices.
+6. **Residual staleness under D11.** The repair loop only fires when a memory (a) surfaces, (b) is acted on,
+   and (c) fails *loudly* enough for the agent to attribute the waste to it. It misses silently-obsolete
+   memories and memories that stopped surfacing. A known limit, and after D27 there is no cheap mechanism
+   behind it. One idea that survives D27's objection: an `amend` variant meaning "confirmed, no change",
+   which would make `updated_at` mean *last confirmed working* — real freshness evidence with no false
+   positives. Parked, because it adds a discretionary verb and cuts against open question 7.
+7. **Write discipline.** Delivery is settled (D18); the content is a v0 draft to experiment against (D30).
+   `~/Memory`'s evidence says under-writing dominates, so the draft biases toward recording. Six
+   deterministic signals are instrumented to reveal which way it actually errs. Still unaddressed: how much
+   detail belongs in `content` versus `gist`, and when to supersede rather than amend in place.
+8. **Does model capacity actually help identifier discrimination? Still untested.** The counterfactual
+   instrument confirms the weakness is **mechanistically real** — discrimination index **0.194–0.233** for
+   all four models, direction right in 14/14 blocks (sign test p≈1.2×10⁻⁴), margin thin. `bge-large −
+   bge-small` on that index is **+0.029, CI [−0.016, +0.062]** against a preregistered 0.15 bar, so no
+   demonstrated remedy. But fastembed serves a *quantized* small against an *unquantized* large, so this
+   compares deployed artifacts, **not** capacity. Matched fp32 exports of one family would settle it.
+9. **Evaluation** (deferred by D14). Grok named LoCoMo, LongMemEval(-V2), BEAM, HaluMem, LongMemCode,
+   PersonaMem, LifeBench, AFTER, EvoMemBench; several may be misremembered, and all are conversational or
+   codebase-QA proxies rather than tribal-knowledge tests. The benchmark set is the seed but its residual
+   threats are the work: 187 synthetic memories is 1–2 orders below real scale, relevance labels were
+   authored by the same agent that wrote the corpus, and query-set independence is attested rather than
+   mechanically provable. Real memories from a real repository with independent annotators is the fix.
+
+## Dogfooding notes (evidence from our own sessions)
+- **A self-delegated subagent does not inherit the `subagent` tool.** The crew system strips it, so a
+  spawned `memory-researcher` cannot delegate further. A brief instructing one to obtain an independent
+  review was therefore unsatisfiable; it degraded to self-critique and disclosed that clearly. Verify a
+  delegate's capabilities before writing a brief that depends on them.
+- **The review loop earned its cost.** Three rounds of independent critique overturned four of the first
+  benchmark run's eight conclusions — including killing our own `tokens`-column proposal and inverting the
+  reason for keeping `bge-small`. A self-graded benchmark would have shipped all eight.
+- **Authorship independence has to be structural, not promised.** Blind query authoring only worked because
+  the blind author ran as a separate pipeline stage with no access to the corpus, before it existed.
+- **This file is now a live test of D4's progressive disclosure.** The decision *gists* stay loaded every
+  session; the rationale is fetched from `design/overview.md` on demand. If a future session re-litigates a
+  settled decision because the one-line index was not enough, that is direct evidence that gist-only
+  surfacing is too thin — which is exactly what D13 and D21 are about.
+- **Twelve rounds of review made an unnecessary mechanism airtight.** The `/proc`-ancestry rung of the
+  session-label ladder was introduced in round 3 and hardened through round 8: a defined race outcome, a
+  fail-closed ambiguity rule, a `register_session` RPC with a named sender, a durable `session_client`
+  provenance table, an `event.label_source` copy, invariant 21, durability-precedes-adoption, and a rung-0
+  error code. Every round found a genuine internal defect and every fix was correct. **None of it could tell us
+  the premise was false.** One `env` check did: `KIRO_SESSION_ID` is in every process kiro spawns, including
+  live MCP servers, so the case the rung existed for never occurs. The lesson is not "review less" — the same
+  loop caught eleven other classes of defect that measurement would not have. It is that **internal review
+  pressure-tests consistency, not premises**, and a corpus needs a distinct mechanism for the second: an
+  explicit list of assumptions about the environment, each with a named cheap experiment. The corpus's own
+  phrase "specified but unverified" is the only reason this was findable, so the practice to keep is writing
+  that phrase into the design and then *acting* on it before building around it. Directly a Zikaron
+  requirement: a memory that is internally coherent and premised on something no longer true is precisely the
+  confidently-stale memory D11 exists for, and no amount of self-consistency checking detects it.
+- **A large hub document crowds the index it shares with focused ones.** `design/` is indexed in the
+  knowledge base as `zikaron-design` (9 items). First real query — "why was grouping consolidation by
+  session rejected" — returned the correct passage, but **two of three results were chunks of
+  `overview.md`** rather than of `consolidation.md`, which actually answers it. `overview.md` is the largest doc
+  and carries the whole decision table, so it matches nearly any design query and competes with the
+  specific spec. Same phenomenon Zikaron will hit when one accreted memory outranks the precise one. Worth
+  watching; if it worsens, the fix is to index the specs and keep the hub out, or split the decision table
+  out of the overview.
+- **This knowledge tool lists results in ascending score order.** In that same query the scores ran
+  0.5163 → 0.5899 → 0.5999, so the best match printed **last**. Trivial to misread as "top result first",
+  and a reminder for our own surface: an injected block whose order does not mean what the reader assumes is
+  worse than one with no order at all.
+- **A looping subagent stage's prompt is static, so any state it asserts goes stale.** The design-corpus
+  loop's remediation brief said "round 8's findings are outstanding" — true when written, false by the third
+  iteration, and two remediation runs opened by correcting me before doing the work. They were right to.
+  Write loop prompts to *derive* current state ("address the newest round with no response") rather than to
+  name it. Directly analogous to what Zikaron is for: a confidently stale instruction is worse than none.
+- **Sixteen rounds found the same handful of defect classes over and over.** Worth keeping as a checklist,
+  because each is a rule that is *correct about the case it names and silent about the set it implies*:
+  *stable is not shared* (both clients held a stable label; the signals needed the **same** label);
+  *a rejection can still be a read* (a `version_conflict` payload returns the full record, so checking versions
+  before authorization turned `merge` into the `fetch` D32 withholds);
+  *a disposition is not always a write* (serve-time vacating could empty a group with no write verb to close it);
+  *derived expiry has two sides* (treating a lapsed lease as expired stranded its own owner);
+  *a fallback can be a bypass* (the degraded read answered `bad_config` and `reindexing` too);
+  *the observable was specified and the state behind it left to be inferred* (a reported `of` with no stored
+  count, a depth with no stop reason);
+  *a rate whose unit differs on the two sides is not a rate* (rows over calls; a condition with no aggregation
+  unit);
+  *the fix was recorded somewhere the reader does not look* (a read-side rule for a write-side fact; an erratum
+  applied to the design but not to the cited artifact);
+  and *the fix landed in the normative place and not in its summaries* — which is what rounds 13–16 were almost
+  entirely about, and the one I kept committing myself.
+  One meta-lesson above them: **name the quantity before quoting a number about it.** Two consecutive rounds
+  failed on the *estimand* rather than the statistics — a figure that did not measure the axis it was cited for.
+- **Sixteen review rounds grew the corpus ~6×** (11.5k → 66k words) with no user decision reversed. Three
+  observations worth carrying. Rounds 9–11 were *all* about D30's six instrumented signals, because the
+  instrumentation spec is the only part of the corpus with no consumer — invariants and validation ladders
+  pressure-test everything else, while a signal definition is checked only by reading it; the remediation's
+  own recommendation is to make "the six signals as executable SQL" a build deliverable rather than run
+  another design round. Round 9's defect was created by round 8's fix, and merely by *naming* a set.
+  And `shard_count` (round 5) is flagged as the one mechanism plausibly not needed — a persisted count an
+  invariant then has to police, when it is derivable as a `COUNT(*)`; left alone pre-code, recorded so it
+  need not be rediscovered.
 
 ## References
-_(One line per research note and review, added as they land: topic — key takeaway — file path.)_
+_(One line per research note and review: topic — key takeaway — file path.)_
+- Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
+  (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
+- Prior art as built — schema, RRF+recency ranking, `/sleep`, `merge_reframes` — `~/Memory/design/long-term-memory.md`, `~/Memory/design/ltm-revision-revamp.md`; digested in `design/prior-art.md`.
+- kiro-cli hooks + `introspect` — exactly 5 triggers (`agentSpawn`, `userPromptSubmit`, `preToolUse`,
+  `postToolUse`, `stop`); **no compaction hook** (confirms D10); `userPromptSubmit` and `agentSpawn` are the
+  only two whose stdout reaches context on exit 0; `preToolUse` can block via exit 2; hook entries take
+  `command` / `matcher` / `timeout_ms` (30 s default) / `cache_ttl_seconds`; **v3 mode uses an incompatible
+  standalone `.kiro/hooks/` schema** — a distribution concern —
+  `research/kiro-cli-hooks-and-introspect.md`.
+- Embedding models for technical prose — bge-small suboptimal not disqualified; **no published evidence
+  either way on near-miss identifier discrimination**, closest adjacent result is embedder blindness to
+  negation (Nikiema et al. 2025, arXiv:2509.09714, 96.2% FP rate); code embedders confirmed trained for
+  NL→code, so wrong task; reranker is a complement not a substitute and needs no reindex; same-dimension
+  model swaps corrupt `vec0` silently — `research/embedding-models-technical-prose.md`.
+- **Design-corpus review trail** — sixteen rounds, ~130 findings, all accepted, no user decision reversed;
+  ends `VERDICT: APPROVED`. The audit trail for every design decision and every rejected alternative, plus an
+  `Operator finding` note recording what the 2026-08-01 measurement did to rounds 3–8's remediations —
+  `reviews/design-corpus-review.md`.
+- **kiro session-id probe, measured** — the evidence that collapsed the label ladder to two rungs (D31). Five
+  hook firings across two agents: payload `session_id` == `KIRO_SESSION_ID` for top-level sessions (3/3),
+  **differs** for subagent sessions (2/2, payload carries the subagent's own id), and `KIRO_SESSION_ID` is
+  present in hook processes, shell subprocesses and live MCP servers while absent from kiro's own —
+  `research/kiro-session-id-probe.jsonl`.
+- **Embedder benchmark, measured** — the evidence behind D20–D25 and open questions 2 and 8. Preregistered
+  effect sizes, 187-memory synthetic corpus, 192 blind prompts authored by an agent that never saw the
+  corpus, factorial `tokens`-column ablation, frozen-extractor held-out test, counterfactual
+  identifier-swap instrument, reranker latency curve, cold/warm latency table. Independently reviewed to
+  **APPROVED over 3 rounds**. Report `research/embedder-benchmark-results.md`; review trail
+  `reviews/embedder-benchmark-independent.md`; re-runnable harness + preregistration + gotchas
+  `experiments/embedder-precision/README.md`.

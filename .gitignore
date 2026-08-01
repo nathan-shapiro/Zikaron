@@ -29,8 +29,12 @@ target/
 # Logs
 *.log
 
-# NOTE: memory-store artifacts (databases, indexes, session transcripts) are
-# deliberately NOT ignored yet. Zikaron's stores are the product, and whether
-# they should be committed — diffable and reviewable — or kept local is an open
-# design question (see FINDINGS.md). Add rules once that is decided, rather
-# than silently excluding our own output.
+# Memory store — local state, never committed (FINDINGS.md D19).
+# Memories live only in the local SQLite DB; the FTS5 and sqlite-vec indexes and the
+# downloaded embedding model are all rebuildable, so none of it belongs in git.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.zikaron/
