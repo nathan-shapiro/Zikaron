@@ -123,6 +123,15 @@ retiring it is not the fix.
 An earlier draft said "delete the row and its chunks directly". **That does not erase the secret**, and it was
 verified locally that it does not: `memory_fts` is an **external-content** FTS5 table, so deleting the `memory`
 row leaves every one of its terms matchable — a `MATCH` on the secret still returns the deleted rowid.
+**Re-verified in M0 (spike 2), and the failure is worse than "the term stays findable": it degrades rather
+than fails cleanly.** Deleting only the content-table row commits with no error. The next `MATCH` query does
+not raise either — it returns a phantom result that matches nothing real, since the term it appears to match
+no longer exists anywhere. A second, identical query then raises `database disk image is malformed`. So the
+naive form is not merely insufficient, it is a path to database corruption, and the corruption does not
+announce itself on first contact — an operator who ran one query after a bad delete and saw a plausible-looking
+answer would have no signal anything was wrong until the next touch. This is why the sequence below maintains
+`memory_fts` explicitly with the `'delete'` command rather than relying on the content-table delete alone.
+Detail: `research/spike-results.md` §"Spike 2".
 `memory_vec` has no foreign key, so deleting chunks first orphans vectors. And three `ON DELETE RESTRICT`
 references will refuse the delete outright. The supported sequence, with the service **stopped** (find its pid
 in `service.log`, `SIGTERM` it; it unlinks its socket on exit — do not do this against a live service, whose
@@ -159,7 +168,9 @@ VACUUM;
 ```
 
 Then, outside SQLite: **truncate `service.log`**, which quotes prompts and error text and may therefore hold
-the same string.
+the same string. `warmup.log` and `hook.log` do not need the same treatment: neither ever echoes prompt text,
+memory content, or anything beyond a fixed failure-kind label and an error code (`architecture.md` §"Paths",
+§"Degraded modes"), so neither can hold a secret by construction.
 
 #### What this still does not guarantee
 - **`event.detail` is not covered, and one field of it is prose.** Event details store counts, not memory
@@ -249,12 +260,13 @@ reproducible from an untyped `detail` column, and because a rate needs a stated 
 same direction:
 
 1. Sessions are counted from a `surface_call` event, which exists even when a push returns nothing — but a
-   session whose every push fell to the degraded path emits no events at all, because the degraded path opens
-   the store read-only by design. The same holds, more strongly, for the two failures round 4 made
-   non-fallback: on `bad_config` and `reindexing` the hook prints nothing *and* reads nothing
-   (`architecture.md` §"Degraded modes"). So the rate is conditional on the service having been reachable
-   **and healthy**. Making the hook write would mean handing it a writable store handle, which is a worse trade
-   than a stated caveat.
+   session whose every push failed emits no `surface_call` event at all, because the hook never reaches the
+   service on a failure and therefore never emits the event the service would have written. This holds
+   uniformly across every failure kind — transport, `bad_config`, `reindexing`, contention, identity — because
+   the hook's response to all of them is now identical: nothing printed, nothing read, one line to its own
+   `hook.log` (`architecture.md` §"Degraded modes"). So the rate is conditional on the service having been
+   reachable **and healthy**. Making the hook write would mean handing it a writable store handle, which is a
+   worse trade than a stated caveat.
 2. Pushes come from `zikaron-hook` and writes come from `zikaron-mcp`, so **two of these six signals are
    cross-process joins** and only work when both clients resolved the same session label. Since 2026-08-01 they
    do so *by construction under kiro* — both read the same `KIRO_SESSION_ID` out of their own environment

@@ -116,10 +116,41 @@ what it will be told when it is wrong. Public API only; a docstring on a three-l
 pin them exactly in a lock file so a build is reproducible, and bump deliberately rather than drifting. An
 unpinned range means a green run today and a red one tomorrow with no change of ours.
 
+**`zikaron-core`'s SQL runs through `aiosqlite`, never bare stdlib `sqlite3`.** Not a preference: a handler
+that calls the blocking sqlite3 API directly can hold the single-threaded event loop for as long as SQLite's
+own `busy_timeout` retries, starving whichever other coroutine holds the lock it is waiting on — confirmed
+locally as a genuine self-inflicted deadlock (M0 spike 3), which surfaces as an ordinary-looking
+`store_busy` and is indistinguishable from real contention without tracing it back to the handler.
+`aiosqlite` closes this structurally: each connection runs on its own dedicated worker thread, so there is no
+synchronous call path for a handler to get wrong. Re-verified against every mechanism `core` needs — extension
+loading (`sqlite-vec`, via `aiosqlite.Connection.load_extension`, not by reaching into the wrapped connection),
+`vec0` KNN, the FTS5 external-content amend/erasure sequence, and two-writer `busy_timeout` contention — in
+M0 spike 5, `research/spike-results.md` §"Spike 5". `aiosqlite==0.22.1` verified; pin exactly.
+
 **Minimal surface, and in the hook it is a design constraint rather than a preference.** `zikaron-hook` and
 `zikaron-mcp` are stdlib-only because their measured interpreter cost is the argument for the whole
 architecture. Adding a third-party import to the hook is a **design violation**, not a style question — it
-silently spends the budget the service exists to protect.
+silently spends the budget the service exists to protect. `aiosqlite` is a `core` dependency, not a hook one:
+the hook opens no database connection at all, on any path (`design/architecture.md` §"Degraded modes") — on
+any RPC failure it logs to its own `hook.log` and stops, so the question of which SQLite driver the hook uses
+does not arise. An earlier version of the hook's degraded mode read the store directly on a transport failure,
+which was the reason a bare-stdlib-`sqlite3` carve-out existed here; that direct read is gone, and no
+carve-out replaces it.
+
+**Logging is split by process, on purpose, and it is a documented exception rather than an inconsistency.**
+`zikaron-service` and the `agentSpawn` hook's detached warm helper both use stdlib `logging` — each to its own
+file (`service.log`, `warmup.log`), never a shared one, since `logging.FileHandler` has no cross-process append
+locking and two independent processes writing one path through it is a real corruption risk, not a style
+choice. Both processes are off any latency-critical path (the service is long-running and warm; the helper
+runs detached, before the first `userPromptSubmit`), so `logging`'s import cost is irrelevant to them.
+`zikaron-hook` does **not** use `logging`, even though `logging` is itself stdlib and so would not violate the
+minimal-surface rule above on its own terms: measured on this machine, `import logging` alone costs **~15 ms**
+of interpreter startup — in the same range as the `socket`/`json`/`os` cost this document's whole
+stdlib-thinness argument rests on, and roughly double the hook's bare interpreter-launch cost. A hook
+invocation writes at most one line to `hook.log` and then exits; it has no log lifecycle for `logging`'s
+formatters, handlers or levels to manage, so the entire mechanism is `open(path, "a")` and one `.write()` call.
+The rule, stated plainly so a future change has to name it rather than drift into it: **`logging` for anything
+long-running or off the critical path; a direct minimal write for anything that is neither.**
 
 ## 7. Errors
 
@@ -127,7 +158,7 @@ The design's numeric codes are a wire contract. One `IntEnum`, one mapping from 
 shape, and every raise site references the enum. Never a bare integer at a call site.
 
 **Never swallow an exception silently** — except in the hook, where the design requires exit 0 and no stderr on
-any failure. Even there the failure goes to the service log; "prints nothing to the user" is not "records
+any failure. Even there the failure goes to `hook.log`; "prints nothing to the user" is not "records
 nothing anywhere".
 
 ## 8. SQL

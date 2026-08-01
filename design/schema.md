@@ -324,16 +324,13 @@ unparseable, or out of range on open is a **fatal store error**, not a fall-back
 substituting a default is how two deployments end up ranking differently while both look healthy. The
 service refuses to serve, returns `−32023 bad_config` naming the key, and logs it.
 
-**A configuration error is not something the degraded path can route around, and saying "the hook goes
-degraded" here was a contradiction.** The degraded hook path needs the *same* ranking values a `bad_config`
-has just declared unusable — `fusion_depth`, the two penalties, `fts_query_max_terms`, now **config-file**
-keys rather than `meta` keys — so it could only proceed by re-deriving them, which is the silent default
-this rule forbids, or by ranking differently while looking healthy, which is the failure the rule exists to
-prevent. So on `bad_config` the hook **prints nothing**. And because a store whose configuration is bad may
-also be a store whose service never started, the degraded path performs the **same validation itself**
-before it reads — the five `meta` keys here *and* the config resolution of `architecture.md`
-§"Configuration", since after the split a fatal misconfiguration can originate in either. Full failure
-classification: `architecture.md` §"Degraded modes".
+**A configuration error is not something the degraded path can route around.** An earlier draft had the
+degraded hook path re-validate the same keys a `bad_config` had just declared unusable, so it could attempt a
+fallback read anyway — which meant re-deriving values the rule above forbids substituting a default for, or
+ranking differently while looking healthy, which is the exact failure this rule exists to prevent. The hook no
+longer attempts this at all: on `bad_config` it **prints nothing and reads nothing**, uniformly with every
+other failure (`architecture.md` §"Degraded modes"). There is no validation for the degraded path to perform,
+because there is no read for that validation to protect.
 
 **Unknown keys are tolerated; a newer `schema_version` is not.** An unknown key on a *supported* version is
 left alone and logged once, so a newer writer's extra settings do not brick the store. That is deliberately
@@ -357,10 +354,11 @@ is the ISO-8601 instant the window opened. Its **absence is the normal state**, 
 required-key validation* — an open that finds it absent proceeds, and an open that finds it **present**
 concludes the previous process died mid-reindex and must finish or restart the reindex before serving
 (`−32022 reindexing` until then). Listing it as a required key with default "absent" was a straight
-contradiction of the paragraph above it; this is the correction. **Every direct reader checks it, not only the
-service:** the degraded hook path reads the sentinel before it queries and prints nothing when it is present,
-which is what keeps invariant 3's "no read may see the gap" true of the one path that does not go through the
-service.
+contradiction of the paragraph above it; this is the correction. **Only the service checks it, and that is
+sufficient:** the service is the only reader of the store, and a `reindexing` result from it produces the
+same response from the hook as every other failure — nothing printed, one line logged
+(`architecture.md` §"Degraded modes"). An earlier draft had the hook itself check this sentinel before
+running a fallback query of its own; there is no fallback query left to guard.
 
 **One setting deliberately does not live in `meta`: the consolidator's model.** D29 requires it to be a
 config value, and the store is the wrong home for it — the store does not spawn the subagent, D10's skill
@@ -587,8 +585,9 @@ is read off, and `probe_cap_hit` is what a retrieval-parameter sweep watches, si
 Null has one defined meaning per field, on both the depth and the reason: `lexical_depth_reached` and
 `lexical_stop_reason` are **null iff `lexical_skipped`** (zero surviving terms, so the arm never ran), and the
 two dense fields are null iff the dense arm never ran — which on the service path is unreachable in v0, so
-that null is reserved rather than live. The degraded BM25-only path emits no events at all, because it opens
-the store read-only (§"Honest limit on the session denominator").
+that null is reserved rather than live. The hook's degraded path emits no events at all on any failure,
+because it never reaches the service — there is no request for the service to log, mint a receipt for, or
+count (§"Honest limit on the session denominator").
 
 **Serve-time vacating is recorded in state, deliberately not in the event log.** A member found no longer
 `tier='journal' AND active=1` inside the serve transaction is not delivered, so it emits no `group_served` —
@@ -641,12 +640,13 @@ wrote and never surfaced anything would be invisible to the zero-write-session s
 call, `surface` is the results, and the two share an `op_id`.
 
 **Honest limit on the session denominator.** `surface_call` counts *sessions the service saw*, not sessions
-that existed. A session whose every push fell to the degraded path contributes no events, because the
-degraded path opens the store **read-only** by design (`architecture.md` §"Degraded modes"); the same is true
-of the two failures that suppress the fallback outright, `bad_config` and `reindexing`, where the hook neither
-prints nor reads. So the zero-write rate is conditional on the service having been reachable **and healthy**.
-That is a stated limitation, not a fixed one — making the degraded path write would mean giving the hook a
-writable store handle, which is a worse trade.
+that existed. A session whose every push failed contributes no events at all, because the hook never reaches
+the service on a failure and so never emits the `surface_call` the service would have logged
+(`architecture.md` §"Degraded modes"). This holds uniformly across every failure kind — transport,
+`bad_config`, `reindexing`, contention, identity — since the hook's response to all of them is now identical:
+nothing printed, nothing read, one line to its own `hook.log`. So the zero-write rate is conditional on the
+service having been reachable **and healthy**. That is a stated limitation, not a fixed one — making the hook
+write would mean giving it a writable store handle, which is a worse trade.
 
 **Subagent sessions are absent from both sides, and that is why they create no artifact.** The hook prints
 nothing and calls nothing in a subagent session (`architecture.md` §"Subagent sessions"), so a subagent
@@ -913,17 +913,13 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
    with a defined error until it completes. A `vec0` dimension change **requires** the second form, since
    `vec0` tables cannot be altered — the table is dropped and recreated, and no read may see the gap.
 
-   **"No read" includes the degraded hook path, which is a direct reader and not an exception.** Round 3 left
-   the service returning `−32022 reindexing` while `architecture.md`'s fallback chain answered *any* RPC
-   failure with a direct read-only BM25 query — so the one path that bypasses the service also bypassed the
-   window this invariant declares unavailable. The degraded path therefore checks for the `reindexing` sentinel
-   itself and **prints nothing** when it is present, exactly as it does on `bad_config`. Permitting BM25-only
-   reads during a reindex was considered and rejected: it is *tempting* because v0's only reindex trigger
-   (`embed_model` / `embed_dim` change) rebuilds the dense side while FTS5 stays intact, so a lexical read
-   would in fact be correct — but nothing in the store records *which* indexes a given reindex is rebuilding,
-   so the permission could not be checked, only assumed, and this invariant's guarantee would become
-   conditional on a fact no reader can verify. Suppressing costs a quiet hook during a rare, operator-triggered
-   window. Classification: `architecture.md` §"Degraded modes".
+   **"No read" has no exception to state, because the hook is never a reader.** An earlier draft had the
+   degraded hook path read the store directly on any RPC failure, which put a second, unsupervised reader
+   outside this invariant's own enforcement — the service could correctly refuse a read with `−32022
+   reindexing` while the one path that bypasses the service read straight through the window this invariant
+   declares unavailable. The hook no longer reads the store under any circumstance, on any failure, so this
+   invariant's "no read may see the gap" is enforced entirely at the one place reads happen: the service
+   itself. Full mechanism: `architecture.md` §"Degraded modes".
 4. **Retire never deletes** (D16): `active=0` only. FTS5 and `vec0` rows stay, which is what keeps
    superseded rows retrievable under the eligibility predicate above and keeps outright-retired rows
    recoverable.
@@ -1190,9 +1186,9 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 
 ## File permissions
 The store is durable, unencrypted, plain-text knowledge about a project. `.zikaron/` is mode **0700** and
-`memory.db`, its `-wal` and `-shm`, and `service.log` are mode **0600**, created with an explicit umask
-rather than inherited. `design/architecture.md` §"Filesystem security" carries the full rule, including the
-socket and the `/tmp` fallback, because those live outside the store directory.
+`memory.db`, its `-wal` and `-shm`, and each of `service.log`, `warmup.log` and `hook.log` are mode **0600**,
+created with an explicit umask rather than inherited. `design/architecture.md` §"Filesystem security" carries
+the full rule, including the socket and the `/tmp` fallback, because those live outside the store directory.
 
 **Erasing a row is not a `DELETE FROM memory`.** `memory_fts` is an external-content FTS5 table, so deleting
 the content row leaves its terms searchable; `memory_vec` has no foreign key, so deleting chunks first

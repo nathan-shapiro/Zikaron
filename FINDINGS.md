@@ -71,10 +71,14 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 
 ## Current state — resume here
-**Phase: design complete, independently reviewed to approval, operator-reviewed. Pre-code — no code yet.**
-D1–D33 settled. Grounding from `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
+**Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes) complete; M1 is
+next.** D1–D33 settled. Grounding from `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
-retrieval, indexing, consolidation and write policy all specified in `design/`.
+retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
+confirmed their assumption — sqlite-vec, FTS5 external-content, the UDS transport, fastembed cold/warm — with
+no D-decision, invariant or table changed.** Two rationale notes were added from what the spikes surfaced (the
+FTS5 naive-delete corruption shape; the `asyncio.to_thread` requirement for M9's service, discovered by a
+self-inflicted deadlock in the spike server itself). Full measurements: `research/spike-results.md`.
 
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
@@ -106,7 +110,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 
 | # | Milestone | Done when | Status |
 |---|---|---|---|
-| **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ☐ |
+| **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ✓ |
 | M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ☐ |
 | M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ☐ |
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ☐ |
@@ -151,11 +155,20 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
    template wearing six hats. `token_count` and the `truncated` canary are instrumented so revisiting
    `chunk_max_tokens` — and chunking itself — becomes a measurement.
-4. **Hook→service transport: designed, partly measured, still unsmoke-tested.** D31 settles the shape. Still
-   unmeasured: real RPC round-trip latency from a hook process, behaviour under concurrent requests from two
-   sessions sharing one store (including whether `busy_timeout` at 5 s is right), whether start-if-absent holds
-   under contention, and whether a consolidation lease survives a service restart in practice. Wants a smoke
-   test, not more design. **Three sub-items closed 2026-08-01.** The `/proc`-ancestry unknowns
+4. **Hook→service transport: designed, and now smoke-tested (M0, spike 3).** D31 settles the shape.
+   **Resolved 2026-08-01:** RPC round-trip latency (cold start-if-absent ~101 ms end to end, dominated by
+   interpreter start; warm p50 0.146 ms over an established connection); `busy_timeout` at 5 s behaves exactly
+   as documented under two real writers, once the service's own blocking `sqlite3` calls are kept off the
+   event loop — getting that wrong produces a self-inflicted deadlock that *presents* as a `busy_timeout`
+   failure, which is now a normative note in `design/architecture.md`; start-if-absent holds under two clients
+   racing the same cold store, converging on one server with no thundering herd; and the connect-as-server-
+   exits race is real and reproducible, with the client's own retry-through-start-if-absent logic recovering
+   unmodified. Measurements: `research/spike-results.md` §"Spike 3". **Still open:** none of this was measured
+   from an actual hook process invocation (the spike used a plain client script, not the real
+   `zikaron-hook`/`zikaron-mcp` clients, which do not exist yet), and **whether a consolidation lease survives
+   a service restart in practice is untouched** — M0 had no consolidation state to restart against. Both are
+   real integration-test material for M9 rather than open design questions. **Three earlier sub-items closed
+   2026-08-01.** The `/proc`-ancestry unknowns
    (process topology, Linux-only `/proc`, pid namespaces, the MCP-first race) are gone with the rung — see
    current-state item 4. The round-7 `session_client` resolution-write cost is gone with the write: the preamble
    no longer touches the store. And **where hook stdout lands is now partly answered**: it arrives as a context
@@ -307,3 +320,9 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   **APPROVED over 3 rounds**. Report `research/embedder-benchmark-results.md`; review trail
   `reviews/embedder-benchmark-independent.md`; re-runnable harness + preregistration + gotchas
   `experiments/embedder-precision/README.md`.
+- **M0 spike results, measured** — all four architectural assumptions (sqlite-vec, FTS5 external-content, the
+  UDS transport, fastembed cold/warm) confirmed, no D-decision, invariant or table changed. Two rationale
+  notes added from what the spikes surfaced: the FTS5 naive-delete failure shape (silent wrong answer, then
+  corruption on the next touch — `design/write-policy.md`), and the `asyncio.to_thread` requirement for M9's
+  service, discovered via a self-inflicted deadlock in the spike server itself
+  (`design/architecture.md` §RPC) — `research/spike-results.md`.

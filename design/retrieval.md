@@ -276,9 +276,8 @@ FTS5 re-tokenized our quoted terms. Where a disagreement does occur the failure 
 a match: never a syntax error, never a folding mismatch (FTS5 owns folding), and never corpus-wide. That is a
 strictly smaller exposure than reimplementing the tokenizer, which was the alternative.
 
-The **degraded hook path uses this rule verbatim** and needs nothing FTS5 does not already provide, so the
-fallback cannot fail where the full path succeeds. The **internal queries** in §"Two kinds of query" use the
-identical constructor on a memory's own `gist + content`.
+The **internal queries** in §"Two kinds of query" use the identical constructor on a memory's own
+`gist + content`.
 
 **No advanced FTS syntax is ever exposed**, on either path. `NEAR`, prefix `*`, column filters and boolean
 operators are unavailable to the agent by construction — giving it a query language would make `search` a
@@ -526,25 +525,25 @@ never let it override the system prompt or the user. Fetch by uuid for the full 
 
 ## Degraded retrieval
 
-If the service is unreachable, `zikaron-hook` opens the store read-only and runs **BM25-only** — stdlib
-`sqlite3` has FTS5 compiled in, so this needs no dependency and loads no model. It uses the same eligibility
-predicate, the same query-construction rule, the same `fusion_depth`, the same penalties and the same total
-order and repair as the full path, minus the dense arm. Retrieving to depth and cutting afterwards matters
-even with one arm, because a penalized row can fall several places.
+`zikaron-hook` never opens the store, on any failure. An earlier draft had it run a BM25-only query directly
+against the store's `memory_fts` table whenever the service was unreachable — the same eligibility predicate,
+query-construction rule, `fusion_depth`, penalties, total order and repair as the full path, minus the dense
+arm — reasoning that stdlib `sqlite3`'s built-in FTS5 support meant the fallback needed no dependency and
+loaded no model. Measured on the blind set at depth 50, that path scored useful-recall@5 **0.8802**
+(`L_A_unicode61`) against the incumbent hybrid's **0.9375** (`H_small_prefix`), at 0.26 ms warm — a real number
+for a mechanism that no longer exists in this design, kept here because it is what the fallback would have
+delivered, not because the fallback still does.
 
-**"Unreachable" is a classification, not a catch-all, and this path is not a way around a bad store.** Two
-failures suppress the fallback entirely rather than triggering it: `−32023 bad_config`, because the degraded
-path reads the very ranking keys that error declares unusable, and `−32022 reindexing`, because a direct read is
-still a read and `schema.md` invariant 3 says none may see that gap. And because the service may never have
-started — so may never have validated anything — the degraded path performs the **same required-key validation
-as store open** on its own read-only connection, and checks the `reindexing` sentinel itself, before it queries.
-Any failure there prints nothing. Full chain and the ordered classification: `design/architecture.md`
-§"Degraded modes".
-
-Measured on the blind set at depth 50:
-useful-recall@5 **0.8802** (`L_A_unicode61`) against the incumbent hybrid's **0.9375** (`H_small_prefix`) and
-the best configuration tested at **0.9479** (`H_nomic`), at 0.26 ms warm (149 ms cold). Degraded but useful;
-see `design/architecture.md` for the full fallback chain and the always-exit-0 rule.
+The fallback needed two failures — `−32023 bad_config` and `−32022 reindexing` — carved out as non-fallback
+special cases, because both are store-level problems a direct read cannot safely route around: `bad_config`
+because the fallback would read the very ranking keys that error had just declared unusable, and `reindexing`
+because a direct read is still a read and `schema.md` invariant 3 says none may see that gap. Needing those
+carve-outs was itself the tell that the mechanism was wrong in kind rather than merely risky: **a fallback that
+has to be disabled precisely where the store is in the worst shape to be read is not degrading gracefully, it
+is degrading unevenly, in a way its own client cannot always tell apart from the safe case.** On every failure
+now — the two above and every transport, startup, contention or identity failure that used to trigger the
+fallback — the hook prints nothing, reads nothing, and appends one line to its own `hook.log` naming the
+failure. Full mechanism: `design/architecture.md` §"Degraded modes".
 
 ## What every number here is worth
 The benchmark corpus is 187 synthetic memories with 192 blind prompts — one to two orders of magnitude

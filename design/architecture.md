@@ -29,6 +29,33 @@ hook would spend more than the transport saves.
 
 Server uses stdlib `asyncio.start_unix_server`. Clients need only `socket` and `json`.
 
+**All of `zikaron-core`'s SQL runs through `aiosqlite`, never through bare stdlib `sqlite3`.** This is a
+correctness requirement, not a style preference, and it replaces an earlier, weaker version of this note that
+said the same blocking-call-off-the-event-loop rule but left it to be enforced per call site via
+`asyncio.to_thread`. That discipline is real but optional at every call site: nothing stops a future handler
+from calling the blocking sqlite3 API directly, and getting it wrong is silent until it deadlocks under real
+contention. Confirmed locally (M0 spike 3): an inline `async def` handler that called blocking `sqlite3`
+directly produced a **self-inflicted deadlock** under two concurrent writers — writer B's blocking `BEGIN
+IMMEDIATE` froze the single-threaded event loop, which prevented writer A's release (simulated with
+`asyncio.sleep`) from ever running, so B's own `busy_timeout` elapsed waiting on a release that could
+structurally never happen. The failure surfaces as `−32020 store_busy` after ~5 s, indistinguishable from
+genuine contention to the caller — exactly the kind of defect that gets misdiagnosed as a database or
+`busy_timeout` problem rather than a service-implementation one.
+
+`aiosqlite` closes this structurally rather than by convention: each `aiosqlite.Connection` runs its underlying
+`sqlite3.Connection` on its own dedicated worker thread and dispatches every call through it, so there is no
+synchronous call path to get wrong at a call site — a handler cannot accidentally block the event loop because
+`aiosqlite` never hands it a blocking call to make. Re-confirmed against the exact mechanisms this design needs
+(M0 spike 5, `research/spike-results.md` §"Spike 5"): `await db.load_extension(sqlite_vec.loadable_path())`
+loads `sqlite-vec` correctly (the equivalent of `sqlite_vec.load()`, which stdlib `sqlite3` exposes but
+`aiosqlite.Connection` does not accept directly — extension loading must go through aiosqlite's own
+`load_extension` method, not by reaching into its wrapped connection, which is bound to aiosqlite's worker
+thread and raises if touched from the caller's); `vec0` KNN and the dimension-mismatch error are unchanged;
+the FTS5 amend and erasure sequences behave identically to the raw-`sqlite3` spike; and the two-writer
+contention check that exposed the original deadlock succeeds cleanly through `aiosqlite` with no special
+handling — writer B's `waited_s` reflects real serialization through `busy_timeout`, not a frozen loop.
+`aiosqlite==0.22.1` is the version verified; pin it exactly per `design/coding-standards.md` §6.
+
 ### The request envelope — where `session_id` comes from
 D27 keeps provenance out of the **agent-facing** call — the write verbs gain no parameters. But a
 long-running service shared by two kiro sessions cannot infer which session a request came from, so the
@@ -272,7 +299,15 @@ rescuing, because the prefix test is the only test.
   (128 bits) of the sha256 of the `realpath`-resolved store path** — long enough that accidental collision
   is not a design concern, short enough to keep the path under the ~108-byte `sun_path` limit. One service
   per store.
-- **Log:** `<cwd>/.zikaron/service.log`. The service is detached and has nowhere else to complain.
+- **Logs: one file per process, never shared.** `<cwd>/.zikaron/service.log` (the long-running service),
+  `<cwd>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<cwd>/.zikaron/hook.log` (the
+  `userPromptSubmit` hook's own failure record). Three distinct processes, three distinct files, by design:
+  Python's `logging.FileHandler` has no cross-process append locking, so two independent processes writing the
+  same path through `logging` is a real corruption risk `logging`'s own documentation does not paper over —
+  giving each process its own file removes the question entirely rather than requiring proof that concurrent
+  appends are safe. The service and the warm helper are both off any latency-critical path, so both use stdlib
+  `logging`. The `userPromptSubmit` hook is not — see §"Degraded modes" for why it does a direct file write
+  instead.
 - **Config:** two layers, resolved per store — see §"Configuration" below.
 
 ## Configuration
@@ -381,7 +416,9 @@ different store. So identity is checked rather than inferred:
   **no `client` envelope and resolves no session label** — see below.
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
   write.** A mismatch is not a retry: the client logs it, treats the socket as foreign, and — for the hook —
-  falls to the degraded BM25 path rather than reading someone else's project knowledge.
+  goes through the same degraded path as any other failure (§"Degraded modes"): nothing printed, nothing read,
+  one line to `hook.log`. The mismatch is not special-cased into a fallback read of a store the client has
+  no way to know is the right one.
 - **Nothing is adopted from an unverified service, session labels included.** This is why `health()` is outside
   the label ladder (§"`label_source` is derived, not stored"). If the handshake resolved a label, a client
   reaching a *foreign* service would adopt a label that service minted, discard the socket on the mismatch it
@@ -399,7 +436,7 @@ draft of this document gave only to the socket.
 |---|---|---|
 | `<cwd>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it and logs |
 | `memory.db`, `-wal`, `-shm` | **0600** | created under an explicit umask (`os.umask(0o077)`) around store creation, because SQLite creates the WAL/SHM itself and will otherwise inherit a permissive umask |
-| `service.log` | **0600** | it quotes prompts and error text |
+| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). Each is written by exactly one process, never shared |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
@@ -453,9 +490,13 @@ An active consolidation run does **not** keep the service alive on its own — a
 `agentSpawn` fires at session start (D18). The **hook process** prints the write policy — static text, no
 RPC, so it can never fail — and spawns a **detached warm helper**, then exits. (Both steps are skipped entirely
 in a subagent session: §"Subagent sessions".) The helper does the work that
-can fail: start-if-absent and `health()` polling to a deadline. It writes to `service.log` rather than to the
-hook's stdout, and its failure is invisible to the session. That way the service is already warm before the first
-`userPromptSubmit`, and the first push of a session is not the slow one.
+can fail: start-if-absent and `health()` polling to a deadline. It writes to its own `warmup.log` — via stdlib
+`logging`, since it runs detached and off the user's critical path so the ~15 ms interpreter cost of importing
+`logging` is irrelevant here — rather than to the hook's stdout, and its failure is invisible to the session.
+`warmup.log` is not `service.log`: the helper and the service are two independent processes, and two
+processes writing one file through `logging.FileHandler` with no cross-process locking is a corruption risk,
+not a convenience — see §"Paths". That way the service is already warm before the first `userPromptSubmit`,
+and the first push of a session is not the slow one.
 
 **The split matters and blurring it was a real contradiction:** "the `agentSpawn` hook talks to the service" and
 "the `agentSpawn` path makes no RPC" cannot both describe one process. The hook process makes no RPC; its
@@ -539,52 +580,53 @@ Three consequences, stated because two of them touch settled guarantees:
   only avoided this in the `minted` case — an `ancestry`-derived consolidator label matched the session's and
   pooled identically, so this was a latent hole rather than a new one.
 
-## Degraded modes — the hook must never block a user message
+## Degraded modes — the hook must never block a user message, and it never reads the store itself
 
-**Classify the failure before falling back.** An earlier draft answered *any* RPC failure with a direct
-read-only BM25 query, which quietly made the hook a way around two store states the schema declares
-unavailable. Two of them are not transport problems and must not be treated as one:
-
-- **`−32023 bad_config`.** The degraded path consumes the *same* ranking keys the service just declared
-  unusable — `fusion_depth`, `supersession_penalty`, `retired_penalty`, `fts_query_max_terms`. It could only
-  proceed by re-deriving them, which `schema.md` forbids as a silent default, or by ranking on
-  whatever it could parse, which is the "two deployments ranking differently while both look healthy" failure
-  that rule exists to prevent.
-- **`−32022 reindexing`.** `schema.md` invariant 3 says no read may see the reindex gap, and a direct reader is
-  a read.
+**The hook is never a reader of the store, under any failure.** An earlier draft answered any RPC failure with
+a direct read-only BM25 query, reasoning that a transport failure (the service unreachable or not yet started)
+is a different kind of problem from a store failure (`bad_config`, `reindexing`) and could safely be routed
+around by reading the store directly. That distinction was real, and it produced a genuine defect: `bad_config`
+and `reindexing` had to be carved out as non-fallback special cases, the fallback then had to re-validate the
+same configuration and sentinel state the service itself would have checked, and the hook — a process
+explicitly kept model-free and stdlib-only for latency reasons — ended up as a second implementation of the
+service's own read path, one that had to stay in lockstep with it by hand. **The fallback was a bypass, not a
+resilience mechanism**: it let the hook answer a store problem by opening the store anyway, which is exactly
+what a degraded mode should not do when the reason for the degradation is unknown to the client experiencing
+it. There is no failure classification left to make, because there is no case where the hook proceeds.
 
 So `zikaron-hook` for `userPromptSubmit`, in order:
 
 0. **Subagent check** — if `KIRO_SESSION_ID` is present and differs from the payload's `session_id`, **print
-   nothing, stop** (§"Subagent sessions"). No RPC, no fallback, no store access.
+   nothing, stop** (§"Subagent sessions"). No RPC, no log line. This is unrelated to the failure path below;
+   it is not a failure at all.
 1. RPC `surface(prompt, limit=5)`. On success, print what the service returned.
-2. **On failure, classify:**
-   - `−32023 bad_config` → **print nothing, stop.** No fallback.
-   - `−32022 reindexing` → **print nothing, stop.** No fallback.
-   - anything else — `ENOENT`, `ECONNREFUSED`, spawn failure, `health()` never ready, the internal deadline,
-     a `store_identity` mismatch, `−32020 store_busy`, or an unexpected error — → continue to 3.
-3. **Validate before reading, because in this branch nothing else has.** Open the store read-only and, on that
-   connection: run the **same required-key validation as store open** (every key present, parseable, in range,
-   `schema_version == 1`), and confirm the `reindexing` sentinel is **absent**. Any failure here → **print
-   nothing, stop.** This step is what makes the fallback safe when the service never started at all and so
-   never validated anything — the case the round-3 draft silently relied on the service for.
-4. Run a BM25-only FTS5 query directly, using the same eligibility predicate, the same query-construction rule
-   and the config validated in step 3 (`design/retrieval.md`). Verified locally that stdlib `sqlite3` 3.45.1
-   has FTS5 compiled in, so this needs **no third-party dependency and loads no model**. This is the fallback
-   D22 names. On the blind benchmark set at depth 50, BM25-only scored useful-recall@5 **0.8802** against the
-   incumbent hybrid's **0.9375** and the best configuration tested (`H_nomic`) at **0.9479**, at 0.26 ms warm —
-   degraded but useful.
-5. On any failure at all: print nothing.
+2. **On any failure — transport, startup, contention, identity, or a store error** — `ENOENT`, `ECONNREFUSED`,
+   spawn failure, `health()` never ready, the internal deadline, a `store_identity` mismatch, `−32020
+   store_busy`, `−32023 bad_config`, `−32022 reindexing`, or anything unexpected: **print nothing to stdout,
+   open nothing, read nothing, and append one line to its own `hook.log`** naming the failure kind and, where
+   one exists, the error code. This is a **direct file write, not `logging`**: `open(path, "a")` and one
+   `.write()` call, then close — `logging`'s import cost is ~15 ms on this machine, measured directly against
+   the same interpreter-cost argument that keeps this client stdlib-thin in the first place, and a process that
+   writes exactly one line per invocation and then exits has no log lifecycle for `logging`'s formatters and
+   handlers to manage. `hook.log` is its own file, not `service.log` or `warmup.log` — three independent
+   processes, three files, so an operator checks all three rather than one, but none of them can corrupt
+   another by writing at the same instant (§"Paths").
 
-Note what the classification does *not* change: transport, startup, contention and identity failures still get
-the full degraded path, which is the common case and the one D22 was written for. What it removes is the hook's
-ability to answer a *store* problem by reading the store anyway.
+There is no step 3 or 4. What made the removed fallback tempting is also why it is refused: a BM25-only read
+degrades gracefully in isolation, but the hook has no way to tell *which* failure it is looking at with any
+confidence a config error or an in-progress reindex haven't already invalidated the very keys and sentinels a
+safe read would need to check first — and a client that has to re-derive the service's own preconditions before
+it can act on them is not a fallback, it is an unsupervised second copy of the service. Logging the failure
+kind is strictly better for diagnosing *why* pushes are degraded than a silent, sometimes-successful read would
+have been: `hook.log` now says "reindexing" or "bad_config" or "ECONNREFUSED" in the exact moment it
+happened, rather than leaving an operator to infer the cause from an intermittently missing injection.
 
 Two hard rules:
 
 - **Always exit 0, and never write to stderr.** Per the hooks research, exit codes other than 0 and 2 cause
   stderr to be shown to the user as a warning. A memory system having a bad day must not nag on every
-  message.
+  message. Writing to `hook.log` is not writing to stderr, and is required on every failure rather than
+  merely permitted.
 - **Enforce an internal deadline of ~2 s**, far under the 30 s `timeout_ms`. Failing fast and silently beats
   being correct and late, because the user is waiting.
 
@@ -1138,8 +1180,8 @@ could not both hold.
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
 | −32020 | `store_busy` | `SQLITE_BUSY` still after `busy_timeout` (5 s) | `{verb}` — the caller may retry once. Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
 | −32021 | `index_failed` | embedding or index maintenance failed; the transaction rolled back | `{stage}` |
-| −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook **prints nothing** on this rather than falling back; a direct read is still a read (§"Degraded modes") |
-| −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook **prints nothing** on this rather than falling back, because the degraded path reads the same keys |
+| −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook **prints nothing** on this, like every other failure (§"Degraded modes") |
+| −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook **prints nothing** on this, like every other failure |
 | −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook **prints nothing**. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 

@@ -228,11 +228,18 @@ dedup payload, retire semantics), and a consolidator config provably cannot reac
 Normative: `design/architecture.md` §"Degraded modes", §"Subagent sessions"; `design/write-policy.md`.
 
 `agentSpawn`: print the policy, warm the service, print nothing on failure. `userPromptSubmit`: subagent
-suppression by comparing payload `session_id` against `KIRO_SESSION_ID`, then RPC, then direct BM25, then
-silence. Always exit 0, never stderr, internal deadline well under `timeout_ms`.
+suppression by comparing payload `session_id` against `KIRO_SESSION_ID`, then RPC, then — on any failure —
+silence plus one line appended to its own `hook.log` naming the failure, via a direct `open`/`write`, **not**
+`import logging` — `logging` costs ~15 ms of interpreter startup on this machine, measured against the same
+argument that keeps this client stdlib-thin, and a process writing one line per invocation has no log
+lifecycle for it to manage. No fallback query, no direct store access under any circumstance. Always exit 0,
+never stderr, internal deadline well under `timeout_ms`.
 
-**Done when:** a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout; a subagent
-payload produces no output; the degraded path is exercised with the service down.
+**Done when:** a test asserts stdlib-only imports **and specifically that `logging` is not among them**; every
+failure mode exits 0 with empty stdout and no store access of any kind; a subagent payload produces no output;
+each of the failure kinds named in `architecture.md` §"Degraded modes" (transport, `bad_config`, `reindexing`,
+`store_busy`, an identity mismatch) is exercised with the service down or unhealthy and produces exactly one
+`hook.log` line naming it, with no read attempted.
 
 ---
 
