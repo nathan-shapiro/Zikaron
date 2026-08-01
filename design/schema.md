@@ -589,6 +589,26 @@ that null is reserved rather than live. The hook's degraded path emits no events
 because it never reaches the service — there is no request for the service to log, mint a receipt for, or
 count (§"Honest limit on the session denominator").
 
+**Which `detail` fields may be null, in one place.** Nullability is stated above in three different forms —
+inline in `surface`'s value set, as a clause on the `merge` and `promote` rows, and as the paragraph on the two
+arms — and the `retire` case is stated only in §"D30's six signals, as queries". That is how a signal comes to
+be written against a field whose null case was specified somewhere its author did not read. The table below
+introduces **no new rule**: it is exactly the nulls this document already states, gathered so they can be read
+and checked in one place. A field absent from it is one this document says nothing about, which is **not** the
+same as one that cannot be null — the answer for such a field is a design question, not an inference.
+
+| `kind` | `detail` fields that may be null | Why |
+|---|---|---|
+| `surface_call` | `dense_depth_reached`, `dense_stop_reason`, `lexical_depth_reached`, `lexical_stop_reason` | an arm that never ran reports neither a depth nor a reason. The lexical pair is null **iff** `lexical_skipped`; the dense pair is reserved rather than live, being unreachable on the service path in v0 |
+| `surface` | `demotion` | the row was not demoted, so there is no demotion to name |
+| `search` | `dense_depth_reached`, `dense_stop_reason`, `lexical_depth_reached`, `lexical_stop_reason` | the same two conditions as `surface_call` |
+| `retire` | `superseded_by` | an outright retirement names no replacement, and the retire-count signal splits on exactly this null |
+| `merge` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | the size fields describe authored prose, and only the `target` row authored any |
+| `promote` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | as `merge`, except that the authoring row is the `created` or `flipped` one |
+
+`group_served.version_served` is the one detail field this document declares **NOT NULL** outright, and it is
+absent from the table above for that reason rather than by omission.
+
 **Serve-time vacating is recorded in state, deliberately not in the event log.** A member found no longer
 `tier='journal' AND active=1` inside the serve transaction is not delivered, so it emits no `group_served` —
 and that is what lets `version_served` in the event detail be non-null and mean what it says. The vacating is

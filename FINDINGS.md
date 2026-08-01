@@ -71,14 +71,25 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 
 ## Current state — resume here
-**Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes) complete; M1 is
-next.** D1–D33 settled. Grounding from `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
+**Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes) and M1 (skeleton
++ the three singletons) complete; M2 is next.** D1–D33 settled. Grounding from
+`research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
 confirmed their assumption — sqlite-vec, FTS5 external-content, the UDS transport, fastembed cold/warm — with
 no D-decision, invariant or table changed.** Two rationale notes were added from what the spikes surfaced (the
 FTS5 naive-delete corruption shape; the `asyncio.to_thread` requirement for M9's service, discovered by a
 self-inflicted deadlock in the spike server itself). Full measurements: `research/spike-results.md`.
+
+**M1 shipped the package skeleton, the exact-pinned venv and `./check.sh`, plus the three singletons —
+`core/errors.py`, `core/events.py`, `core/config/keys.py`.** Reviewed to `APPROVED` over three rounds
+(`reviews/m1-skeleton-review.md`). It left two things for the milestones that own them, both now written into
+`design/build-plan.md` so neither depends on being remembered: **M2** must make whatever it needs the schema
+version for agree with the one declaration already in `errors.py`, and **M3** must settle `inactive_row.state`'s
+value set in the design before defining the row-state enum — the design gives the row-state vocabulary in the
+MCP tool surface but states no set on the error row, so two implementations could disagree today. Also worth an
+operator's eye: the design deliberately spells the same situation two ways, error `no_read_receipt` (−32002)
+against event kind `no_receipt`. Both are pinned by a test so neither gets tidied into the other.
 
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
@@ -111,7 +122,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | # | Milestone | Done when | Status |
 |---|---|---|---|
 | **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ✓ |
-| M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ☐ |
+| M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ✓ |
 | M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ☐ |
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ☐ |
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ☐ |
@@ -243,6 +254,37 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   that phrase into the design and then *acting* on it before building around it. Directly a Zikaron
   requirement: a memory that is internally coherent and premised on something no longer true is precisely the
   confidently-stale memory D11 exists for, and no amount of self-consistency checking detects it.
+- **A drift guard that re-transcribes the table only guards one direction.** M1's job was "a test asserts each
+  singleton matches its design table exactly". The obvious build — compare the code against a second, hand-typed
+  copy of the table in the test — catches a code edit and is blind to a *design* edit, which is the likelier one
+  because the design keeps being revised. So the tests parse the design markdown at test time and compare. What
+  made that a claim rather than a hope was **mutation testing**: 100% branch coverage over 102 tests said
+  nothing at all about whether any guard could detect drift, while 31 deliberate one-line mutations — 12 of them
+  on the *design* side — did. All 31 tripped. Coverage measures which lines ran; only mutation measures whether
+  a test can fail.
+- **Every defect three review rounds found in that parser was the same shape: a reader that returns a
+  *plausible* answer instead of raising.** Not "returns nothing" — that fails loudly and is safe. The dangerous
+  set: a heading occurring twice read as the first copy; a revised TOML sample added beside the old one and
+  ignored; two contradictory bullets resolved by document order; one stray unterminated fence hiding every later
+  heading while everything before it parsed perfectly. My first fix for the first one was *placed where it could
+  never fire*, which the second round caught. Two practices carried: for each reader, enumerate how it could
+  return the **wrong** thing rather than no thing; and write the test as a stale-read scenario where the stale
+  answer is exactly what the code already agrees with, since that is the case that would have passed.
+- **The design stated one fact in four places and in collective terms, and that made it unguardable.**
+  Event-detail nullability was written inline in one field's value set, as a clause on two rows, as a paragraph
+  about "the two dense fields", and — for `retire.superseded_by` — only inside a signal's query. Collective
+  references cannot be parsed, so the choice was a code-side transcription nothing checks, or gathering the
+  statements. Gathering won: `design/schema.md` now has a nullability table that invents nothing and says
+  explicitly that a field's absence means the document is silent, **not** that null is impossible. Directly a
+  Zikaron requirement: a claim whose qualifier lives in a different paragraph will be recalled without its
+  qualifier.
+- **A scope fence protects against building the next milestone's behaviour, not against finishing this one's
+  data.** I deferred the event `detail` closed value sets (`role`, `form`, `phase`, `demotion`, the stop reasons)
+  to M5/M7 on the grounds that their domains live there, and the reviewer overruled it: they are stated *inside*
+  the very table M1 owns, my parser was already reading those cells and discarding the values, and deferring
+  them would have forced M5/M7 to invent literals. The distinction worth keeping is that M1 correctly refused to
+  write a row-state enum for `inactive_row.state` — that would have required *deciding* something the design
+  does not state, which is a different act from transcribing something it does.
 - **A large hub document crowds the index it shares with focused ones.** `design/` is indexed in the
   knowledge base as `zikaron-design` (9 items). First real query — "why was grouping consolidation by
   session rejected" — returned the correct passage, but **two of three results were chunks of
@@ -326,3 +368,8 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   corruption on the next touch — `design/write-policy.md`), and the `asyncio.to_thread` requirement for M9's
   service, discovered via a self-inflicted deadlock in the spike server itself
   (`design/architecture.md` §RPC) — `research/spike-results.md`.
+- **M1 code review** — three rounds, ending `VERDICT: APPROVED`. Two blockers were the same class twice over:
+  design readers that could return a plausible stale answer, and contract *values* omitted from tables whose
+  *names* were guarded. Both accepted; the second produced the design's nullability table. One nitpick stands as
+  an M3 prerequisite (`inactive_row.state`), recorded in `design/build-plan.md` §M3 —
+  `reviews/m1-skeleton-review.md`.

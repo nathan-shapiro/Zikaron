@@ -1,0 +1,111 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zikaron"
+version = "0.0.0"
+description = "Tribal-knowledge memory for coding agents"
+requires-python = "==3.12.*"
+dependencies = [
+    "aiosqlite==0.22.1",
+    "sqlite-vec==0.1.9",
+    "fastembed==0.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.16.1",
+    "mypy==2.3.0",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["zikaron*"]
+
+[tool.setuptools.package-data]
+zikaron = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# Formatter and linter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["spikes", "experiments"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # import sorting
+    "N",    # pep8 naming
+    "UP",   # pyupgrade
+    "ANN",  # every signature annotated
+    "S",    # bandit
+    "B",    # bugbear
+    "A",    # shadowed builtins
+    "C4",   # comprehensions
+    "PIE",
+    "PT",   # pytest style
+    "RET",
+    "SIM",
+    "ARG",  # unused arguments
+    "PTH",  # pathlib over os.path
+    "ERA",  # commented-out code
+    "PL",   # pylint
+    "TRY",
+    "RUF",
+]
+ignore = [
+    # Zikaron raises exactly one exception type carrying a design error code, so the
+    # "define your own exception" and "abstract the raise" advice both fire on every
+    # deliberate raise site.
+    "TRY003",
+    "TRY300",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, and compare against literals transcribed from the design tables:
+# a named constant per expected number would hide the transcription it exists to check.
+"tests/**" = ["S101", "PLR2004"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+enable_error_code = [
+    "redundant-expr",
+    "truthy-bool",
+    "ignore-without-code",
+    "unused-awaitable",
+]
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `manual` needs a live model API and so is never in the default run; ask for it by
+# marker when you mean to spend money.
+addopts = "-q --strict-markers --strict-config -m 'not manual'"
+markers = [
+    "integration: real fastembed, real sqlite-vec, real socket, real subprocess",
+    "manual: needs a live model API; excluded from the default run",
+]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# A ratchet: it may rise, never fall.
+fail_under = 90

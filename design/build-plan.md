@@ -91,6 +91,11 @@ result, `bad_config` naming source and key); `0600` permissions; WAL and `busy_t
 create→close→open, a config fixture set covers missing/partial/unknown-key/out-of-range/wrong-type across both
 layers, and a dimension mismatch is rejected before any table exists.
 
+**Carried from M1:** the schema version this build supports is already declared once, as the fixed value of
+`schema_incompatible`'s `supported` field in `zikaron/core/errors.py`. Whatever `store/` needs the number for,
+it must agree with that declaration rather than restate it — a test asserting the two are equal is cheaper than
+discovering they are not.
+
 **Fence:** no records, no embedding. A fake embedder that reports a width is enough.
 
 ---
@@ -113,6 +118,14 @@ not the writer's; retired-vs-superseded are distinguishable and no query assumes
 NULL`; a consolidator receipt does **not** license a `kind='mcp'` amend.
 
 **Fence:** fake embedder, no chunking yet — rows only.
+
+**Settle before building, carried from M1:** `inactive_row`'s payload is `{uuid, state}` and the design states
+no value set for `state`, while §"MCP tool surface" gives the row-state vocabulary as
+`live | superseded | retired`. An `inactive_row` cannot be `live`, so the intended subset is presumably
+`superseded | retired` — but two implementations can currently disagree, and closing it to all three would be
+wrong. Decide the subset in `architecture.md` §Errors, then define the row-state enum here and have
+`ERROR_SPECS` reference the subset of it. M1's payload guard already fails the moment the design states a set,
+so this cannot be forgotten, only deferred.
 
 ---
 
