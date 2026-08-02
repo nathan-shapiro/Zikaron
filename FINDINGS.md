@@ -72,8 +72,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
-+ the three singletons), M2 (store + configuration), M3 (records, versioning, receipts) and M4 (indexing)
-complete; M5 (retrieval) is next.** D1–D33 settled. Grounding from
++ the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing) and
+M5 (retrieval) complete and reviewed to APPROVED; M6 (write path + D15 dedup) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -172,6 +172,56 @@ index on a **rejected** amend; and the indexed write path has **two** verbs, not
 changes no indexed column and D16 keeps its chunks. 416 tests, 99.87% branch coverage on `zikaron/core`, and
 **24 injected mutations across the four rounds, all 24 caught.**
 
+**M5 shipped `core/retrieval/`** (`eligibility.py`, `query.py`, `arms.py`, `ranking.py`, `retrieve.py`,
+`block.py`, `reads.py`) — both arms, RRF, the five-step total order, the supersession repair, the injected
+block, and `search`/`surface` as one transaction each. **596 tests, 99.91% branch coverage on
+`zikaron/core`, and 50 injected mutations, all 50 caught. Reviewed to `APPROVED` over three rounds**
+(`reviews/m5-retrieval-review.md`), with a genuine defect in each of the first two. Fourteen things the
+design left to be inferred were settled in `design/` first, the load-bearing ones being: **the RRF formula
+written out** with **1-based** ranks — the base the benchmark measured, and a rebase to 0 changes every fused
+score while preserving every arm's order, so nothing downstream could notice; **within-arm ties break on
+`uuid`**, because two documents matching one term at equal length return *bit-identical* `bm25()` (measured),
+which would otherwise leave arm ranks, and so the fused order, to the query plan; **one read is one
+transaction**, since the dense arm's coverage test compares against a `chunk_count` a concurrent write would
+otherwise move, which makes the instrumentation write a WAL snapshot upgrade and its refusal a plain
+`store_busy`; **the injected block prints whole uuids** (the `…` in the design's sample is elision in that
+document, and both "fetch by uuid" and the demotion label's one-call promise are unsatisfiable against a
+4-character prefix); and **a read has no `index_failed`** — contention maps, everything else propagates,
+because that code's contract names index maintenance and a rolled-back write. Two structural choices worth
+keeping: invariant 20 is enforced **at construction** (`ArmOutcome` refuses a depth its own stop reason
+contradicts, ranks that are not `1…n`, and a null/null pair on any arm but the lexical one), so an arm that
+cannot classify itself honestly cannot exist to be logged; and the transaction envelope M4 spent three review
+rounds getting right — the failed-commit, failed-rollback, close-the-connection ladder — moved to
+`core/store/transactions.py` rather than being copied, since two copies of "which errors commit" is exactly
+how a rejected write comes to commit half an index.
+
+**The review's blocker was a rule this codebase already held on the write side and I broke on the read
+side.** The query preflight computed its budget as `cap − specials − count(prefix)` and then embedded
+`prefix + kept` **without counting the concatenation** — while `indexing.md` step 7 and its implementation
+recount the *assembled* gist-plus-chunk sequence precisely "because the parts' counts are exactly what an
+assumption of additivity would be". Tokenization is not additive across a configurable boundary:
+`embed_prefix_query` is a free-form string, only the shipped default ends in whitespace, and a prefix without
+a trailing boundary fuses with the query's first token and can retokenize into *more* pieces than the two
+counts predicted. So a short prompt could be recorded `query_truncated = false` while the model silently
+truncated what it was handed — the one failure the whole preflight exists to prevent. The fix counts the
+assembled string, shrinks a token at a time until it fits, and reports `query_truncated` from what was
+actually kept. Two things that fix taught: my own first attempt introduced a *false* truncation, because
+slicing to token boundaries strips leading punctuation from a query that already fitted; and the review's
+second round then found that dropping the helper which had derived `n_returned` from `uuids` had
+reintroduced a disagreement between them, which mutation testing confirmed as a live survivor. **Both halves
+of the general lesson are the same one: a rule stated for one direction of one path is not enforced until it
+is enforced at the place the value is produced.**
+
+**Round 2 also made the event log's own contract binding in production.** `EVENT_SPECS` declared every kind's
+detail shape, and nothing checked it: details travelled as `dict[str, object]`, so `coding-standards.md` §2's
+"every payload becomes a typed object" held for records and not for the log every layer writes into. Each of
+the nine kinds that has a producer now has a frozen typed value carrying its own `kind`, so **`log_event`
+takes no `kind` argument at all** — filing a payload under the wrong kind is unrepresentable rather than
+merely tested — and `EventSpec.validate` remains as defence in depth for what a type cannot enforce at
+runtime. The six consolidation kinds stay untyped **until their verbs exist**, since a dataclass nothing
+constructs is dead code and `log_event`'s signature leaves no dict-shaped way in; a test asserts exactly
+which six those are, so adding a producer without its type fails.
+
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
 **no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
@@ -207,7 +257,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ✓ |
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ✓ |
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ✓ |
-| M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18–20 tested; one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ☐ |
+| M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18 and 20 tested (19 moved to M7, which owns the table it constrains); one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ✓ |
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ☐ |
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` | ☐ |
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ☐ |
@@ -491,9 +541,54 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   rather than the single new test — the exact verification discipline this project's own standards ask for
   ("a related set of changes, then the whole suite"), and the exact case where skipping it would have shipped a
   regression under the cover of a passing new test.
+- **An unclosed database handle did not leak memory; it hung the entire test run for over an hour while
+  printing nothing.** `aiosqlite` runs each connection on a **non-daemon** worker thread, so a store nobody
+  closes keeps its process alive after all work is done. Four of my own new tests failed an assertion and
+  therefore skipped the `close()` written below it; the suite finished in **0.76 s** and then sat in
+  `threading._shutdown` indefinitely, with the summary buffered in a pipe that never closed, so the visible
+  evidence was *nothing at all* until the user killed it. Three things worth keeping. **The symptom inverted the
+  cause**: a hang looks like slow work, and the actual fault was a fast failure whose cleanup was skipped —
+  which is why the first instinct, "the query must be pathological", was wrong. **No late hook can rescue it**,
+  because CPython joins non-daemon threads *before* running `atexit`, so the fix has to be at the holder, not
+  at exit. And **production has the worse version of this bug**: `zikaron-service`'s idle self-stop would
+  complete and unlink its socket while the process stayed alive, so the next client's start-if-absent would
+  raise a second server against a store the first still holds. The rule is now in `coding-standards.md` §6 (every
+  holder uses `async with`) and §4 (tests included), with an autouse fixture that fails the leaking test and
+  stops the thread. Verified twice over: injecting a mid-body failure into a then-unconverted test file made it
+  report in a second instead of hanging, and the same injection after the suite was converted reports with no
+  leak at all. The whole suite now holds every store and every second connection with `async with` — 115 sites
+  converted by an AST-guided rewriter that refused anything it could not classify, plus a dozen by hand where
+  the close was the operation under test rather than cleanup. Marking the thread a daemon was considered and
+  rejected: it needs private-attribute surgery on a pinned dependency to hide a convention we can simply hold,
+  and it would trade a loud hang for a silent exit.
+- **Four of thirty-five mutations survived, and the most useful one was a test that passed for the right answer
+  by luck.** Deleting the dense arm's `uuid` tiebreak did not fail the test written to defend it, because on that
+  fixture SQLite's natural order happened to agree with uuid order — so the assertion was true while the property
+  it names was gone. The other three were the same shape in different clothes: nothing asserted arm rank
+  *values*, so rebasing them 0-based changed every fused score while preserving every order (the config default
+  `rrf_k = 60` would silently stop naming the denominator the benchmark measured); and `n_demoted` counting the
+  whole pool passed only because that fixture's pool and returned set were the same rows. The same shape then
+  recurred *inside a review fix*: removing a helper that had derived `n_returned` from the uuid list it counts
+  let the two disagree again, and only mutation testing noticed. **Two practices carried.**
+  For an invariant whose effect is only *sometimes* observable — a tiebreak the engine may satisfy by accident —
+  assert the mechanism as well as the outcome; the fix pins both arms' `ORDER BY` text alongside the behavioural
+  test, and says why in the test's own docstring. And for a quantity defined as "of the returned set", build the
+  fixture where the returned set and the candidate pool **differ**, because a fixture where they coincide cannot
+  tell the two definitions apart. Directly a Zikaron requirement: a memory that is true of the case it was
+  written against and silent about the set it implies is exactly the confidently-partial recall D11 exists for.
+- **A text tool that edits source without parsing it corrupts source, and it corrupts it in the two places
+  prose and code meet.** A line-reflow helper written to satisfy the 100-column limit split a *data* string
+  literal across lines — the injected block's preamble, whose line breaks are part of its value — and merged a
+  one-line docstring into the `if` statement beneath it. Both edits produced invalid Python; both were caught only
+  because the next command failed to parse. The rewrite classifies every candidate line through `ast` and
+  `tokenize` first (multi-line docstring, single-line docstring, whole-line comment) and refuses anything else,
+  re-parses each file after editing and reverts on failure. The lesson generalizes past formatting: **a tool that
+  cannot tell prose from data must not be pointed at a file containing both**, and the cheap version of that
+  guarantee is to parse rather than to pattern-match. The same claim is what `design_tables.py` rests on, and it
+  is why the FTS5 query constructor quotes terms and hands them to SQLite's own tokenizer instead of
+  reimplementing `unicode61`.
 
 ## References
-_(One line per research note and review: topic — key takeaway — file path.)_
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
 - Prior art as built — schema, RRF+recency ranking, `/sleep`, `merge_reframes` — `~/Memory/design/long-term-memory.md`, `~/Memory/design/ltm-revision-revamp.md`; digested in `design/prior-art.md`.
@@ -561,6 +656,20 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   attempts' validation completing before either write. Round 3 found stale docstrings and test narrative
   still describing the removed commit-inside-rejection mechanism, and one event assertion that excluded two
   named kinds rather than asserting the exact list. Round 4: `APPROVED` — `reviews/m3-records-review.md`.
+- **M5 code review** — three rounds, ending `VERDICT: APPROVED`, with a genuine defect in each of the first
+  two. Round 1's blocker was the read side assuming what the write side already refuses: the query preflight
+  added `count(prefix)` and `count(query)` and embedded the concatenation without counting it, so under a legal
+  non-default `embed_prefix_query` — a free-form config string, only the shipped default ending in whitespace —
+  a fused boundary could retokenize into more pieces than the sum predicted and the model would truncate
+  silently while `query_truncated` recorded `false`. Round 1 also found the consumer-filter guards testing only
+  which *columns* a predicate mentioned (so `active = 0` would have passed), `ArmOutcome` accepting null/null on
+  the dense arm and with rows despite claiming to enforce otherwise, event details travelling as untyped dicts
+  against `coding-standards.md` §2, and three circumstantial-provenance references the same standard forbids.
+  Round 2 accepted the typed-detail remedy but rejected my scoping of it, and was right: `log_event` now takes
+  no `kind` argument at all. Round 2 also caught two pieces of wording claiming more than the algorithm proves —
+  "the longest head" for a search that only shrinks, and "any single-token query" for a check that tested one
+  query's own first token. Round 3: `APPROVED`, one nitpick, a test docstring still describing the dictionary
+  architecture the round-2 fix had replaced — `reviews/m5-retrieval-review.md`.
 - **M4 code review** — four rounds, ending `VERDICT: APPROVED` with zero findings in the fourth, and a genuine
   defect in each of the first three. Round 1: the hard split's defensive branch returned a *plausible* plan
   instead of raising, and the test I had written to cover that line blessed the invalid result — the fix is a

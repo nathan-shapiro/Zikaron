@@ -14,6 +14,13 @@ import pytest
 
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.errors import ErrorCode, RowState, ZikaronError
+from zikaron.core.events import (
+    ArmTermination,
+    FetchDetail,
+    QueryShape,
+    SearchDetail,
+    StopReason,
+)
 from zikaron.core.records import supersession
 from zikaron.core.records.memory import (
     CallParams,
@@ -27,6 +34,7 @@ from zikaron.core.records.memory import (
     create,
     create_within_transaction,
     fetch,
+    log_event,
     retire,
     retire_within_transaction,
 )
@@ -88,16 +96,13 @@ async def _receipt_count(store: Store, memory_uuid: str) -> int:
 
 
 async def test_create_inserts_a_live_journal_row_at_version_one(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         assert created.version == 1
         assert created.tier is Tier.JOURNAL
         assert created.active is True
         assert created.superseded_by is None
         assert created.resolved_state is RowState.LIVE
-    finally:
-        await store.close()
 
 
 async def test_create_with_empty_content_rolls_back_on_the_tables_own_check_constraint(
@@ -107,21 +112,17 @@ async def test_create_with_empty_content_rolls_back_on_the_tables_own_check_cons
     which raises `sqlite3.IntegrityError` rather than a `ZikaronError` — this milestone's fence
     leaves that boundary to M6's tool-facing `bounds` rejection. The failed `INSERT` must still
     roll back cleanly rather than leave a half-open transaction behind for the next call."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         with pytest.raises(sqlite3.IntegrityError):
             await create(store.connection, gist="g", content="   ", session_id="s1")
         # The connection is usable afterwards — proof the rollback actually ran, since a
         # dangling open transaction would make this next write hang or raise instead.
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         assert created.version == 1
-    finally:
-        await store.close()
 
 
 async def test_fetch_mints_a_receipt_and_reports_missing_uuids(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         records, missing = await fetch(
             store.connection, uuids=[created.uuid, "does-not-exist"], ctx=_ctx()
@@ -129,22 +130,17 @@ async def test_fetch_mints_a_receipt_and_reports_missing_uuids(tmp_path: Path) -
         assert [r.uuid for r in records] == [created.uuid]
         assert missing == ["does-not-exist"]
         assert await _receipt_count(store, created.uuid) == 1
-    finally:
-        await store.close()
 
 
 async def test_fetch_collapses_duplicate_uuids_to_one_record_in_first_occurrence_order(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         a = await create(store.connection, gist="ga", content="ca", session_id="s1")
         b = await create(store.connection, gist="gb", content="cb", session_id="s1")
         records, missing = await fetch(store.connection, uuids=[b.uuid, a.uuid, b.uuid], ctx=_ctx())
         assert [r.uuid for r in records] == [b.uuid, a.uuid]
         assert missing == []
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +151,7 @@ async def test_fetch_collapses_duplicate_uuids_to_one_record_in_first_occurrence
 async def test_invariant_4_retire_sets_active_zero_and_leaves_the_row_readable(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -173,8 +168,6 @@ async def test_invariant_4_retire_sets_active_zero_and_leaves_the_row_readable(
             "SELECT COUNT(*) FROM memory WHERE uuid = ?", (created.uuid,)
         )
         assert int(next(iter(rows))[0]) == 1
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +176,7 @@ async def test_invariant_4_retire_sets_active_zero_and_leaves_the_row_readable(
 
 
 async def test_invariant_5_retired_outright_has_no_superseded_by(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -196,15 +188,12 @@ async def test_invariant_5_retired_outright_has_no_superseded_by(tmp_path: Path)
         )
         assert retired.superseded_by is None
         assert retired.resolved_state is RowState.RETIRED
-    finally:
-        await store.close()
 
 
 async def test_invariant_5_superseded_has_active_zero_and_superseded_by_set(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         old = await create(store.connection, gist="old", content="old", session_id="s1")
         new = await create(store.connection, gist="new", content="new", session_id="s1")
         await fetch(store.connection, uuids=[old.uuid], ctx=_ctx())
@@ -218,8 +207,6 @@ async def test_invariant_5_superseded_has_active_zero_and_superseded_by_set(
         assert superseded.active is False
         assert superseded.superseded_by == new.uuid
         assert superseded.resolved_state is RowState.SUPERSEDED
-    finally:
-        await store.close()
 
 
 async def test_invariant_5_active_zero_does_not_imply_superseded_by_not_null(
@@ -228,8 +215,7 @@ async def test_invariant_5_active_zero_does_not_imply_superseded_by_not_null(
     """`active=0` alone does not imply `superseded_by` is set: an outright retirement is
     `active=0, superseded_by IS NULL`, and a caller that inferred otherwise from `active` alone
     would be wrong here."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -241,8 +227,6 @@ async def test_invariant_5_active_zero_does_not_imply_superseded_by_not_null(
         )
         assert retired.active is False
         assert retired.superseded_by is None
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +240,7 @@ async def test_an_unknown_target_precedes_the_sources_own_stale_version(tmp_path
     for any of them: a `retire` naming a stale source version *and* an unknown `superseded_by`
     target must report the target's own `NOT_FOUND` — not `VERSION_CONFLICT` on the source,
     which is what checking the source's version before the target's existence would report."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -291,8 +274,6 @@ async def test_an_unknown_target_precedes_the_sources_own_stale_version(tmp_path
         assert [str(r[0]) for r in rows] == ["own_write"]
         kinds = await _event_kinds(store, created.uuid)
         assert kinds == ["fetch"]
-    finally:
-        await store.close()
 
 
 async def test_an_unknown_target_precedes_the_sources_own_missing_receipt(
@@ -301,8 +282,7 @@ async def test_an_unknown_target_precedes_the_sources_own_missing_receipt(
     """As the version case above, but for the receipt rung: a `retire` naming a source with no
     receipt at all *and* an unknown `superseded_by` target must still report the target's own
     `NOT_FOUND`, not `NO_READ_RECEIPT` on the source."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         # No fetch at all — the source holds no receipt for any version.
         with pytest.raises(ZikaronError) as excinfo:
@@ -322,13 +302,10 @@ async def test_an_unknown_target_precedes_the_sources_own_missing_receipt(
         assert list(rows) == []
         kinds = await _event_kinds(store, created.uuid)
         assert kinds == []
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_a_self_edge_is_rejected(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         with pytest.raises(ZikaronError) as excinfo:
@@ -341,14 +318,11 @@ async def test_invariant_6_a_self_edge_is_rejected(tmp_path: Path) -> None:
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == "self_edge"
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_a_cycle_is_rejected(tmp_path: Path) -> None:
     """A -> B exists; closing B -> A would be a cycle and must be refused."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         a = await create(store.connection, gist="a", content="a", session_id="s1")
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         await fetch(store.connection, uuids=[a.uuid], ctx=_ctx())
@@ -366,13 +340,10 @@ async def test_invariant_6_a_cycle_is_rejected(tmp_path: Path) -> None:
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == "cycle"
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_target_already_retired_outright_is_rejected(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         target = await create(store.connection, gist="t", content="t", session_id="s1")
         await fetch(store.connection, uuids=[target.uuid], ctx=_ctx())
         retired_target = await retire(
@@ -394,14 +365,11 @@ async def test_invariant_6_target_already_retired_outright_is_rejected(tmp_path:
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == "target_retired_outright"
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_superseded_target_is_a_legal_replacement(tmp_path: Path) -> None:
     """A replacement may itself be superseded — that is how A -> B -> C arises."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         a = await create(store.connection, gist="a", content="a", session_id="s1")
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         await fetch(store.connection, uuids=[a.uuid], ctx=_ctx())
@@ -414,15 +382,12 @@ async def test_invariant_6_superseded_target_is_a_legal_replacement(tmp_path: Pa
             store.connection, uuid=c.uuid, version=c.version, superseded_by=b.uuid, ctx=_ctx()
         )
         assert superseded.superseded_by == b.uuid
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_a_walk_that_hits_the_depth_cap_is_an_error(tmp_path: Path) -> None:
     """A store deep enough that the cycle walk cannot resolve within `max_depth` steps must fail
     closed rather than hang."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         ctx = CallParams(session_id="s1", client_kind="mcp", op_id="op1", max_depth=2)
         head = await create(store.connection, gist="head", content="head", session_id="s1")
         current = head
@@ -452,15 +417,12 @@ async def test_invariant_6_a_walk_that_hits_the_depth_cap_is_an_error(tmp_path: 
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == "depth_cap_hit"
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_acceptance_a_to_b_to_c_traversal(tmp_path: Path) -> None:
     """The invariant's own named acceptance test: A -> B -> C, then fetch A and confirm the walk
     resolves to C."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         c = await create(store.connection, gist="c", content="c", session_id="s1")
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         a = await create(store.connection, gist="a", content="a", session_id="s1")
@@ -477,8 +439,6 @@ async def test_invariant_6_acceptance_a_to_b_to_c_traversal(tmp_path: Path) -> N
         assert fetched_a.superseded_by == b.uuid
         assert fetched_a.superseded_by_latest == c.uuid
         assert fetched_a.superseded_by_latest_state == RowState.LIVE
-    finally:
-        await store.close()
 
 
 async def _attempt_retire(
@@ -523,20 +483,18 @@ async def test_invariant_6_acceptance_two_concurrent_attempts_to_close_a_cycle(
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
     embedder = FakeEmbedder(model_name="BAAI/bge-small-en-v1.5", dim=384)
-    setup_store = await Store.create(store_dir, config, embedder)
-    try:
+    async with await Store.create(store_dir, config, embedder) as setup_store:
         a = await create(setup_store.connection, gist="a", content="a", session_id="s1")
         b = await create(setup_store.connection, gist="b", content="b", session_id="s1")
         # Receipts minted once, from the setup connection — invariant 9 scopes a receipt to
         # `(session_id, client_kind)`, not to a connection, so both racing connections below can
         # present the same one.
         await fetch(setup_store.connection, uuids=[a.uuid, b.uuid], ctx=_ctx(session_id="racer"))
-    finally:
-        await setup_store.close()
 
-    left = await Store.open(store_dir, config)
-    right = await Store.open(store_dir, config)
-    try:
+    async with (
+        await Store.open(store_dir, config) as left,
+        await Store.open(store_dir, config) as right,
+    ):
         real_validate = supersession.validate_new_edge
         both_validated = asyncio.Event()
         validated_count = 0
@@ -601,9 +559,6 @@ async def test_invariant_6_acceptance_two_concurrent_attempts_to_close_a_cycle(
             assert by_uuid[b.uuid].superseded_by != a.uuid
         if by_uuid[b.uuid].superseded_by == a.uuid:
             assert by_uuid[a.uuid].superseded_by != b.uuid
-    finally:
-        await left.close()
-        await right.close()
 
 
 async def test_invariant_6_acceptance_retiring_a_replacement_outright_makes_a_terminal_component(
@@ -611,8 +566,7 @@ async def test_invariant_6_acceptance_retiring_a_replacement_outright_makes_a_te
 ) -> None:
     """The invariant's own named acceptance test: A -> B, then an outright retire(B) must
     succeed and produce a terminal component, not an error or a corrupted graph."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         a = await create(store.connection, gist="a", content="a", session_id="s1")
         await fetch(store.connection, uuids=[a.uuid], ctx=_ctx())
@@ -631,16 +585,13 @@ async def test_invariant_6_acceptance_retiring_a_replacement_outright_makes_a_te
         assert fetched_a.superseded_by == b.uuid
         assert fetched_a.superseded_by_latest == b.uuid
         assert fetched_a.superseded_by_latest_state == RowState.RETIRED
-    finally:
-        await store.close()
 
 
 async def test_invariant_6_superseded_by_is_immutable_once_set(tmp_path: Path) -> None:
     """A row already superseded is `active=0`, so a second `retire` naming a different target is
     caught as `inactive_row` before any supersession check runs — the edge is immutable because
     nothing can reach the code that would re-point it."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         c = await create(store.connection, gist="c", content="c", session_id="s1")
         a = await create(store.connection, gist="a", content="a", session_id="s1")
@@ -658,8 +609,6 @@ async def test_invariant_6_superseded_by_is_immutable_once_set(tmp_path: Path) -
                 ctx=_ctx(),
             )
         assert excinfo.value.code is ErrorCode.INACTIVE_ROW
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -670,16 +619,13 @@ async def test_invariant_6_superseded_by_is_immutable_once_set(tmp_path: Path) -
 async def test_invariant_7_fetch_omits_superseded_by_latest_for_a_root_row(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         records, _missing = await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         (fetched,) = records
         assert fetched.superseded_by is None
         assert fetched.superseded_by_latest is None
         assert fetched.superseded_by_latest_state is None
-    finally:
-        await store.close()
 
 
 async def test_invariant_7_two_absorbed_rows_resolve_to_the_same_replacement(
@@ -687,8 +633,7 @@ async def test_invariant_7_two_absorbed_rows_resolve_to_the_same_replacement(
 ) -> None:
     """Two rows superseded by the same target both resolve `superseded_by_latest` to it —
     convergence, not only chains, per invariant 6's "rooted converging forest"."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         target = await create(store.connection, gist="t", content="t", session_id="s1")
         a = await create(store.connection, gist="a", content="a", session_id="s1")
         b = await create(store.connection, gist="b", content="b", session_id="s1")
@@ -709,8 +654,6 @@ async def test_invariant_7_two_absorbed_rows_resolve_to_the_same_replacement(
         )
         records, _missing = await fetch(store.connection, uuids=[a.uuid, b.uuid], ctx=_ctx())
         assert {r.superseded_by_latest for r in records} == {target.uuid}
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -719,8 +662,7 @@ async def test_invariant_7_two_absorbed_rows_resolve_to_the_same_replacement(
 
 
 async def test_invariant_8_amend_bumps_version_by_exactly_one(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         amended = await amend(
@@ -731,13 +673,10 @@ async def test_invariant_8_amend_bumps_version_by_exactly_one(tmp_path: Path) ->
             ctx=_ctx(),
         )
         assert amended.version == created.version + 1
-    finally:
-        await store.close()
 
 
 async def test_invariant_8_retire_bumps_version_by_exactly_one(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -748,13 +687,10 @@ async def test_invariant_8_retire_bumps_version_by_exactly_one(tmp_path: Path) -
             ctx=_ctx(),
         )
         assert retired.version == created.version + 1
-    finally:
-        await store.close()
 
 
 async def test_invariant_8_version_never_decreases_across_repeated_amends(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         current = await create(store.connection, gist="g0", content="c0", session_id="s1")
         versions = [current.version]
         for i in range(1, 5):
@@ -769,8 +705,6 @@ async def test_invariant_8_version_never_decreases_across_repeated_amends(tmp_pa
             versions.append(current.version)
         assert versions == sorted(versions)
         assert len(set(versions)) == len(versions)
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -779,8 +713,7 @@ async def test_invariant_8_version_never_decreases_across_repeated_amends(tmp_pa
 
 
 async def test_invariant_9_amend_without_a_receipt_is_rejected(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         with pytest.raises(ZikaronError) as excinfo:
             await amend(
@@ -793,8 +726,6 @@ async def test_invariant_9_amend_without_a_receipt_is_rejected(tmp_path: Path) -
         assert excinfo.value.code is ErrorCode.NO_READ_RECEIPT
         assert excinfo.value.data["uuids"] == [created.uuid]
         assert excinfo.value.data["hint"] == "fetch it first"
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_a_version_bump_revokes_other_receipts_but_not_the_writers_own(
@@ -802,8 +733,7 @@ async def test_invariant_9_a_version_bump_revokes_other_receipts_but_not_the_wri
 ) -> None:
     """The build plan's own done-when criterion, verbatim: "a version bump provably revokes
     other clients' receipts but not the writer's"."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         # Two different sessions both fetch the row at version 1, minting a receipt each.
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx(session_id="writer"))
@@ -837,21 +767,16 @@ async def test_invariant_9_a_version_bump_revokes_other_receipts_but_not_the_wri
                 ctx=_ctx(session_id="onlooker"),
             )
         assert excinfo.value.code is ErrorCode.VERSION_CONFLICT
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_minting_is_idempotent_on_a_repeat_fetch(tmp_path: Path) -> None:
     """`schema.md`: minting is an upsert refreshing `at`/`source`, since a repeat delivery at the
     same version must not violate `read_receipt`'s primary key."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         assert await _receipt_count(store, created.uuid) == 1
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_a_receipt_is_scoped_to_session_and_client_kind_together(
@@ -861,8 +786,7 @@ async def test_invariant_9_a_receipt_is_scoped_to_session_and_client_kind_togeth
     `session_id` alone — a consolidator receipt for one session must not license an `mcp` write
     for that same session. This is the build plan's own done-when criterion: "a consolidator
     receipt does not license a `kind='mcp'` amend"."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(
             store.connection,
@@ -878,8 +802,6 @@ async def test_invariant_9_a_receipt_is_scoped_to_session_and_client_kind_togeth
                 ctx=_ctx(session_id="shared", client_kind="mcp"),
             )
         assert excinfo.value.code is ErrorCode.NO_READ_RECEIPT
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_own_write_licenses_a_further_amend_with_no_extra_fetch(
@@ -887,8 +809,7 @@ async def test_invariant_9_own_write_licenses_a_further_amend_with_no_extra_fetc
 ) -> None:
     """`own_write` mints a receipt at the new version, so the same session may amend again
     immediately — D6's "read before amend" is satisfied by having just authored the prose."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         first = await amend(
@@ -906,16 +827,13 @@ async def test_invariant_9_own_write_licenses_a_further_amend_with_no_extra_fetc
             ctx=_ctx(),
         )
         assert second.version == first.version + 1
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_the_version_check_precedes_the_receipt_check(tmp_path: Path) -> None:
     """`architecture.md`: version runs before receipt, so a stale-version call with no receipt
     at all still reports `version_conflict`, not `no_read_receipt` — the informative error for
     the common lost-update race."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -935,8 +853,6 @@ async def test_invariant_9_the_version_check_precedes_the_receipt_check(tmp_path
                 ctx=_ctx(session_id="never-fetched"),
             )
         assert excinfo.value.code is ErrorCode.VERSION_CONFLICT
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_conflict_mints_a_receipt_the_caller_can_retry_with(
@@ -944,8 +860,7 @@ async def test_invariant_9_conflict_mints_a_receipt_the_caller_can_retry_with(
 ) -> None:
     """D26's "re-decide in one round trip": the conflict payload's receipt licenses an immediate
     retry at the current version, with no extra `fetch` call."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx(session_id="racer"))
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx(session_id="winner"))
@@ -975,8 +890,6 @@ async def test_invariant_9_conflict_mints_a_receipt_the_caller_can_retry_with(
             ctx=_ctx(session_id="racer"),
         )
         assert retried.version == winning.version + 1
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_a_version_conflicts_current_is_one_conflict_record_never_a_list(
@@ -986,8 +899,7 @@ async def test_invariant_9_a_version_conflicts_current_is_one_conflict_record_ne
     as `{conflict: true, current: CONFLICT_RECORD}` — one object. The list form
     (`current: [CONFLICT_RECORD, ...]`) belongs only to the four consolidator verbs, which this
     milestone does not implement, so `amend`'s own conflict payload must never wrap in a list."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx(session_id="winner"))
         winning = await amend(
@@ -1019,13 +931,10 @@ async def test_invariant_9_a_version_conflicts_current_is_one_conflict_record_ne
             superseded_by_latest=None,
             superseded_by_latest_state=None,
         )
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_amend_rejects_an_already_inactive_row(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -1046,13 +955,10 @@ async def test_invariant_9_amend_rejects_an_already_inactive_row(tmp_path: Path)
             )
         assert excinfo.value.code is ErrorCode.INACTIVE_ROW
         assert excinfo.value.data["state"] == RowState.RETIRED
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_retire_rejects_an_already_inactive_row(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         old = await create(store.connection, gist="old", content="old", session_id="s1")
         new = await create(store.connection, gist="new", content="new", session_id="s1")
         await fetch(store.connection, uuids=[old.uuid], ctx=_ctx())
@@ -1074,15 +980,12 @@ async def test_invariant_9_retire_rejects_an_already_inactive_row(tmp_path: Path
             )
         assert excinfo.value.code is ErrorCode.INACTIVE_ROW
         assert excinfo.value.data["state"] == RowState.SUPERSEDED
-    finally:
-        await store.close()
 
 
 async def test_invariant_9_no_uuid_ever_reports_inactive_row_state_live(tmp_path: Path) -> None:
     """`RowState.LIVE` is excluded from `INACTIVE_ROW_STATES` by construction (`errors.py`); this
     confirms the exclusion holds end to end through every raise site this module actually uses."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         retired = await retire(
@@ -1102,8 +1005,6 @@ async def test_invariant_9_no_uuid_ever_reports_inactive_row_state_live(tmp_path
                 ctx=_ctx(),
             )
         assert excinfo.value.data["state"] != RowState.LIVE
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1112,21 +1013,17 @@ async def test_invariant_9_no_uuid_ever_reports_inactive_row_state_live(tmp_path
 
 
 async def test_invariant_10_fetch_emits_one_event_per_distinct_uuid(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid, "unknown", created.uuid], ctx=_ctx())
         kinds = await _event_kinds(store)
         assert kinds == ["fetch", "fetch"]
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_retire_emits_its_event_in_the_same_call_as_the_mutation(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         b = await create(store.connection, gist="b", content="b", session_id="s1")
@@ -1146,8 +1043,6 @@ async def test_invariant_10_retire_emits_its_event_in_the_same_call_as_the_mutat
                 "superseded_by": b.uuid,
             }
         ]
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_version_conflict_commits_its_event_and_receipt_despite_raising(
@@ -1155,8 +1050,7 @@ async def test_invariant_10_a_version_conflict_commits_its_event_and_receipt_des
 ) -> None:
     """The carve-out: "a rejected call commits no domain mutation but does commit its audit
     events and, for a version conflict, the receipt for the record it returned"."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -1186,15 +1080,12 @@ async def test_invariant_10_a_version_conflict_commits_its_event_and_receipt_des
         records, _missing = await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         (fetched,) = records
         assert fetched.gist == "g2"
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_no_receipt_rejection_commits_its_event_despite_raising(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         with pytest.raises(ZikaronError):
             await amend(
@@ -1208,8 +1099,6 @@ async def test_invariant_10_a_no_receipt_rejection_commits_its_event_despite_rai
         assert "no_receipt" in kinds
         # A no_receipt rejection mints no receipt of its own.
         assert await _receipt_count(store, created.uuid) == 0
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_not_found_rejection_commits_no_event_at_all(
@@ -1218,8 +1107,7 @@ async def test_invariant_10_a_not_found_rejection_commits_no_event_at_all(
     """`not_found` carries no documented minting/logging obligation in `architecture.md` §Errors
     (unlike `version_conflict`/`no_read_receipt`), so a rejected `amend` of an unknown uuid must
     leave the event log untouched."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         with pytest.raises(ZikaronError) as excinfo:
             await amend(
                 store.connection,
@@ -1231,15 +1119,12 @@ async def test_invariant_10_a_not_found_rejection_commits_no_event_at_all(
         assert excinfo.value.code is ErrorCode.NOT_FOUND
         kinds = await _event_kinds(store)
         assert kinds == []
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_bad_supersession_rejection_commits_no_event_at_all(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         with pytest.raises(ZikaronError):
@@ -1255,8 +1140,6 @@ async def test_invariant_10_a_bad_supersession_rejection_commits_no_event_at_all
         assert "retire" not in kinds
         assert "version_conflict" not in kinds
         assert "no_receipt" not in kinds
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1267,8 +1150,7 @@ async def test_invariant_10_a_bad_supersession_rejection_commits_no_event_at_all
 async def test_determinism_resolving_the_same_chain_twice_gives_the_same_answer(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         c = await create(store.connection, gist="c", content="c", session_id="s1")
         b = await create(store.connection, gist="b", content="b", session_id="s1")
         a = await create(store.connection, gist="a", content="a", session_id="s1")
@@ -1285,8 +1167,6 @@ async def test_determinism_resolving_the_same_chain_twice_gives_the_same_answer(
         second, _ = await fetch(store.connection, uuids=[a.uuid], ctx=_ctx())
         assert first[0].superseded_by_latest == second[0].superseded_by_latest
         assert first[0].superseded_by_latest_state == second[0].superseded_by_latest_state
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1300,14 +1180,11 @@ async def test_the_public_verb_raises_on_a_nested_begin(tmp_path: Path) -> None:
     wrapper from inside an already-open transaction must fail exactly as `create`'s own
     docstring says, proving the distinction between the wrapper and the neutral core is real
     rather than only nominal."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await store.connection.execute("BEGIN")
         with pytest.raises(sqlite3.OperationalError, match="cannot start a transaction"):
             await create(store.connection, gist="g", content="c", session_id="s1")
         await store.connection.rollback()
-    finally:
-        await store.close()
 
 
 async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_commit(
@@ -1316,8 +1193,7 @@ async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_c
     """A caller (standing in for M4) opens one transaction, calls the neutral core, does its own
     further write, and commits once — proving the neutral form does not itself open or close a
     transaction and so does not conflict with an outer owner."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await store.connection.execute("BEGIN")
         created = await create_within_transaction(
             store.connection, gist="g", content="c", session_id="s1"
@@ -1333,8 +1209,6 @@ async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_c
             "SELECT token_count FROM memory WHERE uuid = ?", (created.uuid,)
         )
         assert next(iter(rows))[0] == 99
-    finally:
-        await store.close()
 
 
 async def test_a_failure_after_the_neutral_core_rolls_back_both_writes_together(
@@ -1344,8 +1218,7 @@ async def test_a_failure_after_the_neutral_core_rolls_back_both_writes_together(
     failure injected before the outer commit. Neither write must survive — proving the two are
     genuinely one atomic unit under the composing caller's transaction, not two transactions that
     merely happened not to conflict."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await store.connection.execute("BEGIN")
         created = await create_within_transaction(
             store.connection, gist="g", content="c", session_id="s1"
@@ -1362,15 +1235,12 @@ async def test_a_failure_after_the_neutral_core_rolls_back_both_writes_together(
             "SELECT COUNT(*) FROM memory WHERE uuid = ?", (created.uuid,)
         )
         assert int(next(iter(rows))[0]) == 0
-    finally:
-        await store.close()
 
 
 async def test_amend_within_transaction_composes_with_a_sentinel_write_in_one_commit(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
 
@@ -1393,15 +1263,12 @@ async def test_amend_within_transaction_composes_with_a_sentinel_write_in_one_co
         (version, token_count) = next(iter(rows))
         assert version == amended.version
         assert token_count == 42
-    finally:
-        await store.close()
 
 
 async def test_retire_within_transaction_composes_with_a_sentinel_write_in_one_commit(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
 
@@ -1425,8 +1292,6 @@ async def test_retire_within_transaction_composes_with_a_sentinel_write_in_one_c
         assert bool(active) is False
         assert retired.active is False
         assert token_count == 7
-    finally:
-        await store.close()
 
 
 async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receipt(
@@ -1438,8 +1303,7 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
     `_reject_version_conflict`'s own docstring), so an outer caller that used a bare
     `except: rollback()` would lose the carve-out under composition, which is exactly the shape
     of hole this design closes by moving the decision to the transaction owner."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -1471,8 +1335,6 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
             (created.uuid, "stale-caller"),
         )
         assert [str(r[0]) for r in rows] == ["conflict"]
-    finally:
-        await store.close()
 
 
 async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accidentally_committed(
@@ -1487,8 +1349,7 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
     commits (this is the actual fix, not a favorable choice of caller policy), even that wrong
     policy loses the sentinel correctly, since there is nothing already committed for it to
     fail to undo."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -1502,7 +1363,7 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
         await store.connection.execute("BEGIN")
         try:
             # The sentinel: a composing caller's own write, staged before it ever reaches the
-            # authorization ladder — the exact ordering the round-2 finding named as unsafe.
+            # authorization ladder: the ordering that makes committing a rejection unsafe.
             await store.connection.execute(
                 "UPDATE memory SET token_count = 123 WHERE uuid = ?", (created.uuid,)
             )
@@ -1530,8 +1391,6 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
             (created.uuid, "stale-caller"),
         )
         assert list(receipt_rows) == []
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1550,8 +1409,7 @@ async def test_invariant_10_a_failure_between_retires_row_write_and_its_event_lo
     its version, its receipt set and the event log are all left exactly as they were before the
     call. A row `UPDATE` that ran and then rolled back is the specific case co-occurrence checks
     cannot distinguish from one that never ran at all."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
 
@@ -1603,8 +1461,6 @@ async def test_invariant_10_a_failure_between_retires_row_write_and_its_event_lo
             "SELECT source FROM read_receipt WHERE memory_uuid = ?", (created.uuid,)
         )
         assert [str(r[0]) for r in receipt_rows] == ["fetch"]
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_failure_between_fetchs_receipt_and_its_event_loses_both(
@@ -1613,8 +1469,7 @@ async def test_invariant_10_a_failure_between_fetchs_receipt_and_its_event_loses
     """Fails the statement immediately after `fetch` mints its receipt for a found row — the
     event-log `INSERT` that would otherwise follow it — and confirms neither the receipt nor any
     partial event survives."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
 
         real_execute = store.connection.__class__.execute
@@ -1636,8 +1491,6 @@ async def test_invariant_10_a_failure_between_fetchs_receipt_and_its_event_loses
         assert await _receipt_count(store, created.uuid) == 0
         kinds = await _event_kinds(store, created.uuid)
         assert kinds == []
-    finally:
-        await store.close()
 
 
 async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_owner(
@@ -1649,8 +1502,7 @@ async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_o
     event and raised, never touching the transaction, so `amend`'s own `finally` block is the
     one place that actually commits them. This test proves that end to end through the real
     public `amend` wrapper, and also checks the connection is left fully usable afterward."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
         await amend(
@@ -1692,5 +1544,49 @@ async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_o
             ctx=_ctx(session_id="stale-caller"),
         )
         assert healthy.gist == "recovered"
-    finally:
-        await store.close()
+
+
+async def test_a_per_call_kind_may_not_name_a_memory(tmp_path: Path) -> None:
+    """`EVENT_SPECS[kind].names_memory` is a contract about the *column*, not only about the detail.
+
+    A per-call kind that named a memory, or a per-memory kind that named none, would leave the
+    signals joining on a column whose meaning changed with the writer — so the disagreement is
+    refused where the row is written rather than left for a query to average over.
+
+    This is the only shape mismatch still reachable from a call site: the detail carries its own
+    kind and its own field types, so filing a payload under the wrong kind, or giving a field the
+    wrong name or type, no longer type-checks.
+    """
+    async with await _open_store(tmp_path) as store:
+        with pytest.raises(ValueError, match="names_memory=False"):
+            await log_event(
+                store.connection,
+                ctx=_ctx(),
+                detail=SearchDetail(
+                    query_chars=1,
+                    limit=5,
+                    fusion_depth=50,
+                    arms=ArmTermination(
+                        dense_depth_reached=0,
+                        dense_stop_reason=StopReason.INDEX_EXHAUSTED,
+                        lexical_depth_reached=0,
+                        lexical_stop_reason=StopReason.INDEX_EXHAUSTED,
+                    ),
+                    query=QueryShape(query_tokens=1, query_truncated=False, lexical_skipped=False),
+                    include_retired=False,
+                    n_returned=0,
+                    uuids=(),
+                ),
+                memory_uuid="not-mine",
+            )
+
+
+async def test_a_per_memory_kind_must_name_one(tmp_path: Path) -> None:
+    async with await _open_store(tmp_path) as store:
+        with pytest.raises(ValueError, match="names_memory=True"):
+            await log_event(
+                store.connection,
+                ctx=_ctx(),
+                detail=FetchDetail(version=1, found=True),
+                memory_uuid=None,
+            )

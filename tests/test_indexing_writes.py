@@ -152,8 +152,7 @@ async def test_remember_writes_the_row_both_indexes_the_receipt_and_one_event(
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -186,8 +185,6 @@ async def test_remember_writes_the_row_both_indexes_the_receipt_and_one_event(
             "truncated": False,
         }
         assert list(events[0][1]) == list(EVENT_SPECS[EventKind.REMEMBER].field_names)
-    finally:
-        await store.close()
 
 
 async def test_remember_writes_one_chunk_and_one_vector_per_part(tmp_path: Path) -> None:
@@ -196,8 +193,7 @@ async def test_remember_writes_one_chunk_and_one_vector_per_part(tmp_path: Path)
     still hold if the vectors were paired with the wrong parts, and every chunk would then describe
     a different chunk's prose — a wrong answer to every dense query, with nothing to notice it."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder, chunk_max_tokens=3)
         content = "\n\n".join(["a1 a2 a3", "b1 b2 b3", "c1"])
         written = await writes.remember(
@@ -215,8 +211,6 @@ async def test_remember_writes_one_chunk_and_one_vector_per_part(tmp_path: Path)
             )
         detail = (await _events(store, written.memory.uuid))[0][1]
         assert detail["n_chunks"] == 3
-    finally:
-        await store.close()
 
 
 async def test_stored_vectors_are_unit_length_even_though_the_encoder_returns_longer_ones(
@@ -226,8 +220,7 @@ async def test_stored_vectors_are_unit_length_even_though_the_encoder_returns_lo
     `cos = 1 - d^2/2` depends on. The fake encoder deliberately returns unnormalized vectors, so a
     write path that merely trusted its embedder would fail here."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -239,16 +232,13 @@ async def test_stored_vectors_are_unit_length_even_though_the_encoder_returns_lo
         assert _norm(stored) == pytest.approx(1.0, abs=1e-5)
         scale = _norm(raw)
         assert stored == pytest.approx(tuple(value / scale for value in raw), abs=1e-6)
-    finally:
-        await store.close()
 
 
 async def test_every_active_memory_has_at_least_one_chunk(tmp_path: Path) -> None:
     """Invariant 12. A memory with zero vectors is invisible to the dense arm while looking
     perfectly healthy, which is why this is an invariant rather than an expectation."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder, chunk_max_tokens=2)
         for content in (_CONTENT, "one", "a b\n\nc d\n\ne f"):
             await writes.remember(
@@ -259,8 +249,6 @@ async def test_every_active_memory_has_at_least_one_chunk(tmp_path: Path) -> Non
             "AND NOT EXISTS (SELECT 1 FROM memory_chunk c WHERE c.memory_uuid = m.uuid)"
         )
         assert int(next(iter(rows))[0]) == 0
-    finally:
-        await store.close()
 
 
 async def test_two_stores_index_the_same_prose_identically(tmp_path: Path) -> None:
@@ -271,8 +259,7 @@ async def test_two_stores_index_the_same_prose_identically(tmp_path: Path) -> No
         root = tmp_path / name
         root.mkdir()
         encoder = FakeEncoder()
-        store = await _open_store(root, encoder)
-        try:
+        async with await _open_store(root, encoder) as store:
             call = _call(store, root, encoder, chunk_max_tokens=4)
             content = "\n\n".join(["alpha beta gamma delta epsilon", "zeta eta"])
             written = await writes.remember(
@@ -281,8 +268,6 @@ async def test_two_stores_index_the_same_prose_identically(tmp_path: Path) -> No
             chunks = await _chunk_rows(store, written.memory.uuid)
             stored = [await _stored_vector(store, int(row[0])) for row in chunks]
             written_state.append(([list(row[1:]) for row in chunks], stored))
-        finally:
-            await store.close()
     assert written_state[0] == written_state[1]
 
 
@@ -295,8 +280,7 @@ async def test_amend_rewrites_the_row_replaces_the_chunks_and_resyncs_the_lexica
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -349,16 +333,13 @@ async def test_amend_rewrites_the_row_replaces_the_chunks_and_resyncs_the_lexica
         }
         assert list(events[1][1]) == list(EVENT_SPECS[EventKind.AMEND].field_names)
         assert await _receipts(store, written.memory.uuid) == [("mcp", 2, "own_write")]
-    finally:
-        await store.close()
 
 
 async def test_amend_from_one_chunk_to_several_leaves_no_stale_chunk_or_vector(
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder, chunk_max_tokens=2)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content="one two"), call=call
@@ -375,8 +356,6 @@ async def test_amend_from_one_chunk_to_several_leaves_no_stale_chunk_or_vector(
         chunks = await _chunk_rows(store, written.memory.uuid)
         assert [row[1] for row in chunks] == [0, 1, 2]
         assert await _vector_rowids(store) == sorted(int(row[0]) for row in chunks)
-    finally:
-        await store.close()
 
 
 async def test_deleting_a_memorys_vectors_precedes_deleting_its_chunk_rows(
@@ -386,8 +365,7 @@ async def test_deleting_a_memorys_vectors_precedes_deleting_its_chunk_rows(
     chunks-first would leave a vector nothing identifies if the sequence were interrupted — a
     silent false positive in retrieval, where the reverse order leaves a detectable orphan chunk."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -412,8 +390,6 @@ async def test_deleting_a_memorys_vectors_precedes_deleting_its_chunk_rows(
             "DELETE FROM memory_vec WHERE rowid = ?",
             "DELETE FROM memory_chunk WHERE memory_uuid = ?",
         ]
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -428,8 +404,7 @@ async def test_a_failure_after_every_index_write_leaves_no_trace_of_the_remember
     the last statement, so at the moment this raises the row, the lexical index, the chunks, the
     vectors and the size are all staged."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with (
             unittest.mock.patch.object(
@@ -445,8 +420,6 @@ async def test_a_failure_after_every_index_write_leaves_no_trace_of_the_remember
             rows = await store.connection.execute_fetchall(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
             assert int(next(iter(rows))[0]) == 0, f"{table} kept a row from a rolled-back write"
         assert await _fts_uuids(store, "protobuf") == []
-    finally:
-        await store.close()
 
 
 async def test_a_failure_between_deleting_and_rewriting_the_index_leaves_the_old_index_intact(
@@ -456,8 +429,7 @@ async def test_a_failure_between_deleting_and_rewriting_the_index_leaves_the_old
     been rewritten, the lexical postings have been swapped and the old chunks and vectors have been
     deleted. Either all of that survives or none of it does."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -491,16 +463,13 @@ async def test_a_failure_between_deleting_and_rewriting_the_index_leaves_the_old
         assert await _fts_uuids(store, "content") == []
         assert [kind for kind, _ in await _events(store, written.memory.uuid)] == ["remember"]
         assert await _receipts(store, written.memory.uuid) == [("mcp", 1, "own_write")]
-    finally:
-        await store.close()
 
 
 async def test_a_store_level_failure_inside_the_transaction_is_index_failed_at_index_write(
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with (
             unittest.mock.patch.object(
@@ -515,8 +484,6 @@ async def test_a_store_level_failure_inside_the_transaction_is_index_failed_at_i
         assert raised.value.data["stage"] == IndexStage.INDEX_WRITE
         rows = await store.connection.execute_fetchall("SELECT COUNT(*) FROM memory")
         assert int(next(iter(rows))[0]) == 0
-    finally:
-        await store.close()
 
 
 async def test_a_locked_store_is_store_busy_naming_the_verb_not_a_terminal_index_failure(
@@ -530,9 +497,10 @@ async def test_a_locked_store_is_store_busy_naming_the_verb_not_a_terminal_index
     waiting connection's `busy_timeout` lowered so the test does not sit out the real five seconds.
     """
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    holder = await aiosqlite.connect(store.path)
-    try:
+    async with (
+        await _open_store(tmp_path, encoder) as store,
+        aiosqlite.connect(store.path) as holder,
+    ):
         await store.connection.execute("PRAGMA busy_timeout = 50")
         await holder.execute("BEGIN IMMEDIATE")
         await holder.execute(
@@ -546,10 +514,6 @@ async def test_a_locked_store_is_store_busy_naming_the_verb_not_a_terminal_index
             )
         assert raised.value.code is ErrorCode.STORE_BUSY
         assert raised.value.data == {"verb": "remember"}
-    finally:
-        await holder.rollback()
-        await holder.close()
-        await store.close()
 
 
 async def test_a_failing_commit_is_reported_and_leaves_the_connection_clean(
@@ -564,9 +528,10 @@ async def test_a_failing_commit_is_reported_and_leaves_the_connection_clean(
     *second* connection, and a subsequent write succeeding with no cleanup of the test's own.
     """
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    onlooker = await aiosqlite.connect(store.path)
-    try:
+    async with (
+        await _open_store(tmp_path, encoder) as store,
+        aiosqlite.connect(store.path) as onlooker,
+    ):
         call = _call(store, tmp_path, encoder)
 
         async def failing_commit() -> None:
@@ -592,9 +557,6 @@ async def test_a_failing_commit_is_reported_and_leaves_the_connection_clean(
             store.connection, rewrite=Rewrite(gist=_GIST, content="a later write"), call=call
         )
         assert recovered.memory.version == 1
-    finally:
-        await onlooker.close()
-        await store.close()
 
 
 async def test_a_connection_whose_rollback_also_fails_is_closed_rather_than_left_in_circulation(
@@ -609,9 +571,10 @@ async def test_a_connection_whose_rollback_also_fails_is_closed_rather_than_left
     store told the agent it had not stored.
     """
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    onlooker = await aiosqlite.connect(store.path)
-    try:
+    async with (
+        await _open_store(tmp_path, encoder) as store,
+        aiosqlite.connect(store.path) as onlooker,
+    ):
         call = _call(store, tmp_path, encoder)
 
         async def failing_commit() -> None:
@@ -634,9 +597,6 @@ async def test_a_connection_whose_rollback_also_fails_is_closed_rather_than_left
         assert int(next(iter(visible))[0]) == 0, "a reported failure published rows anyway"
         with pytest.raises(ValueError, match="no active connection"):
             await store.connection.execute("SELECT 1")
-    finally:
-        await onlooker.close()
-        await store.close()
 
 
 async def test_an_extended_busy_result_is_still_contention_rather_than_a_terminal_failure(
@@ -654,8 +614,7 @@ async def test_an_extended_busy_result_is_still_contention_rather_than_a_termina
 
     assert SnapshotBusy.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with (
             unittest.mock.patch.object(
@@ -668,8 +627,6 @@ async def test_an_extended_busy_result_is_still_contention_rather_than_a_termina
             )
         assert raised.value.code is ErrorCode.STORE_BUSY
         assert raised.value.data == {"verb": "remember"}
-    finally:
-        await store.close()
 
 
 async def test_a_real_stale_snapshot_during_an_amend_is_reported_as_contention(
@@ -680,9 +637,10 @@ async def test_a_real_stale_snapshot_during_an_amend_is_reported_as_contention(
     promote its stale snapshot. Ordered by construction — the second connection's commit is driven
     from inside the amend — so there is no timing window to be flaky about."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    other = await aiosqlite.connect(store.path)
-    try:
+    async with (
+        await _open_store(tmp_path, encoder) as store,
+        aiosqlite.connect(store.path) as other,
+    ):
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -712,9 +670,6 @@ async def test_a_real_stale_snapshot_during_an_amend_is_reported_as_contention(
         assert raised.value.data == {"verb": "amend"}
         assert not store.connection.in_transaction
         assert (await _row(store, written.memory.uuid))[:3] == (_GIST, _CONTENT, 1)
-    finally:
-        await other.close()
-        await store.close()
 
 
 async def test_a_failure_opening_the_transaction_is_mapped_rather_than_escaping_raw(
@@ -723,8 +678,7 @@ async def test_a_failure_opening_the_transaction_is_mapped_rather_than_escaping_
     """`BEGIN` is a statement like any other and can fail like any other. A raw `sqlite3` exception
     escaping here would leave whoever serializes the response with no code to send."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         original = store.connection.execute
 
@@ -746,8 +700,6 @@ async def test_a_failure_opening_the_transaction_is_mapped_rather_than_escaping_
         assert raised.value.data["stage"] == IndexStage.INDEX_WRITE
         rows = await store.connection.execute_fetchall("SELECT COUNT(*) FROM memory")
         assert int(next(iter(rows))[0]) == 0
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -764,8 +716,7 @@ async def test_a_version_conflict_commits_its_audit_trail_and_touches_neither_in
     resync therefore names the values it removes rather than letting FTS5 read them out of the
     content table, which is what allows it to run after authorization."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -790,16 +741,13 @@ async def test_a_version_conflict_commits_its_audit_trail_and_touches_neither_in
         kinds = [kind for kind, _ in await _events(store, written.memory.uuid)]
         assert kinds == ["remember", "version_conflict"], "the audit event must survive"
         assert ("mcp", 1, "conflict") in await _receipts(store, written.memory.uuid)
-    finally:
-        await store.close()
 
 
 async def test_an_amend_without_a_receipt_commits_its_event_and_touches_neither_index(
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         writer = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=writer
@@ -821,14 +769,11 @@ async def test_an_amend_without_a_receipt_commits_its_event_and_touches_neither_
         ]
         assert await _fts_uuids(store, "requirements.txt") == [written.memory.uuid]
         assert (await _row(store, written.memory.uuid))[:3] == (_GIST, _CONTENT, 1)
-    finally:
-        await store.close()
 
 
 async def test_amending_a_retired_row_is_refused_and_writes_nothing_at_all(tmp_path: Path) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
@@ -850,8 +795,6 @@ async def test_amending_a_retired_row_is_refused_and_writes_nothing_at_all(tmp_p
             "remember",
             "retire",
         ]
-    finally:
-        await store.close()
 
 
 async def test_retire_leaves_both_indexes_exactly_as_they_were(tmp_path: Path) -> None:
@@ -859,8 +802,7 @@ async def test_retire_leaves_both_indexes_exactly_as_they_were(tmp_path: Path) -
     row remains retrievable. This is also why the indexed write path has two verbs, not three —
     `retire` changes no indexed column, so it has nothing for this layer to maintain."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder, chunk_max_tokens=3)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content="a b c\n\nd e f"), call=call
@@ -875,8 +817,6 @@ async def test_retire_leaves_both_indexes_exactly_as_they_were(tmp_path: Path) -
         assert await _chunk_rows(store, written.memory.uuid) == before_chunks
         assert await _vector_rowids(store) == before_vectors
         assert await _fts_uuids(store, "protobuf") == [written.memory.uuid]
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -888,8 +828,7 @@ async def test_a_gist_over_its_bound_rejects_the_write_before_any_row_exists(
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         long_gist = " ".join(f"g{index}" for index in range(65))
         with pytest.raises(ZikaronError) as raised:
@@ -900,8 +839,6 @@ async def test_a_gist_over_its_bound_rejects_the_write_before_any_row_exists(
         rows = await store.connection.execute_fetchall("SELECT COUNT(*) FROM memory")
         assert int(next(iter(rows))[0]) == 0
         assert encoder.embedded == [], "nothing should have been embedded for a refused write"
-    finally:
-        await store.close()
 
 
 @pytest.mark.parametrize(
@@ -919,8 +856,7 @@ async def test_an_embedder_that_misbehaves_is_index_failed_at_the_embed_stage(
     fails, it returns a different number of vectors than there are chunks, or it returns the wrong
     width. Each would otherwise become a vector that does not describe its chunk."""
     encoder = FakeEncoder(**fault)
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with pytest.raises(ZikaronError) as raised:
             await writes.remember(
@@ -931,8 +867,6 @@ async def test_an_embedder_that_misbehaves_is_index_failed_at_the_embed_stage(
         assert len(encoder.embedded) == expected_embed_calls
         rows = await store.connection.execute_fetchall("SELECT COUNT(*) FROM memory")
         assert int(next(iter(rows))[0]) == 0
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -952,16 +886,13 @@ async def test_a_degenerate_vector_is_refused_rather_than_stored_as_infinities(
             return tuple((0.0,) * self.dim for _ in texts)
 
     encoder = ZeroEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with pytest.raises(ZikaronError) as raised:
             await writes.remember(
                 store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
             )
         assert raised.value.data["stage"] == IndexStage.EMBED
-    finally:
-        await store.close()
 
 
 async def test_an_encoder_raising_a_zikaron_error_keeps_its_own_code(tmp_path: Path) -> None:
@@ -971,16 +902,13 @@ async def test_an_encoder_raising_a_zikaron_error_keeps_its_own_code(tmp_path: P
     encoder = FakeEncoder(
         embed_error=ZikaronError(ErrorCode.BOUNDS, field="content", limit=1, actual=0)
     )
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         with pytest.raises(ZikaronError) as raised:
             await writes.remember(
                 store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
             )
         assert raised.value.code is ErrorCode.BOUNDS
-    finally:
-        await store.close()
 
 
 async def test_writing_fewer_vectors_than_chunks_is_refused_at_the_insert(tmp_path: Path) -> None:
@@ -988,8 +916,7 @@ async def test_writing_fewer_vectors_than_chunks_is_refused_at_the_insert(tmp_pa
     the two have already disagreed. It is still checked here, because the alternative is a chunk row
     with no vector — invisible to the dense arm while looking perfectly healthy."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder, chunk_max_tokens=2)
         prepared = await writes.prepare(Rewrite(gist=_GIST, content="a b\n\nc d"), index=call.index)
         assert prepared.plan.n_chunks == 2
@@ -1006,8 +933,6 @@ async def test_writing_fewer_vectors_than_chunks_is_refused_at_the_insert(tmp_pa
             assert raised.value.data["stage"] == IndexStage.EMBED
         finally:
             await store.connection.rollback()
-    finally:
-        await store.close()
 
 
 async def test_a_driver_that_reports_no_chunk_id_is_index_failed_rather_than_paired_wrongly(
@@ -1017,8 +942,7 @@ async def test_a_driver_that_reports_no_chunk_id_is_index_failed_rather_than_pai
     driver does not report that id there is nothing to pair the vector with, and guessing one would
     attach it to whatever row happened to hold that number."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         prepared = await writes.prepare(Rewrite(gist=_GIST, content=_CONTENT), index=call.index)
         # A real row, because `memory_chunk.memory_uuid` is a foreign key: the guard under test is
@@ -1050,8 +974,6 @@ async def test_a_driver_that_reports_no_chunk_id_is_index_failed_rather_than_pai
             assert raised.value.data["stage"] == IndexStage.INDEX_WRITE
         finally:
             await store.connection.rollback()
-    finally:
-        await store.close()
 
 
 async def test_a_missing_row_at_the_lexical_step_is_reported_rather_than_indexed_at_a_guess(
@@ -1062,13 +984,10 @@ async def test_a_missing_row_at_the_lexical_step_is_reported_rather_than_indexed
     transaction — and checked because indexing at a guessed rowid would attach one memory's terms
     to another's record."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         with pytest.raises(ZikaronError) as raised:
             await writes._rowid_of(store.connection, "no-such-uuid")
         assert raised.value.code is ErrorCode.NOT_FOUND
-    finally:
-        await store.close()
 
 
 class _NoRowidCursor:
@@ -1116,15 +1035,12 @@ async def test_for_store_takes_its_identity_from_meta_and_its_bounds_from_the_co
     tmp_path: Path,
 ) -> None:
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         index = IndexingContext.for_store(store, _config(tmp_path), encoder)
         assert index.identity == IndexIdentity(
             embed_model=store.meta.embed_model, embed_dim=store.meta.embed_dim
         )
         assert (index.chunk_max_tokens, index.gist_max_tokens) == (450, 64)
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1139,8 +1055,7 @@ async def test_the_neutral_cores_compose_into_a_wider_transaction_with_one_commi
     it queries the vectors that write just inserted. This is that composition, with a sentinel
     write standing in for the dedup query's own bookkeeping."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         prepared = await writes.prepare(Rewrite(gist=_GIST, content=_CONTENT), index=call.index)
 
@@ -1160,8 +1075,6 @@ async def test_the_neutral_cores_compose_into_a_wider_transaction_with_one_commi
             "dedup_offered",
         ]
         assert len(await _chunk_rows(store, written.memory.uuid)) == 1
-    finally:
-        await store.close()
 
 
 async def test_a_composing_callers_transaction_rolls_back_the_whole_indexed_write(
@@ -1170,8 +1083,7 @@ async def test_a_composing_callers_transaction_rolls_back_the_whole_indexed_writ
     """The other half of the seam: the neutral core touches the transaction on no path, so a
     composing caller that decides to roll back takes the index writes with it."""
     encoder = FakeEncoder()
-    store = await _open_store(tmp_path, encoder)
-    try:
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         prepared = await writes.prepare(Rewrite(gist=_GIST, content=_CONTENT), index=call.index)
 
@@ -1184,5 +1096,3 @@ async def test_a_composing_callers_transaction_rolls_back_the_whole_indexed_writ
         assert await _chunk_rows(store, written.memory.uuid) == []
         assert await _vector_rowids(store) == []
         assert await _fts_uuids(store, "protobuf") == []
-    finally:
-        await store.close()

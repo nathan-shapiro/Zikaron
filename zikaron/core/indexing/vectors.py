@@ -70,7 +70,12 @@ def _normalize(vector: Sequence[float], *, embed_dim: int) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
-def _serialize(vector: Sequence[float]) -> bytes:
+def serialize(vector: Sequence[float]) -> bytes:
+    """One vector in `vec0`'s wire format: `len(vector)` little-endian 32-bit floats, no header.
+
+    Public because the read path binds a query vector into the same column this one writes into, and
+    two copies of a binary layout is how a query silently stops describing the corpus it searches.
+    """
     return struct.pack(_FLOAT32.format(n=len(vector)), *vector)
 
 
@@ -102,7 +107,7 @@ async def embed_chunks(
         raise _reject_embed() from error
     if len(vectors) != len(texts):
         raise _reject_embed()
-    return tuple(_serialize(_normalize(vector, embed_dim=embed_dim)) for vector in vectors)
+    return tuple(serialize(_normalize(vector, embed_dim=embed_dim)) for vector in vectors)
 
 
 async def insert_chunks(

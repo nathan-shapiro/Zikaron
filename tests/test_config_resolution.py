@@ -305,6 +305,20 @@ def test_get_int_and_get_str_return_the_typed_value(tmp_path: Path) -> None:
     assert config.get_str("embed_model") == "BAAI/bge-small-en-v1.5"
 
 
+def test_get_float_returns_the_typed_value(tmp_path: Path) -> None:
+    config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
+    assert config.get_float("supersession_penalty") == 0.5
+
+
+def test_get_float_on_an_int_key_raises_type_error(tmp_path: Path) -> None:
+    """An `int` is not silently widened to a `float`: a key whose declared type has changed is a
+    schema edit worth a loud failure, and the two demotion penalties are the keys that would
+    otherwise start ranking against an integer nobody declared."""
+    config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
+    with pytest.raises(TypeError, match="not float"):
+        config.get_float("rrf_k")
+
+
 def test_get_int_on_a_float_key_raises_type_error(tmp_path: Path) -> None:
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
     with pytest.raises(TypeError, match="not int"):

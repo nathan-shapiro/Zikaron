@@ -155,12 +155,28 @@ Both arms; RRF at `rrf_k`; the eligibility predicate with its per-consumer filte
 memory-level dedup; supersession demotion with the labelling and precedence rules; query construction and
 bounds on both arms; the depth and stop-reason instrumentation with its three terminal reasons.
 
-**Invariants:** 18–20. **Done when:** the eligibility predicate has one implementation used by all five
+**The push block's text is `core`'s, not the service's.** `architecture.md` §"Service RPC surface" says
+`surface` returns ready-to-print text so the hook stays dumb, and names `retrieval.md` §"Push output format" as
+the spec — so the formatter is a pure function in `core/retrieval/`, built here, and M9's service only calls it.
+Leaving it to M9 would put a ranking-and-labelling rule in the transport layer, where the demotion label has no
+access to the reason it exists.
+
+**Invariants:** **18 and 20.** **19 is not this milestone's** — it constrains the set of
+`consolidation_group` rows one planning pass writes, a table M5 neither reads nor writes, so it moves to **M7**
+with the planner that can violate it. The 18–20 grouping here was the residual after M2 (1, 3, 11), M3 (4–10),
+M4 (2) and M7 (12–17), which is bookkeeping rather than analysis. What M5 owes invariant 18 is narrower than
+what M9 owes it: normalization is the service's (`architecture.md` §"Resolution is a preamble"), so M5's share
+is that every `event` row the read path writes carries the label it was handed, in both the returned-rows and
+the nothing-eligible cases.
+
+**Done when:** the eligibility predicate has one implementation used by all five
 consumers (a test asserts no consumer adds a filter outside the documented table); a superseded row surfaces
 demoted and ordered behind its replacement; `dense_stop_reason` distinguishes exhausted from cut on a fixture
 sized to each case; one memory never occupies two of five slots.
 
-**Fence:** no write verbs, no consolidation. Read path only.
+**Fence:** no write verbs, no consolidation. Read path only. The read path's *internal-query* half
+(`retrieval.md` §"Two kinds of query") is in scope and its consumers are not: M5 builds the query construction
+and the composable retrieval core that dedup, anchoring and orphan edges will call, and calls none of them.
 
 ---
 
@@ -183,13 +199,16 @@ others.
 ## M7 — Consolidation
 
 Normative: `design/consolidation.md` in full; `design/architecture.md` §"Consolidation lifecycle",
-§"Consolidator tool surface"; `design/schema.md` invariants 12–17.
+§"Consolidator tool surface"; `design/schema.md` invariants 12–17 and 19.
 
 Anchor-by-retrieval, mutual top-K with the cosine floor, the complete-linkage cohesion pass, deterministic
 sharding; the run and group state machine with every transition's named cause; leases with `(session_id, pid)`
 ownership and expiry-only takeover; the four verbs; serve-time vacating; the never-lose closure property.
 
-**Invariants:** 12–17. **Done when:** each has a test; the A~B/B~C/A≁C chain case is explicitly tested and does
+**Invariants:** 12–17, **and 19** — shard identity, moved here from M5 because the planner is the only thing
+that writes `consolidation_group.shard_index`/`shard_count` and so the only thing that can violate the
+set-level condition; M5 neither reads nor writes that table. **Done when:** each has a test; the A~B/B~C/A≁C
+chain case is explicitly tested and does
 **not** over-merge; group ordering is deterministic across runs; a run abandoned mid-way loses no journal row; a
 second worker in the same session with a different pid gets `{busy: true}`.
 

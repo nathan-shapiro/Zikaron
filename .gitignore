@@ -9,6 +9,10 @@
 *~
 .DS_Store
 
+# Local code-intelligence config: absolute server paths for this machine, not a
+# project convention. The rest of .kiro/ (agents, skills) is tracked deliberately.
+.kiro/settings/lsp.json
+
 # Python
 .venv/
 venv/

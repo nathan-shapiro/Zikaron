@@ -12,6 +12,8 @@ property ever changes, a failing test is exactly how this design note should com
 """
 
 import struct
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Final
 
@@ -52,10 +54,20 @@ def _ctx() -> CallParams:
     return CallParams(session_id="s1", client_kind="mcp", op_id="op1", max_depth=_MAX_DEPTH)
 
 
-async def _open(tmp_path: Path, encoder: FastEmbedEncoder) -> tuple[Store, IndexedCall]:
-    store = await Store.create(tmp_path / ".zikaron", _config(tmp_path), encoder)
-    index = IndexingContext.for_store(store, _config(tmp_path), encoder)
-    return store, IndexedCall(ctx=_ctx(), index=index)
+@asynccontextmanager
+async def _open(
+    tmp_path: Path, encoder: FastEmbedEncoder
+) -> AsyncIterator[tuple[Store, IndexedCall]]:
+    """A store and the call that writes into it, closed however the test ends.
+
+    A context manager rather than a plain factory because the pair cannot be bound by a single
+    `async with ... as`, and the store still has to be closed on the failure path: its connection
+    runs on a non-daemon thread, so a leak hangs the session at interpreter exit rather than
+    reporting.
+    """
+    async with await Store.create(tmp_path / ".zikaron", _config(tmp_path), encoder) as store:
+        index = IndexingContext.for_store(store, _config(tmp_path), encoder)
+        yield store, IndexedCall(ctx=_ctx(), index=index)
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +196,7 @@ async def test_a_real_write_stores_unit_vectors_that_a_knn_query_finds(
     """One KNN probe, as a check on the *write*: invariant 1's join is the only thing tying a
     vector to its memory, so a write that produced an unqueryable index would look healthy in every
     other assertion here. The read path itself is a later milestone's."""
-    store, call = await _open(tmp_path, encoder)
-    try:
+    async with _open(tmp_path, encoder) as (store, call):
         content = "\n\n".join([_LONG_PARAGRAPH, "run make clean first or the stale objects link"])
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=content), call=call
@@ -212,15 +223,12 @@ async def test_a_real_write_stores_unit_vectors_that_a_knn_query_finds(
         )
         found = [str(row[0]) for row in hits]
         assert written.memory.uuid in found
-    finally:
-        await store.close()
 
 
 async def test_a_real_amend_replaces_the_index_and_leaves_no_stale_term(
     tmp_path: Path, encoder: FastEmbedEncoder
 ) -> None:
-    store, call = await _open(tmp_path, encoder)
-    try:
+    async with _open(tmp_path, encoder) as (store, call):
         written = await writes.remember(
             store.connection,
             rewrite=Rewrite(gist=_GIST, content="the protobuf step fails on staging only"),
@@ -246,8 +254,6 @@ async def test_a_real_amend_replaces_the_index_and_leaves_no_stale_term(
         )
         vec_count = await store.connection.execute_fetchall("SELECT COUNT(*) FROM memory_vec")
         assert int(next(iter(chunk_count))[0]) == int(next(iter(vec_count))[0]) == 1
-    finally:
-        await store.close()
 
 
 async def test_a_real_store_writes_identical_bytes_for_identical_prose(
@@ -259,8 +265,7 @@ async def test_a_real_store_writes_identical_bytes_for_identical_prose(
     for name in ("first", "second"):
         root = tmp_path / name
         root.mkdir()
-        store, call = await _open(root, encoder)
-        try:
+        async with _open(root, encoder) as (store, call):
             await writes.remember(
                 store.connection,
                 rewrite=Rewrite(gist=_GIST, content="pin the proto compiler to 3.21.12"),
@@ -270,6 +275,4 @@ async def test_a_real_store_writes_identical_bytes_for_identical_prose(
                 "SELECT embedding FROM memory_vec ORDER BY rowid"
             )
             blobs.append([bytes(row[0]) for row in rows])
-        finally:
-            await store.close()
     assert blobs[0] == blobs[1]

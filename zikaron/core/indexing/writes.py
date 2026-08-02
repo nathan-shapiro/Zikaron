@@ -33,23 +33,22 @@ row-level cores do. The tool-facing write path composes them: D15's dedup search
 just wrote.
 """
 
-import contextlib
-import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Final, Self
+from typing import Self
 
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import BadConfigSource, ErrorCode, IndexStage, ZikaronError
-from zikaron.core.events import EventKind
+from zikaron.core.events import AmendDetail, RememberDetail
 from zikaron.core.indexing import chunking, lexical, vectors
 from zikaron.core.indexing.chunking import ChunkPlan
 from zikaron.core.indexing.encoder import Encoder
 from zikaron.core.indexing.vectors import IndexIdentity
 from zikaron.core.records import memory
 from zikaron.core.records.memory import CallParams, Memory, Rewrite
+from zikaron.core.store import transactions
 from zikaron.core.store.store import Store
 
 #: One verb's work inside an already-open transaction. Named so `_in_one_transaction` can own the
@@ -230,19 +229,28 @@ async def _write_index(
     return replace(row, token_count=prepared.plan.content_tokens)
 
 
-def _size_detail(plan: ChunkPlan) -> dict[str, object]:
-    """The four size fields `remember` and `amend` both report, from the plan that produced them.
+def _remember_detail(plan: ChunkPlan, *, version: int) -> RememberDetail:
+    """`remember`'s event, from the plan whose numbers it reports."""
+    return RememberDetail(
+        version=version,
+        token_count=plan.content_tokens,
+        gist_tokens=plan.gist_tokens,
+        n_chunks=plan.n_chunks,
+        truncated=plan.truncated,
+    )
 
-    One function because the two events state the same four in the same way, and a second
-    transcription of them is how one verb's `truncated` comes to mean something the other's does
-    not.
-    """
-    return {
-        "token_count": plan.content_tokens,
-        "gist_tokens": plan.gist_tokens,
-        "n_chunks": plan.n_chunks,
-        "truncated": plan.truncated,
-    }
+
+def _amend_detail(plan: ChunkPlan, *, from_version: int, to_version: int) -> AmendDetail:
+    """`amend`'s event. Reports the same four size fields as `remember` from the same plan fields,
+    so one verb's `truncated` cannot come to mean something the other's does not."""
+    return AmendDetail(
+        from_version=from_version,
+        to_version=to_version,
+        token_count=plan.content_tokens,
+        gist_tokens=plan.gist_tokens,
+        n_chunks=plan.n_chunks,
+        truncated=plan.truncated,
+    )
 
 
 async def remember_within_transaction(
@@ -270,9 +278,8 @@ async def remember_within_transaction(
     await memory.log_event(
         db,
         ctx=call.ctx,
-        kind=EventKind.REMEMBER,
+        detail=_remember_detail(prepared.plan, version=stored.version),
         memory_uuid=stored.uuid,
-        detail={"version": stored.version, **_size_detail(prepared.plan)},
     )
     return IndexedWrite(memory=stored, plan=prepared.plan)
 
@@ -308,106 +315,45 @@ async def amend_within_transaction(
     await memory.log_event(
         db,
         ctx=call.ctx,
-        kind=EventKind.AMEND,
+        detail=_amend_detail(prepared.plan, from_version=before.version, to_version=after.version),
         memory_uuid=uuid,
-        detail={
-            "from_version": before.version,
-            "to_version": after.version,
-            **_size_detail(prepared.plan),
-        },
     )
     return IndexedWrite(memory=stored, plan=prepared.plan)
 
 
-#: The SQLite **primary** result codes that mean *the store was locked, try again* rather than *the
-#: write failed*. `store_busy` is the one error the design tells a caller it may retry, so
-#: collapsing contention into `index_failed` would take a retryable answer and make it look
-#: terminal. Primary codes rather than names, because SQLite reports *extended* results — a WAL
-#: reader whose snapshot went stale before it tried to write gets `SQLITE_BUSY_SNAPSHOT`, which is
-#: contention by every meaning that matters and matches no exact-name test for `SQLITE_BUSY`.
-_CONTENTION: Final = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
-
-#: SQLite packs an extended result as the primary code in its low byte plus a subcode above it.
-_PRIMARY_RESULT_MASK: Final = 0xFF
+#: The SQLite result codes that mean *retry* rather than *failed* are `store.transactions`'s to
+#: classify, since they are a property of SQLite and not of indexing.
 
 
 def _driver_failure(error: aiosqlite.Error, *, verb: str) -> ZikaronError:
     """Map a driver-level failure onto the wire contract, contention distinguished from the rest.
 
-    Contention is read off the exception's own SQLite result code rather than its message text: the
-    message is prose that varies between builds, while the code is the contract SQLite itself
-    publishes. An exception carrying no result code — one constructed rather than raised by the
-    driver — is not contention by definition and lands with the general case.
+    Contention is the one retryable answer the design gives a caller, so it must not be collapsed
+    into `index_failed`, which tells the caller the write is not worth repeating. Everything else a
+    driver can raise here happened while this layer was writing an index, which is exactly what
+    `index_failed`'s `index_write` stage names.
     """
-    code = getattr(error, "sqlite_errorcode", None)
-    if isinstance(code, int) and (code & _PRIMARY_RESULT_MASK) in _CONTENTION:
+    if transactions.is_contention(error):
         return ZikaronError(ErrorCode.STORE_BUSY, verb=verb)
     return ZikaronError(ErrorCode.INDEX_FAILED, stage=IndexStage.INDEX_WRITE)
 
 
-async def _finalize(db: aiosqlite.Connection, error: BaseException | None, *, verb: str) -> None:
-    """Commit or roll back per invariant 10, leaving the connection out of a transaction either way.
-
-    Two obligations, and the second is the one easy to miss. A `COMMIT` that fails means the write
-    did not happen, so it must be reported rather than merely logged — and it can leave the
-    transaction *open*, with every staged row still visible on this connection. Reporting the
-    failure without also rolling back would leave a write already announced as failed sitting there
-    to be committed by whatever runs next, and would make the following call's `BEGIN` fail as a
-    nested one. So a failed finalization always attempts the rollback before raising.
-
-    **If that rollback also fails, the connection is closed.** At that point the transaction state
-    could not be repaired, so every later use of this connection risks committing the very write
-    this call has just reported as failed — a durable, silent wrong answer. Closing it makes the
-    next use of it fail loudly instead, which is the trade this whole layer is built on: one noisy
-    failure in preference to one quiet corruption. It does mean disrupting another holder of a
-    connection this layer only borrows, and that is accepted rather than overlooked — the holder
-    gets an error it can act on, where the alternative is a memory the store claims not to have.
-
-    When this fires while another error is already propagating, the raise replaces it and keeps it
-    as the new error's context: the transaction's own outcome is the more useful answer, and
-    preserving only the first fault would leave the caller told nothing about the write's fate.
-    """
-    try:
-        await memory.commit_or_roll_back(db, error)
-    except aiosqlite.Error as caught:
-        mapped = _driver_failure(caught, verb=verb)
-        # Unconditional, because rolling back a connection that holds no transaction is a no-op and
-        # asking first would only add a branch that means nothing.
-        try:
-            await db.rollback()
-        except aiosqlite.Error:
-            with contextlib.suppress(Exception):
-                await db.close()
-        raise mapped from caught
+def _failure_map(verb: str) -> transactions.FailureMap:
+    """`_driver_failure` bound to one verb. Never returns `None`: every driver failure an indexed
+    write can hit has a Zikaron code, which is what distinguishes a write from a read here."""
+    return lambda error: _driver_failure(error, verb=verb)
 
 
 async def _in_one_transaction[T](db: aiosqlite.Connection, work: _Work[T], *, verb: str) -> T:
-    """Run `work` inside one transaction, then commit or roll back per invariant 10.
+    """Run `work` inside one transaction, naming every driver failure this layer's own way.
 
-    Every driver-level failure this verb can hit is mapped, and all three places it can hit one are
-    covered: opening the transaction, the work itself, and finalizing. A raw `sqlite3` exception
-    escaping would leave whoever serializes the response with no code to send and an operator
-    reading a driver traceback out of a JSON-RPC error field.
-
-    A `ZikaronError` passes through untouched, so a rejection keeps its own code — and, for the two
-    carve-out codes, its committed audit trail.
+    The envelope itself — `BEGIN`, the commit-or-rollback decision, and the ladder that keeps a
+    failed `COMMIT` from leaving a poisoned connection behind — is `store.transactions`'s, shared
+    with every other layer that owns a transaction. What is this layer's is only how a driver
+    failure is named: contention as `store_busy`, everything else as `index_failed` at the
+    `index_write` stage.
     """
-    try:
-        await db.execute("BEGIN")
-    except aiosqlite.Error as caught:
-        raise _driver_failure(caught, verb=verb) from caught
-    error: BaseException | None = None
-    try:
-        result = await work(db)
-    except aiosqlite.Error as caught:
-        error = caught
-        raise _driver_failure(caught, verb=verb) from caught
-    except BaseException as caught:
-        error = caught
-        raise
-    finally:
-        await _finalize(db, error, verb=verb)
-    return result
+    return await transactions.in_one_transaction(db, work, failure=_failure_map(verb))
 
 
 async def remember(

@@ -77,14 +77,19 @@ a developer skipping the slow tier is trying to skip. The consequence, stated so
 rather than an accident: most store behaviour is verified in the default run, which is what makes
 that run worth having.
 
+**A test holds its store with `async with`, for the reason §6 gives.** A test is the one caller whose cleanup
+is routinely skipped — a failing assertion jumps straight over whatever close follows it — so the fragile form
+is what turns a one-line failure into a session that never exits and never prints. `tests/conftest.py` fails
+any test that leaks a connection and stops the thread it left, which is what keeps a mistake here reportable
+rather than fatal.
+
 **Invariant tests are first-class and non-optional.** `design/schema.md` names twenty invariants. Each gets at
 least one test that **fails if the invariant is violated**, named for the invariant it defends. These are the
 tests that make the design enforceable rather than aspirational; they are also what lets a later session
 refactor confidently. If an invariant is genuinely untestable, say so in the test file and explain why —
 do not silently skip it.
 
-**Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result — group
-ordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the same input and
+**Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result — groupordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the same input and
 asserts byte-identical output. "It was deterministic on my machine" is how ordering bugs ship.
 
 **Coverage is measured and gated.** `pytest-cov`, with a floor on `zikaron/core` (start at **90%**) and the
@@ -136,6 +141,24 @@ synchronous call path for a handler to get wrong. Re-verified against every mech
 loading (`sqlite-vec`, via `aiosqlite.Connection.load_extension`, not by reaching into the wrapped connection),
 `vec0` KNN, the FTS5 external-content amend/erasure sequence, and two-writer `busy_timeout` contention — in
 M0 spike 5, `research/spike-results.md` §"Spike 5". `aiosqlite==0.22.1` verified; pin exactly.
+
+**A `Store` is held with `async with`, or closed in a `finally`. That is a rule about process exit, not about
+tidiness.** The dedicated worker thread above is **not a daemon thread**, so a connection nobody closes keeps
+its process alive after all its work is done — and it prints nothing while not exiting, because CPython joins
+non-daemon threads *before* running `atexit` handlers, so there is no hook late enough to rescue it. Measured
+in this repository's own suite: a run whose tests all completed in 0.76 s then hung indefinitely with an empty
+output pipe, the only evidence being a `threading._shutdown` traceback after an interrupt. For
+`zikaron-service` the same defect is worse than a hang: idle self-stop would run to completion and unlink the
+socket while the process stayed alive, so the next client's start-if-absent would raise a **second** server
+against a store the first still holds.
+
+Two consequences, neither optional. `Store` implements `__aenter__`/`__aexit__` precisely so that the correct
+form is also the shortest one, and every holder — the service, a future migration tool, a test — uses it or an
+equivalent `finally`. And the test suite makes a violation **loud** rather than silent: an autouse fixture in
+`tests/conftest.py` fails the test that leaked and stops the thread it left, so the session still reports
+instead of hanging. Marking the thread a daemon was considered and rejected — it needs private-attribute
+surgery on a pinned dependency to hide a convention we can simply hold, and it would trade a loud hang for a
+silent exit, when the loud version is what found this in the first place.
 
 **Minimal surface, and in the hook it is a design constraint rather than a preference.** `zikaron-hook` and
 `zikaron-mcp` are stdlib-only because their measured interpreter cost is the argument for the whole

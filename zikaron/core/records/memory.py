@@ -22,10 +22,18 @@ from uuid import uuid4
 import aiosqlite
 
 from zikaron.core.errors import ErrorCode, RowState, ZikaronError
-from zikaron.core.events import EventKind
+from zikaron.core.events import (
+    EVENT_SPECS,
+    EventDetail,
+    FetchDetail,
+    NoReceiptDetail,
+    RetireDetail,
+    VersionConflictDetail,
+)
 from zikaron.core.records import receipts, supersession
 from zikaron.core.records.receipts import ReceiptKey, ReceiptSource
 from zikaron.core.records.supersession import ResolvedHead, RootState
+from zikaron.core.store import transactions
 
 
 class Tier(StrEnum):
@@ -204,18 +212,37 @@ async def log_event(
     db: aiosqlite.Connection,
     *,
     ctx: CallParams,
-    kind: EventKind,
+    detail: EventDetail,
     memory_uuid: str | None,
-    detail: dict[str, object],
 ) -> None:
     """Insert one `event` row. Never committed here — invariant 10 requires it share the
     caller's own transaction, so the caller's own `COMMIT` is what makes this durable.
+
+    The kind comes from `detail`, not from a separate argument, so a payload cannot be filed under
+    the wrong kind. `detail`'s own type fixes its field names and their types at type-check time,
+    and `EVENT_SPECS[kind].validate` then re-checks the shape that reaches the log — the field
+    order, and any closed set's membership — as defence in depth against a value type Python does
+    not enforce. `memory_uuid` is checked against whether the kind names a memory at all, since a
+    per-call kind naming one, or a per-memory kind naming none, would leave the signals joining on a
+    column whose meaning changed with the writer.
 
     Public because every write path emits into the same log and there is exactly one `INSERT`
     statement for it: the indexed write verbs compose their own transactions out of this module's
     neutral cores and must not carry a second copy of this statement, since a schema change would
     then have two places to reach.
+
+    Raises:
+        ValueError: the payload's fields are not this kind's declared fields in order; a closed-set
+            field holds a value outside its set; or `memory_uuid` disagrees with whether this kind
+            names one.
     """
+    spec = EVENT_SPECS[detail.kind]
+    payload = detail.as_detail()
+    spec.validate(payload)
+    if spec.names_memory != (memory_uuid is not None):
+        raise ValueError(
+            f"{detail.kind}: names_memory={spec.names_memory} but memory_uuid={memory_uuid!r}"
+        )
     await db.execute(
         "INSERT INTO event (at, session_id, client_kind, op_id, kind, memory_uuid, detail) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -224,9 +251,9 @@ async def log_event(
             ctx.session_id,
             ctx.client_kind,
             ctx.op_id,
-            kind.value,
+            detail.kind.value,
             memory_uuid,
-            json.dumps(detail),
+            json.dumps(payload),
         ),
     )
 
@@ -299,33 +326,21 @@ async def create_within_transaction(
     return await _require_existing(db, new_uuid)
 
 
-#: The two codes invariant 10's rejection carve-out applies to: a rejected call that still
-#: commits its audit event and, for a conflict, the receipt for the record it returned. Every
-#: other `ZikaronError` this module raises (`NOT_FOUND`, `INACTIVE_ROW`, `BAD_SUPERSESSION`) has
-#: written nothing at the point it raises, so it rolls back the ordinary way.
-_CARVE_OUT_CODES: Final = (ErrorCode.VERSION_CONFLICT, ErrorCode.NO_READ_RECEIPT)
+#: The two codes invariant 10's rejection carve-out applies to are `store.transactions`'s to name,
+#: because the same rule governs every layer that owns a transaction. Every `ZikaronError` this
+#: module raises outside that pair (`NOT_FOUND`, `INACTIVE_ROW`, `BAD_SUPERSESSION`) has written
+#: nothing at the point it raises, so it rolls back the ordinary way.
 
 
 async def commit_or_roll_back(db: aiosqlite.Connection, error: BaseException | None) -> None:
     """Commit on success or on a carve-out rejection; roll back on anything else.
 
-    This is the one place that decides which of the two invariant-10 outcomes applies, and it
-    belongs to the transaction-*owning* wrapper — `amend`/`retire`/`create`/`fetch` here, and the
-    indexed write verbs that compose the neutral cores below into a wider transaction — never to a
-    `<verb>_within_transaction` core itself: only the owner structurally knows that authorization
-    ran with nothing else staged ahead of it in this transaction, which is what makes committing a
-    carve-out rejection safe. A neutral core called from inside a wider transaction must never
-    make this decision itself — see `_reject_version_conflict` and `_reject_no_receipt`'s own
-    docstrings for why they raise without committing.
-
-    Public for that reason: a composing caller needs *this* function rather than its own copy of
-    the carve-out rule, since two copies of "which codes commit" is precisely how a rejected write
-    ends up durably committing half an index.
+    Re-exported from `store.transactions`, which owns the rule, so that this module's own wrappers
+    and the composing callers reading them see one name. See that function for why only a
+    transaction-*owning* caller may call it, and why the neutral `_<verb>_within_transaction` cores
+    below — including their rejection helpers — never touch the transaction on any path.
     """
-    if error is None or (isinstance(error, ZikaronError) and error.code in _CARVE_OUT_CODES):
-        await db.commit()
-    else:
-        await db.rollback()
+    await transactions.commit_or_roll_back(db, error)
 
 
 async def create(db: aiosqlite.Connection, *, gist: str, content: str, session_id: str) -> Memory:
@@ -402,12 +417,8 @@ async def fetch_within_transaction(
         await log_event(
             db,
             ctx=ctx,
-            kind=EventKind.FETCH,
+            detail=FetchDetail(version=memory.version if memory is not None else None, found=found),
             memory_uuid=uuid,
-            detail={
-                "version": memory.version if memory is not None else None,
-                "found": found,
-            },
         )
     return records, missing
 
@@ -496,13 +507,12 @@ async def _reject_version_conflict(
     await log_event(
         db,
         ctx=ctx,
-        kind=EventKind.VERSION_CONFLICT,
+        detail=VersionConflictDetail(
+            verb=verb,
+            expected_version=presented_version,
+            actual_version=current.version,
+        ),
         memory_uuid=current.uuid,
-        detail={
-            "verb": verb,
-            "expected_version": presented_version,
-            "actual_version": current.version,
-        },
     )
     record = await _to_conflict_record(db, current, max_depth=ctx.max_depth)
     raise ZikaronError(ErrorCode.VERSION_CONFLICT, current=record)
@@ -524,9 +534,8 @@ async def _reject_no_receipt(
     await log_event(
         db,
         ctx=ctx,
-        kind=EventKind.NO_RECEIPT,
+        detail=NoReceiptDetail(verb=verb, version_presented=presented_version),
         memory_uuid=uuid,
-        detail={"verb": verb, "version_presented": presented_version},
     )
     raise ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=[uuid], hint="fetch it first")
 
@@ -750,13 +759,12 @@ async def retire_within_transaction(
     await log_event(
         db,
         ctx=ctx,
-        kind=EventKind.RETIRE,
+        detail=RetireDetail(
+            from_version=current.version,
+            to_version=new_version,
+            superseded_by=superseded_by,
+        ),
         memory_uuid=uuid,
-        detail={
-            "from_version": current.version,
-            "to_version": new_version,
-            "superseded_by": superseded_by,
-        },
     )
     return await _require_existing(db, uuid)
 

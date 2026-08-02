@@ -48,44 +48,34 @@ def _key(
 
 
 async def test_mint_then_spend_finds_the_receipt(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         key = _key()
         await receipts.mint(store.connection, key=key, at="t0", source=ReceiptSource.FETCH)
         await store.connection.commit()
         assert await receipts.spend(store.connection, key=key) is True
-    finally:
-        await store.close()
 
 
 async def test_spend_with_no_matching_receipt_returns_false(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         assert await receipts.spend(store.connection, key=_key()) is False
-    finally:
-        await store.close()
 
 
 async def test_spend_does_not_consume_the_receipt(tmp_path: Path) -> None:
     """Named `spend` for what the caller's own version bump does next, not for a deletion this
     function itself performs — checking twice must find the same receipt both times."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         key = _key()
         await receipts.mint(store.connection, key=key, at="t0", source=ReceiptSource.FETCH)
         await store.connection.commit()
         assert await receipts.spend(store.connection, key=key) is True
         assert await receipts.spend(store.connection, key=key) is True
-    finally:
-        await store.close()
 
 
 async def test_mint_is_an_idempotent_upsert_refreshing_at_and_source(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         key = _key()
         await receipts.mint(store.connection, key=key, at="t0", source=ReceiptSource.FETCH)
@@ -95,14 +85,11 @@ async def test_mint_is_an_idempotent_upsert_refreshing_at_and_source(tmp_path: P
             "SELECT at, source FROM read_receipt WHERE memory_uuid = ?", ("m1",)
         )
         assert list(rows) == [("t1", "group")]
-    finally:
-        await store.close()
 
 
 async def test_mint_does_not_violate_the_primary_key_on_a_repeat_call(tmp_path: Path) -> None:
     """A plain `INSERT` would raise `IntegrityError` on the second call; the upsert must not."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         key = _key()
         for _ in range(3):
@@ -112,15 +99,12 @@ async def test_mint_does_not_violate_the_primary_key_on_a_repeat_call(tmp_path: 
             "SELECT COUNT(*) FROM read_receipt WHERE memory_uuid = ?", ("m1",)
         )
         assert int(next(iter(rows))[0]) == 1
-    finally:
-        await store.close()
 
 
 async def test_revoke_on_version_bump_deletes_every_other_receipt_for_the_uuid(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         await receipts.mint(
             store.connection,
@@ -144,15 +128,12 @@ async def test_revoke_on_version_bump_deletes_every_other_receipt_for_the_uuid(
             "SELECT session_id, version FROM read_receipt WHERE memory_uuid = ?", ("m1",)
         )
         assert list(rows) == [("writer", 2)]
-    finally:
-        await store.close()
 
 
 async def test_revoke_on_version_bump_does_not_touch_receipts_for_a_different_uuid(
     tmp_path: Path,
 ) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "m1")
         await _insert_memory(store, "m2")
         await receipts.mint(
@@ -171,8 +152,6 @@ async def test_revoke_on_version_bump_does_not_touch_receipts_for_a_different_uu
             "SELECT memory_uuid FROM read_receipt ORDER BY memory_uuid"
         )
         assert [str(r[0]) for r in rows] == ["m1", "m2"]
-    finally:
-        await store.close()
 
 
 def test_require_all_passes_when_every_uuid_holds_a_receipt() -> None:

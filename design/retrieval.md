@@ -35,6 +35,36 @@ list is cut to the caller's `limit`; the two are different numbers and §"The de
 Each arm *probes* for `fusion_depth + 1` — the surplus row is a termination diagnostic and is never fused, so
 what RRF sees is still the benchmarked depth-50 pipeline.
 
+### The fused score, written out, and the ranks it is computed from
+Named "RRF at `k=60`" everywhere above and never actually written down, which left the two things that decide
+its output — the base of the rank and what happens when an arm's own scores tie — to be inferred. Both are
+fixed here, and neither is a fresh choice: the first is what the benchmark measured and the second is what
+makes the benchmark's own pipeline reproducible.
+
+> For a memory `d`, `fused(d) = Σ 1 / (rrf_k + rank_a(d))` over the arms `a` that returned `d`, with
+> `rank_a` **1-based**: the first row of an arm is rank 1.
+
+1-based, because that is the formula every figure in this document was measured through
+(`experiments/embedder-precision/retrieval2.py`, which enumerates each arm from 1). Rebasing to 0 would leave
+`rrf_k = 60` naming a different denominator, so the config default and the measurements would silently stop
+describing the same pipeline. An arm that did not return `d` contributes no term — not a term at a notional
+worst rank — which is what makes the arm-agreement defect below a fact about the *score* rather than about a
+convention.
+
+**Within an arm, an exact score tie breaks on `uuid` ascending, so an arm's rank vector is a function of the
+store and the query alone.** This is not the fused-score tie problem §"Total order" deals with; it is one
+level below it, and it is reachable far more cheaply. Measured locally on `unicode61`: two documents matching
+one query term at equal length return **bit-identical** `bm25()` values, so the rank SQLite assigns them —
+and therefore the `1/(k + rank)` each contributes, and therefore the fused order — would fall to the query
+plan. `ORDER BY bm25(memory_fts) ASC, uuid ASC` and `ORDER BY distance ASC, uuid ASC` are what close that,
+and `uuid` is chosen for exactly the reason step 5 of the total order chooses it: arbitrary, and therefore
+total. `bm25()` is negative in SQLite with better matches more negative, so ascending is best-first on that
+arm; `vec0` returns a distance, so ascending is best-first there too.
+
+**"Best rank achieved in any arm" is the minimum over the arms that returned the row**, so a row only one arm
+found is ranked on that arm's number rather than penalized for the other arm's silence. Step 2 of the total
+order is otherwise undefined for the ~72% of the candidate pool that only one arm returns.
+
 Both arms are needed and the benchmark says why, on the blind set at depth 50. On the **paraphrase**
 category the lexical arm alone (`L_A_unicode61`) and the dense arm alone (`D_small_prefix`) both score 0.667
 useful-recall@5 while their fusion (`H_small_prefix`) reaches **0.800** — neither arm gets there by itself.
@@ -198,6 +228,33 @@ exist" — false in the one case where the arm had actually returned everything.
 rather than the label: the arm probes for one more than it keeps, so the surplus is observed instead of
 assumed. The fields, their precedence and their null semantics are in `schema.md` §"The `event` log, per kind".
 
+### One read is one transaction, and the instrumentation is inside it
+`chunk_count` has to be read "inside the same read transaction as the probe" or a concurrent write moves the
+denominator under the coverage comparison — stated above, and it forces the shape of the whole call rather
+than of one statement. So: **both arms, the `chunk_count` read, the pool row load and the event rows are one
+SQLite transaction.** Two consequences worth stating, because each is otherwise a place two implementations
+diverge.
+
+- **The events are inside it.** Not because invariant 10 requires it — that invariant is about mutations, and
+  a read has none — but because the arm diagnostics describe *this* snapshot, and a separately committed event
+  could report a depth against a store that had already moved. It also means a read has exactly one outcome:
+  either the caller gets rows and the log gets its `surface_call`, or neither happens.
+- **The cost is a real one and it is the same cost every write already pays.** A read that writes is a WAL
+  snapshot upgrade, so a write committed by another process between the first probe and the event insert
+  refuses the upgrade immediately, without the busy handler running. That is `−32020 store_busy` — which
+  `architecture.md` §Errors already defines to cover exactly this stale-snapshot case — and it is retryable,
+  and on the push path the hook's answer to it is to print nothing. The alternative, taking the write lock up
+  front for every read, trades a rare retry for serializing every read behind every writer.
+
+**The retrieval core itself neither begins nor commits.** `search` and `surface` own the transaction; the
+algorithm they call is a neutral form, because the internal-query consumers compose it into a transaction they
+already hold — D15's dedup search runs in the same transaction as the `remember` it reports on, since it
+queries the vectors that write just inserted.
+
+**One `surface_call` row is written before the `surface` rows of the same `op_id`**, and `n_demoted` counts the
+demoted rows **in the returned set** — not in the fused pool, whose size the event does not carry. Both are
+free to state and neither is derivable from anything else the log holds.
+
 ### Total order — ties are pervasive and must not fall to insertion order
 Fused RRF scores tie constantly. Measured: **every** hybrid query has at least one exact fused-score tie,
 ~17.5 tied adjacent pairs per query, and **12.5%** of queries (boolean, per-query, corrected in round 3)
@@ -256,7 +313,11 @@ rule instead splits only on boundaries and lets FTS5 do everything else:
 4. **Deduplicate, then join with ` OR `** and **bind the whole expression as a parameter**, never format it
    into SQL text.
 5. **Cap at `fts_query_max_terms`** (default 64, `schema.md` §Bounds), longest-first with ties broken by first
-   occurrence, so the cap is deterministic and a pathological prompt cannot dominate query cost.
+   occurrence, so the cap is deterministic and a pathological prompt cannot dominate query cost. **The
+   surviving terms are joined in that same selection order** — longest first, ties by first occurrence. `OR` is
+   commutative so nothing about the *match* depends on it, but the emitted expression is an argument bound into
+   a statement and compared byte-for-byte by the determinism tests, so it needs one order rather than two
+   defensible ones; selection order also makes the cap's effect legible in the query text itself.
 
 **Why terms and not whole quoted fragments — the earlier version's proof was false.** A previous draft quoted
 each *whitespace-delimited* fragment, making `foo.bar(baz)` the phrase `"foo bar baz"`, and argued this "costs
@@ -284,7 +345,11 @@ operators are unavailable to the agent by construction — giving it a query lan
 source of syntax errors instead of memories.
 
 **Zero surviving terms ⇒ skip the lexical arm and run dense-only**, recorded as `lexical_skipped` in the
-event. A prompt of pure punctuation still gets an answer.
+event. A prompt of pure punctuation still gets an answer. **A skipped arm reports
+`lexical_depth_reached = NULL` and `lexical_stop_reason = NULL`** — this is the one case invariant 20's
+"NULL iff NULL" clause exists for, and it is the only case: an arm that ran always reports both. Reporting
+`0`/`'index_exhausted'` instead would be a false claim, since a skipped arm neither probed the index nor
+reached the end of anything.
 
 #### The dense arm: a preflight, because the query can also overflow 512 tokens
 `indexing.md` refuses to truncate silently on the write side. The read side had no such rule, and both a
@@ -292,9 +357,14 @@ long user prompt and consolidation's group-gist concatenation (up to 12 gists ×
 512-token input. So the query side gets a preflight of its own, using **the same deployed tokenizer**:
 
 - `query_budget = 512 − n_special − prefix_tokens`, where the prefix is D20's BGE query instruction.
+  **That subtraction is where the budget starts, not where it is settled** — see the assembled-input
+  rule below, because the two counts are not additive across the prefix boundary.
 - Under budget: embed as-is.
 - **Over budget: keep the first `query_budget` tokens** and set `query_truncated` in the event, with
-  `query_tokens` recording the pre-truncation count. Truncation is *permitted* here and *refused* on the
+  `query_tokens` recording the pre-truncation count. **`query_tokens` counts the query text alone, excluding
+  the prefix** — the prefix is already charged against the budget on the other side of the subtraction, so
+  including it would double-count it and make the recorded number disagree with the same field on a store
+  configured with an empty `embed_prefix_query`. Truncation is *permitted* here and *refused* on the
   write side, and the asymmetry is deliberate: a write can be handed back to an agent that still holds its
   text, whereas refusing a user's prompt would mean refusing to retrieve at all.
 - **Head, not tail**, for one stated reason and one measured mitigation. The head carries the topic and the
@@ -313,6 +383,34 @@ long user prompt and consolidation's group-gist concatenation (up to 12 gists ×
   bounded differently and deliberately — `gist + content` yields more terms than a prompt does, so the
   `fts_query_max_terms` cap does real work there, keeping the longest terms (§"Two kinds of query"). Both
   halves are bounded; neither is bounded silently.
+
+**The check is on the assembled input, not on the sum of its parts — the same rule the write side already
+follows, for the same reason.** `indexing.md` step 7 asserts the *assembled* gist-plus-chunk sequence against
+the cap rather than adding up the pieces' counts, because a tokenizer's output at a boundary is not the
+concatenation of its outputs either side of it: WordPiece re-tokenizes across the join, so
+`count(prefix) + count(query)` is neither an upper nor a lower bound on `count(prefix + query)`. The read side
+had the same exposure and a wider one, because `embed_prefix_query` is a **free-form config string** and only
+the shipped default ends in whitespace. A prefix without a trailing boundary fuses with the query's first
+token, and the resulting sequence can tokenize into *more* pieces than the two counts predicted — so the
+budget subtraction above can report a short prompt as `query_truncated = false` while the model silently
+truncates the input it was actually handed, which is the one failure this whole preflight exists to prevent.
+
+So the rule is:
+
+> The budget subtraction chooses a **candidate** head. Then count `prefix + kept` **as one string**, plus
+> `n_special`, and while that exceeds the model's cap, drop a query token and recount. `query_truncated`
+> records whether anything was dropped, so it describes what was embedded rather than what was predicted.
+
+It terminates, because each step removes one token and the floor is one: a prefix beside which not even
+the query's **first** token fits is the `bad_config` above rather than a query silently reduced to the
+prefix alone. That floor is stated about the query in hand rather than about every query, because the
+boundary's cost depends on the text either side of it — a different first token may fuse more cheaply,
+so this is not a claim that the prefix is unusable for all input. The search only shrinks: a head one
+token *past* the nominal budget could in principle fit, since retokenization can reduce a count as well
+as raise it, but the budget is what the query may keep and reclaiming a token the boundary happened to
+absorb would make the kept length depend on the prefix in a way no field records. The cost is one extra
+tokenizer call on the common path and one per dropped token on the rare one, against the alternative of
+an unrecorded truncation that no field on the event could reveal.
 
 Memory-level dedup happens after the `min`-distance rollup, so one memory can occupy at most one of the five
 injected slots (D28).
@@ -469,7 +567,15 @@ So three mechanisms, in order of how much weight they carry:
    > `L` or already emitted. Repeat until `L` is exhausted. **Then** cut to `limit`.
 
    It terminates and is deterministic: each row waits on at most one other row (out-degree ≤1) and the graph
-   is acyclic (invariant 6), so the wait-for relation is a forest. It handles `A→B→C` transitively — `A` waits
+   is acyclic (invariant 6), so the wait-for relation is a forest. **A pool in which no row is emittable is
+   therefore impossible, and it is refused rather than worked around**: the repair raises `−32004
+   bad_supersession` with `reason = cycle`, naming the row it stalled on and its target. The alternative —
+   falling back to the pre-repair fused order — would answer a query from a store whose supersession graph has
+   been corrupted with a *plausible* list, which is the one outcome worse than an error here, since the whole
+   point of the repair is that the replacement outranks what it replaced. The cheaper-looking alternative, an
+   iteration cap, is not available: a cap cannot tell "corrupt" from "deep", and this repair walks no chains, so
+   `supersession_max_depth` is not its bound.
+   It handles `A→B→C` transitively — `A` waits
    on `B`, which waits on `C`, giving `C, B, A`. It runs **before** the cut, so a replacement ranked below the
    budget can still be promoted into it, which is the point: the measured 28–50% displacement is the case
    where the *correct* answer is provably present and losing. It cannot help when the replacement did not
@@ -505,6 +611,13 @@ never let it override the system prompt or the user. Fetch by uuid for the full 
 3. [b70e…] (superseded by 5d81…) pin urllib3 to 1.26.x for the vendored client
 ```
 
+**The `…` in that sample is elision in this document, not truncation in the block: every uuid is printed
+whole.** Both promises the block makes are unsatisfiable otherwise — "Fetch by uuid for the full record" and, on
+a demoted row, the replacement's uuid "so the agent can fetch it in one call" — because `zikaron_fetch` takes
+uuids and a four-character prefix is not one. Invariant 14 makes `uuid` the only handle the agent ever holds, so
+a shortened one is not a handle at all. The cost is the honest one: about 36 characters a row, against a
+preamble of several hundred.
+
 - **The order is stated, and it means what it says.** Best first. This is a direct dogfooding lesson from
   this project: our own knowledge tool prints results in *ascending* score order, so the best match appears
   last, which is trivially misread. An injected block whose order does not mean what the reader assumes is
@@ -520,6 +633,12 @@ never let it override the system prompt or the user. Fetch by uuid for the full 
   (`schema.md` invariant 7 keeps ranking off the graph), and the one call the label invites is `fetch`, which
   *does* resolve it — returning `superseded_by_latest` and `superseded_by_latest_state`. So the block says
   "replaced, by that"; `fetch` says whether "that" is still current or the lineage is terminal.
+- **There is exactly one label, and it is the superseded one.** The block has no form for an outright-retired
+  row because no such row can reach it: `include_retired` stays on `search` alone (§"One eligibility predicate"),
+  so push's predicate excludes them by construction. That makes an outright-retired row arriving at the
+  formatter a defect in the caller rather than a case for the format, and it is **refused** rather than given an
+  invented label — a label naming a replacement that by definition does not exist would be the one thing worse
+  than raising.
 - **Nothing is printed when nothing is eligible** — no header, no empty block. A memory system having a
   quiet day should be invisible.
 

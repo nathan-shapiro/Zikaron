@@ -42,20 +42,16 @@ async def _insert_memory(
 
 
 async def test_validate_new_edge_accepts_a_live_target(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "a")
         await _insert_memory(store, "b")
         await supersession.validate_new_edge(
             store.connection, from_uuid="a", to_uuid="b", max_depth=_MAX_DEPTH
         )  # must not raise
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_rejects_a_self_edge(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "a")
         with pytest.raises(ZikaronError) as excinfo:
             await supersession.validate_new_edge(
@@ -63,13 +59,10 @@ async def test_validate_new_edge_rejects_a_self_edge(tmp_path: Path) -> None:
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == BadSupersessionReason.SELF_EDGE
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_rejects_an_unknown_target(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "a")
         with pytest.raises(ZikaronError) as excinfo:
             await supersession.validate_new_edge(
@@ -77,29 +70,23 @@ async def test_validate_new_edge_rejects_an_unknown_target(tmp_path: Path) -> No
             )
         assert excinfo.value.code is ErrorCode.NOT_FOUND
         assert excinfo.value.data["uuid"] == "ghost"
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_accepts_a_superseded_but_not_outright_retired_target(
     tmp_path: Path,
 ) -> None:
     """A replacement may itself be superseded — that is how A -> B -> C arises."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "root")
         await _insert_memory(store, "middle", active=0, superseded_by="root")
         await _insert_memory(store, "leaf")
         await supersession.validate_new_edge(
             store.connection, from_uuid="leaf", to_uuid="middle", max_depth=_MAX_DEPTH
         )  # must not raise
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_rejects_a_retired_outright_target(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "dead", active=0, superseded_by=None)
         await _insert_memory(store, "a")
         with pytest.raises(ZikaronError) as excinfo:
@@ -108,14 +95,11 @@ async def test_validate_new_edge_rejects_a_retired_outright_target(tmp_path: Pat
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == BadSupersessionReason.TARGET_RETIRED_OUTRIGHT
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_rejects_a_two_hop_cycle(tmp_path: Path) -> None:
     """a -> b already exists; writing b -> a would close a cycle."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "b")
         await _insert_memory(store, "a", active=0, superseded_by="b")
         with pytest.raises(ZikaronError) as excinfo:
@@ -124,14 +108,11 @@ async def test_validate_new_edge_rejects_a_two_hop_cycle(tmp_path: Path) -> None
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == BadSupersessionReason.CYCLE
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_rejects_a_longer_cycle(tmp_path: Path) -> None:
     """a -> b -> c already exists; writing c -> a would close a three-hop cycle."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "c")
         await _insert_memory(store, "b", active=0, superseded_by="c")
         await _insert_memory(store, "a", active=0, superseded_by="b")
@@ -140,8 +121,6 @@ async def test_validate_new_edge_rejects_a_longer_cycle(tmp_path: Path) -> None:
                 store.connection, from_uuid="c", to_uuid="a", max_depth=_MAX_DEPTH
             )
         assert excinfo.value.data["reason"] == BadSupersessionReason.CYCLE
-    finally:
-        await store.close()
 
 
 async def test_validate_new_edge_walk_exhausting_max_depth_raises_depth_cap_hit(
@@ -149,8 +128,7 @@ async def test_validate_new_edge_walk_exhausting_max_depth_raises_depth_cap_hit(
 ) -> None:
     """A chain deeper than `max_depth` must fail closed rather than hang, on a genuinely acyclic
     graph — proving the cap fires on depth alone, not only on an actual cycle."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         # A chain of 5 supersession edges: n4 -> n3 -> n2 -> n1 -> n0 (n0 is the live root).
         await _insert_memory(store, "n0")
         await _insert_memory(store, "n1", active=0, superseded_by="n0")
@@ -164,25 +142,19 @@ async def test_validate_new_edge_walk_exhausting_max_depth_raises_depth_cap_hit(
             )
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == BadSupersessionReason.DEPTH_CAP_HIT
-    finally:
-        await store.close()
 
 
 async def test_resolve_latest_returns_none_for_a_root_row(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "root")
         result = await supersession.resolve_latest(
             store.connection, start_uuid="root", max_depth=_MAX_DEPTH
         )
         assert result is None
-    finally:
-        await store.close()
 
 
 async def test_resolve_latest_walks_a_chain_to_its_live_root(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "root")
         await _insert_memory(store, "middle", active=0, superseded_by="root")
         await _insert_memory(store, "leaf", active=0, superseded_by="middle")
@@ -192,15 +164,12 @@ async def test_resolve_latest_walks_a_chain_to_its_live_root(tmp_path: Path) -> 
         assert result is not None
         assert result.uuid == "root"
         assert result.state == RootState.LIVE
-    finally:
-        await store.close()
 
 
 async def test_resolve_latest_reports_a_terminal_root_as_retired(tmp_path: Path) -> None:
     """A root that is itself `active=0 AND superseded_by IS NULL` is a terminal component —
     invariant 6's "a root is live or terminal, and both are legal"."""
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "root", active=0, superseded_by=None)
         await _insert_memory(store, "leaf", active=0, superseded_by="root")
         result = await supersession.resolve_latest(
@@ -209,13 +178,10 @@ async def test_resolve_latest_reports_a_terminal_root_as_retired(tmp_path: Path)
         assert result is not None
         assert result.uuid == "root"
         assert result.state == RootState.RETIRED
-    finally:
-        await store.close()
 
 
 async def test_resolve_latest_one_hop_resolves_to_the_immediate_target(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "root")
         await _insert_memory(store, "leaf", active=0, superseded_by="root")
         result = await supersession.resolve_latest(
@@ -223,13 +189,10 @@ async def test_resolve_latest_one_hop_resolves_to_the_immediate_target(tmp_path:
         )
         assert result is not None
         assert result.uuid == "root"
-    finally:
-        await store.close()
 
 
 async def test_resolve_latest_raises_on_a_walk_exhausting_max_depth(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
+    async with await _open_store(tmp_path) as store:
         await _insert_memory(store, "n0")
         await _insert_memory(store, "n1", active=0, superseded_by="n0")
         await _insert_memory(store, "n2", active=0, superseded_by="n1")
@@ -238,8 +201,6 @@ async def test_resolve_latest_raises_on_a_walk_exhausting_max_depth(tmp_path: Pa
             await supersession.resolve_latest(store.connection, start_uuid="n3", max_depth=1)
         assert excinfo.value.code is ErrorCode.BAD_SUPERSESSION
         assert excinfo.value.data["reason"] == BadSupersessionReason.DEPTH_CAP_HIT
-    finally:
-        await store.close()
 
 
 def test_bad_supersession_reason_has_exactly_the_designs_five_cases() -> None:

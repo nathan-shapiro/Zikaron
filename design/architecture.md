@@ -1185,6 +1185,17 @@ could not both hold.
 | −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook **prints nothing**. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 
+**A read has no `index_failed`, and that is deliberate rather than an omission.** The table's store-level codes
+cover the two failures a read can have an opinion about: contention is `store_busy` (retryable, and it covers
+the stale-snapshot case a read that also writes its instrumentation can hit), and an unreadable store is
+`bad_config`, `reindexing` or `schema_incompatible` at open. Any *other* driver-level failure during a read — a
+disk error, a killed connection, a corrupted page — is not a rejection of the request and gets **no Zikaron
+code**: it propagates and the service answers with a protocol-level internal error. Reusing `index_failed`
+would have been the tempting move and it is a lie in both halves of its contract, which names index
+maintenance and a rolled-back write; inventing a `read_failed` would add a code no client can act on
+differently. The rule stated once so no read path decides it locally: **map contention, propagate everything
+else.**
+
 **Empty store, stated so nobody has to guess:** `search` → `[]`; `fetch` → `{records: [], missing: [...]}`;
 `surface` → prints nothing at all, no header, no empty block; `next_group` → `{done: true}`;
 `plan_groups` → a run with zero groups, immediately `complete`.

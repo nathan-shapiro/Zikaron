@@ -75,6 +75,17 @@ class EffectiveConfig:
             raise TypeError(f"{name} is declared {type(value).__name__}, not int")
         return value
 
+    def get_float(self, name: str) -> float:
+        """This key's resolved value, which must be declared as a `float` in `CONFIG_KEYS`.
+
+        A `float`-declared key only: an `int` is not silently widened, because a key whose declared
+        type has changed is a schema edit worth a loud failure rather than a quiet coercion.
+        """
+        value = self._values[name]
+        if type(value) is not float:
+            raise TypeError(f"{name} is declared {type(value).__name__}, not float")
+        return value
+
     def get_str(self, name: str) -> str:
         """This key's resolved value, which must be declared as a `str` in `CONFIG_KEYS`."""
         value = self._values[name]

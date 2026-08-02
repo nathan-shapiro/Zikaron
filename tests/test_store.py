@@ -13,7 +13,8 @@ import zikaron.core.store.store as store_module
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.errors import ERROR_SPECS, BadConfigSource, ErrorCode, ZikaronError
 from zikaron.core.store import meta
-from zikaron.core.store.embedder import FakeEmbedder
+from zikaron.core.store.embedder import Embedder, FakeEmbedder
+from zikaron.core.store.meta import StoreMeta
 from zikaron.core.store.store import (
     SUPPORTED_SCHEMA_VERSION,
     Store,
@@ -45,6 +46,34 @@ def test_supported_schema_version_agrees_with_errors_pys_fixed_declaration() -> 
     assert supported_field.values == (SUPPORTED_SCHEMA_VERSION,)
 
 
+async def _create_then_close(
+    store_dir: Path, config: EffectiveConfig, embedder: Embedder | None = None
+) -> StoreMeta:
+    """Create a store, read its `meta`, and close it — returning what the caller may still assert
+    on.
+
+    Many tests here need a **closed** store as their setup: something they do next reopens it,
+    chmods it, symlinks it, or reconfigures the layer it was created from. The close is therefore
+    part of the arrangement rather than cleanup, and it belongs in one helper that holds the store
+    with `async with` like every other test in the suite, instead of a bare create-then-close pair
+    per test.
+    """
+    async with await Store.create(
+        store_dir, config, embedder if embedder is not None else _default_embedder()
+    ) as store:
+        return store.meta
+
+
+async def _open_then_close(store_dir: Path, config: EffectiveConfig) -> StoreMeta:
+    """Open a store, read its `meta`, and close it.
+
+    The companion to `_create_then_close`, for a test whose assertion *is* that the open succeeds:
+    the returned `meta` is what a caller compares, and a raise is the failure.
+    """
+    async with await Store.open(store_dir, config) as store:
+        return store.meta
+
+
 # ---------------------------------------------------------------------------
 # Create -> close -> open round trip
 # ---------------------------------------------------------------------------
@@ -55,34 +84,24 @@ async def test_create_close_open_round_trips(tmp_path: Path) -> None:
     config = _config(tmp_path)
     embedder = _default_embedder()
 
-    created = await Store.create(store_dir, config, embedder)
-    try:
+    async with await Store.create(store_dir, config, embedder) as created:
         assert created.meta.schema_version == SUPPORTED_SCHEMA_VERSION
         assert created.meta.embed_model == "BAAI/bge-small-en-v1.5"
         assert created.meta.embed_dim == 384
         assert created.meta.chunk_max_tokens == 450
         assert len(created.meta.store_id) == 36
-    finally:
-        await created.close()
 
-    reopened = await Store.open(store_dir, config)
-    try:
+    async with await Store.open(store_dir, config) as reopened:
         assert reopened.meta == created.meta
-    finally:
-        await reopened.close()
 
 
 async def test_reopening_twice_yields_the_same_meta_both_times(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.close()
-
-    first = await Store.open(store_dir, config)
-    await first.close()
-    second = await Store.open(store_dir, config)
-    await second.close()
-    assert first.meta == second.meta
+    await _create_then_close(store_dir, config)
+    first = await _open_then_close(store_dir, config)
+    second = await _open_then_close(store_dir, config)
+    assert first == second
 
 
 async def test_context_manager_closes_on_exit(tmp_path: Path) -> None:
@@ -136,10 +155,9 @@ async def test_dimension_mismatch_is_rejected_even_if_the_store_dir_already_exis
 async def test_a_matching_embedder_creates_successfully(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(
+    await _create_then_close(
         store_dir, config, FakeEmbedder(model_name="BAAI/bge-small-en-v1.5", dim=384)
     )
-    await store.close()
     assert (store_dir / _DB_FILENAME).exists()
 
 
@@ -180,10 +198,9 @@ async def test_open_on_an_existing_db_with_no_meta_table_raises_bad_config_not_a
     fail at the Zikaron boundary, not as a raw `sqlite3.OperationalError`."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE meta")
-    await created.connection.commit()
-    await created.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE meta")
+        await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
@@ -255,8 +272,7 @@ async def test_create_closes_the_connection_if_the_transaction_never_commits(
         assert list(tables) == []
 
     # A fresh create must succeed afterwards — proof the failed attempt left no dangling lock.
-    recovered = await Store.create(store_dir, config, _default_embedder())
-    await recovered.close()
+    await _create_then_close(store_dir, config)
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +307,7 @@ async def test_invariant_1_has_no_enforcement_code_at_this_milestone_and_that_is
     an invariant test could exercise. M4 owns that write path and owns this invariant's test."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(store_dir, config, _default_embedder())
-    try:
+    async with await Store.create(store_dir, config, _default_embedder()) as store:
         (chunk_count,) = next(
             iter(await store.connection.execute_fetchall("SELECT count(*) FROM memory_chunk"))
         )
@@ -301,8 +316,6 @@ async def test_invariant_1_has_no_enforcement_code_at_this_milestone_and_that_is
         )
         assert chunk_count == 0
         assert vec_count == 0
-    finally:
-        await store.close()
 
 
 async def test_invariant_1_the_schema_created_here_permits_the_invariant_to_be_upheld(
@@ -315,8 +328,7 @@ async def test_invariant_1_the_schema_created_here_permits_the_invariant_to_be_u
     conclusion, which is exactly the distinction the section comment above states."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(store_dir, config, _default_embedder())
-    try:
+    async with await Store.create(store_dir, config, _default_embedder()) as store:
         (chunk_id_column,) = list(
             await store.connection.execute_fetchall(
                 "SELECT name, pk FROM pragma_table_info('memory_chunk') WHERE name = 'chunk_id'"
@@ -332,8 +344,6 @@ async def test_invariant_1_the_schema_created_here_permits_the_invariant_to_be_u
             iter(await store.connection.execute_fetchall("SELECT rowid FROM memory_vec"))
         )
         assert inserted_rowid == 42  # the explicit rowid was honoured, not reassigned
-    finally:
-        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -344,11 +354,8 @@ async def test_invariant_1_the_schema_created_here_permits_the_invariant_to_be_u
 async def test_invariant_3_absence_of_the_sentinel_opens_normally(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.close()
-
-    reopened = await Store.open(store_dir, config)
-    await reopened.close()  # must not raise
+    await _create_then_close(store_dir, config)
+    await _open_then_close(store_dir, config)  # must not raise
 
 
 async def test_invariant_3_a_present_sentinel_blocks_open_with_reindexing(
@@ -358,13 +365,12 @@ async def test_invariant_3_a_present_sentinel_blocks_open_with_reindexing(
     the invariant exists to catch, since the store's dense index cannot be trusted mid-swap."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    since = "2026-08-01T12:00:00Z"
-    await created.connection.execute(
-        "INSERT INTO meta (key, value) VALUES (?, ?)", (meta.REINDEXING_KEY, since)
-    )
-    await created.connection.commit()
-    await created.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        since = "2026-08-01T12:00:00Z"
+        await created.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?)", (meta.REINDEXING_KEY, since)
+        )
+        await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
@@ -378,13 +384,12 @@ async def test_invariant_3_the_reindexing_check_precedes_meta_validation(tmp_pat
     BAD_CONFIG, not the other way round."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute(
-        "INSERT INTO meta (key, value) VALUES (?, ?)", (meta.REINDEXING_KEY, "since-x")
-    )
-    await created.connection.execute("DELETE FROM meta WHERE key = 'embed_dim'")
-    await created.connection.commit()
-    await created.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?)", (meta.REINDEXING_KEY, "since-x")
+        )
+        await created.connection.execute("DELETE FROM meta WHERE key = 'embed_dim'")
+        await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
@@ -399,10 +404,8 @@ async def test_invariant_3_the_reindexing_check_precedes_meta_validation(tmp_pat
 async def test_invariant_11_a_matching_config_opens_normally(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.close()
-    reopened = await Store.open(store_dir, config)
-    await reopened.close()
+    await _create_then_close(store_dir, config)
+    await _open_then_close(store_dir, config)  # must not raise
 
 
 async def test_invariant_11_a_disagreeing_embed_model_is_rejected_on_open(
@@ -410,8 +413,7 @@ async def test_invariant_11_a_disagreeing_embed_model_is_rejected_on_open(
 ) -> None:
     store_dir = tmp_path / ".zikaron"
     creation_config = _config(tmp_path)
-    created = await Store.create(store_dir, creation_config, _default_embedder())
-    await created.close()
+    await _create_then_close(store_dir, creation_config)
 
     different_model = tmp_path / "project-different-model.toml"
     different_model.write_text('[embedding]\nembed_model = "some/other-model"\n', encoding="utf-8")
@@ -427,8 +429,7 @@ async def test_invariant_11_a_disagreeing_embed_model_is_rejected_on_open(
 async def test_invariant_11_a_disagreeing_embed_dim_is_rejected_on_open(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     creation_config = _config(tmp_path)
-    created = await Store.create(store_dir, creation_config, _default_embedder())
-    await created.close()
+    await _create_then_close(store_dir, creation_config)
 
     different_dim = tmp_path / "project-different-dim.toml"
     different_dim.write_text("[embedding]\nembed_dim = 768\n", encoding="utf-8")
@@ -446,8 +447,7 @@ async def test_invariant_11_never_silently_continues_on_mismatch(tmp_path: Path)
     best-effort continue. Proven by showing `Store.open` never returns a `Store` in this case —
     the exception is the only outcome, there is no silent-success branch to also check."""
     store_dir = tmp_path / ".zikaron"
-    created = await Store.create(store_dir, _config(tmp_path), _default_embedder())
-    await created.close()
+    await _create_then_close(store_dir, _config(tmp_path))
 
     different_dim = tmp_path / "different.toml"
     different_dim.write_text("[embedding]\nembed_dim = 999\n", encoding="utf-8")
@@ -470,13 +470,12 @@ async def test_invariant_11_a_physical_width_disagreeing_with_meta_is_rejected(
     `meta` row could reach without the store's own creation path ever producing it."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE memory_vec")
-    await created.connection.execute(
-        "CREATE VIRTUAL TABLE memory_vec USING vec0 (embedding float[768])"
-    )
-    await created.connection.commit()
-    await created.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE memory_vec")
+        await created.connection.execute(
+            "CREATE VIRTUAL TABLE memory_vec USING vec0 (embedding float[768])"
+        )
+        await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
@@ -492,15 +491,14 @@ async def test_physical_vec0_width_is_bad_config_if_the_table_is_missing(tmp_pat
     reported as a configuration defect rather than raising a bare `sqlite3` lookup error."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE memory_vec")
-    await created.connection.commit()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE memory_vec")
+        await created.connection.commit()
 
-    with pytest.raises(ZikaronError) as excinfo:
-        await _physical_vec0_width(created.connection)
-    assert excinfo.value.code is ErrorCode.BAD_CONFIG
-    assert excinfo.value.data["key"] == "memory_vec"
-    await created.close()
+        with pytest.raises(ZikaronError) as excinfo:
+            await _physical_vec0_width(created.connection)
+        assert excinfo.value.code is ErrorCode.BAD_CONFIG
+        assert excinfo.value.data["key"] == "memory_vec"
 
 
 async def test_physical_vec0_width_is_bad_config_if_the_ddl_text_has_no_width(
@@ -512,16 +510,15 @@ async def test_physical_vec0_width_is_bad_config_if_the_ddl_text_has_no_width(
     match, and that must be reported rather than crash on an unpacked `None`."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE memory_vec")
-    await created.connection.execute("CREATE TABLE memory_vec (embedding BLOB)")
-    await created.connection.commit()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE memory_vec")
+        await created.connection.execute("CREATE TABLE memory_vec (embedding BLOB)")
+        await created.connection.commit()
 
-    with pytest.raises(ZikaronError) as excinfo:
-        await _physical_vec0_width(created.connection)
-    assert excinfo.value.code is ErrorCode.BAD_CONFIG
-    assert excinfo.value.data["key"] == "memory_vec"
-    await created.close()
+        with pytest.raises(ZikaronError) as excinfo:
+            await _physical_vec0_width(created.connection)
+        assert excinfo.value.code is ErrorCode.BAD_CONFIG
+        assert excinfo.value.data["key"] == "memory_vec"
 
 
 async def test_physical_vec0_width_refuses_a_non_vec0_table_that_merely_mentions_the_width(
@@ -535,18 +532,17 @@ async def test_physical_vec0_width_refuses_a_non_vec0_table_that_merely_mentions
     by coincidence of substring."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE memory_vec")
-    await created.connection.execute(
-        "CREATE TABLE memory_vec (embedding BLOB CHECK (typeof(embedding) <> 'float[384]'))"
-    )
-    await created.connection.commit()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE memory_vec")
+        await created.connection.execute(
+            "CREATE TABLE memory_vec (embedding BLOB CHECK (typeof(embedding) <> 'float[384]'))"
+        )
+        await created.connection.commit()
 
-    with pytest.raises(ZikaronError) as excinfo:
-        await _physical_vec0_width(created.connection)
-    assert excinfo.value.code is ErrorCode.BAD_CONFIG
-    assert excinfo.value.data["key"] == "memory_vec"
-    await created.close()
+        with pytest.raises(ZikaronError) as excinfo:
+            await _physical_vec0_width(created.connection)
+        assert excinfo.value.code is ErrorCode.BAD_CONFIG
+        assert excinfo.value.data["key"] == "memory_vec"
 
 
 async def test_physical_vec0_width_refuses_the_whole_expected_phrase_quoted_as_a_literal(
@@ -561,19 +557,18 @@ async def test_physical_vec0_width_refuses_the_whole_expected_phrase_quoted_as_a
     this, because the table's actual `CREATE TABLE ...` wrapper is not, as a whole, that shape."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("DROP TABLE memory_vec")
-    await created.connection.execute(
-        "CREATE TABLE memory_vec (embedding BLOB CHECK (embedding <> "
-        "'CREATE VIRTUAL TABLE memory_vec USING vec0 (embedding float[384])'))"
-    )
-    await created.connection.commit()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("DROP TABLE memory_vec")
+        await created.connection.execute(
+            "CREATE TABLE memory_vec (embedding BLOB CHECK (embedding <> "
+            "'CREATE VIRTUAL TABLE memory_vec USING vec0 (embedding float[384])'))"
+        )
+        await created.connection.commit()
 
-    with pytest.raises(ZikaronError) as excinfo:
-        await _physical_vec0_width(created.connection)
-    assert excinfo.value.code is ErrorCode.BAD_CONFIG
-    assert excinfo.value.data["key"] == "memory_vec"
-    await created.close()
+        with pytest.raises(ZikaronError) as excinfo:
+            await _physical_vec0_width(created.connection)
+        assert excinfo.value.code is ErrorCode.BAD_CONFIG
+        assert excinfo.value.data["key"] == "memory_vec"
 
 
 # ---------------------------------------------------------------------------
@@ -584,10 +579,9 @@ async def test_physical_vec0_width_refuses_the_whole_expected_phrase_quoted_as_a
 async def test_a_newer_schema_version_is_refused_as_schema_incompatible(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
-    await created.connection.commit()
-    await created.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        await created.connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+        await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
@@ -599,11 +593,9 @@ async def test_a_newer_schema_version_is_refused_as_schema_incompatible(tmp_path
 async def test_the_supported_schema_version_itself_opens_normally(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    assert created.meta.schema_version == SUPPORTED_SCHEMA_VERSION
-    await created.close()
-    reopened = await Store.open(store_dir, config)
-    await reopened.close()
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        assert created.meta.schema_version == SUPPORTED_SCHEMA_VERSION
+    await _open_then_close(store_dir, config)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -616,8 +608,7 @@ async def test_created_store_directory_and_db_file_have_correct_permissions(
 ) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(store_dir, config, _default_embedder())
-    await store.close()
+    await _create_then_close(store_dir, config)
 
     assert (store_dir.stat().st_mode & 0o777) == 0o700
     assert ((store_dir / _DB_FILENAME).stat().st_mode & 0o777) == 0o600
@@ -654,13 +645,11 @@ async def test_open_tightens_a_store_directory_left_wider_than_0700(tmp_path: Pa
     corrected on the very next open, not left broad indefinitely."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.close()
+    await _create_then_close(store_dir, config)
     store_dir.chmod(0o755)
     (store_dir / _DB_FILENAME).chmod(0o644)
 
-    reopened = await Store.open(store_dir, config)
-    await reopened.close()
+    await _open_then_close(store_dir, config)
 
     assert (store_dir.stat().st_mode & 0o777) == 0o700
     assert ((store_dir / _DB_FILENAME).stat().st_mode & 0o777) == 0o600
@@ -683,8 +672,7 @@ async def test_create_refuses_a_symlinked_store_directory(tmp_path: Path) -> Non
 async def test_open_refuses_a_symlinked_store_directory(tmp_path: Path) -> None:
     real_target = tmp_path / "real-target"
     config = _config(tmp_path)
-    created = await Store.create(real_target, config, _default_embedder())
-    await created.close()
+    await _create_then_close(real_target, config)
     store_dir = tmp_path / ".zikaron"
     store_dir.symlink_to(real_target)
 
@@ -702,41 +690,31 @@ async def test_open_refuses_a_symlinked_store_directory(tmp_path: Path) -> None:
 async def test_wal_and_busy_timeout_pragmas_are_active_on_create(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(store_dir, config, _default_embedder())
-    try:
+    async with await Store.create(store_dir, config, _default_embedder()) as store:
         (journal_mode,) = await store.connection.execute_fetchall("PRAGMA journal_mode")
         assert journal_mode[0].lower() == "wal"
         (busy_timeout,) = await store.connection.execute_fetchall("PRAGMA busy_timeout")
         assert busy_timeout[0] == 5000
         (foreign_keys,) = await store.connection.execute_fetchall("PRAGMA foreign_keys")
         assert foreign_keys[0] == 1
-    finally:
-        await store.close()
 
 
 async def test_wal_and_busy_timeout_pragmas_are_active_on_open(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    created = await Store.create(store_dir, config, _default_embedder())
-    await created.close()
+    await _create_then_close(store_dir, config)
 
-    reopened = await Store.open(store_dir, config)
-    try:
+    async with await Store.open(store_dir, config) as reopened:
         (journal_mode,) = await reopened.connection.execute_fetchall("PRAGMA journal_mode")
         assert journal_mode[0].lower() == "wal"
-    finally:
-        await reopened.close()
 
 
 async def test_sqlite_vec_extension_is_loaded(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
-    store = await Store.create(store_dir, config, _default_embedder())
-    try:
+    async with await Store.create(store_dir, config, _default_embedder()) as store:
         (version,) = await store.connection.execute_fetchall("SELECT vec_version()")
         assert isinstance(version[0], str)
-    finally:
-        await store.close()
 
 
 async def test_open_connection_closes_on_a_pragma_failure(
