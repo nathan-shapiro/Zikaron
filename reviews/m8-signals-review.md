@@ -1,0 +1,28 @@
+## Round 1 — 2026-08-02
+
+### Summary judgment
+The six aggregates largely match the schema’s populations and units: dedup implements all four matured outcomes plus pending, repair uses the `(session_id, memory_uuid)` pair and earliest qualifying witness, retirement and write-size role splits are correct, and contention deduplicates each disjoint term by `op_id`. Deadline arithmetic is genuinely anchored to the earlier event, and the post-deadline tests demonstrate permanence; the four documented equivalent-mutant arguments also hold on direct inspection, making the reported mutation results plausible. The artifact is not ready to ship because one cross-event result omits required horizon metadata, one public result defeats its own frozen/bounded contract with a mutable dictionary, and signal 5 is neither represented by the required typed result object nor deterministically ordered.
+
+### Findings
+1. [BLOCKER] `zikaron/core/signals/repair.py:78-89,151-156` omits `signal_horizon_days` from `RepairCounts`, even though `design/schema.md:841` requires **both** cross-event queries to report the horizon alongside the rate. `dedup.py` carries this metadata correctly, but `amend_after_surface()` accepts the horizon and then discards it, so two identical-looking repair results can represent different estimands. Add `signal_horizon_days: int` to `RepairCounts`, populate it from the function argument, and add the analogue of `tests/test_signals_dedup.py:293` in `tests/test_signals_repair.py`.
+
+2. [BLOCKER] `zikaron/core/signals/dedup.py:72-89,153-163` exposes the five outcome counts as a mutable `dict` inside a nominally frozen result, contrary to the binding “types, not dicts” value-model rule (`design/coding-standards.md:40-41`). This is also a concrete boundedness failure: a caller can mutate a successfully returned result’s counts (including to negative values) and make `fully_resolved_rate` exceed 1, despite its documented by-construction guarantee. Replace the mapping with explicit fields on `DedupResolution` or a nested frozen `DedupCounts` dataclass for the five closed states, reject negative counts in `__post_init__`, and preserve enum lookup only through a read-only accessor if callers need it; update `tests/test_signals_dedup.py:319-327` to test immutability/non-negativity rather than only a missing dictionary key.
+
+3. [BLOCKER] `zikaron/core/signals/writes.py:149-188` returns signal 5 as a bare `tuple[int, ...]`, not a frozen typed result object, and `_AUTHORED_SIZES` has no `ORDER BY`. The latter leaves tuple order unspecified by SQL, while the policy expressly calls all six instruments deterministic (`design/write-policy.md:243-244`); `tests/test_signals_writes.py:123-151` asserts determinism only for `writes_per_session`, not `write_size_distribution`. Introduce a frozen `WriteSizeDistribution` dataclass, export it from `signals/__init__.py`, give its values a canonical order (for example, carry `event.id` through the union and order the outer query by it, or sort by size if the contract defines the result as a canonical distribution), and add a repeated-read test that asserts the entire result and its documented order.
+
+VERDICT: NEEDS_CHANGES
+
+## Round 2 — 2026-08-02
+
+### Summary judgment
+All three round-1 blockers are correctly and completely resolved in the current implementation and tests. `RepairCounts` now carries the exact horizon used; `DedupResolution` is an actually immutable, non-negative, closed five-count value with enum lookup derived from named fields; and write sizes now travel in a frozen typed result whose compound query has a global deterministic order. A full rescan of the remaining M8 signal modules and tests found no new correctness, contract, or coverage issue, and the repository-wide call-site search found no live use of the removed dictionary or bare-tuple interfaces.
+
+### Resolved prior findings
+1. **Repair horizon metadata — resolved.** `zikaron/core/signals/repair.py:78-92,155-160` declares `signal_horizon_days: int` on `RepairCounts` and passes the function argument unchanged into every returned result. `tests/test_signals_repair.py:426-434` exercises a non-default value (`45`), so the test distinguishes carried metadata from a hard-coded default.
+2. **Dedup result immutability and boundedness — resolved.** `zikaron/core/signals/dedup.py:73-135` uses five explicit integer fields, checks every one through `_by_outcome()` in `__post_init__`, derives `n_matured` and the rate directly from those fields, and exposes enum lookup only through `count_for()` over a newly built mapping; `zikaron/core/signals/dedup.py:194-201` constructs the value field-by-field. `tests/test_signals_dedup.py:319-331` verifies rejection of a negative count, while all outcome call sites use `count_for()` or named properties rather than the removed `.counts` mapping.
+3. **Typed, deterministic write-size distribution — resolved.** `zikaron/core/signals/writes.py:149-200` selects `id` in every `UNION ALL` branch, applies `ORDER BY id` to the whole compound query, and returns frozen `WriteSizeDistribution(values=...)`; `zikaron/core/signals/__init__.py:32-36,48` imports and publicly exports that type. `tests/test_signals_writes.py:316-345` inserts a merge-target row before a remember row, making branch order disagree with global `event.id` order, then asserts both repeated-read equality and the discriminating `(999, 111)` sequence. Every other test call site at `tests/test_signals_writes.py:216-313` reads `.values`; none expects the former bare tuple.
+
+### Findings
+No new `[BLOCKER]`, `[IMPROVEMENT]`, or `[NITPICK]` findings.
+
+VERDICT: APPROVED

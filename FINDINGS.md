@@ -73,7 +73,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
 + the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
-(retrieval), M6 (write path + D15 dedup) and M7 (consolidation) complete and reviewed to APPROVED; M8 (D30's six signals as SQL) is next.** D1–D33 settled. Grounding from
+(retrieval), M6 (write path + D15 dedup), M7 (consolidation) and M8 (D30's six signals as SQL)
+complete and reviewed to APPROVED; M9 (service) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -356,6 +357,100 @@ in `meta`?* — a genuine conflation, now **D33**. (3) *Event-log retention* —
 no**, and the machinery is deleted; see **D31**, `design/architecture.md` §"Both clients resolve the same
 label" and §"Subagent sessions". Raw probe evidence: `research/kiro-session-id-probe.jsonl`.
 
+**M8 shipped `core/signals/`** (`horizon.py`, `sessions.py`, `writes.py`, `dedup.py`, `repair.py`,
+`retirement.py`, `contention.py`) — D30's six write-policy signals as executable SQL over the
+committed `event` log, exactly as `build-plan.md` instructed rather than as a seventh design round:
+each signal is a typed result the caller reads properties off, never a bare number. `writes.py`
+holds two signals rather than one, because both aggregate the identical authored-write event
+population (signal 1's per-session counts and signal 5's size distribution share the same
+`remember`/`amend`/`merge`/`promote` rows) and splitting them would have meant two modules agreeing
+by convention on what "an authored write" means rather than by sharing one statement of it.
+`horizon.py` and `sessions.py` are the two primitives both cross-event signals need — the
+`signal_horizon_days` deadline arithmetic (dedup resolution, amend-after-surface) and linked-session
+scope (zero-write rate, amend-after-surface) — factored out once specifically so neither signal could
+apply a horizon or a linkage rule the other disagreed with by accident.
+
+**One measurement changed the implementation before a line of signal SQL was written.** The design
+leaves unstated whether the horizon deadline should be computed in SQL or in Python, and the natural
+first attempt — `datetime(event.at, '+N days')` — was checked directly against this store's own
+timestamp format rather than assumed compatible: SQLite's `datetime()` drops the timezone offset,
+truncates microseconds, and substitutes a space for the `T` separator, so its output is not
+string-comparable with `records.memory.timestamp()`'s `datetime.now(UTC).isoformat()`. Doing the
+arithmetic in SQL would have made every deadline comparison silently wrong at exactly the boundary
+signal_horizon_days exists to get right, with no error raised anywhere. Every deadline comparison is
+therefore Python — `horizon.deadline`/`horizon.has_passed`, matching `consolidation.runs.Run.has_lapsed`'s
+own precedent of taking `now` as an explicit parameter rather than reading a clock — and SQL is used only
+to locate candidate rows and hand back their raw, unmodified timestamps.
+
+**Two things the design left to be inferred were settled in code rather than left ambiguous.**
+`schema.md`'s dedup and repair signals both describe a "qualifying follow-up" as a single fact, but the
+underlying SQL needs an aggregate to pick one candidate timestamp when several exist; **`MIN(at)`, not
+`MAX`, is the correct witness for "does any qualifying follow-up land inside the deadline"**, since a
+positive answer needs only the earliest candidate to clear the bound — a later one existing changes
+nothing, and picking the latest could report `not_amended` on a pair a human would call repaired within
+the hour. And signal 5's numerator states the query as an English list of kinds and roles ("`target`,
+`created`, `flipped`"); the implementation filters `merge`/`promote` rows by `role` explicitly rather
+than by `token_count IS NOT NULL`, because the null is a *consequence* of the row's role in this
+store's own nullability contract (`AuthoredSize.none_authored()`), not an independent fact a query
+should key on — a future writer that left `token_count` null for an unrelated reason must not silently
+join this distribution.
+
+**Every rate is a typed property that is bounded `[0, 1]` by construction, and each one's docstring
+states why, or states plainly that it is not bounded.** Five of the six signals' rates hold that
+property because their numerator is provably one disjoint term of the exact sum the denominator is —
+never a separately-computed quantity that happens to agree on well-formed input. `retirement.py`'s
+`retire_per_write` is the deliberate exception: it is a ratio of two independent counts, exactly as
+`schema.md` names it, and forcing it into `[0, 1]` would misrepresent a store where old rows are
+retired faster than new ones are written as a bug rather than as the number it actually is.
+
+**Mutation testing found two genuine test gaps and confirmed four survivors as equivalent mutants,
+not misses.** 20 targeted mutations were applied one at a time by hand (no automated mutation
+tool is in the pinned dependency set, and adding one for a single milestone's exercise was not
+worth the dependency) against boundary flips, AND/OR swaps, `DISTINCT` removal, id-ordering
+changes, and the early-close-ordering shape the dedup signal depends on. 16 were caught
+immediately. Two real gaps were closed: a malformed `surface`-kind row with a null `memory_uuid`
+— constructible only by bypassing `EventSpec.validate`, which this milestone's own raw-insert test
+helper deliberately can do — reached `has_passed`'s date parsing and crashed rather than being
+filtered by the `memory_uuid IS NOT NULL` guard the query already had, so that guard is now
+exercised directly; and the fixture defending `MIN(at)` over `MAX(at)` had used two amends at the
+identical timestamp, so the two aggregates agreed by coincidence rather than by the property being
+tested — rebuilt with two genuinely different timestamps, one inside the deadline and one past it,
+which only `MIN` survives. The four remaining survivors were each individually confirmed, by
+direct behavioural argument rather than by the coincidence of a passing suite, to be
+**unobservable under any reachable database state** rather than untested: a `DISTINCT` the SQL
+states but a Python-side `frozenset` already guarantees; a self-join whose two bound literals are
+symmetric because the query only asks whether both values are present somewhere, not which alias
+holds which; a `SUM(CASE...) AS` label that carries no meaning to a caller who unpacks the row
+positionally; and a `>` that cannot differ from `>=` because `event.id` is one unconditional
+primary key no two distinct rows can ever share. Each is now documented in its own module,
+in-source, with the specific reachability argument that makes it unobservable — the same practice
+`consolidation.serving`/`groups` established for a redundant guard whose safety rests on a
+non-local property of the whole state machine, applied here to four narrower, purely local cases.
+**Reviewed to `APPROVED` over two rounds** (`reviews/m8-signals-review.md`), with three genuine
+blockers in the first. `repair.py`'s `RepairCounts` omitted `signal_horizon_days`, even though
+`schema.md` requires **both** cross-event signals to report the horizon they used alongside the
+rate — `dedup.py` already carried it, so two identical-looking repair results could silently
+represent different estimands. `dedup.py`'s `DedupResolution` held its five outcome counts in a
+`dict[DedupOutcome, int]`, which `frozen=True` protects only against field *reassignment*, not
+against `result.counts[X] = -1` mutating the mapping in place — a concrete way the documented
+`[0, 1]`-bounded-by-construction guarantee could be defeated by a caller, not merely a style
+objection. And `write_size_distribution` returned a bare `tuple[int, ...]` with no `ORDER BY` on
+its three-branch `UNION ALL`, leaving the distribution's order — required deterministic like every
+other instrument — genuinely unspecified rather than merely undocumented. All three were fixed:
+`RepairCounts` carries the horizon; `DedupResolution` now has five named, non-negative-checked
+integer fields with a `count_for()` accessor for enum-keyed lookups, matching every other result
+type in the package; and `write_size_distribution` returns a frozen `WriteSizeDistribution` whose
+underlying query orders the whole compound result by `event.id`, verified directly against SQLite
+rather than assumed. The determinism test written for that last fix caught a defect in itself
+before it shipped: the first fixture inserted three same-branch rows in ascending `event.id` order,
+which passes with or without the `ORDER BY` because a single unindexed table scan happens to
+preserve insertion order regardless — rebuilt to insert a `merge` row **before** a `remember` row
+so the query's own branch-scan order and true `event.id` order disagree, then mutation-checked
+directly against the `ORDER BY`'s removal before being kept. Round two re-verified each fix at the
+specific line and confirmed no call site anywhere in the repository still referenced the removed
+dictionary or bare-tuple interfaces. 869 tests, 99% coverage repo-wide; `zikaron/core/signals`
+itself: 245 statements, 44 branches, 100% coverage, 74 tests.
+
 ## Build plan — start here when writing code
 **Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
 definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
@@ -378,7 +473,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18 and 20 tested (19 moved to M7, which owns the table it constrains); one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ✓ |
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ✓ |
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` from `next_group` | ✓ |
-| M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ☐ |
+| M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ✓ |
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ☐ |
 | M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ☐ |
 | M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ☐ |
@@ -781,6 +876,23 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   than *is* this layer an entry point. The tell, in hindsight, is that the docstring argued about where a
   check belongs at all: a function that has to explain why it is *not* checking something is a function
   whose callers are not all accounted for.
+- **A determinism test can pass for a reason that has nothing to do with determinism.** M8's
+  `write_size_distribution` needed an `ORDER BY` because a three-branch `UNION ALL` gives SQLite no
+  documented guarantee about row order otherwise. The first test written to defend that `ORDER BY`
+  inserted three rows of the *same* branch in ascending `event.id` order and asserted two reads
+  agreed — which they did, with the `ORDER BY` present or deleted, because a single unindexed table
+  scan with nothing else in flight happens to return rows in the order SQLite physically stored
+  them regardless of any explicit ordering clause. The test was asserting "this query is
+  self-consistent," which is true of nearly any query run twice against an unchanged database, not
+  "this query's order is *specified*." Mutation-checking the fix against its own removal — not just
+  running the new test once and moving on — is what caught it: deleting the `ORDER BY` should have
+  failed the test and did not. The fix that actually distinguishes the two claims interleaves rows
+  from *different* `UNION` branches out of `event.id` order, so the query's own branch-scan order and
+  the true global order disagree by construction, and only the specified order survives. The general
+  form is the same one M5's fused-rank tiebreak and M7's group-order tiebreak already found: a
+  property that is only *sometimes* the thing deciding the outcome needs a fixture where it is the
+  *only* thing deciding it, and a fixture that happens to satisfy a guard is indistinguishable from
+  the coverage report's point of view from one that defends it.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
@@ -862,6 +974,17 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   attempts' validation completing before either write. Round 3 found stale docstrings and test narrative
   still describing the removed commit-inside-rejection mechanism, and one event assertion that excluded two
   named kinds rather than asserting the exact list. Round 4: `APPROVED` — `reviews/m3-records-review.md`.
+- **M4 code review** — four rounds, ending `VERDICT: APPROVED` with zero findings in the fourth, and a genuine
+  defect in each of the first three. Round 1: the hard split's defensive branch returned a *plausible* plan
+  instead of raising, and the test I had written to cover that line blessed the invalid result — the fix is a
+  plan-level post-condition that recounts every emitted chunk against the budget it was cut to; and
+  `index_failed` was being returned for `SQLITE_BUSY`, erasing the one error the design tells a caller it may
+  retry. Round 2 found that the first fix was still incomplete in the dangerous direction — a *short* but
+  well-formed span list loses a paragraph's tail while every later check passes — and that exact-name matching
+  on `SQLITE_BUSY` misses the extended `SQLITE_BUSY_SNAPSHOT` a deferred amend actually gets under WAL, and that
+  my failed-commit test masked a missing rollback with its own cleanup. Round 3 found the remaining hole in that:
+  a rollback that *also* fails leaves a poisoned connection in circulation, on which a write already reported as
+  failed can later be published. Every finding accepted — `reviews/m4-indexing-review.md`.
 - **M5 code review** — three rounds, ending `VERDICT: APPROVED`, with a genuine defect in each of the first
   two. Round 1's blocker was the read side assuming what the write side already refuses: the query preflight
   added `count(prefix)` and `count(query)` and embedded the concatenation without counting it, so under a legal
@@ -876,41 +999,6 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   "the longest head" for a search that only shrinks, and "any single-token query" for a check that tested one
   query's own first token. Round 3: `APPROVED`, one nitpick, a test docstring still describing the dictionary
   architecture the round-2 fix had replaced — `reviews/m5-retrieval-review.md`.
-- **M4 code review** — four rounds, ending `VERDICT: APPROVED` with zero findings in the fourth, and a genuine
-  defect in each of the first three. Round 1: the hard split's defensive branch returned a *plausible* plan
-  instead of raising, and the test I had written to cover that line blessed the invalid result — the fix is a
-  plan-level post-condition that recounts every emitted chunk against the budget it was cut to; and
-  `index_failed` was being returned for `SQLITE_BUSY`, erasing the one error the design tells a caller it may
-  retry. Round 2 found that the first fix was still incomplete in the dangerous direction — a *short* but
-  well-formed span list loses a paragraph's tail while every later check passes — and that exact-name matching
-  on `SQLITE_BUSY` misses the extended `SQLITE_BUSY_SNAPSHOT` a deferred amend actually gets under WAL, and that
-  my failed-commit test masked a missing rollback with its own cleanup. Round 3 found the remaining hole in that:
-  a rollback that *also* fails leaves a poisoned connection in circulation, on which a write already reported as
-  failed can later be published. Every finding accepted — `reviews/m4-indexing-review.md`.
-- **M7 code review** — **eleven rounds**, ending `VERDICT: APPROVED` with no findings. Rounds 1-2 covered the
-  milestone; rounds 3-11 were a **targeted review of run takeover alone**, requested after the operator
-  reversed round 1's remedy, and they are worth reading as a case study rather than a defect list: rounds 3-4
-  found real holes (the corpus stating both policies; takeover having no caller at all, so the path was
-  unreachable through the real client), while **rounds 5-10 each found the same defect in the same kind of
-  place** — a summary, a reference entry, an invariant's explanatory paragraph — never in the normative
-  statement or the code, and each was created by the previous round's own fix. The completion test that finally
-  worked was neither attentiveness nor phrase-matching (the phrases mutate: `once per process` does not match
-  `once per client process`) but a **semantic** sweep: enumerate every occurrence of the *subject*, read the
-  claim each site makes, and check it against the current rule. Round 1's first blocker
-  was a rule I had argued belonged one rung up: `plan_groups` is itself a reachable RPC, and it called a
-  neutral planning core whose first act closes any stored `active` run as `abandoned` with no ownership
-  test — so a second worker could steal an unexpired lease through the explicit entry point while
-  `next_group` correctly answered `{busy: true}`, and silently, since the victim's next call would find
-  its own run abandoned and be told `group_expired`. Round 1's second blocker was an invariant test that
-  could not fail: invariant 13's guard counted one `memory_fts` row, which an external-content table has
-  per content row **whatever was indexed**, so it would have passed a merge that dropped the content's
-  tail. Two improvements were also accepted — neither `promote` form had a failure-injection atomicity
-  test despite having its own transaction wrapper and two distinct mutation sequences, and five
-  production docstrings carried circumstantial review provenance that `coding-standards.md` §5 forbids.
-  Round 2: `APPROVED`, one nitpick — `MAX_CANDIDATES` and `_GIST_JOIN` were left behind in `serving.py`
-  when the candidate query moved to `candidates.py`, so the cap the shipped prompt promises and the join
-  the token budget is counted over each had two agreeing declarations, which no test could catch —
-  `reviews/m7-consolidation-review.md`.
 - **M6 code review** — four rounds, ending `VERDICT: APPROVED`, with a genuine defect in each of the
   first three. Round 1's blocker was the same shape open question 5's own lesson names: the first
   implementation conflated "what the dense arm's bounded probe happened to surface" with the
@@ -939,3 +1027,40 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   the lower layer never exercised it. Round 4: `APPROVED`, one nitpick (an optional direct
   cross-check between the scalar function and `vec0`'s KNN path, not required while `sqlite-vec` is
   pinned) — `reviews/m6-write-dedup-review.md`.
+- **M7 code review** — **eleven rounds**, ending `VERDICT: APPROVED` with no findings. Rounds 1-2 covered the
+  milestone; rounds 3-11 were a **targeted review of run takeover alone**, requested after the operator
+  reversed round 1's remedy, and they are worth reading as a case study rather than a defect list: rounds 3-4
+  found real holes (the corpus stating both policies; takeover having no caller at all, so the path was
+  unreachable through the real client), while **rounds 5-10 each found the same defect in the same kind of
+  place** — a summary, a reference entry, an invariant's explanatory paragraph — never in the normative
+  statement or the code, and each was created by the previous round's own fix. The completion test that finally
+  worked was neither attentiveness nor phrase-matching (the phrases mutate: `once per process` does not match
+  `once per client process`) but a **semantic** sweep: enumerate every occurrence of the *subject*, read the
+  claim each site makes, and check it against the current rule. Round 1's first blocker
+  was a rule I had argued belonged one rung up: `plan_groups` is itself a reachable RPC, and it called a
+  neutral planning core whose first act closes any stored `active` run as `abandoned` with no ownership
+  test — so a second worker could steal an unexpired lease through the explicit entry point while
+  `next_group` correctly answered `{busy: true}`, and silently, since the victim's next call would find
+  its own run abandoned and be told `group_expired`. Round 1's second blocker was an invariant test that
+  could not fail: invariant 13's guard counted one `memory_fts` row, which an external-content table has
+  per content row **whatever was indexed**, so it would have passed a merge that dropped the content's
+  tail. Two improvements were also accepted — neither `promote` form had a failure-injection atomicity
+  test despite having its own transaction wrapper and two distinct mutation sequences, and five
+  production docstrings carried circumstantial review provenance that `coding-standards.md` §5 forbids.
+  Round 2: `APPROVED`, one nitpick — `MAX_CANDIDATES` and `_GIST_JOIN` were left behind in `serving.py`
+  when the candidate query moved to `candidates.py`, so the cap the shipped prompt promises and the join
+  the token budget is counted over each had two agreeing declarations, which no test could catch —
+  `reviews/m7-consolidation-review.md`.
+- **M8 code review** — two rounds, ending `VERDICT: APPROVED`, with three genuine blockers in the
+  first and none in the second. `repair.py`'s `RepairCounts` omitted `signal_horizon_days`, which
+  `schema.md` requires both cross-event signals to carry; `dedup.py`'s `DedupResolution` held its
+  five outcome counts in a `dict[DedupOutcome, int]`, which `frozen=True` does not protect from
+  in-place mutation, a concrete way its documented `[0, 1]`-bounded-by-construction guarantee could
+  be defeated; and `write_size_distribution` returned a bare `tuple[int, ...]` with no `ORDER BY`
+  on its three-branch `UNION ALL`, leaving a required-deterministic instrument's order genuinely
+  unspecified. All three fixed — the horizon added to `RepairCounts`, `DedupResolution` rebuilt as
+  five named non-negative fields with a `count_for()` accessor, and `write_size_distribution`
+  returning a frozen `WriteSizeDistribution` ordered by `event.id` — and the determinism test
+  written for the last fix caught a coincidentally-passing fixture in itself before shipping, per
+  the dogfooding note above. Round 2 re-verified every fix at the specific line and found no call
+  site anywhere still referencing the removed interfaces — `reviews/m8-signals-review.md`.
