@@ -33,6 +33,24 @@ tokenizer fastembed will use at embed time, obtained from the same artifact, inc
 another model's tokenizer — makes the guarantee approximate, and an approximate guarantee here is worth
 nothing because the failure is silent.
 
+**The counting tokenizer must have truncation disabled, and that is not a detail.** Measured on the deployed
+artifact: fastembed's own `Tokenizer` instance carries `truncation.max_length = 512`, so asking *it* for a
+count returns **512 for a 1600-token text**. A preflight counting through it would find every over-length
+paragraph to be exactly at the cap, never hard-split, never set `truncated`, and hand fastembed the whole
+paragraph to truncate silently — reintroducing the precise failure this document exists to prevent, with
+every recorded number looking healthy. So the counting tokenizer is an **independent instance built from the
+same artifact** with truncation switched off, and the embedding path's own tokenizer is left exactly as
+fastembed configured it. The cap is read off the deployed tokenizer's truncation config *before* that copy is
+made, and `n_special` is **measured** — encode one word with and without special tokens and subtract —
+rather than assumed to be 2, since both are properties of the artifact and D20 keeps the artifact
+configurable.
+
+**`separator_tokens` is 1 by contract and measures 0 on the deployed model.** A bare `\n` is whitespace,
+which BGE's WordPiece pre-tokenizer discards, so the separator's true cost there is zero tokens. The formula
+keeps the term at 1 regardless: the error is then one token of unused budget rather than one token of
+overflow, and step 7's assertion is a bug-catcher rather than a routine path, so it must not be what
+discovers a future model whose separator does tokenize.
+
 **Preflight, per memory:**
 
 1. Count the gist. Over `gist_max_tokens` (default **64**) ⇒ **reject the write** with the `bounds` error
@@ -85,6 +103,35 @@ than quietly reverting part of the store to content-only.
 | `token_count` | lets us measure the real length distribution once real memories exist |
 | `truncated` | canary, set **only** by the preflight's hard-split step — never inferred from fastembed, which reports nothing |
 
+**Both counts are of `content` alone, and `part_index` is 0-based.** Three things an earlier draft left to be
+inferred, stated because two conforming implementations could have disagreed on all three:
+
+- **`memory.token_count` and the `remember`/`amend` event's `detail.token_count` count `content`** — not the
+  gist, not the separator, not the special tokens. `gist_tokens` is a sibling field of the same event, so a
+  `token_count` that included the gist would double-count it and neither the write-size distribution nor the
+  gist budget could be read off the pair. The `memory` column is that quantity for the row as it now stands;
+  the event field is that quantity per write. Same measurement, two lifetimes, exactly as the column comment
+  in `schema.md` says.
+- **`memory_chunk.token_count` counts that chunk's own slice of `content`** — the quantity `effective_budget`
+  bounds — and not the assembled, gist-prepended sequence that was embedded. Nothing is lost: the assembled
+  length is `gist_tokens + separator_tokens + token_count + n_special`, and `gist_tokens` is recorded per
+  write in the event. Recording the slice is what makes the column a measurement of the chunker against its
+  own parameter, which is what open question 3 wants it for.
+- **`part_index` is 0-based**, so a memory's first chunk — the one every internal query reuses as its dense
+  side (`retrieval.md` §"Two kinds of query") — is `part_index = 0`. Contrast consolidation's deliberately
+  1-based `shard: {index, of}`, which is 1-based because it is *shown to the consolidator* and an unsplit
+  group reads better as `{1, 1}` than as a third convention. Chunk parts are shown to nobody
+  (§"MCP surface"), so their only consumer is code, where 0 is the ordinary first index and matches the
+  position in the list the preflight returns.
+
+**Vectors are L2-normalized by the write path itself**, not taken on trust from the embedder. `retrieval.md`
+states the corpus is normalized at write time, and the three cosine cutoffs' arithmetic (`cos = 1 − d²/2`) is
+true only of unit vectors. Measured: the deployed `bge-small` already returns unit vectors through fastembed,
+so today this is a no-op — which is exactly why the guarantee has to be ours rather than inherited. D20 keeps
+the model a config key, and a future model returning unnormalized vectors would otherwise invalidate every
+threshold in the corpus with no error raised anywhere. A zero-norm vector cannot be normalized and is
+`index_failed`, never a silent divide.
+
 ## Ranking
 - Memory score = **`max`** over its chunk scores — which, in the metric the code actually handles, is
   **`min` over chunk distances**, because `vec0` KNN returns a distance where lower is better. Same
@@ -128,6 +175,39 @@ gain.
   dropped and recreated, so that case *must* take the unavailable form.
 - `chunk_max_tokens` default **450**; `gist_max_tokens` default **64**. The relationship between them and
   the 512 cap is arithmetic, in the preflight above, not a comfortable margin.
+- **The preflight and the embedding run before the transaction opens; only the writes are inside it.**
+  Invariant 2 is a rule about the writes, and the preflight reads nothing from the store — it is a pure
+  function of the prose, the tokenizer and two config values, and the one error it raises is `bounds`, which
+  is rung 1 of both validation ladders and so precedes existence, version and receipt anyway. Embedding is
+  outside for a different reason: a cold fastembed call is ~780 ms (D22), and holding SQLite's single write
+  lock across it would make every concurrent writer's `busy_timeout` a function of model-load time. Nothing
+  is staged before `BEGIN`, so a failure before it loses nothing.
+- **`memory_fts` is resynced with the explicit `'delete'` command carrying the *pre-write* values, not with
+  `DELETE FROM memory_fts WHERE rowid = ?`.** Both forms work in isolation; only one composes with the
+  validation ladder. The plain `DELETE` on an external-content table reads the **content table** to find the
+  terms to remove, so it is correct only *before* the `memory` row is updated — which means before
+  authorization has finished, since the row update and the version/receipt rungs are one indivisible step.
+  That ordering is unsafe, and unsafely so in the quietest possible way: invariant 10's carve-out **commits** a
+  `version_conflict`'s audit event and receipt, so a `DELETE` staged ahead of the version check would be
+  durably committed by a *rejected* amend, leaving a live row with no lexical index and no error anywhere. The
+  values-explicit form (`INSERT INTO memory_fts (memory_fts, rowid, gist, content) VALUES ('delete', …)`)
+  consults no table, so it runs *after* the row is updated and nothing at all is staged before the call is
+  authorized. It is the same command the erasure procedure uses, for the same reason.
+- **`retire` touches no index, and that is consistent with invariant 2 rather than an exception to it.** The
+  invariant requires each mutation's index maintenance to be *inside* its one transaction, not that every
+  mutation has some. `retire` writes `active`, `superseded_by`, `version` and `updated_at`; none is an indexed
+  column, `memory_fts` covers `gist` and `content` only, and D16 leaves chunks and vectors exactly where they
+  are so the row stays retrievable. So there is nothing for its transaction to cover beyond the row, the
+  receipt and the event — which is why the indexed write path has two verbs and not three.
+- **`index_failed`'s `stage` has four values**, and they are the four ways an index write fails without the
+  caller having done anything wrong: `budget` (the arithmetic above leaves no room for content under the
+  effective gist bound — a configuration or model problem, not a prose one), `assembly` (the preflight could not
+  produce chunks satisfying its own arithmetic — step 7's assertion, the same check applied to each
+  chunk's own recounted slice, and a tokenizer whose token count and token spans disagree, which would
+  otherwise cut a paragraph short and drop the remainder from the dense index with every later check
+  still passing), `embed` (the embedder raised, or returned
+  the wrong number of vectors or the wrong width), and `index_write` (the store raised while the transaction
+  was being written). `architecture.md` §Errors carries the set as the payload contract.
 
 ## Open residual
 The real length distribution of tribal-knowledge memories is **unknown** — we have zero real memories. The

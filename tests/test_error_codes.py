@@ -22,6 +22,7 @@ from zikaron.core.errors import (
     BadMergeTargetReason,
     ErrorCode,
     ErrorSpec,
+    IndexStage,
     PayloadField,
     RowState,
     ZikaronError,
@@ -87,10 +88,12 @@ def test_the_closed_sets_are_enums_carrying_exactly_the_designs_values(
         "bad_config.source",
         "bad_merge_target.reason",
         "inactive_row.state",
+        "index_failed.stage",
     }
     assert stated["bad_config.source"].values == tuple(BadConfigSource)
     assert stated["bad_merge_target.reason"].values == tuple(BadMergeTargetReason)
     assert stated["inactive_row.state"].values == INACTIVE_ROW_STATES
+    assert stated["index_failed.stage"].values == tuple(IndexStage)
 
 
 def test_every_code_lies_in_the_range_the_design_claims() -> None:
@@ -214,7 +217,10 @@ def test_a_field_the_code_does_not_carry_is_a_programming_error() -> None:
 
 def test_the_exception_text_names_the_code() -> None:
     error = ZikaronError(ErrorCode.STORE_BUSY, verb="amend")
-    assert str(error) == "store_busy: the store stayed locked past the busy timeout"
+    assert (
+        str(error)
+        == "store_busy: the store was locked; the call did not proceed and may be retried"
+    )
     assert error.code is ErrorCode.STORE_BUSY
     assert error.message == ERROR_SPECS[ErrorCode.STORE_BUSY].message
 

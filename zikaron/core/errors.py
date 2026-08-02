@@ -91,6 +91,22 @@ class BadMergeTargetReason(StrEnum):
     NOT_TARGETABLE = "not_targetable"
 
 
+class IndexStage(StrEnum):
+    """Where an index write failed, for `index_failed`'s one payload field.
+
+    The four members are the four ways indexing fails with nothing wrong in the caller's request,
+    which is what distinguishes this code from `bounds`: `BUDGET` and `ASSEMBLY` are the token
+    arithmetic — no room for content at all under the effective gist bound, and chunks the preflight
+    could not make satisfy that arithmetic — `EMBED` is the model, and `INDEX_WRITE` is the store
+    raising mid-transaction.
+    """
+
+    BUDGET = "budget"
+    ASSEMBLY = "assembly"
+    EMBED = "embed"
+    INDEX_WRITE = "index_write"
+
+
 @dataclass(frozen=True, slots=True)
 class PayloadField:
     """One key of an error's `data` object.
@@ -201,12 +217,15 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             (PayloadField("group_id"), PayloadField("serve_count")),
         ),
         ErrorCode.STORE_BUSY: ErrorSpec(
-            "the store stayed locked past the busy timeout",
+            # Not "past the busy timeout": an exhausted `busy_timeout` is the common case, but a WAL
+            # reader whose snapshot goes stale before it writes is refused immediately without the
+            # busy handler running at all, and both are the same retryable answer to the caller.
+            "the store was locked; the call did not proceed and may be retried",
             (PayloadField("verb"),),
         ),
         ErrorCode.INDEX_FAILED: ErrorSpec(
             "index maintenance failed and the transaction rolled back",
-            (PayloadField("stage"),),
+            (PayloadField("stage", values=tuple(IndexStage)),),
         ),
         ErrorCode.REINDEXING: ErrorSpec(
             "the store is reindexing and cannot be read",

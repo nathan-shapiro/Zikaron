@@ -1,10 +1,10 @@
 """The one thing the store needs from an embedder: its width, and the model name it reports.
 
-`build-plan.md`'s M2 fence is exactly this module's reason to exist: the store's dimension check
-must run before `memory_vec` is created, but nothing in this milestone chunks, embeds or writes a
-vector. `fastembed` is a dependency of `zikaron-core` as a whole, not of this module — a real,
-`fastembed`-backed implementation of this protocol is later work, and the store is written
-against the protocol so that landing it costs no change here.
+The store's dimension check must run before `memory_vec` is created, and creating a store embeds
+nothing — so this is deliberately the *narrowest* thing an embedder can be asked for. `fastembed`
+is a dependency of `zikaron-core` as a whole, not of this module: the indexing layer's `Encoder`
+extends this protocol with the tokenizer and embedding calls a write path needs, and the store is
+written against this narrow form so it never depends on them.
 """
 
 from dataclasses import dataclass

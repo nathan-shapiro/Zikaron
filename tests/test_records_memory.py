@@ -21,14 +21,14 @@ from zikaron.core.records.memory import (
     Memory,
     Rewrite,
     Tier,
-    _amend_within_transaction,
-    _commit_or_roll_back,
-    _create_within_transaction,
-    _retire_within_transaction,
     amend,
+    amend_within_transaction,
+    commit_or_roll_back,
     create,
+    create_within_transaction,
     fetch,
     retire,
+    retire_within_transaction,
 )
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
@@ -1291,7 +1291,7 @@ async def test_determinism_resolving_the_same_chain_twice_gives_the_same_answer(
 
 # ---------------------------------------------------------------------------
 # Transaction composability: the wire-facing verbs open their own transaction, but the
-# `_<verb>_within_transaction` cores must compose into a wider one a caller (M4) already owns.
+# `<verb>_within_transaction` cores must compose into a wider one a caller (M4) already owns.
 # ---------------------------------------------------------------------------
 
 
@@ -1319,7 +1319,7 @@ async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_c
     store = await _open_store(tmp_path)
     try:
         await store.connection.execute("BEGIN")
-        created = await _create_within_transaction(
+        created = await create_within_transaction(
             store.connection, gist="g", content="c", session_id="s1"
         )
         # A stand-in for M4's own further write inside the same transaction (a chunk row, here
@@ -1347,7 +1347,7 @@ async def test_a_failure_after_the_neutral_core_rolls_back_both_writes_together(
     store = await _open_store(tmp_path)
     try:
         await store.connection.execute("BEGIN")
-        created = await _create_within_transaction(
+        created = await create_within_transaction(
             store.connection, gist="g", content="c", session_id="s1"
         )
         with pytest.raises(sqlite3.IntegrityError):
@@ -1375,7 +1375,7 @@ async def test_amend_within_transaction_composes_with_a_sentinel_write_in_one_co
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
 
         await store.connection.execute("BEGIN")
-        amended = await _amend_within_transaction(
+        _, amended = await amend_within_transaction(
             store.connection,
             uuid=created.uuid,
             version=created.version,
@@ -1406,7 +1406,7 @@ async def test_retire_within_transaction_composes_with_a_sentinel_write_in_one_c
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
 
         await store.connection.execute("BEGIN")
-        retired = await _retire_within_transaction(
+        retired = await retire_within_transaction(
             store.connection,
             uuid=created.uuid,
             version=created.version,
@@ -1433,7 +1433,7 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
     tmp_path: Path,
 ) -> None:
     """Invariant 10's carve-out holds under composition too, as long as the composing caller
-    itself decides commit-vs-rollback the same way the wrapper does (`_commit_or_roll_back`)
+    itself decides commit-vs-rollback the same way the wrapper does (`commit_or_roll_back`)
     rather than always rolling back — the neutral core itself commits nothing (see
     `_reject_version_conflict`'s own docstring), so an outer caller that used a bare
     `except: rollback()` would lose the carve-out under composition, which is exactly the shape
@@ -1454,7 +1454,7 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
         error: BaseException | None = None
         try:
             with pytest.raises(ZikaronError) as excinfo:
-                await _amend_within_transaction(
+                await amend_within_transaction(
                     store.connection,
                     uuid=created.uuid,
                     version=created.version,
@@ -1463,7 +1463,7 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
                 )
             error = excinfo.value
         finally:
-            await _commit_or_roll_back(store.connection, error)
+            await commit_or_roll_back(store.connection, error)
         assert excinfo.value.code is ErrorCode.VERSION_CONFLICT
 
         rows = await store.connection.execute_fetchall(
@@ -1483,7 +1483,7 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
     version conflict, must not have that earlier write durably committed alongside the
     rejection's own receipt and event. Proven by using a bare `except: rollback()` — the wrong
     policy for a composing caller to use, on purpose — which is what a caller unaware of
-    `_commit_or_roll_back`'s contract might reach for; because the neutral core itself never
+    `commit_or_roll_back`'s contract might reach for; because the neutral core itself never
     commits (this is the actual fix, not a favorable choice of caller policy), even that wrong
     policy loses the sentinel correctly, since there is nothing already committed for it to
     fail to undo."""
@@ -1507,7 +1507,7 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
                 "UPDATE memory SET token_count = 123 WHERE uuid = ?", (created.uuid,)
             )
             with pytest.raises(ZikaronError) as excinfo:
-                await _amend_within_transaction(
+                await amend_within_transaction(
                     store.connection,
                     uuid=created.uuid,
                     version=created.version,
@@ -1523,7 +1523,7 @@ async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accide
         )
         assert next(iter(rows))[0] == 0
         # The rejection's own receipt is lost too under this policy — the price of a composing
-        # caller using the wrong one, and exactly what motivates `_commit_or_roll_back` existing
+        # caller using the wrong one, and exactly what motivates `commit_or_roll_back` existing
         # as the one place that gets to decide correctly, per the previous test.
         receipt_rows = await store.connection.execute_fetchall(
             "SELECT source FROM read_receipt WHERE memory_uuid = ? AND session_id = ?",
@@ -1643,8 +1643,8 @@ async def test_invariant_10_a_failure_between_fetchs_receipt_and_its_event_loses
 async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_owner(
     tmp_path: Path,
 ) -> None:
-    """`amend`'s own `finally: await _commit_or_roll_back(db, error)` runs unconditionally, and
-    for a `VERSION_CONFLICT` — one of `_commit_or_roll_back`'s two carve-out codes — that means
+    """`amend`'s own `finally: await commit_or_roll_back(db, error)` runs unconditionally, and
+    for a `VERSION_CONFLICT` — one of `commit_or_roll_back`'s two carve-out codes — that means
     committing, not rolling back: `_reject_version_conflict` itself only staged the receipt and
     event and raised, never touching the transaction, so `amend`'s own `finally` block is the
     one place that actually commits them. This test proves that end to end through the real

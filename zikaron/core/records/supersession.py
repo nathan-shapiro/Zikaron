@@ -26,12 +26,12 @@ class BadSupersessionReason(StrEnum):
     of a design table — unlike `BadMergeTargetReason`, which the design table itself constrains.
 
     `ALREADY_SUPERSEDED` — "edge already set" — is a member with no raise site in this
-    milestone's code: `superseded_by` is immutable once written (invariant 6's third rule), and
+    code: `superseded_by` is immutable once written (invariant 6's third rule), and
     the only row that could attempt a second edge is one already `active=0`, which the primary-
     verb ladder's state-legality rung (`architecture.md` §"Validation precedence") catches as
     `inactive_row` before any supersession check runs at all. It is declared anyway so this
     enumeration matches the design's own five-case list exactly, rather than only the subset this
-    milestone's call sites happen to reach.
+    today's call sites happen to reach.
     """
 
     SELF_EDGE = "self_edge"
@@ -206,7 +206,7 @@ async def resolve_latest(
         if row is None:
             # `superseded_by`'s own FK is `ON DELETE RESTRICT`, so a row this walk is currently
             # standing on cannot have vanished between being pointed at and being read — nothing
-            # in this milestone can construct a store where this branch fires without deleting a
+            # can construct a store where this branch fires without deleting a
             # row out from under a live foreign key, which SQLite itself refuses to allow.
             return None
         if row.superseded_by is None:

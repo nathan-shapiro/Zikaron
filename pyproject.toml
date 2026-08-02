@@ -20,6 +20,9 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-asyncio==1.4.0",
+    # Property-based tests, for the places the design states a property rather than a case:
+    # chunking never loses content, and no chunk exceeds the budget it was cut to.
+    "hypothesis==6.140.2",
 ]
 
 [tool.setuptools.packages.find]

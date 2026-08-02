@@ -64,8 +64,18 @@ necessary ignore carries a comment saying **why** it is unavoidable. No `Any` cr
 | Tier | Marker | Character |
 |---|---|---|
 | unit | default | hermetic, fast, `tmp_path`, deterministic fake embedder. The bulk. |
-| integration | `@pytest.mark.integration` | real `fastembed`, real sqlite-vec, real UDS socket, real subprocess. Slower, still automated. |
+| integration | `@pytest.mark.integration` | real `fastembed`, a real UDS socket, a real subprocess — anything that leaves the process or loads a model. Slower, still automated. See the note below on where a real store sits. |
 | paid/manual | `@pytest.mark.manual` | anything needing a live model API — consolidation quality A/Bs. Never in the default run. |
+
+**Where a real store sits, because the line above is otherwise ambiguous and everything touches
+it.** A test that creates a real store on `tmp_path` — real SQLite, real FTS5, the real `sqlite-vec`
+extension loaded — stays in the **default** tier and carries no marker. It is hermetic (a temporary
+directory, no network, nothing shared), deterministic, and fast: `sqlite-vec` is an in-process
+extension pinned in the lock file, not a service. The `integration` marker is for what genuinely
+leaves the process or loads a model — `fastembed`, a UDS socket, a subprocess — because that is what
+a developer skipping the slow tier is trying to skip. The consequence, stated so it is a choice
+rather than an accident: most store behaviour is verified in the default run, which is what makes
+that run worth having.
 
 **Invariant tests are first-class and non-optional.** `design/schema.md` names twenty invariants. Each gets at
 least one test that **fails if the invariant is violated**, named for the invariant it defends. These are the

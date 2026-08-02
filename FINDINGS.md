@@ -72,8 +72,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
-+ the three singletons), M2 (store + configuration) and M3 (records, versioning, receipts) complete; M4 is
-next.** D1–D33 settled. Grounding from
++ the three singletons), M2 (store + configuration), M3 (records, versioning, receipts) and M4 (indexing)
+complete; M5 (retrieval) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -147,6 +147,31 @@ the one remaining uncovered branch (`supersession.py`'s defensive row-is-None ca
 documented in-code as unreachable through any well-formed call, since `superseded_by`'s `ON DELETE RESTRICT`
 foreign key makes the state it guards against impossible to construct without disabling FK enforcement.
 
+**M4 shipped `core/indexing/`** (`encoder.py`, `chunking.py`, `lexical.py`, `vectors.py`, `writes.py`) — the
+chunking preflight, unchunked FTS5 maintenance, chunked `vec0` writes, and `remember`/`amend` as one
+transaction each over M3's neutral row cores. **Reviewed to `APPROVED` over four rounds**
+(`reviews/m4-indexing-review.md`), with a genuine defect in each of the first three. Three things the design
+left to be inferred were settled first and written into `design/indexing.md` §Storage rather than only into
+code: `token_count` counts `content` alone on both the row and the event (since `gist_tokens` is a sibling
+field that would otherwise be double-counted), `memory_chunk.token_count` counts that chunk's own slice rather
+than the assembled gist-prepended sequence (whose length stays derivable from the two), and `part_index` is
+**0-based** — contrast consolidation's deliberately 1-based shard index, which is 1-based because it is *shown*
+to the consolidator, where chunk parts are shown to nobody. **Two measurements changed the implementation.**
+fastembed's own tokenizer carries `truncation.max_length = 512`, so counting through it returns 512 for a
+1600-token text: a preflight using it would find every over-length paragraph exactly at the cap, never
+hard-split, never set `truncated`, and hand the model the whole paragraph to truncate silently — every recorded
+number looking healthy. So counting uses an independent, truncation-free copy built from the same artifact, and
+an integration test guards the *premise* by asserting fastembed still truncates. And the deployed `bge-small`
+already returns unit vectors, which is precisely why the write path normalizes anyway: D20 keeps the model a
+config key, and the cosine arithmetic every threshold in the corpus is written in is true only of unit vectors,
+so that guarantee has to be ours rather than inherited. Two further decisions worth keeping: the FTS resync
+uses FTS5's explicit `'delete'` command with the **pre-write** values, because the plain
+`DELETE ... WHERE rowid = ?` reads the content table and so would have to run before authorization finished —
+and invariant 10's carve-out *commits* a `version_conflict`, which would then durably drop a live row's lexical
+index on a **rejected** amend; and the indexed write path has **two** verbs, not three, because `retire`
+changes no indexed column and D16 keeps its chunks. 416 tests, 99.87% branch coverage on `zikaron/core`, and
+**24 injected mutations across the four rounds, all 24 caught.**
+
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
 **no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
@@ -181,7 +206,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ✓ |
 | M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ✓ |
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ✓ |
-| M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ☐ |
+| M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ✓ |
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18–20 tested; one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ☐ |
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ☐ |
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` | ☐ |
@@ -415,9 +440,48 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   which is what let three further, related cases keep surfacing in the same function — the actual defect was
   never "this one case," it was "deciding whitespace and blank-line handling from state that does not update at
   every point state can meaningfully change," and only round 4's rewrite finally modeled that.
-- **The round-4 fix's own first attempt was wrong, and the reason it did not ship wrong is a discipline worth
-  keeping as a rule rather than a lucky habit: run the whole related test suite before considering any fix
-  done, not just the one test the fix targets.** The first attempt at tracking "did the current fragment start
+- **A test written to cover a line can bless the bug on it, and coverage will call that progress.** Chasing
+  the last uncovered branch in M4's hard split, I wrote a test for a defensive path that returned the paragraph
+  whole when the tokenizer reported no token boundaries — and asserted exactly that. The returned chunk was over
+  its own budget, i.e. a sequence the model truncates silently, which is the single failure chunking exists to
+  prevent; the reviewer caught the test and the code together. Two practices follow. **Coverage should be a
+  by-product of asserting behaviour, never the reason a test exists** — the standards' own "do not chase 100%"
+  is about test *value*, and this is the shape the violation takes when you do. And **for a defensive branch,
+  write the assertion as "this is refused", not "this is what comes back"**: if returning something plausible
+  were acceptable there, the branch would not need to exist. The general fix was better than the reported one —
+  a post-condition that recounts every emitted chunk against the budget it was cut to, so the whole class is
+  caught rather than the one branch patched.
+- **Three rounds on one guard, each finding the previous fix incomplete in the same direction.** The hard split
+  went: return a plausible invalid plan (round 1) → refuse only when the spans are *empty*, missing a
+  well-formed but **short** span list that drops a paragraph's tail while every later check passes (round 2) →
+  compare the span count against a fresh token count at the one place the cut is made (round 3, correct).
+  Identically for the transaction wrapper: map every driver error to `index_failed` → distinguish contention but
+  leave `BEGIN`/commit unmapped → map all three, and then discover a *failed commit* was reported without being
+  rolled back → and finally that a failed *rollback* leaves a poisoned connection on which a write already
+  reported as failed can still be published. The recurring lesson is not "review more"; it is that **a fix
+  aimed at the reported case tends to inherit the reported case's narrowness.** Both fixes only stopped
+  regressing once they were stated as a property of the whole operation — *the emitted chunks account for every
+  counted token*, *the connection ends outside a transaction whatever happened* — rather than as a check on the
+  input that failed.
+- **A verification instruction has to be satisfiable by the agent receiving it.** Every review brief told the
+  reviewer to verify the check gate independently rather than trust my numbers; its session exposes no
+  process-execution tool, so it could not, and said so plainly in round 3. Same family as the
+  subagent-cannot-delegate finding: the brief asked for a capability the delegate did not have. What it cost is
+  worth naming precisely, because the review was still valuable — every finding it made was found by *reading*,
+  and the one thing it could not do was confirm that what I said had run had run. So the division of labour is
+  fine as long as it is stated: the reviewer reads, the author runs the gate, and the author's claims about test
+  results are exactly the part no reviewer is checking. That is the argument for mutation testing being the
+  author's job and not a nicety — 24 injected mutations across four rounds are what make "the suite would catch
+  this" a claim rather than an assurance.
+- **An ambiguous rule in a binding document gets resolved silently, three milestones in a row.** The test-tier
+  table said `integration` means "real sqlite-vec", and M2, M3 and M4 all built real-store tests in the default
+  tier without marking them — because sqlite-vec is an in-process pinned extension, not a service. Nobody
+  decided that; it just happened, three times, and M4's test file then *claimed* to be a unit tier while using
+  a real store. The reviewer read the table, not the habit, and was right to. The fix that matters is not the
+  label: it is that `coding-standards.md` §4 now states where a real store sits and why, so the fourth
+  milestone to face the question reads an answer instead of repeating a decision nobody wrote down.
+- **A fix's own first attempt can be wrong, and the discipline that catches it is running the whole related
+  suite rather than the one test the fix targets.** The first attempt at tracking "did the current fragment start
   inside a string" set a flag only when the fragment's accumulator was empty, on the theory that emptiness meant
   the fragment had just begun. That is false the moment a semicolon resets the accumulator mid-line without the
   fragment actually beginning fresh in the relevant sense, and it passed the new regression test built for
@@ -497,3 +561,14 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   attempts' validation completing before either write. Round 3 found stale docstrings and test narrative
   still describing the removed commit-inside-rejection mechanism, and one event assertion that excluded two
   named kinds rather than asserting the exact list. Round 4: `APPROVED` — `reviews/m3-records-review.md`.
+- **M4 code review** — four rounds, ending `VERDICT: APPROVED` with zero findings in the fourth, and a genuine
+  defect in each of the first three. Round 1: the hard split's defensive branch returned a *plausible* plan
+  instead of raising, and the test I had written to cover that line blessed the invalid result — the fix is a
+  plan-level post-condition that recounts every emitted chunk against the budget it was cut to; and
+  `index_failed` was being returned for `SQLITE_BUSY`, erasing the one error the design tells a caller it may
+  retry. Round 2 found that the first fix was still incomplete in the dangerous direction — a *short* but
+  well-formed span list loses a paragraph's tail while every later check passes — and that exact-name matching
+  on `SQLITE_BUSY` misses the extended `SQLITE_BUSY_SNAPSHOT` a deferred amend actually gets under WAL, and that
+  my failed-commit test masked a missing rollback with its own cleanup. Round 3 found the remaining hole in that:
+  a rollback that *also* fails leaves a poisoned connection in circulation, on which a write already reported as
+  failed can later be published. Every finding accepted — `reviews/m4-indexing-review.md`.

@@ -27,7 +27,7 @@ from zikaron.core.store.embedder import Embedder
 #: The schema version every table and invariant in this build implements. Sourced from nowhere
 #: else: `zikaron.core.errors.ERROR_SPECS[ErrorCode.SCHEMA_INCOMPATIBLE]`'s payload fixes
 #: `supported` to the same integer, and a test asserts the two agree rather than one restating
-#: the other, per `build-plan.md`'s M2 brief ("Carried from M1").
+#: the other: one declaration, checked from two directions, rather than two that agree today.
 SUPPORTED_SCHEMA_VERSION: Final = 1
 
 _DB_FILENAME: Final = "memory.db"
@@ -105,7 +105,7 @@ async def _read_meta_table(db: aiosqlite.Connection) -> dict[str, str]:
 
 
 async def _load_sqlite_vec(db: aiosqlite.Connection) -> None:
-    """Load the `sqlite-vec` extension on this connection, per M0 spike 5's proven sequence.
+    """Load the `sqlite-vec` extension on this connection, through `aiosqlite`'s own method.
 
     `aiosqlite.Connection.load_extension` is the sanctioned path: the wrapped `sqlite3`
     connection lives on `aiosqlite`'s own dedicated worker thread, so reaching into it directly
@@ -250,8 +250,8 @@ class Store:
     def connection(self) -> aiosqlite.Connection:
         """The underlying `aiosqlite` connection, for a caller that needs to run its own SQL.
 
-        Exposed rather than wrapped with per-statement methods, because M2 owns schema creation
-        and the open path only — no record behaviour lives here for a method to wrap yet.
+        Exposed rather than wrapped with per-statement methods: this module owns schema creation
+        and the open path, and no record behaviour lives here for a method to wrap.
         """
         return self._db
 
@@ -288,7 +288,7 @@ class Store:
                 `embed_model` become this store's dual-homed `meta` values, authoritative from
                 this point on.
             embedder: the configured embedder. Consulted only for `.dim` and `.model_name` —
-                this milestone embeds nothing.
+                creation embeds nothing.
 
         Raises:
             ZikaronError: `BAD_CONFIG`, naming `embed_dim` and the embedder's actual width, if
