@@ -330,12 +330,15 @@ def test_every_typed_detail_matches_its_kinds_declared_fields() -> None:
 
 
 def test_the_kinds_with_no_producer_yet_have_no_value_type() -> None:
-    """The six consolidation kinds are deliberately untyped **because nothing writes them yet**.
+    """The five remaining consolidation kinds are deliberately untyped **because nothing writes
+    them yet**.
 
     A dataclass nothing constructs is dead code, so the milestone that ships those verbs adds its
     value type in the same change — and it cannot forget, since `log_event` takes an `EventDetail`
     and there is no dict-shaped way in. Asserted rather than left as a comment so that adding one of
     these producers without its type, or adding a type without its producer, is visible here.
+    `dedup_offered` is no longer in this set: D15's `remember` writes it, and `DedupOfferedDetail`
+    is its typed value.
     """
     typed = {
         subclass.kind for subclass in EventDetail.__subclasses__() if hasattr(subclass, "kind")
@@ -344,7 +347,6 @@ def test_the_kinds_with_no_producer_yet_have_no_value_type() -> None:
         EventKind.MERGE,
         EventKind.PROMOTE,
         EventKind.DISCARD,
-        EventKind.DEDUP_OFFERED,
         EventKind.GROUP_SERVED,
         EventKind.CONSOLIDATE_RUN,
     }

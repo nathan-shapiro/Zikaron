@@ -373,11 +373,12 @@ EVENT_SPECS: Final[Mapping[EventKind, EventSpec]] = MappingProxyType(
 # Declaration order is the contract's order. `EventSpec.validate` compares the two, so a field added
 # here in the wrong place fails rather than quietly reordering a payload.
 #
-# **Only the kinds something writes today are here.** The six consolidation kinds (`merge`,
-# `promote`, `discard`, `dedup_offered`, `group_served`, `consolidate_run`) have no producer yet; a
-# dataclass nothing constructs is dead code, and the milestone that writes those verbs adds its
-# value type in the same change. It cannot forget: `log_event` takes an `EventDetail`, so there is
-# no dict-shaped way in.
+# **Only the kinds something writes today are here.** The five consolidation kinds (`merge`,
+# `promote`, `discard`, `group_served`, `consolidate_run`) have no producer yet; a dataclass nothing
+# constructs is dead code, and the milestone that writes those verbs adds its value type in the
+# same change. It cannot forget: `log_event` takes an `EventDetail`, so there is no dict-shaped way
+# in. `dedup_offered` is no longer in this set: D15's `remember` is what writes it, and that verb's
+# own milestone is what adds `DedupOfferedDetail` below, beside the other verbs that produce it.
 
 
 class EventDetail:
@@ -544,6 +545,24 @@ class RetireDetail(EventDetail):
     from_version: int
     to_version: int
     superseded_by: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DedupOfferedDetail(EventDetail):
+    """`dedup_offered` — one per near-duplicate candidate a `remember` hands back.
+
+    `memory_uuid` (the row this event is filed under) is the **candidate**, not the row `remember`
+    just created: a signal asking "was this offer ever followed by an amend?" joins on the record an
+    agent might amend, which is the candidate, so filing the event under the new row instead would
+    leave that join with nothing to find. `created_uuid` names the new row so the pair is still
+    fully recoverable from one event.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.DEDUP_OFFERED
+
+    created_uuid: str
+    cosine: float
+    rank: int
 
 
 @dataclass(frozen=True, slots=True)

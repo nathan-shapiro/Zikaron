@@ -72,8 +72,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
-+ the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing) and
-M5 (retrieval) complete and reviewed to APPROVED; M6 (write path + D15 dedup) is next.** D1–D33 settled. Grounding from
++ the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
+(retrieval) and M6 (write path + D15 dedup) complete and reviewed to APPROVED; M7 (consolidation) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -222,6 +222,54 @@ runtime. The six consolidation kinds stay untyped **until their verbs exist**, s
 constructs is dead code and `log_event`'s signature leaves no dict-shaped way in; a test asserts exactly
 which six those are, so adding a producer without its type fails.
 
+**M6 shipped `core/write/`** (`dedup.py`, `tools.py`) — the tool-facing `remember`/`amend`/`retire`
+verbs, composing M3's row primitives and M4's indexed writes rather than reimplementing either.
+`remember` runs `indexing.writes.remember_within_transaction`, then D15's dedup search, in one
+transaction; `amend`/`retire` delegate the entire ladder to `indexing.writes.amend`/
+`records.memory.retire`, catching a caught `version_conflict` and returning it as a typed
+`Conflict` value — a Python discriminated union (`Amended | Conflict`, `Retired | Conflict`) a
+caller pattern-matches on — while every other rejection propagates unchanged; the tool surface's
+literal wire object `{conflict: true, current: ...}` is a transport (M10) concern, not core's.
+Two things the design left to be settled in code rather than left ambiguous: `dedup_offered` had
+no producer and no typed event value before this milestone — `events.py`'s own docstring commits
+to adding one "in the same change" as the verb that writes it, so `DedupOfferedDetail` was added
+alongside `remember`, filed under the **candidate's** uuid rather than the new row's, and the
+file's stale six-kinds-with-no-producer comment (and its mirroring test) dropped to five. And the
+directed score `s(new row → candidate)` D15's threshold is defined over — `schema.md`'s "the best
+cosine between X's first chunk and *any* chunk of Y" — is independent of `fusion_depth` and of
+which arm surfaced a candidate: a candidate the dense arm's bounded overfetch already scored
+carries its own exact `best_distance`, and a candidate the **lexical** arm alone surfaced is scored
+by one further batched statement using `sqlite-vec`'s own scalar `vec_distance_L2` function,
+grouped by candidate and bounded by their own chunk counts rather than by store size — delegating
+the exact arithmetic to the same pinned extension the dense arm's KNN path already uses, rather
+than a second implementation of the metric that could disagree with it at a threshold boundary.
+**Reviewed to `APPROVED` over four rounds** (`reviews/m6-write-dedup-review.md`), with a genuine
+defect in each of the first three. Round 1's blocker was exactly the shape open question 5's own
+lesson warns about: the first implementation conflated "what the dense arm's bounded probe
+happened to surface" with the mathematically-defined directed cosine, silently excluding every
+lexical-only candidate from ever being offered regardless of true similarity — caught only by
+writing the regression the round asked for, which failed against the first attempted fix (a
+KNN query sized to the *candidate's* own chunk count, which is wrong because `vec0`'s `k` is a
+*global* rank cutoff and can return zero rows belonging to the memory it was aimed at). Round 2
+found the corrected fix technically right but operationally unsound: it ran one unbounded,
+full-index KNN probe per lexical-only candidate inside the open write transaction. Round 3 found
+the interim fix for that — a batched read of just the named candidates' own stored vectors,
+scored with a hand-written Python L2 loop — introduced a subtler risk: decoding float32 to Python
+binary64 and re-summing has different rounding characteristics than the pinned extension's own
+native arithmetic, so a candidate at the threshold could clear it under one arm's scoring and not
+the other's. The round 3 fix, confirmed by directly querying the installed extension rather than
+assuming its capabilities from the design corpus's own stated vocabulary, delegates the arithmetic
+to `vec_distance_L2` itself — the same function measured bit-identical to `vec0`'s own KNN-reported
+distance for the same vectors. 642 tests, 99.83% coverage on `zikaron/core` (`write/dedup.py` at
+100%); the two remaining uncovered lines are the established documented-unreachable-defensive-
+branch pattern this corpus already carries from M3 and M4, not new gaps. One real defect surfaced
+by writing the tests rather than by review: three setup steps had a second session call `amend`
+without first calling `fetch` to earn a receipt, which is not a `version_conflict` scenario at
+all — a session with no receipt for a row it never touched gets `no_read_receipt` regardless of
+which version it presents, since D26's read-before-write is a receipt fact, not a version-guessing
+game. The fix mirrors what `retrieval_fixtures.Harness.retire` already does for the identical
+reason: fetch first, to earn the receipt the real ladder requires.
+
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
 **no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
@@ -258,7 +306,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ✓ |
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ✓ |
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18 and 20 tested (19 moved to M7, which owns the table it constrains); one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ✓ |
-| M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ☐ |
+| M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ✓ |
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` | ☐ |
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ☐ |
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ☐ |
@@ -681,3 +729,31 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   my failed-commit test masked a missing rollback with its own cleanup. Round 3 found the remaining hole in that:
   a rollback that *also* fails leaves a poisoned connection in circulation, on which a write already reported as
   failed can later be published. Every finding accepted — `reviews/m4-indexing-review.md`.
+- **M6 code review** — four rounds, ending `VERDICT: APPROVED`, with a genuine defect in each of the
+  first three. Round 1's blocker was the same shape open question 5's own lesson names: the first
+  implementation conflated "what the dense arm's bounded probe happened to surface" with the
+  mathematically-defined directed cosine `s(new row → candidate)`, silently excluding every
+  lexical-only pooled candidate from ever being offered regardless of true similarity — caught by
+  writing the regression the round itself asked for, which then failed against the first attempted
+  fix (a KNN query sized to the *candidate's* own chunk count, wrong because `vec0`'s `k` is a
+  *global* rank cutoff that can return zero rows belonging to the memory it was aimed at). Round 2
+  found the corrected fix technically right but operationally unsound: it ran one unbounded,
+  full-index KNN probe per lexical-only candidate inside the open write transaction, multiplying
+  cost by store size and by candidate count at once. Round 3 found the interim fix for that — a
+  batched read of the named candidates' own stored vectors, decoded and scored with a hand-written
+  Python L2 loop — introduced a subtler risk: float32-to-binary64 decoding and re-summation has
+  different rounding characteristics than the pinned extension's own native arithmetic, so a
+  candidate sitting at the threshold could clear it under one arm's scoring and not the other's.
+  The round-3 fix, confirmed by directly querying the installed `sqlite-vec` build rather than
+  trusting the design corpus's own stated vocabulary, delegates the arithmetic to the extension's
+  scalar `vec_distance_L2` function — measured bit-identical to `vec0`'s own KNN-reported distance
+  for the same vectors — inside the identical batched, candidate-scoped statement shape round 2
+  established. Two smaller findings ran alongside the numerical one: a rollback test's FTS
+  assertion read the content-table row through the external-content join rather than proving what
+  the inverted index itself held, fixed with a real `MATCH` query on disjoint old/new marker terms;
+  and `remember`'s own transaction wrapper had no test for ordinary lock contention, since it
+  composes the *neutral* `remember_within_transaction` core directly rather than going through
+  `indexing.writes.remember`'s own transaction-owning wrapper, so M4's existing contention test at
+  the lower layer never exercised it. Round 4: `APPROVED`, one nitpick (an optional direct
+  cross-check between the scalar function and `vec0`'s KNN path, not required while `sqlite-vec` is
+  pinned) — `reviews/m6-write-dedup-review.md`.
