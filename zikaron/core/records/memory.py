@@ -148,8 +148,18 @@ class Rewrite:
     content: str
 
 
-def _now() -> str:
-    """The current instant, ISO-8601 in UTC — `created_at`/`updated_at`/`event.at`'s own format."""
+def timestamp() -> str:
+    """The current instant, ISO-8601 in UTC — every stored time in this store's own format.
+
+    Public, and the only clock any layer calls, because several tables record times that are then
+    compared against each other: a consolidation lease is `started_at` plus a duration, and every
+    reader decides whether a run has lapsed by comparing that string to this one. Two clocks with
+    two formats — one with microseconds and one without, or one naive — would make that comparison a
+    coin flip on a boundary nobody looks at. `created_at`, `updated_at`, `event.at`,
+    `read_receipt.at`,
+    `consolidation_run.started_at`/`expires_at`, `consolidation_group.served_at` and
+    `consolidation_group_member.disposed_at` all come from here.
+    """
     return datetime.now(UTC).isoformat()
 
 
@@ -193,7 +203,15 @@ def _row_to_memory(row: tuple[object, ...]) -> Memory:
     )
 
 
-async def _load(db: aiosqlite.Connection, uuid: str) -> Memory | None:
+async def load(db: aiosqlite.Connection, uuid: str) -> Memory | None:
+    """One `memory` row by uuid, exactly as stored, or `None` if there is no such row.
+
+    Public because a uuid is a handle and resolving one is not a predicate path: any state resolves,
+    which is why `fetch` is absent from `eligibility.Consumer` too. Callers that need a *verb* — a
+    receipt minted, an event logged — use `fetch`; callers that need the row's current facts inside
+    a transaction they already hold, as serve-time re-validation and the consolidator ladder both
+    do, use this. Assumes the caller's own transaction, and mints and logs nothing.
+    """
     rows = await db.execute_fetchall(_SELECT_MEMORY_BY_UUID, (uuid,))
     found = list(rows)
     if not found:
@@ -201,8 +219,14 @@ async def _load(db: aiosqlite.Connection, uuid: str) -> Memory | None:
     return _row_to_memory(tuple(found[0]))
 
 
-async def _require_existing(db: aiosqlite.Connection, uuid: str) -> Memory:
-    found = await _load(db, uuid)
+async def require_existing(db: aiosqlite.Connection, uuid: str) -> Memory:
+    """`load`, but `not_found` rather than `None` — the existence rung of both ladders.
+
+    Public for the same reason as `load`, and separate from it because the two answer different
+    questions: whether a row exists is sometimes the caller's own business (serve-time re-validation
+    treats a missing row as a vacated member) and sometimes a rejection.
+    """
+    found = await load(db, uuid)
     if found is None:
         raise ZikaronError(ErrorCode.NOT_FOUND, uuid=uuid)
     return found
@@ -247,7 +271,7 @@ async def log_event(
         "INSERT INTO event (at, session_id, client_kind, op_id, kind, memory_uuid, detail) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
-            _now(),
+            timestamp(),
             ctx.session_id,
             ctx.client_kind,
             ctx.op_id,
@@ -288,9 +312,16 @@ async def _to_fetched(db: aiosqlite.Connection, memory: Memory, *, max_depth: in
     )
 
 
-async def _to_conflict_record(
+async def conflict_record(
     db: aiosqlite.Connection, memory: Memory, *, max_depth: int
 ) -> ConflictRecord:
+    """`architecture.md`'s `CONFLICT_RECORD` for one row, with its supersession head resolved.
+
+    Public because two ladders build it — this module's primary-agent one and the consolidation
+    layer's, which can name several rows in one call and so returns a list of these where the
+    primary verbs return one object. Both must produce the identical shape from the identical
+    fields, which is what having one constructor buys.
+    """
     head = await _resolve_head(db, memory, max_depth=max_depth)
     return ConflictRecord(
         uuid=memory.uuid,
@@ -306,24 +337,35 @@ async def _to_conflict_record(
 
 
 async def create_within_transaction(
-    db: aiosqlite.Connection, *, gist: str, content: str, session_id: str
+    db: aiosqlite.Connection,
+    *,
+    gist: str,
+    content: str,
+    session_id: str,
+    tier: Tier = Tier.JOURNAL,
 ) -> Memory:
     """`create`'s work, assuming the caller already holds an open transaction.
 
     Neither commits nor rolls back — a caller composing this into a wider transaction (the
     indexing layer, which writes the chunks in the same transaction as the row) owns both, and
     `create` itself is the thin standalone wrapper below for a caller that wants this alone.
+
+    `tier` defaults to `journal` because that is what D3 makes a *new* observation: every agent
+    write lands unconsolidated. It is a parameter rather than a constant because `promote`'s
+    new-row form authors a record that is long-term from its first version — writing it as journal
+    and flipping it would spend a version on a row no reader ever saw, and invariant 8 makes a tier
+    flip a real mutation rather than a fix-up.
     """
     new_uuid = str(uuid4())
-    now = _now()
+    now = timestamp()
     await db.execute(
         "INSERT INTO memory "
         "(uuid, tier, gist, content, active, superseded_by, version, created_at, "
         " updated_at, session_id, token_count) "
-        "VALUES (?, 'journal', ?, ?, 1, NULL, 1, ?, ?, ?, 0)",
-        (new_uuid, gist, content, now, now, session_id),
+        "VALUES (?, ?, ?, ?, 1, NULL, 1, ?, ?, ?, 0)",
+        (new_uuid, tier.value, gist, content, now, now, session_id),
     )
-    return await _require_existing(db, new_uuid)
+    return await require_existing(db, new_uuid)
 
 
 #: The two codes invariant 10's rejection carve-out applies to are `store.transactions`'s to name,
@@ -396,7 +438,7 @@ async def fetch_within_transaction(
     records: list[FetchedMemory] = []
     missing: list[str] = []
     for uuid in ordered_distinct:
-        memory = await _load(db, uuid)
+        memory = await load(db, uuid)
         found = memory is not None
         if memory is not None:
             fetched = await _to_fetched(db, memory, max_depth=ctx.max_depth)
@@ -409,7 +451,7 @@ async def fetch_within_transaction(
                     memory_uuid=uuid,
                     version=memory.version,
                 ),
-                at=_now(),
+                at=timestamp(),
                 source=ReceiptSource.FETCH,
             )
         else:
@@ -461,6 +503,73 @@ async def fetch(
     return result
 
 
+async def record_version_conflict(
+    db: aiosqlite.Connection,
+    *,
+    current: Memory,
+    ctx: CallParams,
+    verb: str,
+    presented_version: int,
+) -> ConflictRecord:
+    """Mint the `conflict` receipt, log the `version_conflict` event, and build the record.
+
+    Everything invariant 10's carve-out requires a version conflict to leave behind, and **no
+    raise** — because the two ladders differ in exactly that: a primary-agent verb names one row and
+    raises on it, while a consolidator verb names several, has to evaluate all of them, and raises
+    once carrying every conflicting record. Both need the identical per-row work, so it lives here
+    and neither ladder writes its own.
+
+    The receipt is what makes D26's "re-decide in one round trip" true: the payload hands back the
+    current full record, so the caller's retry has a licence for it without a `fetch` it may not
+    even have (the consolidator has no `fetch` at all).
+
+    Does **not** commit. Whether the audit trail this writes survives is the transaction-owning
+    caller's decision, through `commit_or_roll_back`, which inspects the raised error's code — see
+    that function for why a neutral core may never make it.
+    """
+    await receipts.mint(
+        db,
+        key=ReceiptKey(
+            session_id=ctx.session_id,
+            client_kind=ctx.client_kind,
+            memory_uuid=current.uuid,
+            version=current.version,
+        ),
+        at=timestamp(),
+        source=ReceiptSource.CONFLICT,
+    )
+    await log_event(
+        db,
+        ctx=ctx,
+        detail=VersionConflictDetail(
+            verb=verb,
+            expected_version=presented_version,
+            actual_version=current.version,
+        ),
+        memory_uuid=current.uuid,
+    )
+    return await conflict_record(db, current, max_depth=ctx.max_depth)
+
+
+async def record_no_receipt(
+    db: aiosqlite.Connection, *, uuid: str, ctx: CallParams, verb: str, presented_version: int
+) -> None:
+    """Log the `no_receipt` event for one uuid, and mint nothing.
+
+    No receipt is minted, unlike a version conflict: a missing receipt hands back nothing to
+    re-decide from, since the caller already named the current version correctly — the record it
+    holds is not stale, it is simply unlicensed. Split from the raise for the same reason
+    `record_version_conflict` is: the consolidator ladder logs one of these per offending uuid and
+    then raises once naming all of them.
+    """
+    await log_event(
+        db,
+        ctx=ctx,
+        detail=NoReceiptDetail(verb=verb, version_presented=presented_version),
+        memory_uuid=uuid,
+    )
+
+
 async def _reject_version_conflict(
     db: aiosqlite.Connection,
     *,
@@ -481,8 +590,8 @@ async def _reject_version_conflict(
     one named row, and `architecture.md`'s tool surface states `zikaron_amend`/`zikaron_retire`'s
     conflict shape as `{conflict: true, current: CONFLICT_RECORD}` — one object, never a list.
     The list form (`current: [CONFLICT_RECORD, ...]`) belongs to the four consolidator verbs,
-    which can name several rows in one call; the consolidation layer has its own authorization
-    path and would need its own rejection helper, not this one.
+    which can name several rows in one call and whose own ladder therefore composes
+    `record_version_conflict` directly rather than calling this.
 
     Does **not** commit. A composing caller could stage its own write before ever calling into the
     authorization ladder, and this function has no way to see that from where it sits —
@@ -493,28 +602,9 @@ async def _reject_version_conflict(
     `_reject_no_receipt`) and commits only for those two — see `commit_or_roll_back`'s own
     docstring.
     """
-    await receipts.mint(
-        db,
-        key=ReceiptKey(
-            session_id=ctx.session_id,
-            client_kind=ctx.client_kind,
-            memory_uuid=current.uuid,
-            version=current.version,
-        ),
-        at=_now(),
-        source=ReceiptSource.CONFLICT,
+    record = await record_version_conflict(
+        db, current=current, ctx=ctx, verb=verb, presented_version=presented_version
     )
-    await log_event(
-        db,
-        ctx=ctx,
-        detail=VersionConflictDetail(
-            verb=verb,
-            expected_version=presented_version,
-            actual_version=current.version,
-        ),
-        memory_uuid=current.uuid,
-    )
-    record = await _to_conflict_record(db, current, max_depth=ctx.max_depth)
     raise ZikaronError(ErrorCode.VERSION_CONFLICT, current=record)
 
 
@@ -531,12 +621,7 @@ async def _reject_no_receipt(
     Does **not** commit, for the same reason `_reject_version_conflict` does not — see its
     docstring.
     """
-    await log_event(
-        db,
-        ctx=ctx,
-        detail=NoReceiptDetail(verb=verb, version_presented=presented_version),
-        memory_uuid=uuid,
-    )
+    await record_no_receipt(db, uuid=uuid, ctx=ctx, verb=verb, presented_version=presented_version)
     raise ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=[uuid], hint="fetch it first")
 
 
@@ -569,9 +654,9 @@ async def _authorize_mutation(
             exists to close. Must be non-empty.
     """
     uuid, *other_named = named_uuids
-    current = await _require_existing(db, uuid)
+    current = await require_existing(db, uuid)
     for other in other_named:
-        await _require_existing(db, other)
+        await require_existing(db, other)
     if current.version != version:
         await _reject_version_conflict(
             db, current=current, ctx=ctx, verb=verb, presented_version=version
@@ -608,7 +693,7 @@ async def mint_own_write_receipt(
             memory_uuid=uuid,
             version=version,
         ),
-        at=_now(),
+        at=timestamp(),
         source=ReceiptSource.OWN_WRITE,
     )
 
@@ -648,6 +733,96 @@ def _require_active(memory: Memory) -> None:
         raise ZikaronError(ErrorCode.INACTIVE_ROW, uuid=memory.uuid, state=memory.resolved_state)
 
 
+async def apply_rewrite(
+    db: aiosqlite.Connection, *, current: Memory, rewrite: Rewrite, ctx: CallParams
+) -> Memory:
+    """Write new prose over `current` and bump its `version`. Authorizes nothing, logs nothing.
+
+    The three `apply_*` functions here are the **column-level** mutators every write verb in the
+    system ends at, split out from the verbs so that a second verb writing the same columns cannot
+    write them a second, slightly different way. Each one bumps `version` (invariant 8), refreshes
+    `updated_at`, mints the writer's `own_write` receipt at the new version and revokes every other
+    receipt for the row (invariant 9) — and does **not** decide who may call it, which state is
+    legal, or what event describes it. Those three differ per verb: `amend` and `retire` run the
+    primary-agent ladder and emit their own kinds, while `merge`, `promote` and `discard` run the
+    consolidator ladder and emit theirs, and both classes of caller need the identical column write
+    underneath.
+
+    Args:
+        current: the row as authorization found it, at the version being replaced. Passed in rather
+            than re-read, because the caller's ladder has already read it and a second read inside
+            one transaction would only be another chance for the two to disagree about what is
+            being overwritten.
+
+    Returns:
+        The row as this call left it, re-read so the caller sees stored values rather than the ones
+        it hoped it wrote.
+    """
+    new_version = current.version + 1
+    await db.execute(
+        "UPDATE memory SET gist = ?, content = ?, version = ?, updated_at = ? WHERE uuid = ?",
+        (rewrite.gist, rewrite.content, new_version, timestamp(), current.uuid),
+    )
+    await _bump_version_and_mint_own_write(db, uuid=current.uuid, new_version=new_version, ctx=ctx)
+    return await require_existing(db, current.uuid)
+
+
+async def apply_retirement(
+    db: aiosqlite.Connection, *, current: Memory, superseded_by: str | None, ctx: CallParams
+) -> Memory:
+    """Soft-retire `current`, optionally writing its one supersession edge, and bump `version`.
+
+    Validates the edge (invariant 6) immediately before writing it, in this same transaction, which
+    is what keeps edge validation and edge writing from drifting apart across the several verbs that
+    create edges — `retire` with a replacement, `merge` absorbing rows into its target, `promote`
+    absorbing rows into a new record. `superseded_by=None` retires outright and validates nothing,
+    because there is no claim about a replacement to be false.
+
+    Authorizes nothing and logs nothing; see `apply_rewrite` for the reason that split exists.
+
+    Raises:
+        ZikaronError: `BAD_SUPERSESSION` if `superseded_by` names an illegal edge — a self-edge, a
+            target already retired-outright at this instant, or one that would close a cycle; or
+            `NOT_FOUND` if it names no row, which the caller's own existence rung should have caught
+            first.
+    """
+    if superseded_by is not None:
+        await supersession.validate_new_edge(
+            db, from_uuid=current.uuid, to_uuid=superseded_by, max_depth=ctx.max_depth
+        )
+    new_version = current.version + 1
+    await db.execute(
+        "UPDATE memory SET active = 0, superseded_by = ?, version = ?, updated_at = ? "
+        "WHERE uuid = ?",
+        (superseded_by, new_version, timestamp(), current.uuid),
+    )
+    await _bump_version_and_mint_own_write(db, uuid=current.uuid, new_version=new_version, ctx=ctx)
+    return await require_existing(db, current.uuid)
+
+
+async def apply_tier(
+    db: aiosqlite.Connection, *, current: Memory, tier: Tier, ctx: CallParams
+) -> Memory:
+    """Move `current` between tiers and bump its `version`. Authorizes nothing, logs nothing.
+
+    A tier flip is a full mutation rather than a metadata touch, which is invariant 8's own list
+    ("including a `tier` flip and a `superseded_by` write") and not a strict reading of it: a
+    primary agent may be amending the row concurrently, and D3 makes the tier the difference between
+    a journal line and a long-term record, so a flip that left `version` alone would be a change
+    another actor's receipt still licensed it to overwrite.
+
+    Touches no indexed column — `memory_fts` indexes `gist` and `content`, and `tier` appears in
+    neither index — so a caller flipping a tier without changing prose has no index to rebuild.
+    """
+    new_version = current.version + 1
+    await db.execute(
+        "UPDATE memory SET tier = ?, version = ?, updated_at = ? WHERE uuid = ?",
+        (tier.value, new_version, timestamp(), current.uuid),
+    )
+    await _bump_version_and_mint_own_write(db, uuid=current.uuid, new_version=new_version, ctx=ctx)
+    return await require_existing(db, current.uuid)
+
+
 async def amend_within_transaction(
     db: aiosqlite.Connection, *, uuid: str, version: int, rewrite: Rewrite, ctx: CallParams
 ) -> tuple[Memory, Memory]:
@@ -672,14 +847,7 @@ async def amend_within_transaction(
         db, named_uuids=(uuid,), version=version, ctx=ctx, verb="amend"
     )
     _require_active(current)
-    new_version = current.version + 1
-    now = _now()
-    await db.execute(
-        "UPDATE memory SET gist = ?, content = ?, version = ?, updated_at = ? WHERE uuid = ?",
-        (rewrite.gist, rewrite.content, new_version, now, uuid),
-    )
-    await _bump_version_and_mint_own_write(db, uuid=uuid, new_version=new_version, ctx=ctx)
-    return current, await _require_existing(db, uuid)
+    return current, await apply_rewrite(db, current=current, rewrite=rewrite, ctx=ctx)
 
 
 async def amend(
@@ -744,29 +912,18 @@ async def retire_within_transaction(
         db, named_uuids=named_uuids, version=version, ctx=ctx, verb="retire"
     )
     _require_active(current)
-    if superseded_by is not None:
-        await supersession.validate_new_edge(
-            db, from_uuid=uuid, to_uuid=superseded_by, max_depth=ctx.max_depth
-        )
-    new_version = current.version + 1
-    now = _now()
-    await db.execute(
-        "UPDATE memory SET active = 0, superseded_by = ?, version = ?, updated_at = ? "
-        "WHERE uuid = ?",
-        (superseded_by, new_version, now, uuid),
-    )
-    await _bump_version_and_mint_own_write(db, uuid=uuid, new_version=new_version, ctx=ctx)
+    retired = await apply_retirement(db, current=current, superseded_by=superseded_by, ctx=ctx)
     await log_event(
         db,
         ctx=ctx,
         detail=RetireDetail(
             from_version=current.version,
-            to_version=new_version,
+            to_version=retired.version,
             superseded_by=superseded_by,
         ),
         memory_uuid=uuid,
     )
-    return await _require_existing(db, uuid)
+    return retired
 
 
 async def retire(

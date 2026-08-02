@@ -553,8 +553,11 @@ Three consequences, stated because two of them touch settled guarantees:
   would read the first's run as *its own*, recover the lease rather than being told it is busy, and be served a
   group the first still holds. **Ownership is therefore `(session_id, pid)`, not `session_id`**, matched against
   the `pid` the envelope already carries. A caller whose pair does not match the effectively-active run's is not
-  the owner and gets `{busy: true}` until the lease lapses; only an **expired** lease may be taken over, which
-  keeps crash recovery working. This costs no schema change — `consolidation_run` already records `pid` — and no
+  the owner, and what follows depends on which entry point it used: `next_group` — the path a *model* drives —
+  answers `{busy: true}` until the lease lapses, so an expired lease is taken over implicitly and keeps crash
+  recovery working, while an **explicit `plan_groups` takes an unexpired run over** and records it `taken_over`
+  (§"Consolidation lifecycle"). The asymmetry is deliberate: no model may decide another worker has stopped, and
+  a human invoking the skill again is the only evidence that it has. This costs no schema change — `consolidation_run` already records `pid` — and no
   per-instance envelope identity, which is exactly the machinery the 2026-08-01 measurement removed.
 
   Why mechanize rather than accept it: the run lease is not only mutual exclusion, it is what makes D29's
@@ -779,6 +782,15 @@ zikaron_next_group()
      `remaining_uuids` belongs to the three write verbs (§"Row-level completion").
      `serve_count` is this group's delivery count **including this delivery**, so a first delivery
      reports 1 and the consolidator can see it is holding a group it has already been shown.
+     `remaining_groups` is how many **other** groups of this run are still open — `status IN
+     ('pending','served')`, counted after this serve's own transitions and **excluding the group
+     being delivered**. The exclusion is the part worth fixing rather than leaving to a reader:
+     the delivered group is itself still `served` and still has undispositioned members, so
+     "groups remaining" could as easily have counted it, and two implementations would then
+     disagree by one on every serve. Counted here as *work not in the consolidator's hands*, so a
+     final group reports 0 and the skill can tell "this is the last one" from the payload.
+     `served_at` is refreshed to the delivery's own timestamp on **every** serve, including a
+     re-serve; it records when this group was last delivered, not when it was first.
      `anchor` is the long-term record the group was built around (null for an orphan group, and
      null with `anchor_vacated: true` if it stopped being targetable after planning) and is also
      the natural merge target. `candidates` are additional long-term records, ≤4, in retrieval
@@ -819,6 +831,18 @@ zikaron_promote(group_id, gist, content, absorb: [{uuid, expected_version}, ...]
      per absorbed row. `in_place` emits **exactly one** event, `role:'flipped'`, `form:'in_place'`,
      `n_absorbed: 1` — because the flipped row *is* the absorbed member and a singular role cannot
      say both. One mutated row, one event; see schema.md §"The `event` log, per kind".
+     **The `flipped` row's four size fields are read off what the store already holds**, not
+     recomputed by a chunking preflight: `token_count` from the `memory` row, `n_chunks` and
+     `truncated` from that row's own `memory_chunk` rows, and `gist_tokens` counted over the stored
+     gist. An in-place promotion changes no prose, so it rebuilds no index — and a preflight run
+     under a `chunk_max_tokens` that has moved since the row was written would report an `n_chunks`
+     the store does not contain. The `created` row of a `new_row` promotion is the opposite case and
+     takes its four from the preflight that actually cut its chunks, exactly as `remember` does.
+     The `gist_max_tokens` bound is checked on the **arguments**, in both forms, because bounds is
+     rung 1 and deciding the form requires reading the absorbed row's stored prose — which is rung 2
+     work. A store whose `gist_max_tokens` was lowered below an existing gist therefore refuses to
+     promote that row in place until the consolidator authors a shorter gist, which is the `new_row`
+     form; that is the same rule §Bounds already states for `amend` and not a second one.
 
 zikaron_discard(group_id, absorb: [{uuid, expected_version}, ...], reason: str)
   -> {retired: int, remaining_uuids: [...], group_complete: bool}
@@ -876,12 +900,124 @@ whoever owns it**, in the precise sense defined below.
   that owns it.
 - **One effectively-active run per store, and one *worker* on it.** If one exists and the caller is not its
   owner, `next_group` returns `{busy: true, holder_session, holder_pid, expires_at}` — a defined, deterministic answer, not
-  an error and not a second plan. The skill reports it and stops. An explicit `plan_groups()` RPC in that
-  situation returns the same `{busy: true}` shape rather than stealing the run. **Ownership is
+  an error and not a second plan. The skill reports it and stops. **Ownership is
   `(session_id, pid)`**, both already recorded on `consolidation_run` and both already carried by the envelope:
   since 2026-08-01 all clients of one kiro session share a `session_id`, so `session_id` alone would make two
   concurrently-launched consolidators the same owner. See §"What the shared label affects" for why one worker
   is required and not merely tidy — it is what makes D29's transitive merging true.
+- **An explicit `plan_groups()` takes the run over, whoever holds it and whether or not the lease has
+  passed.** That is the one deliberate exception to the paragraph above, and the reason is that *no evidence
+  reachable from inside the store can tell a dead consolidator from one that is merely slow.* **A lease is a
+  timer**, so it cannot: a worker deciding on a hard group and a worker that stopped ten minutes ago look
+  identical to `expires_at`.
+
+  **A pid-liveness check is not useless, and the honest reason it is not the mechanism is not that it cannot
+  work.** Measured (`research/kiro-mcp-lifecycle-probe.md`): kiro runs one MCP client process per agent
+  instance, so a consolidator subagent's client is its own process and it **exits when that subagent finishes**
+  — meaning the pid recorded on the run is usually dead once the worker has stopped, and a check would often
+  say so. What it cannot do is carry the weight alone. It answers *is this process alive*, never *is this
+  worker going to make progress*, so a stalled-but-live worker still reads as healthy; pid reuse can return a
+  false **alive** and prolong exactly the lockout being diagnosed; and the service and the client are not
+  guaranteed a shared pid namespace. Its failure direction is at least safe — a false *alive* only continues
+  the status quo — so it remains available as a future refinement rather than being ruled out.
+
+  **What decides it is that a different signal is both simpler and categorically better evidence.** The
+  question is not whether a process exists; it is whether the human wants this store consolidated **now**. That
+  fact lives outside the store entirely: **a human invoking the consolidation skill a second time.** `plan_groups` is the RPC that
+  intent arrives through, and treating that call as authoritative is what keeps a store from being pinned for
+  up to `run_lease` by a worker that has already stopped.
+
+  **The reachability claim, at exactly its true width, because three loose versions of it were in the corpus
+  at once.** What D32 buys is this and only this: **a model confined to a configured tool surface cannot
+  *request* a takeover**, since `plan_groups` is in neither the consolidator's four tools nor the primary
+  agent's five — which is what preserves D7's "code selects the candidates, the model judges". Two things it
+  does **not** buy. It is not a claim that the RPC goes uncalled: the *conforming consolidator client* calls it
+  automatically, by design, on the first serve it forwards — which is the whole bridge below. And it is not a
+  capability boundary at
+  all: the socket is mode `0600` in a `0700` directory, so it is unauthenticated to **any same-uid process**
+  (§"Filesystem security"), and an agent holding a shell can speak JSON-RPC to it directly. That is the trust
+  boundary every other RPC already sits behind and nothing here widens it — what would be false is calling
+  tool omission a *sandbox*.
+
+  **The intent needs a caller, and naming one is part of this rule rather than a distribution detail.** A
+  freshly spawned consolidator's own first tool call is `next_group`, which refuses a live foreign run — so
+  without a bridge the second skill invocation reaches the refusal and takeover is unreachable, leaving the
+  case it exists for unsolved. The bridge: **`zikaron-mcp`, when it starts under the consolidator agent
+  config, calls `plan_groups` with its own `(session_id, pid)` — **lazily, immediately before the first
+  `next_group` it forwards, never when the client starts, and at most once *successfully* per client
+  process.** The bound is on successes rather than on attempts, for the reason the state table below gives:
+  a failed plan rolls back and displaces nobody, so it must not consume the guard. The *client process* makes that call, never the
+  model, which is what keeps "no model decides another worker has stopped" true while still letting a human
+  retry displace a corpse. M10 and M12 carry it as a done-when.
+
+  **Lazily, because a lock must not be taken by a worker that has not asked for work.** The MCP handshake is
+  eager: measured, a subagent's server completes `initialize` and `tools/list` within four milliseconds of
+  starting and the first `tools/call` arrived 1.6 seconds later
+  (`research/kiro-mcp-lifecycle-probe.md`). A `plan_groups` wired to startup would therefore fire before the
+  model had been asked anything — so a consolidator that spawns, reads its prompt and stops, or one whose turn
+  is cancelled before it acts, would displace a live worker for nothing. Deferring the call to the first
+  `next_group` makes the trigger *spawn **and** an actual request for work*, which is strictly stronger
+  evidence than the spawn alone, and it costs the client one boolean: it is a per-spawn process, so
+  "have I already done this" needs no storage beyond memory.
+
+  **Once, and only the client may count it — because the alternative livelocks.** Letting `next_group` itself
+  take over from any stranger would make two concurrent consolidators oscillate without end: A displaces B, B
+  displaces A, and neither is ever refused. Bounding it to one **successful** takeover per client process
+  terminates instead: the second worker displaces the first, and the first's next `next_group` finds it has spent its one
+  takeover and is told `{busy: true}`, so it stops.
+
+  **The call is a prerequisite of the *serve*, not of the tools, and the bound is on *successes* rather
+  than on attempts.** "Once per process" and "`store_busy` may be retried" cannot both be read as
+  rules about RPC attempts — one of them has to give, and it is the attempt count, because a *failed*
+  `plan_groups` rolls back and therefore displaces nobody. So the client is a three-state machine and the
+  guard it holds is "have I planned successfully", not "have I called":
+
+  | state | on a forwarded `next_group` | on the outcome |
+  |---|---|---|
+  | `unplanned` | call `plan_groups` first, and do **not** forward the serve until it succeeds | success → `ready`, then forward; `store_busy` → answer that error and stay `unplanned`, so the permitted retry replans; `index_failed` → `failed` |
+  | `ready` | forward the serve directly, planning nothing | — |
+  | `failed` | answer `index_failed`; plan nothing and forward nothing | terminal for this client; recovery is a new invocation, which is a new process with its own guard |
+
+  The anti-livelock bound survives intact, because it was only ever about *successful* takeovers: at most one
+  per client process, so a second worker displaces the first and the first is then told `{busy: true}` rather
+  than displacing it back.
+
+  **What the prerequisite guarantees, at exactly its width.** An `unplanned` client's first serve does not
+  reach the service until that client has planned successfully — that is the failure the bridge exists to
+  remove. It is **not** a guarantee that every serve reaches a run its caller owns: a `ready` client forwards
+  directly and plans nothing more, so if another worker takes the store over in between, that serve does reach
+  the service against a foreign run and is answered `{busy: true}`. That is not a gap — it is the same path the
+  anti-livelock bound and the displaced-worker safety argument both require, and the ready client stopping
+  there rather than replanning is precisely what makes them terminate.
+
+  **The bridge rested on one environment assumption, and it is now measured rather than assumed.** It buys
+  what it claims only if the consolidator's MCP client starts **once per skill invocation**, so that one
+  startup means one human action. Measured 2026-08-02 (`research/kiro-mcp-lifecycle-probe.md`, raw records
+  beside it): kiro runs **one MCP server process per agent instance** — two spawns of one subagent config
+  produced two distinct pids, each a child of the session's single `acp` process, each given its own
+  `initialize` handshake, and each exiting when its subagent finished. So a per-process guard is a
+  per-invocation guard, which is what lets the bridge's "at most one **successful** takeover per client
+  process" bound mean "at most one per human action" — the process boundary supplies the counter, the first
+  forwarded `next_group` supplies the moment, and only a *success* consumes it. The same measurement is what confirms `(session_id, pid)` ownership is
+  both sound and *necessary*: all three instances shared one `KIRO_SESSION_ID`, so the pid is the only thing
+  distinguishing them. **What remains unmeasured** is whether kiro ever restarts a client mid-subagent for its
+  own reasons — which would supply a fresh guard, and the next `next_group` that client forwarded could then
+  consume it without a new human invocation; three instances showed no such restart, which is weak evidence at
+  that sample size.
+
+  **Takeover is safe against concurrent writes, and that is a property of the ladder rather than a hope.**
+  Rung 2 of every consolidator verb requires the group's run to be owned by the caller *and* effectively
+  active, so the displaced worker's very next `merge`/`promote`/`discard` is refused `group_expired` before it
+  touches a row, and its next `next_group` finds the new run foreign and answers `{busy: true}`. It can
+  therefore commit **nothing** after the takeover instant. What it loses is its in-flight reasoning — which is
+  exactly what the human retrying has chosen to discard — and no journal row, because undispositioned members
+  stay `tier='journal' AND active=1` and are replanned.
+
+  **A taken-over run is recorded as such rather than folded into `abandoned`.** The two are different events
+  with different costs — a worker restarting its own run discarded nothing it wanted, a displaced worker
+  discarded work in progress — and in the likeliest case they are otherwise indistinguishable, since a user
+  retrying in one kiro session produces the *same* `session_id` and only a different pid. So the status set
+  carries `taken_over` and the `consolidate_run` phase mirrors it (`schema.md` invariant 17).
 - **An effectively-expired run is absent, for every caller including its owner.** This is the fix for a real
   dead end: `next_group` replans only when the caller has no active run, so an owner whose lease lapsed used to
   find *its own* run, be served a group from it, and be rejected `group_expired` — with no way out, because
@@ -891,17 +1027,26 @@ whoever owns it**, in the precise sense defined below.
   takeover by a stranger and lease recovery by the owner are therefore the same code path, and neither needs an
   operator. **"Owner" means `(session_id, pid)`.** Since 2026-08-01 the consolidator presents the top-level
   session's label, so a session alone no longer identifies a worker; the pid distinguishes two consolidators
-  launched concurrently from one session, and only an *expired* lease may be taken over by anyone. Crash
+  launched concurrently from one session, and an *expired* lease may be taken over by anyone through
+  `next_group` — an unexpired one only through the explicit `plan_groups` above. Crash
   takeover and owner recovery remain one code path. §"What the shared label affects" carries the argument and
   the pid-reuse residual.
-- **`plan_groups()` closes any pre-existing `active` run, and the lease decides which status it writes:**
-  `'expired'` if `expires_at < now`, `'abandoned'` otherwise. It is the only producer of either, and it emits
-  the matching `consolidate_run` phase event. That also disambiguates two rules that used to overlap —
-  "`expired` only by a later `plan_groups`" and "`abandoned` when the owning session replans" — into one test.
+- **`plan_groups()` closes any pre-existing `active` run, and two tests decide which status it writes:**
+  `'expired'` if `expires_at < now`; otherwise `'abandoned'` when the caller **is** the owner and
+  `'taken_over'` when it is not. It is the only producer of any of the three, and it emits
+  the matching `consolidate_run` phase event. That also disambiguates rules that used to overlap —
+  "`expired` only by a later `plan_groups`", "`abandoned` when the owning session replans", and a takeover that
+  would otherwise be invisible — into one branch.
   Replanning is never incremental: a new run always plans from scratch, which is safe because undispositioned
   members stay `tier='journal' AND active=1`.
 - **The lease is refreshed** by every successful call in the run — a write on a *success* path, which the
-  rejection rule permits. **Expiry itself is never written by a rejected call.** Every reader treats
+  rejection rule permits. **A `{conflict: true}` response is not a success for this purpose**, and that is
+  worth fixing here because the conflict shape is a *return value* rather than an error and so could be read
+  either way: it mutates no `memory` row and dispositions no member, its committed audit events and receipts
+  are invariant 10's carve-out for a call that changed nothing, and letting it extend the lease would mean a
+  consolidator making no progress at all could hold the store indefinitely. What refreshes the lease is a
+  serve that delivered a group, or a write verb that dispositioned at least one member.
+  **Expiry itself is never written by a rejected call.** Every reader treats
   `status='active' AND expires_at < now` as effectively expired and answers `group_expired`, changing nothing
   (`schema.md` invariant 17). Having any call perform the transition contradicted §"What a rejected call does
   and does not change", and this is the side that gave way.
@@ -1093,7 +1238,14 @@ the failure. Rung 0 never changes which error a request returns.
 
 **Consolidator verbs (`merge`, `promote`, `discard`) put authorization first:**
 
-1. **Envelope and bounds** — `bounds`.
+1. **Envelope and bounds** — `bounds`. Independent of store state, which is what fixes where the two
+   `absorb` bounds are checked. **A repeated uuid inside one `absorb` list is `bounds`** (`field:'absorb'`),
+   because it is malformed on its own terms: the list names the rows one call dispositions, so a uuid twice
+   would bump one row's `version` twice for one logical action and report an `n_absorbed` that counts it
+   twice. The other half of the stated bound — **≤ the group's member count** (`schema.md` §Bounds) — needs
+   the store and so cannot be checked here; it follows from rung 2 once the list is known to be distinct,
+   since every element must be a member of that group. The **minimum** of 1 row is `not_in_group` at rung 2
+   rather than `bounds`, which the error table states directly and this ladder does not re-decide.
 2. **Run and group authorization**, entirely from the persisted consolidation tables:
    the `group_id` exists (`group_unknown`); its run belongs to the calling **`(session_id, pid)` owner** —
    the pair, never the session alone, because since 2026-08-01 every client of one kiro session shares a
@@ -1101,7 +1253,14 @@ the failure. Rung 0 never changes which error a request returns.
    session-only test would let a second worker mutate a group the first still holds and would defeat the
    one-worker guarantee `next_group` establishes — and is `active` with
    `expires_at ≥ now` (`group_expired`); the group is `served`, not `complete` or `deferred`
-   (`group_complete` / `group_deferred`); every `absorb` uuid is a row of `consolidation_group_member` for
+   (`group_complete` / `group_deferred`), and not `pending` either — a `pending` group has never been
+   delivered, so no version was handed out and no row of it is *actionable*, which is `not_in_group`
+   naming the `absorb` uuids and whose stated recovery (call `next_group`) is exactly right. A
+   conforming consolidator cannot reach that case, since it learns a `group_id` only from a serve; it
+   is checked rather than argued away because the alternative argument is three steps long (a uuid
+   belongs to one group per run, so a receipt at a served version can only come from that group's own
+   serve, so rung 5 would catch it) and a checked condition outlives an argument;
+   every `absorb` uuid is a row of `consolidation_group_member` for
    this group with `disposition IS NULL`, and the list is non-empty (`not_in_group`); a `merge` target is a
    row of `consolidation_group_candidate` for this group (`bad_merge_target`).
 3. **Existence** — `not_found`. Nearly vacuous after step 2, since both authorization tables carry foreign
@@ -1173,12 +1332,12 @@ could not both hold.
 | −32004 | `bad_supersession` | self-edge, cycle, target retired-outright, edge already set, or depth cap hit | `{uuid, target, reason}` |
 | −32005 | `bounds` | gist over `gist_max_tokens`, empty gist or content, `limit` or list size out of range | `{field, limit, actual}` |
 | −32010 | `group_unknown` | `group_id` not in the store | `{group_id}` |
-| −32011 | `group_expired` | its run is `expired`/`abandoned`, belongs to a different `(session_id, pid)` owner, or is `active` with `expires_at < now` | `{group_id, run_status, expires_at, effective_status}` — `run_status` is the **stored** status and `effective_status` is `'expired'` whenever the lease has passed. The call writes no status; only `plan_groups` does. Recovery is `next_group`, which replans an effectively-expired run for **any** caller including its owner |
+| −32011 | `group_expired` | its run is `expired`/`abandoned`/`taken_over`, belongs to a different `(session_id, pid)` owner, or is `active` with `expires_at < now` | `{group_id, run_status, expires_at, effective_status}` — `run_status` is the **stored** status and `effective_status` is `'expired'` whenever the lease has passed. The call writes no status; only `plan_groups` does. Recovery is `next_group`, which replans an effectively-expired run for **any** caller including its owner — and which answers `{busy: true}` when another worker has taken the store over, since a displaced worker must stop rather than replan against a live holder |
 | −32012 | `group_complete` | every member already dispositioned | `{group_id}` |
-| −32013 | `not_in_group` | an `absorb` uuid that is not an **actionable member** of this group — outside the group, already dispositioned, or (rung 6) still an undispositioned member that has left `tier='journal' AND active=1`, so a serve would record it `vacated`; also an empty `absorb` list | `{group_id, uuids}` — **uuids only**; no state, version or prose, so the error is not an existence oracle, and the rung-6 case discloses nothing new because that caller passed the receipt check. Recovery is `next_group`, which records the disposition (§"Validation precedence") |
+| −32013 | `not_in_group` | an `absorb` uuid that is not an **actionable member** of this group — outside the group, already dispositioned, a member of a group that is still `pending` and so has delivered no version to act on, or (rung 6) still an undispositioned member that has left `tier='journal' AND active=1`, so a serve would record it `vacated`; also an empty `absorb` list | `{group_id, uuids}` — **uuids only**; no state, version or prose, so the error is not an existence oracle, and the rung-6 case discloses nothing new because that caller passed the receipt check. Recovery is `next_group`, which records the disposition or delivers the pending group (§"Validation precedence") |
 | −32014 | `bad_merge_target` | `merge` target is not in this group's persisted authorization set, or is no longer `tier='long_term' AND active=1` | `{group_id, uuid, reason}` with `reason ∈ not_authorized \| not_targetable`. `not_authorized` covers every uuid outside the authorization set **whether or not it exists**, deliberately, so the two cases are indistinguishable to the caller |
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
-| −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry once. Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
+| −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
 | −32021 | `index_failed` | embedding or index maintenance failed; the transaction rolled back | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
 | −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook **prints nothing** on this, like every other failure (§"Degraded modes") |
 | −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook **prints nothing** on this, like every other failure |
@@ -1221,10 +1380,17 @@ The five verbs above, plus:
 - `plan_groups()`, `next_group()`, `apply_merge(...)`, `apply_promote(...)`, `apply_discard(...)` — D29's
   deterministic grouping plus the writes behind the four consolidator tools. `plan_groups` is called implicitly
   by `next_group` when the store has **no effectively-active run** — `status='active' AND expires_at ≥ now` —
-  whoever owns it, so the skill never has to call it explicitly and an owner whose own lease lapsed recovers by
-  the same path a crash takeover uses (§"Consolidation lifecycle", `schema.md` invariant 17). An
+  whoever owns it, so an owner whose own lease lapsed recovers by
+  the same path a crash takeover uses. It is **also** called explicitly by `zikaron-mcp` under the consolidator
+  agent config — **immediately before the first `next_group` that client forwards, never when the client
+  starts, and at most once *successfully* per client process** (it may re-attempt while it has not yet
+  succeeded), since taking the consolidation lock before the model has asked for work
+  would displace a live worker on a spawn that then does nothing. That call is the takeover, and it is the only
+  reason the takeover path is reachable at all (§"Consolidation lifecycle") (§"Consolidation lifecycle", `schema.md` invariant 17). An
   effectively-active run belonging to a **different `(session_id, pid)` owner** yields
-  `{busy: true, holder_session, holder_pid, expires_at}` instead, from both this RPC and `next_group`. The
+  `{busy: true, holder_session, holder_pid, expires_at}` from `next_group` — but an **explicit**
+  `plan_groups` call **takes that run over**, closing it `taken_over`, because a human invoking the skill
+  again is the only available evidence that its holder has stopped (§"Consolidation lifecycle"). The
   pair rather than the session, because two consolidators launched from one kiro session now share a
   `session_id`; `holder_pid` is returned so same-session contention is diagnosable rather than silent.
 

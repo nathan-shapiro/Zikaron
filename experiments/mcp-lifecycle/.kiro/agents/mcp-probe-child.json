@@ -1,0 +1,21 @@
+{
+  "name": "mcp-probe-child",
+  "description": "Throwaway: calls the probe MCP server and reports the exact text it returned.",
+  "model": "claude-haiku-4.5",
+  "prompt": "You are a measurement fixture. Call the probe_ping tool exactly once with the caller value you are given, then report the tool's returned text VERBATIM and nothing else.",
+  "mcpServers": {
+    "probe": {
+      "command": "/usr/bin/python3",
+      "args": [
+        "/home/nathan/Zikaron/experiments/mcp-lifecycle/probe_server.py"
+      ],
+      "timeout": 30000
+    }
+  },
+  "tools": [
+    "@probe"
+  ],
+  "allowedTools": [
+    "@probe"
+  ]
+}

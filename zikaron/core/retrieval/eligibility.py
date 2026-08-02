@@ -95,6 +95,25 @@ CONSUMER_FILTERS: Final[Mapping[Consumer, ConsumerFilter]] = MappingProxyType(
 )
 
 
+def narrowing(consumer: Consumer) -> str | None:
+    """The single filter this consumer adds on top of the base predicate, as SQL over
+    `MEMORY_ALIAS`.
+
+    Exposed because two paths outside retrieval have to answer "does this one row still satisfy that
+    filter": a consolidation serve re-validates the members it is about to deliver, and the
+    consolidator ladder's rung 6 re-checks state on rows it has already authorized. Both use this
+    string in a `WHERE` of their own rather than re-expressing the condition in Python, and that is
+    a structural choice rather than a stylistic one — a hand-written `row.tier is Tier.JOURNAL and
+    row.active` is a **second statement** of a rule the design says has exactly one home, and it
+    would keep passing while this table moved underneath it.
+
+    Returns:
+        The consumer's clause, or `None` where the design states no narrowing — for `surface` and
+        `search`, where every eligible row is admitted and there is nothing to re-check.
+    """
+    return CONSUMER_FILTERS[consumer].predicate
+
+
 @dataclass(frozen=True, slots=True)
 class Scope:
     """Which rows one read may see: a consumer, and the two facts the design lets it vary.

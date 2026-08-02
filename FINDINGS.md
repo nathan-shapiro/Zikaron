@@ -73,7 +73,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
 + the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
-(retrieval) and M6 (write path + D15 dedup) complete and reviewed to APPROVED; M7 (consolidation) is next.** D1–D33 settled. Grounding from
+(retrieval), M6 (write path + D15 dedup) and M7 (consolidation) complete and reviewed to APPROVED; M8 (D30's six signals as SQL) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -270,6 +270,76 @@ which version it presents, since D26's read-before-write is a receipt fact, not 
 game. The fix mirrors what `retrieval_fixtures.Harness.retire` already does for the identical
 reason: fetch first, to earn the receipt the real ladder requires.
 
+**M7 shipped `core/consolidation/`** (`context.py`, `runs.py`, `groups.py`, `rowstate.py`,
+`grouping.py`, `planning.py`, `payload.py`, `candidates.py`, `serving.py`, `authorization.py`,
+`verbs.py`) — D29's grouping, the run and group state machine with its leases, and the four
+consolidator verbs. **790 tests, 99.72% branch coverage on `zikaron/core`, 29 injected mutations, all
+29 caught. Reviewed to `APPROVED` over two rounds** (`reviews/m7-consolidation-review.md`).
+**Ten things the design left to be inferred were settled in `design/` first**, the load-bearing ones
+being: **group order is `(created_at, uuid)`, named once**, because five things are defined over it
+(delivery order, `remaining_uuids`, the gist concatenation, the shard cut, `order_key`'s own minimum)
+and a statement of it per site is five chances to drop the tiebreak; **an anchored group gets no
+cohesion pass**, because the anchor *is* its cohesion criterion while an orphan set has no common
+centre; **the anchor is the highest-*ranked* record clearing the floor**, not rank 1 gated — the two
+readings are both available from one sentence and give different partitions, since RRF fuses two arms
+while `s(X → Y)` is a dense quantity; **`n_gists_used = 0` serves no candidates at all**, because
+`candidates` is a merge *authorization* set and a query assembled from the prefix alone would
+authorize whichever records sit nearest nothing; **a `pending` group named by a write verb answers
+`not_in_group`**, the one status rung 2's own list omitted; and **invariant 14 was rewritten**, because
+it called `run_id` internal while the `next_group` payload has always carried it — resolved as a
+carve-out rather than a removal, since no verb accepts `run_id` and it authorizes nothing.
+Three structural choices worth keeping. **The two row-state re-checks evaluate
+`eligibility.CONSUMER_FILTERS`' own SQL clause** rather than mirroring it in Python: the serve's
+vacating test and the ladder's rung 6 must apply the *identical* predicate — the design says so
+twice — and `row.tier is Tier.JOURNAL and row.active` would be a second statement of a rule with one
+home, surviving a change to that table while still passing. **`s(X → Y)` moved to
+`retrieval/similarity.py`**, because all three cosine cutoffs threshold one quantity and two
+implementations of it would put a pair on opposite sides of a floor depending on which caller asked.
+And **a version conflict is *returned* as a typed `GroupConflict` while `no_read_receipt` is
+*raised*** — the tool surface states the conflict as a response shape carrying `remaining_uuids`,
+which only a read inside the transaction can produce, so returning it keeps that read where it belongs
+and makes the committed audit trail ordinary rather than a carve-out.
+**An operator decision reversed the round-1 blocker's *remedy*, and sharpened the reasoning behind it.**
+The blocker itself was real — `plan_groups` displaced a live worker with nothing stating that it may — but
+the fix I chose, refusing with `{busy: true}`, was wrong about the requirement. The user pointed out the
+case it strands: refusing pins the store for up to `run_lease` on a worker that has stopped, and **nothing
+inside the store can tell a stopped worker from a slow one**. A lease is a timer. A pid check is better than
+it looks — measured, a consolidator's MCP client normally exits with its own subagent — but it cannot carry
+the decision: it answers whether a process exists, never whether a worker will progress; pid reuse can return
+a false *alive* and prolong the very lockout being diagnosed; the service and the client are not guaranteed a
+shared pid namespace; and whether a **cancelled** turn tears the client down is unmeasured
+(`research/kiro-mcp-lifecycle-probe.md`). The one piece of evidence that exists is outside
+the store — a human invoking the skill again — and `plan_groups` is where it arrives. What D32's tool
+omission buys is narrower than "no model can reach it": a model confined to a configured tool surface cannot
+*request* a takeover, while the consolidator's own client calls the RPC by design — at most once
+*successfully* per process, immediately before the first `next_group` it forwards — and any same-uid process
+can speak to the socket directly. So **an explicit `plan_groups` now takes the run
+over unconditionally**, `next_group` still refuses a stranger, and the displaced run is closed
+**`taken_over`** rather than `abandoned` — a new `RunStatus`/`RunPhase` value, because a user retrying in
+one kiro session presents the same `session_id` and only a different pid, so nothing else would separate
+"the holder restarted its own run" from "the holder was displaced". What makes this safe is the ladder
+rather than a convention: rung 2 requires a group's run to be owned by the caller *and* effectively active,
+so the displaced worker can commit **nothing** after the takeover instant — asserted directly, not argued.
+The general lesson is about the *estimand* again: I had been treating "is this worker still entitled to the
+lease" as answerable from stored state, and it is not; the only liveness signal available is a human
+action, and a design that refuses to use it substitutes a timer for evidence.
+
+**What round 1 actually found, stated so it cannot be read as the current design.** `plan_groups` called
+the neutral planning core directly, and that core's first act closes any stored `active` run as
+`abandoned` with no ownership test — so a second worker displaced a live one through the explicit RPC
+while `next_group` answered `{busy: true}`, and *silently*, because the victim's next call found its own
+run abandoned and was told `group_expired`. Two things were wrong and only one survived review: the
+**silence** was a real defect, and the **absence of a stated policy** was too, since the code and
+`architecture.md` disagreed. My remedy — refusing with `{busy: true}`, and a `PlanOutcome = Run | Busy`
+result — was overturned by the operator for the reason above; that union and its test helper are gone,
+and takeover is unconditional. What survives from round 1 is the diagnosis of *how* I got there: my
+docstring reasoned that the check "belongs where the busy shape can be returned", which is true of
+`next_group` and false of the reachable entry point beside it — capability answered in place of
+reachability. **Round 1's second blocker was an invariant test that could not fail**: invariant 13's guard counted one
+`memory_fts` row, and an external-content table has one row per content row *whatever was indexed*, so
+it would have passed a merge that indexed only the gist. It now forces the content across several dense
+chunks and matches a nonsense token appearing only in the last paragraph.
+
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
 **no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
@@ -307,7 +377,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ✓ |
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18 and 20 tested (19 moved to M7, which owns the table it constrains); one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ✓ |
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ✓ |
-| M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` | ☐ |
+| M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` from `next_group` | ✓ |
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ☐ |
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ☐ |
 | M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ☐ |
@@ -345,6 +415,27 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
    template wearing six hats. `token_count` and the `truncated` canary are instrumented so revisiting
    `chunk_max_tokens` — and chunking itself — becomes a measurement.
+10. **Takeover's caller is specified and its premises are now measured — one item remains open.** The
+   consolidation lease is taken over by an explicit `plan_groups`, on the reasoning that a human
+   reinvoking the skill is the only liveness evidence that exists. A targeted review caught that nothing
+   *converted* that invocation into the call: a fresh consolidator's own first tool call is `next_group`,
+   which refuses a live foreign run, so the takeover path was unreachable through the real client path.
+   The bridge is now specified — `zikaron-mcp` calls `plan_groups` with its own `(session_id, pid)`,
+   **lazily, immediately before the first `next_group` it forwards, and at most once *successfully* per
+   client process** — and it is an M10/M12 done-when.
+   **Both premises were measured 2026-08-02** (`research/kiro-mcp-lifecycle-probe.md`): kiro runs one MCP
+   server process **per agent instance**, so each invocation carries its own fresh takeover guard — the
+   process supplies the guard, not a limit on attempts, since a failed plan displaces nobody; and the handshake is
+   **eager**, which is why the call is made lazily on the first forwarded `next_group` — a start-wired call
+   would take the
+   lock before the model had been asked anything, so a spawn that then did nothing would displace a live
+   worker for nothing. The operator's constraint, stated directly: *do not take the consolidation lock
+   unless we plan to consolidate.* **Still open:** whether kiro ever restarts a client mid-subagent for its
+   own reasons, which would supply a fresh guard for the next forwarded `next_group` to consume with no new
+   human invocation behind it. Three instances showed no such restart,
+   which is weak evidence at that sample size, and nothing depends on it being false — a spurious takeover
+   costs one worker's in-flight reasoning, never a journal row.
+
 4. **Hook→service transport: designed, and now smoke-tested (M0, spike 3).** D31 settles the shape.
    **Resolved 2026-08-01:** RPC round-trip latency (cold start-if-absent ~101 ms end to end, dominated by
    interpreter start; warm p50 0.146 ms over an established connection); `busy_timeout` at 5 s behaves exactly
@@ -636,6 +727,61 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   is why the FTS5 query constructor quotes terms and hands them to SQLite's own tokenizer instead of
   reimplementing `unicode61`.
 
+- **Nine of twenty-six mutations survived the first pass, and every survivor was a fixture in which two
+  distinct rules coincided.** Not a missing test — a test that could not tell its own property from a
+  neighbouring one. Every fixture gave its rows a distinct `created_at`, so deleting group order's uuid
+  tiebreak changed nothing (the exact M5 finding, in a new module). The anchor test passed under both
+  readings of "the top-ranked record clearing the floor", because on that fixture rank 1 *did* clear it;
+  separating them needed a fixture where the fused rank 1 **fails** the floor, built by giving the far
+  record every lexical term and the near record none, so RRF and the directed cosine disagree by
+  construction. "Candidates exclude every member" looked defended and was not: a journal member cannot
+  surface under a `tier='long_term'` filter anyway, so the exclusion only bites once a member has been
+  promoted **in place** — which is the one state that makes it simultaneously a member and a long-term
+  record. And the group query's whole reason for existing — counting the *assembled* string rather than
+  the sum of its parts — was untestable while the fixture used an empty prefix, since with nothing on
+  the left of the join the two counts are equal. **The practice this yields is sharper than "write more
+  tests": for each guard, name the smallest state in which it is the only thing deciding the outcome,
+  and build that state.** A fixture that satisfies a guard incidentally is indistinguishable from one
+  that defends it, and coverage reports both as green.
+- **Two guards turned out to be provably unobservable, and disclosing that was better than either
+  deleting them or pretending a test covered them.** `disposition_members`' `AND disposition IS NULL`
+  cannot fire differently, because rung 2 already refuses an `absorb` uuid that is not an undispositioned
+  member; `next_candidate`'s serve-before-pending `CASE` cannot change which row comes back, because
+  every transition out of the candidate set removes a group rather than returning it to `pending`, so
+  served groups are always an order-prefix. Both stay, and both docstrings now say plainly that a
+  mutation removing them survives the suite and why the code keeps them anyway — the second one because
+  its redundancy rests on a reachability argument about the *whole* state machine rather than on anything
+  local, so encoding the shortcut would silently become wrong if a future transition reopened a group.
+  The general shape: **a guard whose redundancy depends on a non-local argument should be written as the
+  design states it, and the fact that no test can defend it should be written down where the guard is.**
+- **Coverage found dead code that no reasoning had.** `groups.member_count` existed to enforce
+  `schema.md`'s "`absorb` ≤ the group's member count", and once rung 1 refused a repeated uuid and rung 2
+  required every element to be a member, the bound followed and nothing called the function. Worth
+  noting because it is the opposite failure from the usual one: not a line without a test, but a line
+  without a *caller*, which only the coverage report was in a position to notice.
+- **A fix that changes a rule has to be propagated to every summary of that rule, and four consecutive review
+  rounds caught me failing at it — each time on the *previous* round's own fix.** Round 3 found the corpus
+  stating both the overturned refusal policy and the new takeover one. Round 5 found the narrowed
+  reachability claim ("no model can reach it" → "no model can *request* it") applied in one paragraph and
+  contradicted two paragraphs later. Round 6 found "at startup" surviving in five places after the trigger
+  moved to the first forwarded serve. Round 7 found "exactly once" surviving everywhere after the bound moved
+  from attempts to *successes* — a defect **created by round 6's fix**, which is the part worth keeping: each
+  repair left the corpus internally inconsistent in a new way, so "did I fix the thing the reviewer named" is
+  the wrong completion test. What finally worked was mechanical rather than attentive: for each changed rule,
+  grep the *phrase family* it is stated in — `at startup`, `exactly once`, `once per process`, `retry once` —
+  across design, FINDINGS, research, experiments and code, and work the list to empty before answering. The
+  pattern is exactly what Zikaron is for: a rule updated in the normative place and left standing in every
+  place a reader is more likely to look is a confidently stale memory, and the reader cannot tell which copy
+  is current.
+- **The same argument that justifies a check can hide where the check belongs.** M7's one blocker was a
+  rule I had reasoned my way out of implementing: `plan_groups` needs an ownership test, my docstring
+  said the test "belongs where the busy shape can be returned", and that sentence is true of
+  `next_group` and false of `plan_groups`, which is a reachable RPC sitting right beside it. The
+  reasoning was locally sound and answered the wrong question — *can* this layer return the shape, rather
+  than *is* this layer an entry point. The tell, in hindsight, is that the docstring argued about where a
+  check belongs at all: a function that has to explain why it is *not* checking something is a function
+  whose callers are not all accounted for.
+
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
@@ -656,10 +802,22 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   `Operator finding` note recording what the 2026-08-01 measurement did to rounds 3–8's remediations —
   `reviews/design-corpus-review.md`.
 - **kiro session-id probe, measured** — the evidence that collapsed the label ladder to two rungs (D31). Five
-  hook firings across two agents: payload `session_id` == `KIRO_SESSION_ID` for top-level sessions (3/3),
-  **differs** for subagent sessions (2/2, payload carries the subagent's own id), and `KIRO_SESSION_ID` is
-  present in hook processes, shell subprocesses and live MCP servers while absent from kiro's own —
-  `research/kiro-session-id-probe.jsonl`.
+  hook firings across two agents: payload `session_id` == `KIRO_SESSION_ID` for top-level sessions (3/3) and
+  **differs** for subagent sessions (2/2, payload carries the subagent's own id) —
+  `research/kiro-session-id-probe.jsonl`. **One claim previously attributed to this file is withdrawn:** that
+  it showed `KIRO_SESSION_ID` present in *live MCP servers*. Those five records contain no MCP process at all;
+  whatever established it was never persisted. The MCP-side fact is now measured properly in the probe below,
+  which supersedes it.
+- **kiro MCP lifecycle probe, measured** — **one MCP server process per agent instance.** Two spawns of one
+  subagent config gave two distinct pids, each a child of the session's single `acp` process, each with its own
+  `initialize` handshake, each exiting when its subagent finished; all three instances of the session shared one
+  `KIRO_SESSION_ID`, so the **pid is the only discriminator**. Confirms three premises — each skill invocation
+  supplies a fresh per-process successful-plan guard (the first forwarded `next_group` may re-attempt
+  `plan_groups` while the client is still `unplanned`, and the first *success* moves it to `ready` so it never
+  plans again), `(session_id, pid)` ownership is sound *and* necessary, and `client_kind` can
+  be a per-process fact — and forced one correction, since the handshake is **eager** (first `tools/call` 1.6 s
+  after `tools/list`), which is why the bridge's call is lazy. Report `research/kiro-mcp-lifecycle-probe.md`,
+  raw records `research/kiro-mcp-lifecycle-probe.jsonl`, harness `experiments/mcp-lifecycle/`.
 - **Embedder benchmark, measured** — the evidence behind D20–D25 and open questions 2 and 8. Preregistered
   effect sizes, 187-memory synthetic corpus, 192 blind prompts authored by an agent that never saw the
   corpus, factorial `tokens`-column ablation, frozen-extractor held-out test, counterfactual
@@ -729,6 +887,30 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   my failed-commit test masked a missing rollback with its own cleanup. Round 3 found the remaining hole in that:
   a rollback that *also* fails leaves a poisoned connection in circulation, on which a write already reported as
   failed can later be published. Every finding accepted — `reviews/m4-indexing-review.md`.
+- **M7 code review** — **eleven rounds**, ending `VERDICT: APPROVED` with no findings. Rounds 1-2 covered the
+  milestone; rounds 3-11 were a **targeted review of run takeover alone**, requested after the operator
+  reversed round 1's remedy, and they are worth reading as a case study rather than a defect list: rounds 3-4
+  found real holes (the corpus stating both policies; takeover having no caller at all, so the path was
+  unreachable through the real client), while **rounds 5-10 each found the same defect in the same kind of
+  place** — a summary, a reference entry, an invariant's explanatory paragraph — never in the normative
+  statement or the code, and each was created by the previous round's own fix. The completion test that finally
+  worked was neither attentiveness nor phrase-matching (the phrases mutate: `once per process` does not match
+  `once per client process`) but a **semantic** sweep: enumerate every occurrence of the *subject*, read the
+  claim each site makes, and check it against the current rule. Round 1's first blocker
+  was a rule I had argued belonged one rung up: `plan_groups` is itself a reachable RPC, and it called a
+  neutral planning core whose first act closes any stored `active` run as `abandoned` with no ownership
+  test — so a second worker could steal an unexpired lease through the explicit entry point while
+  `next_group` correctly answered `{busy: true}`, and silently, since the victim's next call would find
+  its own run abandoned and be told `group_expired`. Round 1's second blocker was an invariant test that
+  could not fail: invariant 13's guard counted one `memory_fts` row, which an external-content table has
+  per content row **whatever was indexed**, so it would have passed a merge that dropped the content's
+  tail. Two improvements were also accepted — neither `promote` form had a failure-injection atomicity
+  test despite having its own transaction wrapper and two distinct mutation sequences, and five
+  production docstrings carried circumstantial review provenance that `coding-standards.md` §5 forbids.
+  Round 2: `APPROVED`, one nitpick — `MAX_CANDIDATES` and `_GIST_JOIN` were left behind in `serving.py`
+  when the candidate query moved to `candidates.py`, so the cap the shipped prompt promises and the join
+  the token budget is counted over each had two agreeing declarations, which no test could catch —
+  `reviews/m7-consolidation-review.md`.
 - **M6 code review** — four rounds, ending `VERDICT: APPROVED`, with a genuine defect in each of the
   first three. Round 1's blocker was the same shape open question 5's own lesson names: the first
   implementation conflated "what the dense arm's bounded probe happened to surface" with the

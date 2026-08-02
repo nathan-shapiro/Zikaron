@@ -47,7 +47,7 @@ from zikaron.core.indexing.chunking import ChunkPlan
 from zikaron.core.indexing.encoder import Encoder
 from zikaron.core.indexing.vectors import IndexIdentity
 from zikaron.core.records import memory
-from zikaron.core.records.memory import CallParams, Memory, Rewrite
+from zikaron.core.records.memory import CallParams, Memory, Rewrite, Tier
 from zikaron.core.store import transactions
 from zikaron.core.store.store import Store
 
@@ -253,15 +253,25 @@ def _amend_detail(plan: ChunkPlan, *, from_version: int, to_version: int) -> Ame
     )
 
 
-async def remember_within_transaction(
-    db: aiosqlite.Connection, *, prepared: PreparedIndex, call: IndexedCall
-) -> IndexedWrite:
-    """`remember`'s work, assuming the caller already holds an open transaction.
+async def insert_row_and_indexes(
+    db: aiosqlite.Connection,
+    *,
+    prepared: PreparedIndex,
+    call: IndexedCall,
+    tier: Tier = Tier.JOURNAL,
+) -> Memory:
+    """Insert one new memory with both of its indexes and the writer's own-write receipt.
 
-    Neither commits nor rolls back — the caller owns that decision, through
-    `records.memory.commit_or_roll_back`, for the reasons that function's own docstring gives.
+    Everything a newly authored record needs and nothing that names *which verb* authored it: no
+    event is emitted here, because the two verbs that create a row emit different kinds — `remember`
+    and `promote`'s `created` role — and a shared function that emitted one of them would have to be
+    told which, at which point the caller may as well emit it. `tier` is a parameter for the reason
+    `records.memory.create_within_transaction`'s own is: a promoted record is long-term from version
+    1.
 
-    Mints the `own_write` receipt the tool surface promises: the agent authored this prose, so it
+    Assumes the caller's own open transaction, and neither commits nor rolls back.
+
+    Mints the `own_write` receipt the tool surface promises: the caller authored this prose, so it
     may amend the row without fetching it back. Nothing is revoked alongside it, because a uuid that
     did not exist a moment ago has no other receipts.
     """
@@ -270,11 +280,53 @@ async def remember_within_transaction(
         gist=prepared.rewrite.gist,
         content=prepared.rewrite.content,
         session_id=call.ctx.session_id,
+        tier=tier,
     )
     rowid = await _rowid_of(db, created.uuid)
     await lexical.insert(db, rowid=rowid, document=_document(created))
     stored = await _write_index(db, row=created, prepared=prepared, index=call.index)
     await memory.mint_own_write_receipt(db, uuid=stored.uuid, version=stored.version, ctx=call.ctx)
+    return stored
+
+
+async def reindex_rewrite(
+    db: aiosqlite.Connection,
+    *,
+    before: Memory,
+    after: Memory,
+    prepared: PreparedIndex,
+    index: IndexingContext,
+) -> Memory:
+    """Rebuild both indexes for a row whose prose has just been rewritten.
+
+    Called **after** the row's own `UPDATE`, and that order is forced rather than chosen: the
+    lexical resync names the pre-write `gist`/`content` it removes, because `memory_fts` is
+    external-content and letting FTS5 read those values out of the content table would require the
+    removal to run *before* the row update — which is to say before authorization finished, on a
+    path where a rejected write commits its audit trail (`lexical.remove`).
+
+    Shared by every verb that rewrites prose in place — `amend` and `merge` — because the index work
+    is identical once the prose is stored and only the event differs.
+
+    Args:
+        before: the row as authorization found it, whose prose the lexical index still holds.
+        after: the same row as the prose write left it.
+    """
+    rowid = await _rowid_of(db, after.uuid)
+    await lexical.resync(db, rowid=rowid, before=_document(before), after=_document(after))
+    await vectors.delete_chunks(db, memory_uuid=after.uuid)
+    return await _write_index(db, row=after, prepared=prepared, index=index)
+
+
+async def remember_within_transaction(
+    db: aiosqlite.Connection, *, prepared: PreparedIndex, call: IndexedCall
+) -> IndexedWrite:
+    """`remember`'s work, assuming the caller already holds an open transaction.
+
+    Neither commits nor rolls back — the caller owns that decision, through
+    `records.memory.commit_or_roll_back`, for the reasons that function's own docstring gives.
+    """
+    stored = await insert_row_and_indexes(db, prepared=prepared, call=call)
     await memory.log_event(
         db,
         ctx=call.ctx,
@@ -308,10 +360,9 @@ async def amend_within_transaction(
     before, after = await memory.amend_within_transaction(
         db, uuid=uuid, version=version, rewrite=prepared.rewrite, ctx=call.ctx
     )
-    rowid = await _rowid_of(db, uuid)
-    await lexical.resync(db, rowid=rowid, before=_document(before), after=_document(after))
-    await vectors.delete_chunks(db, memory_uuid=uuid)
-    stored = await _write_index(db, row=after, prepared=prepared, index=call.index)
+    stored = await reindex_rewrite(
+        db, before=before, after=after, prepared=prepared, index=call.index
+    )
     await memory.log_event(
         db,
         ctx=call.ctx,

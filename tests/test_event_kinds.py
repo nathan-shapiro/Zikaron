@@ -4,28 +4,44 @@ The section states a kind's detail shape in its own row, except for the two stop
 value sets it gives in a second table. Both are read here, so neither can drift alone.
 """
 
+import re
+
 import pytest
 
 from tests.design_tables import (
     literal,
+    parse_fenced_code,
     parse_field_values,
     parse_name_lists,
     parse_payload,
+    section_lines,
+    sql_statements,
     table_with_columns,
 )
+from zikaron.core.consolidation import runs
+from zikaron.core.consolidation.runs import RunStatus
 from zikaron.core.errors import ErrorCode
 from zikaron.core.events import (
     EVENT_SPECS,
     AmendDetail,
     ArmTermination,
+    AuthoredSize,
+    ClientKind,
+    ConsolidateRunDetail,
+    DedupOfferedDetail,
     Demotion,
     DetailField,
+    DiscardDetail,
     EventDetail,
     EventKind,
     EventSpec,
     FetchDetail,
+    GroupRef,
+    GroupServedDetail,
+    MergeDetail,
     MergeRole,
     NoReceiptDetail,
+    PromoteDetail,
     PromoteForm,
     PromoteRole,
     QueryShape,
@@ -321,6 +337,40 @@ def test_every_typed_detail_matches_its_kinds_declared_fields() -> None:
             verb="amend", expected_version=1, actual_version=2
         ),
         EventKind.NO_RECEIPT: NoReceiptDetail(verb="amend", version_presented=1),
+        EventKind.DEDUP_OFFERED: DedupOfferedDetail(created_uuid="u1", cosine=0.9, rank=1),
+        EventKind.MERGE: MergeDetail(
+            group=GroupRef(group_id="g1", run_id="r1"),
+            role=MergeRole.ABSORBED,
+            from_version=1,
+            to_version=2,
+            n_absorbed=2,
+            size=AuthoredSize.none_authored(),
+        ),
+        EventKind.PROMOTE: PromoteDetail(
+            group=GroupRef(group_id="g1", run_id="r1"),
+            role=PromoteRole.FLIPPED,
+            form=PromoteForm.IN_PLACE,
+            from_version=1,
+            to_version=2,
+            n_absorbed=1,
+            size=AuthoredSize(token_count=10, gist_tokens=3, n_chunks=1, truncated=False),
+        ),
+        EventKind.DISCARD: DiscardDetail(
+            group=GroupRef(group_id="g1", run_id="r1"),
+            reason="superseded by the pinned version",
+            from_version=1,
+            to_version=2,
+            n_absorbed=1,
+        ),
+        EventKind.GROUP_SERVED: GroupServedDetail(
+            group=GroupRef(group_id="g1", run_id="r1"),
+            role=ServeRole.MEMBER,
+            version_served=3,
+            serve_count=1,
+        ),
+        EventKind.CONSOLIDATE_RUN: ConsolidateRunDetail(
+            run_id="r1", phase=RunPhase.PLANNED, n_groups=2, n_members=5, n_deferred=0
+        ),
     }
     for kind, detail in built.items():
         assert detail.kind is kind
@@ -329,24 +379,98 @@ def test_every_typed_detail_matches_its_kinds_declared_fields() -> None:
         EVENT_SPECS[kind].validate(payload)
 
 
-def test_the_kinds_with_no_producer_yet_have_no_value_type() -> None:
-    """The five remaining consolidation kinds are deliberately untyped **because nothing writes
-    them yet**.
+def _value_types_by_name() -> dict[str, EventKind]:
+    """Every `EventDetail` subclass's declared kind, keyed by class name.
 
-    A dataclass nothing constructs is dead code, so the milestone that ships those verbs adds its
-    value type in the same change — and it cannot forget, since `log_event` takes an `EventDetail`
-    and there is no dict-shaped way in. Asserted rather than left as a comment so that adding one of
-    these producers without its type, or adding a type without its producer, is visible here.
-    `dedup_offered` is no longer in this set: D15's `remember` writes it, and `DedupOfferedDetail`
-    is its typed value.
+    Keyed by name rather than collected as a list, because `@dataclass(slots=True)` cannot add
+    `__slots__` to an existing class and so **returns a new one**: the class the `class` statement
+    created stays registered in `EventDetail.__subclasses__()` beside its slotted replacement, and
+    every subclass therefore appears twice. Counting the raw list would report every kind as
+    duplicated; keying by `__qualname__`, which both copies share, leaves exactly one entry per
+    declared type — which is what makes "two types claim one kind" a checkable statement.
     """
-    typed = {
-        subclass.kind for subclass in EventDetail.__subclasses__() if hasattr(subclass, "kind")
+    return {
+        subclass.__qualname__: subclass.kind
+        for subclass in EventDetail.__subclasses__()
+        if hasattr(subclass, "kind")
     }
-    assert set(EventKind) - typed == {
-        EventKind.MERGE,
-        EventKind.PROMOTE,
-        EventKind.DISCARD,
-        EventKind.GROUP_SERVED,
-        EventKind.CONSOLIDATE_RUN,
+
+
+def test_every_kind_has_exactly_one_typed_value() -> None:
+    """No kind may be logged without a typed value, and none is left without one.
+
+    This test began life asserting the *complement* — which kinds deliberately had no producer yet,
+    because a dataclass nothing constructs is dead code. Every kind now has both, so the assertion
+    inverts: the set difference is empty in **both** directions. Left as a test rather than deleted,
+    because the property it defends is the one that made the earlier form safe. A new `EventKind`
+    added without its value type fails here, and `log_event` takes an `EventDetail` so there is no
+    dict-shaped way to write one anyway; a value type declaring a `kind` no longer in `EventKind`
+    fails here too.
+    """
+    typed = _value_types_by_name()
+    assert set(typed.values()) == set(EventKind)
+    assert len(typed) == len(set(typed.values())), f"two value types claim one kind: {typed}"
+
+
+_CLIENT_KIND_CHECK = re.compile(r"client_kind TEXT NOT NULL CHECK \(client_kind IN \(([^)]*)\)\)")
+
+
+def _create_statement(prefix: str) -> str:
+    """One `CREATE TABLE` statement from `schema.md`'s DDL block, normalized, read at test time.
+
+    Located by name rather than by position, and required to be **unique**: a second copy of one
+    table anywhere in that block — a revision added beside the old one — would otherwise be read as
+    whichever came first, which is the stale-read failure this family of guards exists to prevent.
+    """
+    ddl = parse_fenced_code(section_lines(DOCUMENT, "## Tables"), "sql")
+    found = [statement for statement in sql_statements(ddl) if statement.startswith(prefix)]
+    assert len(found) == 1, f"{len(found)} statements matching {prefix!r} in {DOCUMENT} §Tables"
+    return found[0]
+
+
+def test_client_kinds_match_the_event_table_check_constraint() -> None:
+    """`ClientKind` is a value set the schema states, so it is read from the schema.
+
+    Read from `event.client_kind`'s `CHECK` rather than transcribed beside it, for the reason every
+    drift guard here exists: a hand-typed second copy catches a code edit and is blind to a design
+    edit, which is the likelier direction. `read_receipt.client_kind` carries the same vocabulary
+    and deliberately declares no `CHECK` of its own — it is half of that table's primary key, and
+    the schema's comment says so — so there is one statement of the set and this reads it.
+    """
+    match = _CLIENT_KIND_CHECK.search(_create_statement("CREATE TABLE event ("))
+    assert match is not None, "event.client_kind's CHECK constraint was not found"
+    stated = tuple(value.strip().strip("'") for value in match.group(1).split(","))
+    assert tuple(kind.value for kind in ClientKind) == stated
+
+
+_RUN_STATUS_CHECK = re.compile(r"status TEXT NOT NULL CHECK \(status IN \(([^)]*)\)\)")
+
+
+def test_run_statuses_match_the_consolidation_run_check_constraint() -> None:
+    """`RunStatus` is a value set the schema states, so it is read from the schema.
+
+    `RunPhase` was already guarded — the `consolidate_run` detail table states its members, and the
+    test above compares them — while `RunStatus` was not, even though the two are deliberately kept
+    1:1 by `runs._CLOSING_PHASE`. A status added to the DDL without its enum member, or the
+    reverse, would have surfaced as a `CHECK` violation on the first store that tried to write it.
+    """
+    statement = _create_statement("CREATE TABLE consolidation_run (")
+    match = _RUN_STATUS_CHECK.search(statement)
+    assert match is not None, "consolidation_run.status's CHECK constraint was not found"
+    stated = tuple(value.strip().strip("'") for value in match.group(1).split(","))
+    assert tuple(status.value for status in RunStatus) == stated
+
+
+def test_every_terminal_run_status_has_a_phase_to_record_it() -> None:
+    """`runs.close` maps a terminal status onto the `consolidate_run` phase that records it, and
+    looks it up with `[]` — so a status added without a phase raises `KeyError` at the one call
+    site that closes a run, on whichever path first reaches it.
+
+    Asserted as an exhaustive set equality rather than a spot check: the mapping must cover
+    **every** status except `ACTIVE`, which is not a close, and must invent none. That keeps the
+    two vocabularies 1:1 by test rather than by the convention of having written them out together.
+    """
+    assert set(runs._CLOSING_PHASE) == set(RunStatus) - {RunStatus.ACTIVE}
+    assert {phase.value for phase in runs._CLOSING_PHASE.values()} <= {
+        phase.value for phase in RunPhase
     }

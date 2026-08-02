@@ -65,7 +65,18 @@ different long-term records from identical inputs and neither would be reproduci
    they are simply not offered as targets.
 
    The hybrid decides *which* record is the candidate and the cosine floor decides *whether* it is close
-   enough. Both halves matter, and the lexical half is worth stating at exactly its true strength, because an
+   enough. **Read those two over the ranked list, not over its first element**: the anchor is the
+   *highest-ranked record that clears the floor*, so a scan down the fused order stops at the first
+   qualifying record. The other reading — take rank 1, gate it, and orphan the entry when rank 1 falls
+   short — is available from the same sentence and produces a different partition, because RRF fuses
+   two arms while `s` is a dense quantity, so a record the lexical arm alone surfaced can outrank one
+   with a far higher directed cosine. Neither reading is unsafe (a spurious anchor shows the
+   consolidator one record it can decline; a missed one becomes an orphan group it can promote), which
+   is precisely why the choice has to be *stated* rather than argued from consequences — and the scan
+   is the reading that matches D15's dedup, which walks its own fused pool applying `dedup_threshold`
+   per row rather than gating rank 1 alone. One construct, one reading.
+
+   Both halves matter, and the lexical half is worth stating at exactly its true strength, because an
    earlier draft overstated it while a later section correctly hedged it — a contradiction inside one document.
    The precise position:
 
@@ -91,6 +102,15 @@ different long-term records from identical inputs and neither would be reproduci
 
    The floor is what stops a store with three long-term records from anchoring everything to whichever one
    happens to rank first.
+
+   **An anchored group is grouped by its shared anchor and by nothing else — step 2's cohesion pass does
+   not run over it**, and that asymmetry is deliberate rather than an omission. The anchor *is* the
+   cohesion criterion here: every member of the group cleared `anchor_cutoff` against the same record, so
+   the group already has a common centre and the consolidator is being shown "this record, and every new
+   observation bearing on it". Complete linkage among the members would split that set on
+   member-to-member similarity the decision does not rest on, and would hand the consolidator two groups
+   with the same anchor for no gain. Step 2's pass exists precisely because an orphan set has **no**
+   common centre, so single linkage over its edges is the only thing holding it together.
 2. **Cluster the orphans, then check cohesion.** Entries with no anchor above cutoff are grouped among
    themselves using the same hybrid retrieval — each journal entry is a query over the other journal
    entries, again with the first-chunk embedding on the dense arm and its own `gist + content` on the lexical
@@ -150,8 +170,10 @@ different long-term records from identical inputs and neither would be reproduci
    persisted as `consolidation_group.order_key`, so every shard of one subgroup carries the same key, sorts
    adjacently, and is ordered among its siblings by `shard_index` — which is the only reason a third component
    is needed at all. The store updates as we go, so transitive merging emerges without union-find.
-4. **Cap group size, and split deterministically.** A cohesive subgroup larger than `group_max`
-   (default **12**) is split into consecutive shards of ≤ `group_max` in `(created_at, uuid)` order —
+4. **Cap group size, and split deterministically.** A pre-shard group larger than `group_max`
+   (default **12**) — a cohesive subgroup from step 2, or the member set of one anchor from step 1, since
+   both are sharded by the same rule — is split into consecutive shards of ≤ `group_max` in
+   `(created_at, uuid)` order —
    "consecutive in the group's own order" is the partition rule, so the same subgroup always shards the same
    way. Each shard is served as its own group with `shard: {index, of}` in the payload, and **the anchor is
    repeated into every shard** with a flag, because a shard without its anchor cannot make a merge decision.
@@ -163,6 +185,14 @@ different long-term records from identical inputs and neither would be reproduci
    `shard_index` a meaningful third component of step 3's total order (`schema.md` invariant 19).
    Mirrors `~/Memory`'s `sleep_batch=40` bound on per-pass input, at a size chosen for the model's attention
    rather than copied.
+   **Group order, named once, because five things are stated in terms of it.** A group's members are
+   ordered by **`(created_at, uuid)`** — the same pair step 4 shards on, and the same pair whose minimum
+   supplies `order_key`. That one order is what `journal_entries` is delivered in, what the gist
+   concatenation below concatenates in, what `remaining_uuids` is reported in
+   (`architecture.md` §"Row-level completion"), and what "consecutive in the group's own order" means in
+   step 4. `created_at` alone is not a total order — concurrent writes really do share the string — which
+   is why the uuid is part of it rather than a tiebreak applied only where a collision was noticed.
+
 5. **Membership is frozen at plan time; the payload is rebuilt at serve time.** The plan is persisted
    (`schema.md` §consolidation tables), so a `group_id` survives a service restart and cannot be handed to a
    second consolidator. Group *membership* is a snapshot — a journal row written after planning waits for the
@@ -203,6 +233,18 @@ consolidator prompt promises:
   half-truncated gist is a garbled query while a shorter well-formed concatenation is not. Deterministic,
   because group order is total. The rule is `retrieval.md` §"Query construction"; this is the one place in the
   system where an *external* query is assembled from stored prose.
+
+  **Gists are joined by a single newline**, which matters only because the budget is checked on the
+  assembled string and a separator is part of what is assembled. It is the same join an internal query's
+  lexical side uses for `gist + content`, so there is one convention rather than two.
+
+  **`n_gists_used = 0` means the payload carries no candidates at all**, and that is the answer rather than
+  a fallback. It is reachable only when not even the *first* gist of the served set fits beside the
+  configured prefix — a pathological `embed_prefix_query` against a stored gist longer than the current
+  `gist_max_tokens` — and the alternative is worse than empty: `candidates` is the persisted set a later
+  `merge` is authorized to target, so a query assembled from a prefix and nothing else would authorize
+  whichever records happen to sit nearest an empty query. An empty candidate list is already normal (see
+  the bullet below), and `n_gists_used` is what tells an operator which of the two reasons produced it.
 - **The `rank` of each candidate is included** so a run is reproducible from the payload alone, and the
   anchor plus candidates are **persisted** with their served versions and ranks
   (`schema.md` `consolidation_group_candidate`) — that table, not the `group_served` events, is what

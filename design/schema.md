@@ -30,7 +30,7 @@ never-lose guard expressed structurally instead of with a separate boolean.
 `consolidation_group_member.disposition` is a **plan-tracking** column, not a second source of truth: it
 records what a run did so a group's completeness can be checked (invariant 16) and so `remaining_uuids` can
 be computed. The authoritative answer to "is this row consolidated" remains the `memory` row itself, which
-is why an expired or abandoned run loses nothing — and why a member that left the journal between plan and
+is why a run that ends without completing — `expired`, `abandoned` or `taken_over` — loses nothing — and why a member that left the journal between plan and
 serve can simply be marked `'vacated'` without anyone having to reconcile two truths.
 
 ## Tables
@@ -194,7 +194,8 @@ CREATE TABLE consolidation_run (
                                     -- architecture.md rejects a missing envelope `pid` with `bounds`.
   started_at  TEXT NOT NULL,
   expires_at  TEXT NOT NULL,        -- lease; refreshed by every successful call in the run
-  status      TEXT NOT NULL CHECK (status IN ('active', 'complete', 'expired', 'abandoned'))
+  status      TEXT NOT NULL CHECK (status IN ('active', 'complete', 'expired', 'abandoned',
+                                               'taken_over'))
 );
 
 CREATE TABLE consolidation_group (
@@ -539,7 +540,7 @@ computed by whoever wants it — `architecture.md` §"`label_source` is derived,
 | `version_conflict` | **one row per conflicting uuid** in the rejected call | the contested uuid | `{verb, expected_version, actual_version}` |
 | `no_receipt` | **one row per uuid lacking a receipt** in the rejected call | the contested uuid | `{verb, version_presented}` |
 | `group_served` | **one row per row whose prose this serve actually delivered** — one per member of the **served set** (`architecture.md` §"Serving": the group's members with `disposition IS NULL` after re-validation), one per candidate, and one for the anchor when an anchor was delivered. A serve-time-vacated member emits **none**; a vacated anchor emits none; a member dispositioned by an earlier call is not in the served set and so emits none on a re-serve | that uuid | `{group_id, run_id, role:'member'\|'candidate'\|'anchor', version_served, serve_count}` — `version_served` is **NOT NULL**, because the event exists only for a row that was delivered at that version; `serve_count` is the group's delivery count **including this delivery**, so the first delivery emits `1` (invariant 17) |
-| `consolidate_run` | one per run transition | NULL | `{run_id, phase:'planned'\|'complete'\|'expired'\|'abandoned', n_groups, n_members, n_deferred}` |
+| `consolidate_run` | one per run transition | NULL | `{run_id, phase:'planned'\|'complete'\|'expired'\|'abandoned'\|'taken_over', n_groups, n_members, n_deferred}` |
 
 **`promote`'s two forms have two different cardinalities, stated because one physical row can hold two
 roles.** In the `new_row` form the created record and the absorbed members are different rows, so the call
@@ -548,6 +549,17 @@ absorbed member *is* the row that gets flipped, and a singular `role` cannot say
 **exactly one event, `role:'flipped'`, `form:'in_place'`, `n_absorbed: 1`, and no `absorbed` event for that
 uuid.** One mutated row, one event. Every query that counts affected rows or per-write sizes therefore counts
 an in-place promotion once, and the `created`/`flipped` roles remain the complete set of authored-prose rows.
+
+**`consolidate_run`'s three counts describe the run the transition is about, at the moment of the
+transition** — not the run being created, where those differ. `plan_groups` closing a stale run emits that
+run's `expired`/`abandoned`/`taken_over` event with *its* totals and then the new run's `planned` event
+with the new
+ones, so two events of one `op_id` legitimately carry different numbers. `n_groups` and `n_members` are the
+run's own `consolidation_group` and `consolidation_group_member` row counts, which are fixed at plan time and
+therefore identical on every later phase of that run; `n_deferred` is the count of its groups currently
+`status='deferred'`, which is 0 on `planned` and is the only one of the three that can move. Stated because
+"the counts" invites a reader to compute them over whichever run the *call* is about, and a `plan_groups`
+that closes one run and opens another is about two.
 
 **Each arm reports the depth it reached *and why it stopped*, because the depth alone does not say.**
 `retrieval.md` claims both arms report the depth they actually reached; carrying only the *configured*
@@ -1056,8 +1068,14 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
     perfectly healthy.
 13. **FTS5 is unchunked; `vec0` is chunked.** Easy to break by reflex; D28 explains why the asymmetry is
     correct (BM25 already length-normalizes).
-14. **`uuid` is the only handle ever exposed.** `rowid`, `chunk_id`, `run_id` and `event.id` are internal.
-    `group_id` is exposed to the consolidator only.
+14. **`uuid` is the only handle ever exposed *to the primary agent*.** `rowid`, `chunk_id` and `event.id`
+    are internal to every client. `group_id` and `run_id` are exposed to the **consolidator** only, and
+    naming `run_id` internal here without that carve-out contradicted `architecture.md`
+    §`zikaron_next_group`, whose payload has stated `{group_id, run_id, …}` since the lifecycle was written.
+    The carve-out is safe because neither id is a *handle*: `group_id` is the only one any verb accepts, and
+    **no verb accepts `run_id` at all** — it is a correlation id, so that a consolidator's own log line, and
+    the `merge`/`promote`/`discard`/`group_served`/`consolidate_run` events it caused, can be joined to the
+    run that produced them. It reaches no row of `memory` and authorizes nothing.
 15. **One *effectively-active* consolidation run per store at a time** — `status='active' AND
     expires_at ≥ now`. A stored `'active'` row past its lease constrains nobody, including its owner
     (invariant 17). Enforced by that predicate rather than by `status` alone; the lifecycle, including
@@ -1117,10 +1135,26 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
     | — → `active` | `plan_groups` |
     | `active → complete` | whichever transaction first observes that no group of the run is `pending` or `served` — either the write verb that completed the last group, or the `next_group` that finds nothing servable left |
     | `active → expired` | `plan_groups`, closing a pre-existing `active` run whose `expires_at < now` |
-    | `active → abandoned` | `plan_groups`, closing a pre-existing `active` run whose lease has **not** passed |
+    | `active → abandoned` | `plan_groups`, closing a pre-existing `active` run whose lease has **not** passed, called by that run's **own** `(session_id, pid)` owner |
+    | `active → taken_over` | `plan_groups`, closing a pre-existing `active` run whose lease has **not** passed, called by a **different** owner |
 
-    `expired` and `abandoned` are therefore the *same* producer discriminated by one test, which removes an
-    earlier ambiguity: `plan_groups` closes any `active` run and the lease decides which status it writes.
+    `expired`, `abandoned` and `taken_over` are therefore the *same* producer discriminated by two tests, which
+    removes an earlier ambiguity: `plan_groups` closes any `active` run, the lease decides whether the status is
+    `expired`, and ownership decides which of the other two it is. The third value exists because a takeover is
+    a **supported operation** rather than a fault (`architecture.md` §"Consolidation lifecycle": no evidence
+    inside the store distinguishes a dead consolidator from a slow one, so a human reinvoking the consolidation
+    skill is the evidence), and folding it into `abandoned` would make the two indistinguishable in the
+    one case that matters — a user retrying in one kiro session produces the same `session_id` and only a
+    different pid.
+
+    **How a model relates to this transition, stated precisely, because the loose version is wrong.** A human
+    invoking the skill supplies a fresh consolidator client, and that client — not the model — calls explicit
+    `plan_groups` when the model first requests a serve, at most once successfully per process. So a model
+    confined to the configured tool surface cannot *request* this transition: `plan_groups` is in neither tool
+    set, and `next_group`, which is in one, refuses a foreign unexpired run with `{busy: true}`. It can
+    nonetheless *reach* the transition indirectly, since asking for a serve is what causes the client's own
+    call. Saying "no model can reach this transition" would therefore be false — what holds is that none can
+    ask for it.
     Every transition is written as a guarded update (`... WHERE status='active'`) so it is idempotent under a
     retry.
 

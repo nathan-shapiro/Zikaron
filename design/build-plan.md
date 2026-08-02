@@ -196,21 +196,33 @@ others.
 
 ---
 
-## M7 — Consolidation
+## M7 — Consolidation — **complete**
+
+**Shipped and reviewed to `APPROVED`** (`reviews/m7-consolidation-review.md`), as
+`zikaron/core/consolidation/`: `context`, `runs`, `groups`, `rowstate`, `grouping`, `planning`,
+`payload`, `candidates`, `serving`, `authorization`, `verbs`. Ten items the design left to be inferred
+were settled in `design/` before coding rather than only in code — group order, an anchored group's
+absent cohesion pass, the anchor scan versus a rank-1 gate, the gist join, `n_gists_used = 0`, absorb
+distinctness, `promote` in-place's event size fields, `remaining_groups`, the `pending`-group answer,
+and invariant 14's `run_id` carve-out. `shard_count` was **not** found redundant (see the standing note
+below): the payload has to carry `of` after a restart, and recomputing it would mean replanning a group
+whose membership is frozen.
 
 Normative: `design/consolidation.md` in full; `design/architecture.md` §"Consolidation lifecycle",
 §"Consolidator tool surface"; `design/schema.md` invariants 12–17 and 19.
 
 Anchor-by-retrieval, mutual top-K with the cosine floor, the complete-linkage cohesion pass, deterministic
 sharding; the run and group state machine with every transition's named cause; leases with `(session_id, pid)`
-ownership and expiry-only takeover; the four verbs; serve-time vacating; the never-lose closure property.
+ownership — expiry-only implicit takeover through `next_group`, plus unconditional explicit takeover through
+`plan_groups`; the four verbs; serve-time vacating; the never-lose closure property.
 
 **Invariants:** 12–17, **and 19** — shard identity, moved here from M5 because the planner is the only thing
 that writes `consolidation_group.shard_index`/`shard_count` and so the only thing that can violate the
 set-level condition; M5 neither reads nor writes that table. **Done when:** each has a test; the A~B/B~C/A≁C
 chain case is explicitly tested and does
 **not** over-merge; group ordering is deterministic across runs; a run abandoned mid-way loses no journal row; a
-second worker in the same session with a different pid gets `{busy: true}`.
+second worker in the same session with a different pid gets `{busy: true}` **from `next_group`**,
+while an explicit `plan_groups` takes the run over and records it `taken_over`.
 
 **Fence:** this is the largest milestone. If it needs splitting, split at the state machine — grouping first,
 then the verbs — but keep the invariant tests with whichever half owns them.
@@ -250,8 +262,24 @@ race with one client retry, a stale socket file, and a foreign-store handshake b
 
 Five primary tools, four consolidator tools, gated to separate agent configs. Thin: translate, call, return.
 
+**The consolidator client calls `plan_groups`**, with its own `(session_id, pid)`, **lazily — immediately
+before the first `next_group` it forwards, never when the client starts, and at most once *successfully* per
+process** — and a **successful** response is a
+prerequisite of that serve reaching the service (`architecture.md` §"Consolidation lifecycle"). That call *is*
+the takeover a human retry performs, and without it the takeover path is unreachable, since a fresh
+consolidator's first tool call is `next_group` and that refuses a live foreign run. Lazily, because the MCP
+handshake is eager and a startup-wired call would take the consolidation lock before the model had been asked
+anything — a spawn that then does nothing would displace a live worker for nothing. One boolean in a per-spawn
+process is the whole mechanism. Both premises are **measured**, not assumed — one client process per spawn,
+and an eager handshake preceding the first tool call: `research/kiro-mcp-lifecycle-probe.md`.
+
 **Done when:** tool descriptions carry the mechanics the write policy deliberately omits (version precondition,
-dedup payload, retire semantics), and a consolidator config provably cannot reach `search` or `fetch`.
+dedup payload, retire semantics); a consolidator config provably cannot reach `search` or `fetch`; the client
+provably makes **no** service call until the model calls a tool, so a spawn that does nothing takes no lock;
+the first `next_group` provably completes a successful `plan_groups` before any serve reaches the service, at
+most **once successfully** per process; and the three-state machine is tested at its awkward transition — a
+first `plan_groups` answering `store_busy` leaves the client `unplanned` so the retry plans and serves, with no
+`next_group` having reached the service in between and exactly one takeover committed.
 
 ---
 
@@ -280,7 +308,9 @@ each of the failure kinds named in `architecture.md` §"Degraded modes" (transpo
 The `zikaron-consolidator` agent config, the consolidation skill, hook entries for both the stable and `--v3`
 formats, the write-policy text as a shipped asset, and install docs.
 
-**Done when:** a clean install on a fresh directory produces a working push, pull, write and consolidation run.
+**Done when:** a clean install on a fresh directory produces a working push, pull, write and consolidation
+run — **and** an end-to-end takeover: hold a run from one worker, invoke the skill again through the real
+path, and observe the first run closed `taken_over` while the second serves the replanned groups.
 
 ---
 

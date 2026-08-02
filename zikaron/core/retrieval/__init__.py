@@ -10,6 +10,8 @@ what it must hold. The shape of it, lowest layer first:
 - `arms` — the dense overfetch loop with its three terminal reasons, and the lexical arm's single
   statement with its two. `ArmOutcome` enforces invariant 20 at construction.
 - `ranking` — pure: RRF, the demotion penalties, the five-step total order, the supersession repair.
+- `similarity` — `s(X → Y)`, the one directed score all three cosine cutoffs threshold. A read,
+  not a ranking: the pool says which rows are candidates, this says whether each clears a floor.
 - `retrieve` — the algorithm every consumer runs, composable into a transaction a caller holds.
 - `block` — the injected block's exact text.
 - `reads` — `search` and `surface`: one transaction each, with the instrumentation inside it.

@@ -13,9 +13,17 @@ which is where fidelity to the deployed tokenizer is actually checked.
 embeds identically in every process — which is what lets a test assert a stored vector byte for
 byte. Unnormalized, so the write path's own L2 normalization is observable rather than accidentally
 satisfied by an embedder that happened to return unit vectors.
+
+**A test that needs a *specific* cosine registers the vector instead.** Hashed vectors of
+independent texts are near-orthogonal in 384 dimensions, so every pair scores near zero and a
+single cutoff cannot separate one pair from another — which makes the consolidation graph
+untestable through prose alone. `planned` maps an embedded text to the exact vector to return for
+it, and `unit_at` builds one at a chosen angle in a fixed two-dimensional plane, so `cos(u(a),
+u(b)) = cos(a - b)` and a fixture can put a pair on either side of a floor on purpose.
 """
 
 import hashlib
+import math
 import random
 import re
 from collections.abc import Sequence
@@ -51,6 +59,7 @@ class FakeEncoder:
     vector_count_delta: int = 0
     vector_width: int | None = None
     embedded: list[tuple[str, ...]] = field(default_factory=list)
+    planned: dict[str, tuple[float, ...]] = field(default_factory=dict)
 
     def count_tokens(self, text: str) -> int:
         return len(_TOKEN.findall(text))
@@ -63,12 +72,27 @@ class FakeEncoder:
         if self.embed_error is not None:
             raise self.embed_error
         width = self.dim if self.vector_width is None else self.vector_width
-        vectors = [vector_for(text, width) for text in texts]
+        vectors = [
+            self.planned[text] if text in self.planned else vector_for(text, width)
+            for text in texts
+        ]
         if self.vector_count_delta > 0:
             vectors.extend(vector_for("surplus", width) for _ in range(self.vector_count_delta))
         elif self.vector_count_delta < 0:
             vectors = vectors[: max(0, len(vectors) + self.vector_count_delta)]
         return tuple(vectors)
+
+
+def unit_at(degrees: float, width: int = DEFAULT_DIM) -> tuple[float, ...]:
+    """A unit vector at `degrees` in the plane spanned by the first two coordinates.
+
+    Two such vectors have cosine `cos(a - b)` exactly, so a fixture can place a pair at a chosen
+    similarity and put it on either side of a cutoff deliberately. Every other coordinate is zero,
+    which keeps the arithmetic hand-checkable: the store's own `s(X → Y)` is then `cos(a - b)` and
+    nothing else.
+    """
+    radians = math.radians(degrees)
+    return (math.cos(radians), math.sin(radians), *(0.0 for _ in range(width - 2)))
 
 
 def vector_for(text: str, width: int) -> tuple[float, ...]:

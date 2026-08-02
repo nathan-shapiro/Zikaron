@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import ClassVar, Final
+from typing import ClassVar, Final, Self
 
 
 class EventKind(StrEnum):
@@ -45,6 +45,23 @@ class Demotion(StrEnum):
 
     SUPERSEDED = "superseded"
     RETIRED = "retired"
+
+
+class ClientKind(StrEnum):
+    """Which client made the call, as `event.client_kind` and `read_receipt.client_kind` record it.
+
+    Three values, exactly as both tables' `CHECK` constraints state them, and deliberately no
+    `service` member: every v0 event is emitted inside a client call, which is also what lets
+    invariant 18 hold. The value is load-bearing on both tables rather than decorative. On `event`
+    it is what makes cross-client session linkage observable — a push comes from `hook`, a write
+    from `mcp` — now that every client of one kiro session shares a `session_id`. On `read_receipt`
+    it is part of the primary key, so a receipt minted by a consolidation serve does not license
+    the primary agent to amend a row it never fetched.
+    """
+
+    HOOK = "hook"
+    MCP = "mcp"
+    CONSOLIDATOR = "consolidator"
 
 
 class MergeRole(StrEnum):
@@ -84,12 +101,21 @@ class ServeRole(StrEnum):
 
 
 class RunPhase(StrEnum):
-    """The transition a consolidation run's event is recording."""
+    """The transition a consolidation run's event is recording.
+
+    `ABANDONED` and `TAKEN_OVER` are the same *mechanism* — an explicit `plan_groups` closing an
+    unexpired run — discriminated by whether the caller owned it. They are separate values because
+    the two have different costs and would otherwise be indistinguishable in the case that matters:
+    a user retrying the consolidation skill in one kiro session produces the same `session_id` and
+    only a different pid, so nothing else on the event row could tell "the holder restarted its own
+    run" from "the holder was displaced and its work in progress discarded".
+    """
 
     PLANNED = "planned"
     COMPLETE = "complete"
     EXPIRED = "expired"
     ABANDONED = "abandoned"
+    TAKEN_OVER = "taken_over"
 
 
 class StopReason(StrEnum):
@@ -373,12 +399,11 @@ EVENT_SPECS: Final[Mapping[EventKind, EventSpec]] = MappingProxyType(
 # Declaration order is the contract's order. `EventSpec.validate` compares the two, so a field added
 # here in the wrong place fails rather than quietly reordering a payload.
 #
-# **Only the kinds something writes today are here.** The five consolidation kinds (`merge`,
-# `promote`, `discard`, `group_served`, `consolidate_run`) have no producer yet; a dataclass nothing
-# constructs is dead code, and the milestone that writes those verbs adds its value type in the
-# same change. It cannot forget: `log_event` takes an `EventDetail`, so there is no dict-shaped way
-# in. `dedup_offered` is no longer in this set: D15's `remember` is what writes it, and that verb's
-# own milestone is what adds `DedupOfferedDetail` below, beside the other verbs that produce it.
+# **Every kind now has a typed value, and that set is closed rather than merely full.** Each kind's
+# type arrived with the verb that writes it, because a dataclass nothing constructs is dead code —
+# and none could be skipped, since `log_event` takes an `EventDetail` and there is no dict-shaped
+# way in. A *new* kind therefore cannot be logged until its type exists, which is the property that
+# was being protected while five of them were still unwritten.
 
 
 class EventDetail:
@@ -584,3 +609,140 @@ class NoReceiptDetail(EventDetail):
 
     verb: str
     version_presented: int
+
+
+@dataclass(frozen=True, slots=True)
+class GroupRef:
+    """Which consolidation group and run one event belongs to.
+
+    One value rather than two loose fields on each of the four consolidation kinds that carry them,
+    for the reason `ArmTermination` exists: the pair is one fact, every one of those kinds states it
+    first and in this order, and four transcriptions is four chances for one of them to swap the
+    two — which no type checker would catch, since both are strings.
+    """
+
+    group_id: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredSize:
+    """The four size fields describing prose a call authored, or four nulls where it authored none.
+
+    `merge` and `promote` each mutate several rows in one call and emit one event per row, and only
+    one of those rows carries authored prose — the merge target, or the created/flipped record. The
+    contract states the four fields on every row of both kinds and declares them nullable, so the
+    absent case is *four nulls present*, never four keys missing: a key that is absent and a key
+    that is null are indistinguishable to a signal, and one of them would have to mean "this writer
+    predates the field".
+
+    `none_authored()` is what an absorbed row uses, so the fact that "no prose authored" means
+    exactly four nulls lives in one place instead of at each raise site.
+    """
+
+    token_count: int | None
+    gist_tokens: int | None
+    n_chunks: int | None
+    truncated: bool | None
+
+    @classmethod
+    def none_authored(cls) -> Self:
+        """The four fields as a row that authored no prose reports them."""
+        return cls(token_count=None, gist_tokens=None, n_chunks=None, truncated=None)
+
+
+@dataclass(frozen=True, slots=True)
+class MergeDetail(EventDetail):
+    """`merge` — one per row the call mutated: the target, then one per absorbed member.
+
+    `n_absorbed` is the call's own absorbed count and is therefore identical on every row of the
+    call, including the target's: it describes the merge, not the row.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.MERGE
+
+    group: GroupRef
+    role: MergeRole
+    from_version: int
+    to_version: int
+    n_absorbed: int
+    size: AuthoredSize
+
+
+@dataclass(frozen=True, slots=True)
+class PromoteDetail(EventDetail):
+    """`promote` — one per row the call mutated, with the two forms' differing cardinality.
+
+    `new_row` emits one `created` row plus one `absorbed` row per absorbed member. `in_place` emits
+    exactly one row, `flipped`, `n_absorbed = 1`, and no `absorbed` row for that uuid — the flipped
+    row *is* the absorbed member, and a singular role cannot say both. This type enforces neither
+    cardinality, which is the verb's to decide; what it fixes is that `role` and `form` always
+    travel together, so no event can describe a role without saying which form produced it.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.PROMOTE
+
+    group: GroupRef
+    role: PromoteRole
+    form: PromoteForm
+    from_version: int
+    to_version: int
+    n_absorbed: int
+    size: AuthoredSize
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardDetail(EventDetail):
+    """`discard` — one per discarded member.
+
+    `reason` is the verb's own argument and this is the **only** place it is stored: D16 leaves the
+    discarded row's prose untouched, so "we decided this was noise" is recoverable from the log or
+    from nowhere. Carries no size fields, because a discard authors no prose at all.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.DISCARD
+
+    group: GroupRef
+    reason: str
+    from_version: int
+    to_version: int
+    n_absorbed: int
+
+
+@dataclass(frozen=True, slots=True)
+class GroupServedDetail(EventDetail):
+    """`group_served` — one per row whose prose a serve actually delivered.
+
+    `version_served` is non-null by contract, and this type makes that structural rather than
+    documented: the event exists only for a row that was delivered *at* that version, so a
+    serve-time-vacated member and a vacated anchor emit none at all. `serve_count` is the group's
+    delivery count including this delivery, so a first delivery emits 1.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.GROUP_SERVED
+
+    group: GroupRef
+    role: ServeRole
+    version_served: int
+    serve_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolidateRunDetail(EventDetail):
+    """`consolidate_run` — one per run transition.
+
+    The three counts describe **the run this transition is about**, at the moment of the transition.
+    That is not always the run the *call* is about: a `plan_groups` that closes a pre-existing run
+    emits that run's own closing event — `expired`, `abandoned` or `taken_over` — with its totals,
+    and then the new run's `planned` event with different ones, under one `op_id`. `n_groups` and
+    `n_members` are fixed at plan time and so repeat unchanged on every later phase of one run;
+    `n_deferred` is the only one that moves.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.CONSOLIDATE_RUN
+
+    run_id: str
+    phase: RunPhase
+    n_groups: int
+    n_members: int
+    n_deferred: int

@@ -16,7 +16,8 @@ from zikaron.core.events import EventKind
 from zikaron.core.retrieval.eligibility import Consumer, Scope
 from zikaron.core.retrieval.query import internal_query
 from zikaron.core.retrieval.retrieve import retrieve
-from zikaron.core.write.dedup import DedupPolicy, _exact_directed_cosines, offer
+from zikaron.core.retrieval.similarity import exact_directed_cosines
+from zikaron.core.write.dedup import DedupPolicy, offer
 
 _GIST_A = "protobuf codegen fails silently on staging"
 _CONTENT_A = "the proto compiler version drifts from the one pinned in requirements.txt"
@@ -278,7 +279,7 @@ async def test_exact_directed_cosine_reads_the_minimum_across_all_of_a_candidate
             )
         await h.store.connection.commit()
 
-        cosines = await _exact_directed_cosines(
+        cosines = await exact_directed_cosines(
             h.store.connection, [candidate], query_vector=query_vector
         )
         assert cosines[candidate] == pytest.approx(1.0, abs=1e-4)

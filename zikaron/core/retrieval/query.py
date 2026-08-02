@@ -224,7 +224,7 @@ def _prefix_leaves_no_query_token(prefix_tokens: int, cap: int) -> ZikaronError:
     )
 
 
-def _assembled_tokens(prefix: str, kept: str, *, encoder: Encoder) -> int:
+def assembled_tokens(prefix: str, kept: str, *, encoder: Encoder) -> int:
     """How many tokens the model will actually see for `prefix + kept`, special tokens included.
 
     Counted on the **concatenation**, never as the sum of the two pieces' counts. A tokenizer
@@ -259,7 +259,7 @@ def _fit_to_cap(text: str, *, prefix: str, budget: int, encoder: Encoder) -> str
     """
     for tokens in range(min(budget, encoder.count_tokens(text)), 0, -1):
         kept = _head(text, tokens=tokens, encoder=encoder)
-        if _assembled_tokens(prefix, kept, encoder=encoder) <= encoder.max_sequence_tokens:
+        if assembled_tokens(prefix, kept, encoder=encoder) <= encoder.max_sequence_tokens:
             return kept
     raise _prefix_leaves_no_query_token(encoder.count_tokens(prefix), encoder.max_sequence_tokens)
 
@@ -322,7 +322,7 @@ def external_query(text: str, *, encoder: Encoder, prefix: str, max_terms: int) 
     # `query_truncated` exact: `_head` slices from the first token's start to the last token's end,
     # so calling it on a query that already fits would drop leading or trailing punctuation and
     # report a truncation that did not happen.
-    fits_whole = _assembled_tokens(prefix, text, encoder=encoder) <= cap
+    fits_whole = assembled_tokens(prefix, text, encoder=encoder) <= cap
     kept = text if fits_whole else _fit_to_cap(text, prefix=prefix, budget=budget, encoder=encoder)
     (vector,) = encoder.embed([f"{prefix}{kept}"])
     return ExternalQuery(

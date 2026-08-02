@@ -119,7 +119,8 @@ CREATE TABLE consolidation_run (
   pid         INTEGER NOT NULL,
   started_at  TEXT NOT NULL,
   expires_at  TEXT NOT NULL,
-  status      TEXT NOT NULL CHECK (status IN ('active', 'complete', 'expired', 'abandoned'))
+  status      TEXT NOT NULL CHECK (status IN ('active', 'complete', 'expired', 'abandoned',
+                                               'taken_over'))
 )
 """
 

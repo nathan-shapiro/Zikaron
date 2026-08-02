@@ -167,3 +167,35 @@ async def delete_chunks(db: aiosqlite.Connection, *, memory_uuid: str) -> None:
     for (chunk_id,) in rows:
         await db.execute("DELETE FROM memory_vec WHERE rowid = ?", (chunk_id,))
     await db.execute("DELETE FROM memory_chunk WHERE memory_uuid = ?", (memory_uuid,))
+
+
+@dataclass(frozen=True, slots=True)
+class StoredChunks:
+    """What one memory's existing chunk rows say about it: how many, and whether any was truncated.
+
+    The two facts a caller needs when it must report a row's size **without** re-chunking it.
+    Exactly one caller has that need — `promote`'s in-place form, which flips a tier and changes no
+    prose, so it rebuilds no index and cannot honestly take its `n_chunks` from a preflight run
+    under a `chunk_max_tokens` that may have moved since the row was written.
+
+    `truncated` is `any` over the chunks rather than a count, which is what the field means on the
+    event too: the canary says *something in this row was handed to the model over-length*, and a
+    row with two truncated chunks is not twice as canary-ish as one.
+    """
+
+    n_chunks: int
+    truncated: bool
+
+
+async def stored_chunks(db: aiosqlite.Connection, *, memory_uuid: str) -> StoredChunks:
+    """Read one memory's chunk count and truncation canary out of the index as it stands.
+
+    Zero chunks is reported rather than refused — invariant 12 makes it unreachable for an active
+    memory, and a reader is not the place to enforce another layer's invariant.
+    """
+    rows = await db.execute_fetchall(
+        "SELECT count(*), coalesce(max(truncated), 0) FROM memory_chunk WHERE memory_uuid = ?",
+        (memory_uuid,),
+    )
+    n_chunks, truncated = next(iter(rows))
+    return StoredChunks(n_chunks=int(str(n_chunks)), truncated=bool(truncated))

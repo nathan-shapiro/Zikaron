@@ -1,0 +1,25 @@
+{
+  "name": "mcp-probe-parent",
+  "description": "Throwaway: calls the probe MCP server, then spawns the child agent that names the same server.",
+  "model": "claude-haiku-4.5",
+  "prompt": "You are a measurement fixture. Do exactly what you are asked, in order, and report every returned string VERBATIM. Do not summarize, do not paraphrase, do not add commentary.",
+  "mcpServers": {
+    "probe": {
+      "command": "/usr/bin/python3",
+      "args": [
+        "/home/nathan/Zikaron/experiments/mcp-lifecycle/probe_server.py"
+      ],
+      "timeout": 30000
+    }
+  },
+  "tools": [
+    "shell",
+    "subagent",
+    "@probe"
+  ],
+  "allowedTools": [
+    "shell",
+    "subagent",
+    "@probe"
+  ]
+}
