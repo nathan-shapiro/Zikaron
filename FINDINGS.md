@@ -71,8 +71,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 
 ## Current state — resume here
-**Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes) and M1 (skeleton
-+ the three singletons) complete; M2 is next.** D1–D33 settled. Grounding from
+**Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
++ the three singletons) and M2 (store + configuration) complete; M3 is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -90,6 +90,24 @@ value set in the design before defining the row-state enum — the design gives 
 MCP tool surface but states no set on the error row, so two implementations could disagree today. Also worth an
 operator's eye: the design deliberately spells the same situation two ways, error `no_read_receipt` (−32002)
 against event kind `no_receipt`. Both are pinned by a test so neither gets tidied into the other.
+
+**M2 shipped the store and the two-layer TOML config resolution — `core/store/` (`ddl.py`, `meta.py`,
+`permissions.py`, `store.py`, `embedder.py`) and `core/config/resolution.py`.** Reviewed to `APPROVED` over
+**five** rounds (`reviews/m2-store-config-review.md`) — longer than the self-review skill's usual three, and
+deliberately so, since every round through the fourth found a genuine, independently verified defect rather
+than a manufactured one, and the fifth found none. `Store.create` validates the effective `embed_dim`, checks
+the configured embedder's *actual* reported width and model name against it, and only then runs any `CREATE`
+statement, with no database file on disk if either check fails. `Store.open` re-validates on every call:
+the `reindexing` sentinel, all five required `meta` keys, the physical `memory_vec` column's own recorded
+width (not only `meta`'s claim about it), `schema_version`, and the effective config's `embed_model`/`embed_dim`
+— existing-only, via SQLite's `mode=rw` URI, so a missing store is reported rather than silently created.
+Config resolution merges three layers (built-in defaults, system-wide, project override) per key at depth 2,
+rejects an unknown key or a wrong TOML type per file at parse time, and range-validates the merged result;
+`EffectiveConfig` self-validates on construction rather than trusting only its one real caller. Filesystem
+permissions are enforced on both create and open, and a store reached through a symlinked ancestor — not only
+a symlinked `.zikaron` itself — is refused. Invariant 1 has no enforcement code at this milestone and the test
+file says so explicitly, per `coding-standards.md`'s own escape hatch for a genuinely untestable invariant;
+M4's indexing path is where it becomes real. 256 tests, 100% branch coverage on `zikaron/core`.
 
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
@@ -123,7 +141,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 |---|---|---|---|
 | **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ✓ |
 | M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ✓ |
-| M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ☐ |
+| M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ✓ |
 | M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ☐ |
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ☐ |
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18–20 tested; one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ☐ |
@@ -329,6 +347,48 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   And `shard_count` (round 5) is flagged as the one mechanism plausibly not needed — a persisted count an
   invariant then has to police, when it is derivable as a `COUNT(*)`; left alone pre-code, recorded so it
   need not be rediscovered.
+- **A design rule stated for one caller's situation is not automatically a rule for every function that touches
+  the same fact.** `architecture.md` says "`realpath` the store directory and require the resolved parent to
+  be the cwd" — true and load-bearing for `zikaron-service`, which derives the store path *from* its own cwd in
+  the first place (D17). Read literally and implemented inside `Store.create`/`Store.open` themselves, it broke
+  33 of the milestone's own tests immediately, because those two functions take `store_dir` as an explicit
+  parameter and have no way to know whether the caller's cwd is the concept the caller meant by it — a test
+  fixture, or a future tool iterating several projects' stores from one process, is not the service. The fix
+  was not to route around the failing tests; it was to ask what the rule actually protects against (a symlink
+  hijacking the path between what the caller believes and what the filesystem holds) and implement *that*,
+  independent of the ambient process cwd. The general lesson: a design sentence written from one component's
+  vantage point can be true and still be the wrong thing to copy verbatim into a different component's code,
+  and a sudden wall of test failures is worth reading as "the design's premise doesn't hold here" before it is
+  read as "route around this."
+- **The same ~15 lines of test infrastructure took four consecutive review-round fixes for one bug class, each
+  narrower than the last, in a way worth naming precisely because "we fixed the multiline-string bug" is a false
+  summary of what happened.** A hand-rolled SQL statement scanner (backing the DDL drift guard, itself built to
+  stop the design and the code from silently disagreeing) needed to know, for every line it read, whether that
+  line was inside a quoted string literal — because a string can legally contain a parenthesis, a semicolon, or
+  a blank line that must not be read as SQL structure. Four things went wrong in succession, in the same small
+  function: whitespace was stripped from a continuation line without checking whether a string was already open
+  (round 2); a wholly blank line *inside* an open string was dropped entirely rather than merely having
+  whitespace trimmed, because an empty string failed an `if remainder != "":` guard (also round 2); trailing
+  whitespace on the line where a string *opens* was stripped because the fix decided for the whole line from a
+  single start-of-line flag, which cannot see that the line's own end is a different quote state from its start
+  (round 3); and a fresh, empty statement fragment that began immediately *after* a mid-line semicolon inherited
+  a stale "started inside a string" fact left over from before that semicolon fired (round 4, and the fix's own
+  first attempt was itself wrong, described next). Each fix solved exactly the case in front of it and no more,
+  which is what let three further, related cases keep surfacing in the same function — the actual defect was
+  never "this one case," it was "deciding whitespace and blank-line handling from state that does not update at
+  every point state can meaningfully change," and only round 4's rewrite finally modeled that.
+- **The round-4 fix's own first attempt was wrong, and the reason it did not ship wrong is a discipline worth
+  keeping as a rule rather than a lucky habit: run the whole related test suite before considering any fix
+  done, not just the one test the fix targets.** The first attempt at tracking "did the current fragment start
+  inside a string" set a flag only when the fragment's accumulator was empty, on the theory that emptiness meant
+  the fragment had just begun. That is false the moment a semicolon resets the accumulator mid-line without the
+  fragment actually beginning fresh in the relevant sense, and it passed the new regression test built for
+  exactly that case — while silently breaking a *different*, already-fixed case from two rounds earlier (a blank
+  line inside a multiline literal), because the flag no longer updated correctly for it. The break was caught
+  immediately, before the reviewer ever saw it, only because the fix was checked against the *full* test file
+  rather than the single new test — the exact verification discipline this project's own standards ask for
+  ("a related set of changes, then the whole suite"), and the exact case where skipping it would have shipped a
+  regression under the cover of a passing new test.
 
 ## References
 _(One line per research note and review: topic — key takeaway — file path.)_
@@ -373,3 +433,16 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   *names* were guarded. Both accepted; the second produced the design's nullability table. One nitpick stands as
   an M3 prerequisite (`inactive_row.state`), recorded in `design/build-plan.md` §M3 —
   `reviews/m1-skeleton-review.md`.
+- **M2 code review** — five rounds, ending `VERDICT: APPROVED` with zero findings in the fifth. Every one of the
+  first four rounds found a genuine, independently verified defect: invariant 11's physical-`vec0`-width check
+  went through three tightenings before it could no longer be satisfied by a string literal merely *quoting*
+  the expected DDL shape as data; the filesystem symlink check needed one round to fix and a second to correct
+  the author's own over-literal first attempt (comparing against the ambient process cwd, which broke 33 tests
+  and was caught before it shipped); `Store.open` gained an existing-only mode so a missing store is reported
+  rather than silently created, then a further fix so an *existing* store with a dropped `meta` table is too;
+  and the same ~15 lines of test infrastructure (a hand-rolled SQL statement scanner backing the DDL drift
+  guard) accumulated four consecutive fixes for progressively narrower instances of one bug class — a
+  multiline string literal's internal whitespace and blank lines being mishandled by state that looked
+  right for one case and wrong for the next. One of those four fixes was itself wrong on the first attempt
+  and was caught only by re-running the *whole* related test suite before calling it done, which is the
+  dogfooding-relevant lesson below — `reviews/m2-store-config-review.md`.

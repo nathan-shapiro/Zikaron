@@ -388,6 +388,222 @@ def parse_couplings(section: list[str]) -> dict[str, str]:
     return couplings
 
 
+def parse_fenced_code(section: list[str], language: str) -> str:
+    """The one fence tagged ` ```{language} ` in a section, with its opening/closing lines cut.
+
+    Exactly one, for the same reason `parse_toml` insists on exactly one TOML fence: a second
+    block added beside the one it revises would otherwise leave every guard reading whichever
+    one happens to be first, silently and indefinitely. A fence tagged with a different language,
+    or untagged, does not count — this function is for finding a specific normative block, not
+    every fence in the section.
+    """
+    blocks: list[list[str]] = []
+    collecting: list[str] | None = None
+    for line in section:
+        if line.startswith(_FENCE):
+            if collecting is not None:
+                blocks.append(collecting)
+                collecting = None
+            elif line.strip().removeprefix(_FENCE).strip() == language:
+                collecting = []
+            continue
+        if collecting is not None:
+            collecting.append(line)
+    if collecting is not None:
+        raise DesignTableError(f"a {language} fence is opened and never closed")
+    if len(blocks) != 1:
+        raise DesignTableError(f"{len(blocks)} fenced {language} blocks, expected one")
+    return "\n".join(blocks[0])
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Remove every `--` line comment, respecting single-quoted strings a comment marker could
+    sit inside — none of `schema.md`'s DDL does that, but a splitter that assumed it does is
+    exactly the kind of assumption that stops being true on the next design edit.
+    """
+    out: list[str] = []
+    in_string = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if char == "'":
+            in_string = not in_string
+            out.append(char)
+            index += 1
+        elif not in_string and sql[index : index + 2] == "--":
+            newline = sql.find("\n", index)
+            index = len(sql) if newline == -1 else newline
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+@dataclass
+class _ScanState:
+    """The running state a top-level-semicolon scan carries from one line to the next.
+
+    A plain mutable object rather than several closed-over locals, so `_scan_line` can update
+    it in place and the caller's loop stays a loop over lines instead of a loop that also has to
+    thread four return values back into itself each iteration.
+
+    `remainder_segment_started_in_string` is a separate fact from `in_string`, and conflating
+    them is the bug this comment exists to prevent a future edit from reintroducing: `in_string`
+    is the quote state *right now*, while this field is whether the text segment that will
+    become this line's `remainder` — the part after the most recent reset, whether that reset
+    was the top of the line or a semicolon partway through it — began inside a string. A
+    semicolon can close a statement and start a new, empty segment in the middle of a line
+    whose own *entry* state said "inside a string"; from that point to the end of the line,
+    until that segment actually opens a new string of its own, it did not begin inside one, and
+    using the line's entry fact there let a trailing empty remainder survive as a spurious
+    statement.
+    """
+
+    statements: list[str]
+    current: list[str]
+    depth: int
+    in_string: bool
+    remainder_segment_started_in_string: bool = False
+
+
+def _scan_line(state: _ScanState, raw_line: str) -> None:
+    """Advance `state` by one line: track quote/paren depth, and close a statement at every
+    top-level semicolon this line contains.
+
+    A parenthesis or semicolon inside a single-quoted string is not a structural character and
+    must never be counted as one — a literal containing either would otherwise desynchronize
+    the depth counter or split a statement in half, which is why quote state is checked before
+    anything else on every character.
+
+    Whitespace gets the same care, and a single start-of-line flag is not enough to give it:
+    this line's *leading* whitespace is safe to strip only if the scan enters the line outside
+    a string, and its *trailing* whitespace is safe to strip only if the scan leaves the line
+    outside a string — those are two independent facts, since a line can start outside a
+    string, open one partway through, and end still inside it (leading whitespace is
+    formatting; trailing whitespace is now part of the literal's value). Deciding stripping for
+    the whole line from either fact alone gets one of those two cases wrong.
+    """
+    entered_in_string = state.in_string
+    # A first pass purely to learn the quote state at the END of the line, without yet deciding
+    # what to strip — trailing-whitespace safety depends on that end state, which is not known
+    # until the whole line has been scanned once.
+    trial_in_string = entered_in_string
+    for char in raw_line:
+        if char == "'":
+            trial_in_string = not trial_in_string
+    left = 0 if entered_in_string else len(raw_line) - len(raw_line.lstrip())
+    right = len(raw_line) if trial_in_string else len(raw_line.rstrip())
+    text = raw_line[left : max(left, right)]
+
+    state.remainder_segment_started_in_string = state.in_string
+    line_start = 0
+    for position, char in enumerate(text):
+        if char == "'":
+            state.in_string = not state.in_string
+        elif state.in_string:
+            continue
+        elif char == "(":
+            state.depth += 1
+        elif char == ")":
+            state.depth -= 1
+            if state.depth < 0:
+                raise DesignTableError(f"unbalanced parentheses in SQL block: {raw_line!r}")
+        elif char == ";" and state.depth == 0:
+            state.current.append(text[line_start : position + 1])
+            state.statements.append("\n".join(state.current))
+            state.current = []
+            state.remainder_segment_started_in_string = state.in_string
+            line_start = position + 1
+    remainder = text[line_start:]
+    # An ordinary remainder that carries nothing is safe to drop. A remainder that is empty but
+    # belongs to a segment which STARTED inside a string is different — an entirely blank line
+    # sitting inside a multiline literal is itself part of the literal's value (it is the
+    # `\n\n` between two non-blank lines), and dropping it here would lose that newline when
+    # `"\n".join(state.current)` reconstructs the statement. The check is against
+    # `remainder_segment_started_in_string`, not the line's own entry state: a semicolon
+    # earlier in this same line can have reset `current` to a fresh, empty segment that never
+    # opened a string at all, and using the line's entry fact there would append a spurious
+    # empty element to the segment that follows the semicolon, surviving as an extra, empty
+    # statement.
+    if remainder != "" or state.remainder_segment_started_in_string:
+        state.current.append(remainder)
+
+
+def sql_statements(sql: str) -> list[str]:
+    """Split a fenced SQL block into its individual statements, comments and blank lines gone.
+
+    A statement ends at a top-level semicolon **or** a blank line — `schema.md`'s DDL block uses
+    both conventions, a semicolon after three one-line `PRAGMA`s and a blank line between the
+    longer `CREATE` statements — so both are accepted, and a nesting-depth check refuses to split
+    inside an unbalanced parenthesis rather than guessing. Lines are joined with a newline, not a
+    forced space, because a design line that wraps immediately after an open paren has no space
+    there to begin with; `normalize_sql` below normalizes the newline itself, so two statements
+    differing only in how the design wrapped them still compare equal.
+    """
+    uncommented = _strip_sql_comments(sql)
+    state = _ScanState(statements=[], current=[], depth=0, in_string=False)
+    for raw_line in uncommented.splitlines():
+        stripped = raw_line.strip()
+        if stripped == "" and state.depth == 0 and not state.in_string:
+            if state.current:
+                state.statements.append("\n".join(state.current))
+                state.current = []
+            continue
+        _scan_line(state, raw_line)
+    if state.depth != 0:
+        raise DesignTableError("SQL block ends with unbalanced parentheses")
+    if state.in_string:
+        raise DesignTableError("SQL block ends with an unterminated string literal")
+    if state.current:
+        state.statements.append("\n".join(state.current))
+    return [normalize_sql(statement) for statement in state.statements]
+
+
+def normalize_sql(statement: str) -> str:
+    """Collapse whitespace so two statements differing only in *how* the source wrapped their
+    lines compare equal, while a real content difference — a changed literal, a missing column,
+    a reordered clause — still does not.
+
+    `schema.md` sometimes writes one value per line with a trailing comment, which a plain
+    whitespace collapse turns into a space where a flat, uncommented transcription has none —
+    `CHECK (source IN (\\n 'fetch', ...` versus `CHECK (source IN ('fetch', ...`. Stripping
+    whitespace that sits directly against a paren or before a comma removes exactly that
+    formatting difference — but only **outside** a single-quoted string: `'a  b'` and `'a b'`
+    are different string values, and `'a( b'` is a different string value from `'a(b'`, so this
+    function must never rewrite a byte that sits between two unescaped `'` characters. Exposed
+    for a caller comparing a hand-written literal against `sql_statements`'s own output, since
+    both sides need the same normalization or a wrapping difference on one side alone would
+    look like content drift.
+    """
+    without_trailing_semicolon = statement.rstrip().removesuffix(";")
+    out: list[str] = []
+    in_string = False
+    index = 0
+    length = len(without_trailing_semicolon)
+    while index < length:
+        char = without_trailing_semicolon[index]
+        if char == "'":
+            in_string = not in_string
+            out.append(char)
+            index += 1
+        elif in_string:
+            out.append(char)
+            index += 1
+        elif char.isspace():
+            end = index
+            while end < length and without_trailing_semicolon[end].isspace():
+                end += 1
+            before = out[-1] if out else ""
+            after = without_trailing_semicolon[end] if end < length else ""
+            if before not in ("(", "") and after not in (")", ",", ""):
+                out.append(" ")
+            index = end
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out).strip()
+
+
 # ---------------------------------------------------------------------------
 # Reading: a document name in, parsed structure out
 # ---------------------------------------------------------------------------

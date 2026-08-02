@@ -19,6 +19,7 @@ dev = [
     "mypy==2.3.0",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
+    "pytest-asyncio==1.4.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -89,6 +90,13 @@ enable_error_code = [
     "unused-awaitable",
 ]
 
+# `sqlite-vec` ships no type stubs and no `py.typed` marker. Its Python surface used here is one
+# function, `loadable_path() -> str`, so an ignore here costs no real type safety and a
+# hand-written stub package would be pure overhead for one call site.
+[[tool.mypy.overrides]]
+module = "sqlite_vec"
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -101,6 +109,11 @@ markers = [
     "integration: real fastembed, real sqlite-vec, real socket, real subprocess",
     "manual: needs a live model API; excluded from the default run",
 ]
+# `zikaron-core`'s own SQL runs exclusively through `aiosqlite` (coding-standards.md §6), so
+# every test that exercises the store is itself a coroutine. `auto` runs every `async def test_*`
+# without a per-test `@pytest.mark.asyncio`, which would otherwise be required on every one of
+# them with no exceptions worth carving out.
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 branch = true
