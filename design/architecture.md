@@ -1169,7 +1169,7 @@ could not both hold.
 | −32000 | `not_found` | `amend`/`retire` on an unknown uuid; unknown `superseded_by` target | `{uuid}` |
 | −32001 | `version_conflict` | presented version ≠ current | `{current: [{...}]}` — every conflicting row; **mints a receipt for each and logs an event for each** |
 | −32002 | `no_read_receipt` | no receipt for `(session_id, client_kind, memory_uuid, version)` (invariant 9) | `{uuids, hint:'fetch it first'}` — **logs an event per uuid** |
-| −32003 | `inactive_row` | `amend` or `retire` of a row that is already `active=0` | `{uuid, state}` |
+| −32003 | `inactive_row` | `amend` or `retire` of a row that is already `active=0` | `{uuid, state}` with `state ∈ superseded \| retired` — the two `active=0` members of the tool surface's `live \| superseded \| retired` vocabulary (§"MCP tool surface"). Never `live`: this code fires only on a row already `active=0`, and `live` means `active=1`, so a raise site that produced it would itself be the bug this payload exists to catch |
 | −32004 | `bad_supersession` | self-edge, cycle, target retired-outright, edge already set, or depth cap hit | `{uuid, target, reason}` |
 | −32005 | `bounds` | gist over `gist_max_tokens`, empty gist or content, `limit` or list size out of range | `{field, limit, actual}` |
 | −32010 | `group_unknown` | `group_id` not in the store | `{group_id}` |

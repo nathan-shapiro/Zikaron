@@ -17,11 +17,13 @@ from zikaron.core.errors import (
     APPLICATION_CODE_MAX,
     APPLICATION_CODE_MIN,
     ERROR_SPECS,
+    INACTIVE_ROW_STATES,
     BadConfigSource,
     BadMergeTargetReason,
     ErrorCode,
     ErrorSpec,
     PayloadField,
+    RowState,
     ZikaronError,
 )
 
@@ -81,9 +83,14 @@ def test_the_closed_sets_are_enums_carrying_exactly_the_designs_values(
         for field in parse_payload(row["`data`"])
         if len(field.values) > 1
     }
-    assert set(stated) == {"bad_config.source", "bad_merge_target.reason"}
+    assert set(stated) == {
+        "bad_config.source",
+        "bad_merge_target.reason",
+        "inactive_row.state",
+    }
     assert stated["bad_config.source"].values == tuple(BadConfigSource)
     assert stated["bad_merge_target.reason"].values == tuple(BadMergeTargetReason)
+    assert stated["inactive_row.state"].values == INACTIVE_ROW_STATES
 
 
 def test_every_code_lies_in_the_range_the_design_claims() -> None:
@@ -156,6 +163,18 @@ def test_a_value_outside_a_closed_set_is_refused() -> None:
             value="0",
             expected="int >= 1",
         )
+
+
+def test_inactive_row_state_excludes_live_and_accepts_the_other_two_row_states() -> None:
+    """`live` means `active=1`, and `inactive_row` fires only on a row already `active=0` — a
+    raise site that named `live` would itself be the bug this payload exists to catch."""
+    assert RowState.LIVE not in INACTIVE_ROW_STATES
+    assert set(INACTIVE_ROW_STATES) == {RowState.SUPERSEDED, RowState.RETIRED}
+    for state in INACTIVE_ROW_STATES:
+        error = ZikaronError(ErrorCode.INACTIVE_ROW, uuid="a", state=state)
+        assert error.data["state"] == state
+    with pytest.raises(ValueError, match=r"inactive_row\.state"):
+        ZikaronError(ErrorCode.INACTIVE_ROW, uuid="a", state=RowState.LIVE)
 
 
 def test_a_closed_set_accepts_its_enum_member_and_its_plain_string() -> None:

@@ -72,7 +72,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
-+ the three singletons) and M2 (store + configuration) complete; M3 is next.** D1–D33 settled. Grounding from
++ the three singletons), M2 (store + configuration) and M3 (records, versioning, receipts) complete; M4 is
+next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -109,6 +110,43 @@ a symlinked `.zikaron` itself — is refused. Invariant 1 has no enforcement cod
 file says so explicitly, per `coding-standards.md`'s own escape hatch for a genuinely untestable invariant;
 M4's indexing path is where it becomes real. 256 tests, 100% branch coverage on `zikaron/core`.
 
+**M3 shipped `core/records/`** (`receipts.py`, `supersession.py`, `memory.py`) — the row-level primitives
+`create`/`amend`/`retire`/`fetch` compose, with optimistic-concurrency versioning, read-receipt mint/spend/
+revocation, and the supersession graph's write-time checks. Settled the one item M1 deferred:
+`inactive_row.state`'s value set is now `superseded | retired` (never `live`, by construction), encoded as
+`RowState`/`INACTIVE_ROW_STATES` in `errors.py` and stated in `architecture.md` §Errors. A real design
+boundary drawn here, not merely an implementation choice: `create`/`amend` do **not** emit `remember`/`amend`
+`event` rows, because those kinds carry `token_count`/`gist_tokens`/`n_chunks`/`truncated` — chunking-preflight
+outputs `indexing.md` assigns to M4 — and `schema.md`'s own nullability table does not list them as nullable
+for these two kinds the way it does for `merge`/`promote`'s non-authoring rows, so a value M3's fake embedder
+cannot produce honestly must not be invented. `retire`/`fetch`/`version_conflict`/`no_receipt` carry no such
+dependency and are fully M3's own. Transaction handling required getting the invariant-10 rejection carve-out
+right, and getting it right took two of the four review rounds: `_reject_version_conflict`/`_reject_no_receipt`
+stage a receipt and event and raise, but never commit — only the transaction-*owning* wrapper
+(`create`/`amend`/`retire`/`fetch`, never the neutral `_<verb>_within_transaction` core M4 composes into its
+own wider transaction) decides commit-versus-rollback, via one function, `_commit_or_roll_back`, that inspects
+the raised error's code. Three small value
+types (`CallParams`, `Rewrite`, `ReceiptKey`) exist because bundling them was the correct fix for genuine
+`PLR0913` violations, not a suppression — each is a natural grouping the design already implies (an RPC call's
+constant fields; a full rewrite's two fields; `read_receipt`'s own primary key). **Reviewed to `APPROVED` over
+four rounds** (`reviews/m3-records-review.md`), and the first two rounds changed the transaction architecture
+materially rather than only its prose: round 1 found the retire ladder checked an unknown `superseded_by`
+target's existence *after* the source's own version and receipt, contrary to `architecture.md`'s fixed rung
+order, and found the single-row conflict payload wrongly wrapped in a list where the tool surface states one
+object. Round 2 found the fix for a third round-1 defect — that the whole transaction-owning API could not
+compose into M4's wider transactions, since a nested `BEGIN` raises `OperationalError`, verified empirically —
+was itself unsafe: splitting each verb into a transaction-owning wrapper around a neutral
+`_<verb>_within_transaction` core left the neutral core's own rejection helpers still calling `db.commit()`
+directly, which could durably commit an outer composing caller's earlier writes. The structural fix moves that
+decision into one function, `_commit_or_roll_back`, that inspects the caught error's code and lives only in
+the wrappers; the neutral cores now never touch the transaction on any path. Round 2 also caught the
+concurrent-cycle acceptance test racing an already-illegal graph instead of two legal opposite edges on an
+edgeless pair, and two missing end-to-end regression tests for the corrected ladder order — both added and
+verified by mutation testing to fail against the pre-fix code. 333 tests, 99.82% coverage on `zikaron/core`;
+the one remaining uncovered branch (`supersession.py`'s defensive row-is-None case inside the chain walk) is
+documented in-code as unreachable through any well-formed call, since `superseded_by`'s `ON DELETE RESTRICT`
+foreign key makes the state it guards against impossible to construct without disabling FK enforcement.
+
 **Sixteen rounds of independent review, ending APPROVED with no open blockers.** Rounds 1–12 covered the
 corpus, 13–16 the operator-review delta. 26 findings in round 1, ~130 across all sixteen; every one accepted,
 **no user decision reversed in any round**, and roughly twenty D-row *rationales* corrected where one asserted
@@ -142,7 +180,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | **M0** | **Spikes** — sqlite-vec + the `float[<dim>]` template, FTS5 external-content under amend and erasure, UDS round-trip cold/warm + start-if-absent race, fastembed cold/warm | `research/spike-results.md` records each measurement; any failed assumption has a design correction applied | ✓ |
 | M1 | Skeleton + check gate; the three declarative singletons (error codes, config keys, event kinds) | gate passes; a test asserts each singleton matches its design table exactly | ✓ |
 | M2 | Store + configuration | invariants 1, 3, 11 tested; create→close→open round-trips; dimension mismatch rejected before any table exists | ✓ |
-| M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ☐ |
+| M3 | Records, versioning, receipts | invariants 4–10 tested (10 is cross-cutting — M4/M6/M7 re-assert it for their own verbs); a version bump revokes others' receipts but not the writer's; a consolidator receipt cannot license an `mcp` amend | ✓ |
 | M4 | Indexing — chunking, FTS5 sync, vector writes, **atomic** amend | invariant 2 tested by raising mid-transaction; chunk boundaries deterministic across runs | ☐ |
 | M5 | Retrieval — arms, RRF, eligibility, rollup, demotion, stop reasons | invariants 18–20 tested; one eligibility implementation used by all five consumers; a superseded row surfaces demoted, behind its replacement | ☐ |
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ☐ |
@@ -446,3 +484,16 @@ _(One line per research note and review: topic — key takeaway — file path.)_
   right for one case and wrong for the next. One of those four fixes was itself wrong on the first attempt
   and was caught only by re-running the *whole* related test suite before calling it done, which is the
   dogfooding-relevant lesson below — `reviews/m2-store-config-review.md`.
+- **M3 code review** — four rounds, ending `VERDICT: APPROVED` with one optional nitpick in the fourth. The
+  first two rounds changed the transaction architecture rather than only its prose: round 1 found the retire
+  ladder's existence rung misordered against version/receipt for an unknown `superseded_by` target, and the
+  single-row conflict payload wrapped in a list contrary to the tool surface's own contract. Round 2 found
+  that round 1's fix for transaction composability — splitting each verb into a transaction-owning wrapper
+  around a neutral `_<verb>_within_transaction` core — was itself unsafe, because the neutral core's own
+  rejection helpers still called `db.commit()` directly and could durably commit an outer composing caller's
+  earlier writes; the structural fix moved that one decision into `_commit_or_roll_back`, living only in the
+  wrappers. Round 2 also caught a "concurrent" cycle test that raced an already-illegal graph rather than two
+  legal opposite edges on an edgeless pair, rebuilt as a genuine check-then-write race synchronized on both
+  attempts' validation completing before either write. Round 3 found stale docstrings and test narrative
+  still describing the removed commit-inside-rejection mechanism, and one event assertion that excluded two
+  named kinds rather than asserting the exact list. Round 4: `APPROVED` — `reviews/m3-records-review.md`.

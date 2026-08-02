@@ -58,6 +58,28 @@ class BadConfigSource(StrEnum):
     FILE = "file"
 
 
+class RowState(StrEnum):
+    """The state of a `memory` row, as reported to an agent — never a storage-column name.
+
+    `architecture.md` §"MCP tool surface" states the full vocabulary as `live | superseded |
+    retired`, but `inactive_row` fires only on a row already `active=0`, so `LIVE` — the
+    `active=1` case — can never appear in that payload: a raise site that produced it would
+    itself be the bug the payload exists to catch. `INACTIVE` is the two-member subset the
+    error's `state` field actually draws from.
+    """
+
+    LIVE = "live"
+    SUPERSEDED = "superseded"
+    RETIRED = "retired"
+
+
+#: The subset of `RowState` a row already known to be `active=0` can report — every member of
+#: `RowState` except `LIVE`, which describes `active=1` and so is unreachable at this raise site.
+INACTIVE_ROW_STATES: Final[tuple[RowState, ...]] = tuple(
+    state for state in RowState if state is not RowState.LIVE
+)
+
+
 class BadMergeTargetReason(StrEnum):
     """Why a merge target was refused.
 
@@ -135,7 +157,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
         ),
         ErrorCode.INACTIVE_ROW: ErrorSpec(
             "that memory is already inactive",
-            (PayloadField("uuid"), PayloadField("state")),
+            (PayloadField("uuid"), PayloadField("state", values=INACTIVE_ROW_STATES)),
         ),
         ErrorCode.BAD_SUPERSESSION: ErrorSpec(
             "illegal supersession edge",
