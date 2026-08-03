@@ -76,7 +76,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 (retrieval), M6 (write path + D15 dedup), M7 (consolidation) and M8 (D30's six signals as SQL)
 complete and reviewed to APPROVED. M9 (service) is built and its gate is green, but its review
 **did not converge** — see below. M10 (MCP client) is built and reviewed to `APPROVED` over seven
-rounds — see below; M11 (hook client) is next.** D1–D33 settled. Grounding from
+rounds — see below. M11 (hook client) is built and reviewed to `APPROVED` over eleven
+rounds — see below.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -612,6 +613,161 @@ this corpus.
 own `--cov` flags now name `zikaron/mcp` explicitly, added at M10's introduction rather than
 discovered as a gap the way M9's own `--cov=zikaron/service` omission was.
 
+**M11 shipped `zikaron/hook/`** (`connect.py`, `envelope.py`, `failure.py`, `main.py`, `push.py`, `rpc.py`,
+`spawn_warm.py`, `warm_helper.py`, `write_policy.py`) — the two hooks: `userPromptSubmit`'s push, and
+`agentSpawn`'s write-policy print plus best-effort service warming. Both are single-shot, stdlib-only
+processes by design (D22, D12's own hook-thinness argument), and the single outer connection attempt this
+milestone holds itself to — never `zikaron-mcp`'s own retry-once — is the one deliberately narrower property
+that recurs through nearly every finding below. 1259 tests, 97.67% coverage repo-wide, `zikaron/hook` itself
+at 95.5%. **Reviewed to `APPROVED` over eleven rounds** (`reviews/m11-hook-client-review.md`) — the longest
+review trail of any milestone, and worth reading in two parts: rounds 1–2 covered the whole client broadly,
+finding a genuine defect in each; rounds 3–11 were almost entirely consumed by one specific sub-problem —
+verifying store identity across a connect-time replacement race — which took a materially different shape
+each round and ended, deliberately, on human authority rather than engineering conquest.
+
+**Measured before a line of production code addressed it: kiro's own exit-code and stderr contract for a
+hook's stdout is not what the design corpus assumed, and the corpus was wrong twice before the measurement,
+not once.** A live spike against a real kiro session — instrumented, then deleted per its own docstring's
+instruction, per `coding-standards.md`'s own "spikes are throwaway" convention — walked three shapes in
+order: silence on both channels with exit 0 (the original design); reporting on stderr too, still exit 0;
+then also making exit non-zero on a failure, reasoned as the more conventional Unix contract. The third
+shape was the one actually measured wrong: a non-zero exit suppressed the confirmed-working exit-0 stdout
+channel *entirely*, and stderr never surfaced to the model at all on either exit code. The shipped contract,
+confirmed working end to end against the real kiro session: always exit 0, never stderr; on failure, the
+exact machine-readable detail goes to `hook.log`, and a short, deliberately paraphrasable natural-language
+instruction asking the model to relay the failure to the operator (citing `hook.log` for the exact detail)
+goes to stdout — verified directly, not merely reasoned about, that this text genuinely reaches the model's
+own context and gets relayed in its response. `design/architecture.md`'s "Degraded modes" section keeps the
+full three-shape history; every other design site — `coding-standards.md`, `overview.md`, `retrieval.md`,
+`schema.md`, `write-policy.md`, `build-plan.md` — was swept for the two superseded phrasings ("prints nothing
+and reads nothing", "never stderr, always silent") and corrected everywhere the *failure* contract was
+described, while every genuinely unaffected site (subagent-session suppression, an empty successful
+`surface` result) was correctly left alone, since both remain silent for reasons this pivot never touched.
+
+**A genuine, independently reviewed shared-infrastructure bug surfaced while building this milestone's own
+tests, before the review trail even started.** `tests/design_tables.py`'s `parse_fenced_code` — the parser
+every prior milestone's own drift-guard tests read the design corpus through — could not distinguish a
+closing fence of a differently-tagged code block from a fresh opener for the target language when the
+target language string was empty, a case this milestone's own new tests were the first to exercise. Fixed
+generally (a `matched` boolean tracked per open/close pair, not a special case for this one language), and
+re-verified against `test_ddl.py`'s own existing assertions after an incidental message-format change had to
+be reverted — a small, direct instance of the corpus's own recurring lesson that reformatting a diagnostic
+string while fixing its logic is a second, unrelated change wearing the first one's commit.
+
+**Round 1 found eight blockers and two improvements, one in nearly every module this milestone shipped.**
+`connect.py`'s own start-if-absent sequence was missing the `flock` lock-and-recheck step entirely — a real
+TOCTOU where two racing hooks could unlink each other's live socket — restored, and proven with two new
+tests racing real concurrent threads against a real long-running fake server. `push.py` and `spawn_warm.py`
+each caught only a finite, named set of exception types rather than genuine `Exception`, meaning an
+unanticipated failure could escape both `hook.log` and the stdout relay entirely and propagate past this
+package's own outermost catch-all — restructured to catch broadly after the specific cases, with a test
+proving a bare, unlisted `RuntimeError` is still caught and relayed. `failure.py`'s own docstring claimed
+`os.open`'s mode argument was umask-independent — measured directly and found false, a `0600` process umask
+genuinely produces a `0000`-mode file — fixed with `O_EXCL`-first creation detection and `os.fchmod` forcing
+the exact mode only on genuine creation; the same fix closed a second, more consequential defect in the same
+function, that it never created its own parent `.zikaron` directory, meaning the single most common failure
+case — the very first session, before any store exists — silently lost the failure record `hook.log` exists
+to make durable. `main.py` used `print(output)`, appending a trailing newline the design's own "empty
+`surface` prints nothing at all" contract does not include — fixed to `sys.stdout.write`, proven byte-exact
+against a real subprocess. `warm_helper.py` configured its own log file *before* securing the directory that
+log needs to exist, meaning a genuinely fresh project crashed the detached warm helper silently on the very
+first run, before start-if-absent was ever attempted — fixed by moving both inside one leading failure
+boundary. `push.py` always passed `store_id=None` to the connection layer, making the store-identity-mismatch
+check unreachable past a store's first-ever creation — the first of several rounds this specific check would
+occupy (see below). `test_hook_stdlib_only.py`'s own enforcement was a hand-maintained denylist, blind to any
+unanticipated third-party import, and a hand-maintained "critical path" module list, silently exempting any
+future module added without updating it — rewritten to discover modules from disk and classify every import
+positively against Python's own `sys.stdlib_module_names`, with a negative-control test proving a synthetic
+non-stdlib import is actually caught. A comprehensive stale-text sweep found five more sites the original
+sweep missed. Two improvements: a carve-out added to `coding-standards.md` §4 for in-process
+socket-bound-on-a-background-thread tests, mirroring the design's own existing "where a real store sits"
+precedent, since this package's own test suite uses the pattern extensively; and both modules' docstrings
+trimmed of round-by-round operator-pivot narrative, per §5's "no circumstantial provenance" rule, pointing to
+`architecture.md`'s own "Degraded modes" section for the history instead of duplicating it in code.
+
+**A genuine test-leak bug was found after round 2's own check gate reported clean, and it was found by
+distrusting the delegated summary specifically, not by reading it more carefully.** One test never mocked
+`subprocess.Popen`, so it genuinely spawned the real detached warm helper, which genuinely spawned a real
+`zikaron.service.main`, every time it ran; two other tests spawn a real service as an *intended* side effect
+of testing the real end-to-end `agentSpawn` entry point, and needed their own explicit reap-by-health-poll-
+then-signal cleanup rather than none at all. Caught specifically by running `pgrep -af
+"zikaron.service.main"` directly after a check-gate run, rather than trusting the delegated py-runner
+summary's own aggregate pass/coverage numbers — which were separately, independently found inaccurate on
+their own terms this same session, a recurring and by-now well-documented lesson in this corpus. Fixed,
+re-verified clean via the identical `pgrep` check, and folded into this session's own standing discipline:
+every test run that could plausibly spawn a real service gets checked this way, and every delegated coverage
+number gets independently recomputed per package from the raw `Stmts`/`Miss` table before being trusted.
+
+**Rounds 3 through 9 are best read as one continuous engineering arc on a single question — can a
+stateless, no-store-access client verify the identity of the store it just connected to — that changed shape
+five times before the human operator directed it stopped changing shape at all.** Round 3 found the
+hook's own path-only identity check was, by construction, unable to detect a store deleted and recreated at
+the identical path while a stale service kept it open — the exact scenario `store_id` exists to catch, which
+a *stateless* client genuinely cannot resolve on its own (a sidecar file the hook would write and read
+itself to remember an id across invocations was considered and rejected as circular: whatever a later
+invocation would compare against was itself written by an earlier call to the same, possibly-now-stale
+service, so a service that goes stale without restarting reports the identical value both times and the
+sidecar never disagrees with itself). The resolution moved to the *service* side instead, since it is the
+only party with an independent way to notice: `zikaron/service/lifecycle.py`'s own idle-poll task — already
+running every 30 s to check for idle timeout — gained a second, independent exit condition, comparing the
+store's own inode at the path against the one captured when the connection first opened, and self-stopping
+on drift exactly as it already does on idle. Round 6 found the *capture* of that baseline inode was itself
+racing `aiosqlite`'s own documented cross-thread connect handoff (`Connection._connect` queues the real
+`sqlite3.connect()` call onto a separate worker thread and only resumes the caller once that thread hands
+the result back), and a fix pinning a file descriptor before the connect call — but only ever using it to
+read a number, closing it again immediately — left the connect itself going through the still-adversarial
+plain pathname, unprotected by anything the pin had established. Round 7 found that fix's own comparison
+still could not rule out the path being swapped away and restored *during* the handoff, since two path reads
+bracketing a window prove nothing about what happened inside it, and moved to reading SQLite's own
+post-connect identity through a `/proc/self/fd` scan for any descriptor matching the path. Round 8 found the
+scan itself unsound — it cannot attribute a match to *this* connection over any other same-process,
+same-path descriptor, so a coincidentally matching, unrelated one could produce a false accept or reject —
+and the fix connected SQLite directly through the pinned descriptor's own `/proc/self/fd/<n>` path instead,
+reasoned to sidestep pathname resolution entirely, since that magic symlink resolves to the descriptor's own
+file rather than by re-walking the original name. **Round 9 measured that reasoning wrong, directly and
+concretely, not merely by argument**: `PRAGMA database_list` on a connection opened through `/proc/self/fd/
+<n>` reports the ordinary, canonicalized pathname, not the magic-symlink string handed to it — SQLite's own
+VFS resolves it internally — and a file replaced at the path while an existing connection is live can make
+even an *already-established* connection fail on its very next statement, disproving the premise the whole
+mechanism rested on rather than merely finding it incompletely built.
+
+**At that point the human operator was consulted directly, and made the call the eight prior rounds could
+not have made for themselves: stop engineering around a race whose real shape does not warrant the
+engineering.** Closing the gap properly would require controlling SQLite's own VFS-level file handle — a
+custom VFS or file-control integration, a materially larger undertaking than the milestone's own scope. The
+race this whole arc chased is a sub-millisecond window at process startup, not the ordinary case the
+mechanism exists for at all — a store deleted and recreated while the service has been sitting open and
+idle, which the poll closes completely, with no narrower timing assumption anywhere in *that* half of the
+design. The operator's own direction, stated plainly: revert to the simple capture — a bare `db_path.stat()`
+immediately after connect, no `await` in between — and accept the narrow startup-instant race as a
+documented, out-of-scope gap on human authority, rather than pursued further. This is recorded in both
+`architecture.md` and `_open_connection`'s own docstring exactly as a decision, not a silent regression:
+what was tried, what was measured wrong about each attempt in turn, what closing it properly would require,
+and that the operator judged the race's own shape not worth that cost. Round 10 then found one genuine bug
+the revert itself introduced — the reverted `stat()` call sat *outside* the function's existing
+close-on-failure boundary, meaning a stat failure would abandon the just-established, worker-thread-backed
+connection with nothing left to close it, a real resource leak of exactly the shape this corpus has already
+paid for once (`coding-standards.md` §6) — fixed by moving the read to the first statement *inside* the
+existing guard, preserving the "no `await` before the read" property the capture still depends on, and
+verified by mutation-testing the fix against its own removal. Round 10 also found the design prose itself
+had drifted back into overclaiming during the revert — stating unconditionally that the stale connection
+"keeps serving whatever inode it opened regardless," directly beside the sentence recording round 9's own
+finding that a later operation on it can still genuinely fail — corrected to distinguish the descriptor's
+own binding from a promise about every subsequent operation on it, which was never true. **Round 11 approved
+with one cosmetic nitpick** (a test docstring's own stale cross-reference to an earlier capture location),
+fixed immediately without a twelfth round since it carried no behavioral implication.
+
+**The lesson this arc leaves is not "review more" — every one of rounds 3 through 9 found something real,
+and finding it took exactly that many rounds.** It is that an estimand can survive five rounds of
+increasingly careful engineering and still rest on a premise nobody had actually measured, and that
+recognizing a chase has stopped being proportionate to what it defends against is a judgment call this
+corpus's own tooling cannot make for itself — the same shape of call M9's own operator-directed shutdown
+tradeoff and M7's own consolidation-takeover reversal already established as precedent, now with a fourth
+instance: measure past reasoning-in-place at every step (`PRAGMA database_list` settled in one command what
+several rounds of confident implementation had assumed), keep exploring the engineering while a next round
+keeps finding something real, and know that a human calling "this is not worth closing further" is itself a
+legitimate, recorded design decision rather than a failure to converge.
+
 ## Build plan — start here when writing code
 **Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
 definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
@@ -637,7 +793,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ✓ |
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ✓ |
 | M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ✓ |
-| M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ☐ |
+| M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ✓ |
 | M12 | Distribution — agent config, skill, hook entries (stable + `--v3`), policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run | ☐ |
 
 **M0 is first and is throwaway.** Four assumptions underpin the architecture and none has been exercised in
@@ -1165,6 +1321,28 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   distinction matters for the identical reason a stale design paragraph matters: a comment that claims
   more certainty than the code actually provides is a confidently wrong memory of what was built,
   and it will mislead the next reader exactly as reliably as a wrong design paragraph would.
+- **An estimand can survive nine rounds of increasingly careful engineering and still rest on a
+  premise nobody had actually measured — and the single command that measured it settled in seconds
+  what several rounds of confident implementation had assumed.** M11's own store-identity mechanism
+  went through five distinct shapes across rounds 3–9, each one correctly closing the gap the
+  *previous* round had found, until round 9 ran `PRAGMA database_list` against a connection opened
+  through the mechanism's own supposedly-race-proof `/proc/self/fd/<n>` path and found SQLite
+  reporting the ordinary, canonicalized pathname back — proving the whole mechanism's own premise
+  false, not merely incompletely built. Nothing about that measurement required more review rounds;
+  it required running one command against the real dependency instead of continuing to reason about
+  its documented behavior. This is the identical shape as the earlier lesson about `asyncio`
+  internals being "wrong three times in a row about things that read as obviously true" — the
+  difference here is what happened *after* the measurement: recognizing that closing the gap
+  *properly* (a custom SQLite VFS) was no longer proportionate to what it defended against (a
+  sub-millisecond race at process startup, not the ordinary case the mechanism existed for) is a
+  judgment call the review process itself could not make, and the human operator making that call
+  explicitly — revert to the simple, honestly-documented capture, accept the narrow gap on stated
+  authority — is itself a fourth instance of the same precedent M7's takeover reversal and M9's
+  shutdown tradeoff already established for this corpus: a design decision, not a failure to
+  converge. Directly relevant to what Zikaron is for: an engineering effort that keeps finding real
+  problems is not evidence it should continue, and a memory system that only ever remembers "the
+  bug was fixed" without also remembering "and here is where we deliberately stopped, and why" would
+  misinform whoever reads it next just as confidently as if the fix had never happened at all.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
@@ -1369,4 +1547,31 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   on a separate thread — was weighed and deliberately disclosed as bounded rather than layered with
   further defenses, given six rounds already spent on cancellation-safety edges — `reviews/m10-mcp-
   client-review.md`.
+- **M11 code review** — **eleven rounds, ending `VERDICT: APPROVED`**, the longest trail of any
+  milestone. Rounds 1–2 covered the client broadly (eight blockers in round 1: a missing `flock`
+  lock/recheck in start-if-absent; `push.py`/`spawn_warm.py` catching only named exception types
+  rather than genuine `Exception`; a false umask-independence claim in `failure.py`'s own docstring,
+  measured wrong directly, plus that function never creating its own parent directory;
+  `print(output)`'s stray trailing newline; `warm_helper.py` configuring its own log before securing
+  the directory that log needs; an unreachable store-identity check from an always-`None` `store_id`;
+  a hand-maintained denylist standing in for `test_hook_stdlib_only.py`'s own enforcement; a stale-
+  text sweep gap. Two improvements: a `coding-standards.md` §4 carve-out for in-process socket-bound-
+  on-a-background-thread tests; docstrings trimmed of round-by-round changelog narrative). Rounds
+  3–9 were a single continuous engineering arc on one question — can a stateless, no-store-access
+  client verify store identity across a connect-time replacement race — that took five different
+  shapes (a path-only check; a service-side inode-drift poll; a pin-then-compare-against-a-second-
+  path-read; a `/proc/self/fd` scan for SQLite's own descriptor; connecting directly through the
+  pinned descriptor's own `/proc/self/fd/<n>` path) before round 9 measured, directly via `PRAGMA
+  database_list`, that the last of these does not actually work as reasoned — SQLite's own VFS
+  canonicalizes that magic-symlink path back to the ordinary pathname internally. The human operator
+  was consulted at that point and directed reverting to the simple capture (a bare `db_path.stat()`
+  immediately after connect) and accepting the narrow, sub-millisecond startup-instant race as a
+  documented, out-of-scope gap rather than pursuing a VFS-level fix — recorded in both the design and
+  the code as a decision, not a silent regression. Round 10 found one genuine bug the revert itself
+  introduced (the reverted `stat()` sat outside the existing close-on-failure boundary, a real
+  resource leak on the one path it could raise) and a design-prose contradiction from the revert
+  (overclaiming that a stale connection "keeps serving...regardless" beside the sentence recording
+  round 9's own finding that it can still fail) — both fixed and mutation-verified. Round 11
+  approved with one cosmetic nitpick (a stale test-docstring cross-reference), fixed immediately —
+  `reviews/m11-hook-client-review.md`.
   site anywhere still referencing the removed interfaces — `reviews/m8-signals-review.md`.

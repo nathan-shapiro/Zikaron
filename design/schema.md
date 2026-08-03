@@ -329,9 +329,10 @@ service refuses to serve, returns `−32023 bad_config` naming the key, and logs
 degraded hook path re-validate the same keys a `bad_config` had just declared unusable, so it could attempt a
 fallback read anyway — which meant re-deriving values the rule above forbids substituting a default for, or
 ranking differently while looking healthy, which is the exact failure this rule exists to prevent. The hook no
-longer attempts this at all: on `bad_config` it **prints nothing and reads nothing**, uniformly with every
-other failure (`architecture.md` §"Degraded modes"). There is no validation for the degraded path to perform,
-because there is no read for that validation to protect.
+longer attempts this at all: on `bad_config` it logs the exact detail to `hook.log` and exits 0 with a
+model-facing relay instruction on stdout, uniformly with every other failure (`architecture.md` §"Degraded
+modes"). There is no validation for the degraded path to perform, because there is no read for that
+validation to protect.
 
 **Unknown keys are tolerated; a newer `schema_version` is not.** An unknown key on a *supported* version is
 left alone and logged once, so a newer writer's extra settings do not brick the store. That is deliberately
@@ -357,9 +358,9 @@ concludes the previous process died mid-reindex and must finish or restart the r
 (`−32022 reindexing` until then). Listing it as a required key with default "absent" was a straight
 contradiction of the paragraph above it; this is the correction. **Only the service checks it, and that is
 sufficient:** the service is the only reader of the store, and a `reindexing` result from it produces the
-same response from the hook as every other failure — nothing printed, one line logged
-(`architecture.md` §"Degraded modes"). An earlier draft had the hook itself check this sentinel before
-running a fallback query of its own; there is no fallback query left to guard.
+same response from the hook as every other failure — one line to `hook.log` plus a model-facing relay on
+stdout, never a read (`architecture.md` §"Degraded modes"). An earlier draft had the hook itself check this
+sentinel before running a fallback query of its own; there is no fallback query left to guard.
 
 **One setting deliberately does not live in `meta`: the consolidator's model.** D29 requires it to be a
 config value, and the store is the wrong home for it — the store does not spawn the subagent, D10's skill
@@ -676,9 +677,9 @@ that existed. A session whose every push failed contributes no events at all, be
 the service on a failure and so never emits the `surface_call` the service would have logged
 (`architecture.md` §"Degraded modes"). This holds uniformly across every failure kind — transport,
 `bad_config`, `reindexing`, contention, identity — since the hook's response to all of them is now identical:
-nothing printed, nothing read, one line to its own `hook.log`. So the zero-write rate is conditional on the
-service having been reachable **and healthy**. That is a stated limitation, not a fixed one — making the hook
-write would mean giving it a writable store handle, which is a worse trade.
+one line to its own `hook.log` plus a model-facing relay on stdout, never a read. So the zero-write rate is
+conditional on the service having been reachable **and healthy**. That is a stated limitation, not a fixed one
+— making the hook write would mean giving it a writable store handle, which is a worse trade.
 
 **Subagent sessions are absent from both sides, and that is why they create no artifact.** The hook prints
 nothing and calls nothing in a subagent session (`architecture.md` §"Subagent sessions"), so a subagent

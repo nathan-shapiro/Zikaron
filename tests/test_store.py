@@ -178,6 +178,105 @@ async def test_open_on_a_missing_store_creates_no_database_file(tmp_path: Path) 
     assert not (store_dir / _DB_FILENAME).exists()
 
 
+async def test_open_raises_filenotfound_when_the_path_becomes_unstatable_right_after_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`memory.db` deleted, with nothing recreated at all, strictly *after* the real connect call
+    has already returned but *before* `_open_connection`'s own `opened_inode = db_path.stat()`
+    read runs. That read itself is what fails here — a plain `FileNotFoundError`, since there is
+    genuinely nothing left to `stat` at the path — rather than reaching the pragma-application
+    loop that follows it at all. This is the accepted, documented gap `_open_connection`'s own
+    docstring names explicitly: a replacement landing in this exact narrow window is detected as
+    a failure (the store cannot be opened), but not classified as a `store_identity` mismatch,
+    since this build deliberately does not implement the VFS-level mechanism that would be
+    required to distinguish the two here. This test exists to confirm that failure surfaces as a
+    plain `FileNotFoundError` propagating unmodified, not silently swallowed or misclassified —
+    **and, separately, that the already-established connection is genuinely closed rather than
+    abandoned**: `aiosqlite.connect()` succeeding before this failure means a real, worker-
+    thread-backed connection already exists at the moment the `stat()` raises, and a version of
+    this function that read the inode *outside* the cleanup boundary left exactly that
+    connection unclosed on this path — a genuine resource leak this project's own history has
+    already paid for once (a leaked, worker-thread-backed handle keeps the whole interpreter
+    alive after all other work is done, per `coding-standards.md` §6).
+    """
+    store_dir = tmp_path / ".zikaron"
+    store_dir.mkdir(mode=0o700)
+    config = _config(tmp_path)
+    async with await Store.create(store_dir, config, _default_embedder()):
+        pass
+    db_path = store_dir / _DB_FILENAME
+
+    real_connect_method = aiosqlite.Connection._connect
+    established_connection: aiosqlite.Connection | None = None
+
+    async def _connect_then_delete_with_nothing_recreated(
+        self: aiosqlite.Connection,
+    ) -> aiosqlite.Connection:
+        nonlocal established_connection
+        result = await real_connect_method(self)
+        established_connection = result
+        db_path.unlink()
+        return result
+
+    monkeypatch.setattr(
+        aiosqlite.Connection, "_connect", _connect_then_delete_with_nothing_recreated
+    )
+
+    with pytest.raises(FileNotFoundError):
+        await Store.open(store_dir, config)
+
+    assert established_connection is not None, (
+        "the connect must have genuinely succeeded before the stat() failure for this test to "
+        "mean anything"
+    )
+    # A query against the closed connection must fail with `aiosqlite`'s own "no active
+    # connection" `ValueError` — the identical proof-of-closure pattern
+    # `test_context_manager_closes_on_exit` already establishes for the ordinary close path,
+    # applied here to confirm the *failure* path closes it too.
+    with pytest.raises(ValueError, match="no active connection"):
+        await established_connection.execute("SELECT 1")
+
+
+async def test_open_on_a_file_that_exists_but_aiosqlite_connect_itself_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file genuinely exists and is readable, but `aiosqlite.connect()` itself still raises,
+    which must still be reported as `BAD_CONFIG` exactly like the missing-file case above.
+    `aiosqlite.connect()` is monkeypatched directly to raise a real `aiosqlite.Error` subclass,
+    rather than trying to construct a genuine filesystem condition that triggers a *connect-time*
+    rejection specifically: SQLite's own file-format validation is lazy — a plainly non-SQLite
+    file connects successfully and only fails on the first actual query, which a different,
+    pre-existing exception path already handles — so a real connect-time `aiosqlite.Error` is
+    narrow enough (permission edge cases, resource exhaustion) that a direct, deterministic
+    construction of the classification logic itself is the more faithful test of what this
+    branch is actually for.
+    """
+    store_dir = tmp_path / ".zikaron"
+    store_dir.mkdir(mode=0o700)
+    db_path = store_dir / _DB_FILENAME
+    db_path.write_bytes(b"exists and is readable, but aiosqlite.connect will still reject it")
+    config = _config(tmp_path)
+
+    async def _connect_always_rejects(*_args: object, **_kwargs: object) -> aiosqlite.Connection:
+        raise aiosqlite.OperationalError("deliberately rejected, for this test")
+
+    monkeypatch.setattr(aiosqlite, "connect", _connect_always_rejects)
+
+    with pytest.raises(ZikaronError) as excinfo:
+        await Store.open(store_dir, config)
+    assert excinfo.value.code is ErrorCode.BAD_CONFIG
+
+    monkeypatch.undo()
+    async with aiosqlite.connect(db_path) as fresh:
+        with pytest.raises(aiosqlite.Error):
+            # `SELECT 1` alone would succeed even against this garbage file — it is a pure
+            # literal, never touching the database's own on-disk format — so this uses the exact
+            # pragma `_open_connection`'s own pragma-application loop applies first
+            # (`ddl.PRAGMAS`), which genuinely does need to read/rewrite the file header and is
+            # what surfaces "file is not a database" against a plainly non-SQLite file.
+            await fresh.execute("PRAGMA journal_mode = WAL")
+
+
 async def test_open_on_a_store_directory_that_does_not_exist_at_all_creates_nothing(
     tmp_path: Path,
 ) -> None:
@@ -629,7 +728,7 @@ async def test_a_pre_existing_wide_db_file_is_tightened_before_any_fallible_oper
     db_path.chmod(0o644)
     config = _config(tmp_path)
 
-    async def _always_fail(_db_path: Path) -> aiosqlite.Connection:
+    async def _always_fail(_db_path: Path) -> tuple[aiosqlite.Connection, int]:
         raise RuntimeError("simulated connection setup failure")
 
     monkeypatch.setattr(store_module, "_open_connection", _always_fail)
@@ -747,3 +846,51 @@ async def test_open_connection_closes_on_a_pragma_failure(
     # connection or lock on the file.
     async with aiosqlite.connect(db_path) as fresh:
         await fresh.execute("SELECT 1")
+
+
+async def test_opened_inode_survives_a_replacement_during_later_open_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact race a round of independent review measured against this milestone's own first
+    fix attempt: `Store.open`'s own `_validate_on_open` call runs real, awaited SQL *after*
+    `_open_connection` has already returned — a version of the inode-drift baseline that read a
+    fresh `stat()` at that later point, rather than the value `_open_connection` itself captured,
+    would have silently adopted whichever file existed at the path by the time validation
+    finished, not the one this store's own connection actually opened.
+
+    Forced directly: `_validate_on_open` is monkeypatched so that, partway through its own
+    execution — genuinely after `_open_connection` has already returned and captured
+    `opened_inode` — `memory.db` is deleted and a different file is written at the identical
+    path, then the real validation proceeds against the connection that is still bound to the
+    *original* file. `Store.opened_inode` must still equal the original file's own inode,
+    unaffected by a replacement that happened during this later step — proving the captured
+    baseline predates, and is independent of, everything that runs after `_open_connection`
+    itself returns.
+    """
+    store_dir = tmp_path / ".zikaron"
+    store_dir.mkdir(mode=0o700)
+    config = _config(tmp_path)
+    async with await Store.create(store_dir, config, _default_embedder()):
+        pass
+    original_inode = (store_dir / _DB_FILENAME).stat().st_ino
+
+    real_validate = Store._validate_on_open
+
+    async def _validate_after_replacing_the_file(
+        db: aiosqlite.Connection, cfg: EffectiveConfig
+    ) -> meta.StoreMeta:
+        db_path = store_dir / _DB_FILENAME
+        db_path.unlink()
+        db_path.write_text("a different file now lives at the identical path", encoding="utf-8")
+        assert db_path.stat().st_ino != original_inode, (
+            "the replacement must actually land at a different inode for this test to mean anything"
+        )
+        return await real_validate(db, cfg)
+
+    monkeypatch.setattr(Store, "_validate_on_open", _validate_after_replacing_the_file)
+    async with await Store.open(store_dir, config) as store:
+        assert store.opened_inode == original_inode, (
+            "opened_inode must be the inode this connection actually opened, unaffected by a "
+            "replacement that happened during later validation — not a fresh stat of whatever "
+            "currently sits at the path"
+        )

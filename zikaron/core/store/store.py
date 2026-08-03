@@ -119,8 +119,15 @@ async def _load_sqlite_vec(db: aiosqlite.Connection) -> None:
         await db.enable_load_extension(False)
 
 
-async def _open_connection(db_path: Path, *, existing_only: bool = False) -> aiosqlite.Connection:
+async def _open_connection(
+    db_path: Path, *, existing_only: bool = False
+) -> tuple[aiosqlite.Connection, int]:
     """Open `db_path` through `aiosqlite`, with the extension and pragmas every connection needs.
+
+    Returns the connection **and** the inode `db_path` resolved to at the moment this call's own
+    `aiosqlite.connect()` returned — needed so a caller (`Store.open`/`Store.create`) can hand it
+    onward to whatever later needs to detect this exact file being replaced out from under an
+    already-open connection (`zikaron.service.lifecycle`'s inode-drift self-stop).
 
     Never bare `sqlite3`: a handler that called it directly could hold the single-threaded event
     loop for as long as SQLite's own `busy_timeout` retries, which is a genuine, previously
@@ -132,17 +139,29 @@ async def _open_connection(db_path: Path, *, existing_only: bool = False) -> aio
     that only wraps its *own* work in `try`/`except` would otherwise be handed nothing to close
     when the failure happened here instead.
 
-    Args:
-        existing_only: when `True`, refuse to create `db_path` if it is absent, via SQLite's
-            own `mode=rw` URI option — `Store.open` sets this, because an "open" that silently
-            creates an empty database on a missing store is a mutation this operation must not
-            perform, and would otherwise leave that empty file at the ambient process umask
-            rather than `0600` (`restrictive_umask` only wraps `Store.create`'s connection).
-            `Store.create` leaves this `False`, since creating the file is exactly its job.
-
-    Raises:
-        ZikaronError: `BAD_CONFIG` if `existing_only` is set and `db_path` does not already
-            exist as an openable SQLite database, naming what was expected.
+    **A known, deliberately accepted gap, settled on human authority rather than closed by
+    further engineering — read this before "improving" the capture below.** Several attempts
+    were made to close a much narrower race than the one this baseline actually needs to defend
+    against: a replacement landing in the specific, sub-millisecond window inside `aiosqlite`'s
+    own cross-thread connect handoff, between SQLite binding to a file on its worker thread and
+    this coroutine resuming to read the path. Pinning a file descriptor and connecting through
+    its own `/proc/self/fd/<n>` path — reasoned to sidestep pathname resolution entirely — was
+    measured, empirically, to *not* actually do so: `PRAGMA database_list` shows SQLite
+    canonicalizes that magic-symlink path back to the ordinary pathname internally, and a file
+    replaced at the path while an existing connection is live can make even an *already
+    established* connection fail on its next statement — meaning the assumption the whole
+    mechanism rested on was false, not merely incompletely implemented. Closing this properly
+    would require controlling SQLite's own VFS-level file handle directly (a custom VFS or
+    file-control integration), which is a materially larger undertaking than this milestone
+    warrants for a race with this shape: it requires an adversarial replacement to land inside a
+    sub-millisecond window at process startup, not the ordinary case this mechanism exists for
+    (a store deleted and recreated while the service has been sitting open and idle, which the
+    poll below closes completely). **The operator's own explicit direction is to accept this
+    narrow gap rather than pursue that undertaking**, and to keep the capture simple: read
+    `db_path.stat()` once, immediately after `await aiosqlite.connect()` returns, with no
+    `await` between the connect and the read — not provably instantaneous with SQLite's own
+    internal bind, but the tightest capture available without the VFS-level work this decision
+    declines, and correct for every case except the one named above.
     """
     if existing_only:
         uri = f"file:{quote(str(db_path))}?mode=rw"
@@ -159,13 +178,20 @@ async def _open_connection(db_path: Path, *, existing_only: bool = False) -> aio
     else:
         db = await aiosqlite.connect(db_path)
     try:
+        # The very first statement inside this `try`, with no `await` before it — a failure here
+        # (a permission error, the path having become unstatable) must close the just-established
+        # `db` exactly like a pragma failure a few lines below does; reading it *outside* this
+        # block would abandon a real, worker-thread-backed connection with nothing left to close
+        # it, which is a genuine resource leak this project's own history has already paid for
+        # once (`coding-standards.md` §6, §4's own "an unclosed handle hung the whole suite").
+        opened_inode = db_path.stat().st_ino
         await _load_sqlite_vec(db)
         for pragma in ddl.PRAGMAS:
             await db.execute(pragma)
     except BaseException:
         await db.close()
         raise
-    return db
+    return db, opened_inode
 
 
 def _dimension_mismatch(
@@ -238,14 +264,27 @@ class Store:
     Construct only through `create` or `open`, never directly: both classmethods run the
     validation their path requires before a `Store` exists to hand back, so holding one is
     holding a store already known to satisfy invariants 1, 3 and 11 for this open.
+
+    `opened_inode` is `db_path`'s own inode, captured by `_open_connection` immediately after
+    its own `aiosqlite.connect()` returned, with no `await` in between — the tightest available
+    capture short of a materially larger VFS-level integration a deliberate, human-authorized
+    decision declined to pursue (see `_open_connection`'s own docstring for the full reasoning
+    and the narrow, accepted gap this leaves). It is *not* re-derivable later from `self.path.
+    stat()`: that would read whatever file currently sits at the path, which is precisely the
+    question this field exists to answer independently of.
     """
 
     def __init__(
-        self, db: aiosqlite.Connection, db_path: Path, current_meta: meta.StoreMeta
+        self,
+        db: aiosqlite.Connection,
+        db_path: Path,
+        current_meta: meta.StoreMeta,
+        opened_inode: int,
     ) -> None:
         self._db: Final = db
         self.path: Final = db_path
         self.meta: Final = current_meta
+        self.opened_inode: Final = opened_inode
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -320,7 +359,7 @@ class Store:
             await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
 
         with permissions.restrictive_umask():
-            db = await _open_connection(db_path)
+            db, opened_inode = await _open_connection(db_path)
             try:
                 defaults = await cls._create_tables_and_meta(
                     db, embed_dim, embed_model, chunk_max_tokens
@@ -333,7 +372,7 @@ class Store:
             await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
 
         current_meta = meta.parse_and_validate(defaults)
-        return cls(db, db_path, current_meta)
+        return cls(db, db_path, current_meta, opened_inode)
 
     @staticmethod
     async def _create_tables_and_meta(
@@ -402,13 +441,13 @@ class Store:
         # process holding many concurrent tool calls on one loop — depends on it.
         await asyncio.to_thread(permissions.enforce_existing_store_permissions, store_dir)
         db_path = store_dir / _DB_FILENAME
-        db = await _open_connection(db_path, existing_only=True)
+        db, opened_inode = await _open_connection(db_path, existing_only=True)
         try:
             current_meta = await cls._validate_on_open(db, config)
         except BaseException:
             await db.close()
             raise
-        return cls(db, db_path, current_meta)
+        return cls(db, db_path, current_meta, opened_inode)
 
     @staticmethod
     async def _validate_on_open(

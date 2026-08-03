@@ -243,8 +243,9 @@ diverge.
   snapshot upgrade, so a write committed by another process between the first probe and the event insert
   refuses the upgrade immediately, without the busy handler running. That is `−32020 store_busy` — which
   `architecture.md` §Errors already defines to cover exactly this stale-snapshot case — and it is retryable,
-  and on the push path the hook's answer to it is to print nothing. The alternative, taking the write lock up
-  front for every read, trades a rare retry for serializing every read behind every writer.
+  and on the push path the hook logs it to `hook.log` and relays it to the model rather than retrying. The
+  alternative, taking the write lock up front for every read, trades a rare retry for serializing every read
+  behind every writer.
 
 **The retrieval core itself neither begins nor commits.** `search` and `surface` own the transaction; the
 algorithm they call is a neutral form, because the internal-query consumers compose it into a transaction they
@@ -661,8 +662,10 @@ carve-outs was itself the tell that the mechanism was wrong in kind rather than 
 has to be disabled precisely where the store is in the worst shape to be read is not degrading gracefully, it
 is degrading unevenly, in a way its own client cannot always tell apart from the safe case.** On every failure
 now — the two above and every transport, startup, contention or identity failure that used to trigger the
-fallback — the hook prints nothing, reads nothing, and appends one line to its own `hook.log` naming the
-failure. Full mechanism: `design/architecture.md` §"Degraded modes".
+fallback — the hook logs one line to its own `hook.log` naming the failure and prints a short, model-facing
+relay instruction to stdout, so the model can tell the operator something is wrong (never the store itself, and
+never a synthesized answer). Full mechanism, including the measurement behind the exact channel split:
+`design/architecture.md` §"Degraded modes".
 
 ## What every number here is worth
 The benchmark corpus is 187 synthetic memories with 192 blind prompts — one to two orders of magnitude

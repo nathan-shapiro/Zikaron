@@ -169,6 +169,16 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     """
     log.configure_service_log(service_log_path(_ensure_store_dir_exists(store_dir)))
     ctx = await _assemble_or_log_and_raise(store_dir)
+    # `ctx.store.opened_inode` — not a fresh `ctx.store.path.stat()` here — because a version
+    # that re-`stat`ed the path at this point was measured wrong: `ServiceContext.assemble` opens
+    # the connection through `Store.open`/`Store.create`, and both run further awaited validation
+    # or creation SQL *inside that one `await`*, after SQLite's own connect already succeeded —
+    # every one of those is a real yield point a replacement could land in, all of them strictly
+    # *before* control ever returns here. `Store.opened_inode` is captured immediately after
+    # `_open_connection`'s own connect returns instead, with no further `await` before the read
+    # (`_open_connection`'s own docstring has the full reasoning, including the narrow, human-
+    # authorized gap this deliberately accepts rather than a materially larger VFS-level fix).
+    original_store_inode = ctx.store.opened_inode
 
     try:
         security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
@@ -181,7 +191,9 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                 tasks: list[asyncio.Task[object]] = []
                 try:
                     idle_task = asyncio.create_task(
-                        lifecycle.idle_self_stop(ctx, server, sock_path)
+                        lifecycle.idle_self_stop(
+                            ctx, server, sock_path, original_store_inode=original_store_inode
+                        )
                     )
                     tasks.append(idle_task)
                     signal_wait = asyncio.create_task(stop.wait())
@@ -210,19 +222,44 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                     # at the point of failure, never one that was never created. `gather(...,
                     # return_exceptions=True)` rather than a per-task loop so one task's own
                     # failure during cancellation cannot skip the rest.
+                    #
+                    # `sys.exc_info()` is read as the very first statement in this `finally` —
+                    # before cancelling anything — for the identical reason `_close_context_
+                    # preserving_any_active_failure` reads it below: whatever is already
+                    # propagating into this block (a failure from `asyncio.wait`, from
+                    # `_raise_if_any_task_genuinely_failed`, or from `server.shut_down()` on the
+                    # idle-exit branch) is the *primary* failure, and a distinct exception a
+                    # cancelled task produces while being torn down must not silently replace it —
+                    # exactly the masking class round-6 review found this block's own generic
+                    # re-raise could cause, since raising inside a `finally` unconditionally
+                    # displaces whatever exception was already in flight. The exception *object*
+                    # itself is kept, not only a boolean flag it exists — round-7 review found
+                    # that a boolean alone could not distinguish "a task raised something new
+                    # during cancellation" from "this is the exact same exception `gather` is
+                    # simply reporting again for the task that already raised it as the primary,"
+                    # which produced a misleading duplicate log entry on every ordinary
+                    # lifecycle-task failure — the identical `idle_task`, still `done()`, still
+                    # holding the same exception object, is genuinely gathered a second time here.
+                    primary_exception = sys.exc_info()[1]
                     for task in tasks:
                         task.cancel()
                     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
                     # `return_exceptions=True` is what keeps one task's failure from skipping the
                     # cancellation of the rest — but it also *collects* every exception instead of
-                    # raising it, which silently swallowed the one exception that must never be
+                    # raising it, which silently swallowed exceptions that must never be
                     # swallowed. Concretely: if a signal won the `asyncio.wait` snapshot above
-                    # while `idle_self_stop` was concurrently inside its own `shut_down()`, that
-                    # task's `ShutdownTimeoutError` arrives here as a *return value*, never seen
-                    # by `_raise_if_any_task_genuinely_failed` (which only inspected the earlier
-                    # `done` set). Inspecting the outcomes is what routes it to the directed
-                    # terminal path instead of dropping it on the floor.
-                    _force_exit_if_shutdown_timed_out(outcomes, sock_path)
+                    # while a lifecycle task was concurrently raising — `ShutdownTimeoutError`
+                    # from an in-progress `shut_down()`, or any other genuine exception, such as
+                    # `idle_self_stop`'s own inode-drift check propagating an unexpected `stat`
+                    # failure — that exception arrives here as a *return value*, never seen by
+                    # `_raise_if_any_task_genuinely_failed` (which only inspected the earlier
+                    # `done` set). Inspecting the outcomes is what routes a shutdown-deadline
+                    # failure to the directed terminal path and re-raises everything else
+                    # *when nothing else is already propagating*, rather than dropping either
+                    # kind on the floor or masking whatever primary failure brought us here.
+                    _surface_any_genuine_task_failure(
+                        outcomes, sock_path, primary_exception=primary_exception
+                    )
         except ShutdownTimeoutError:
             _force_exit_after_failed_graceful_shutdown(sock_path)
         except BaseException:
@@ -317,14 +354,49 @@ def main() -> None:
     asyncio.run(run(sock_path, store_dir))
 
 
-def _force_exit_if_shutdown_timed_out(outcomes: Sequence[object], sock_path: Path) -> None:
-    """Route a `ShutdownTimeoutError` collected by `gather(..., return_exceptions=True)` to the
-    directed terminal path, instead of letting it be silently discarded as a return value.
+def _surface_any_genuine_task_failure(
+    outcomes: Sequence[object], sock_path: Path, *, primary_exception: BaseException | None
+) -> None:
+    """Route every genuine exception `gather(..., return_exceptions=True)` collected to somewhere
+    that actually surfaces it, instead of letting any of them be silently discarded as a mere
+    return value — `ShutdownTimeoutError` to the directed terminal path always, and any other
+    genuine exception re-raised so it reaches this coroutine's own ordinary propagation, **but
+    only when it is not the identical exception object `primary_exception` already names**.
 
     `return_exceptions=True` is required where it is used — it keeps one task's failure from
-    skipping the cancellation of the others — but it converts exceptions into *results*, and a
-    shutdown deadline expiring inside a lifecycle task is the one exception that must never be
-    absorbed that way.
+    skipping the cancellation of the others — but it converts exceptions into *results*, and
+    checking only for `ShutdownTimeoutError` here was itself a real, measured gap: an unrelated
+    genuine failure (M11's own inode-drift self-stop propagating a `PermissionError` from an
+    unexpected `stat` failure, for one concrete case, or any future lifecycle task's own
+    unanticipated defect) landing in `outcomes` — reachable specifically when a signal wins the
+    earlier `asyncio.wait` snapshot while a lifecycle task concurrently raises something other
+    than `ShutdownTimeoutError` — would otherwise vanish here with nothing downstream ever
+    re-raising it, the exact "genuinely raised but never seen" shape `_raise_if_any_task_
+    genuinely_failed`'s own docstring already names for the *earlier* snapshot. `asyncio.
+    CancelledError` results are excluded, since every task in `tasks` is cancelled immediately
+    before this `gather` runs as a matter of course, and a cancellation this function itself
+    caused is not a failure to surface.
+
+    `primary_exception` is the caller's own `sys.exc_info()[1]` read, taken *before* this
+    function's own cancellation work began — the identical masking concern `_close_context_
+    preserving_any_active_failure` already handles for the outer cleanup `finally`, applied here
+    for this inner one: `raise outcome` runs unconditionally inside a `finally` block and would
+    otherwise **replace** whatever exception was already propagating into it (a failure from
+    `asyncio.wait` itself, or from `_raise_if_any_task_genuinely_failed`), surviving only as its
+    `__context__` rather than as what actually reaches the caller — round-6 review found this
+    exact interaction. Passing the exception *object* itself, not only a boolean that one is
+    active, is what a further review round found necessary: `_raise_if_any_task_genuinely_
+    failed`'s own raise leaves the task it came from still `done()` and still holding that
+    identical exception object, which `gather` genuinely reports again here for the ordinary
+    case where nothing else concurrently failed — a version that only checked a boolean logged
+    that reappearance as if it were a *distinct* secondary failure on every ordinary lifecycle-
+    task crash, which is itself a misleading diagnostic this function must not produce.
+    `ShutdownTimeoutError` is deliberately exempt from the identity check and always routes to
+    the terminal path regardless: `_force_exit_after_failed_graceful_shutdown` calls `os._exit`
+    and never returns, so there is no "caller" for it to displace anything from — the process
+    simply ends. A genuine, *distinct* non-timeout secondary failure, when a primary is already
+    active, is logged rather than raised, so the operator can still see it happened without it
+    silently taking the primary's place.
     """
     for outcome in outcomes:
         if isinstance(outcome, ShutdownTimeoutError):
@@ -332,6 +404,19 @@ def _force_exit_if_shutdown_timed_out(outcomes: Sequence[object], sock_path: Pat
                 "a lifecycle task's graceful shutdown exceeded its deadline: %s", outcome
             )
             _force_exit_after_failed_graceful_shutdown(sock_path)
+        elif (
+            isinstance(outcome, BaseException)
+            and not isinstance(outcome, asyncio.CancelledError)
+            and outcome is not primary_exception
+        ):
+            if primary_exception is not None:
+                logging.getLogger("zikaron.service").error(
+                    "a lifecycle task raised %r while an earlier failure was already propagating "
+                    "— the earlier failure is what this process reports",
+                    outcome,
+                )
+            else:
+                raise outcome
 
 
 def _force_exit_after_failed_graceful_shutdown(sock_path: Path) -> None:

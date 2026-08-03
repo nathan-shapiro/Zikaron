@@ -477,9 +477,9 @@ different store. So identity is checked rather than inferred:
   **no `client` envelope and resolves no session label** — see below.
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
   write.** A mismatch is not a retry: the client logs it, treats the socket as foreign, and — for the hook —
-  goes through the same degraded path as any other failure (§"Degraded modes"): nothing printed, nothing read,
-  one line to `hook.log`. The mismatch is not special-cased into a fallback read of a store the client has
-  no way to know is the right one.
+  goes through the same degraded path as any other failure (§"Degraded modes"): one line to `hook.log`
+  plus a model-facing relay on stdout, never a read. The mismatch is not special-cased into a fallback read
+  of a store the client has no way to know is the right one.
 - **Nothing is adopted from an unverified service, session labels included.** This is why `health()` is outside
   the label ladder (§"`label_source` is derived, not stored"). If the handshake resolved a label, a client
   reaching a *foreign* service would adopt a label that service minted, discard the socket on the mismatch it
@@ -495,6 +495,22 @@ different store. So identity is checked rather than inferred:
   connection this client never verified. Every later connection this client makes — including any recovery
   reconnect — has a real `store_id` to compare against, since the store now exists; the bootstrap case fires
   at most once per client process, on whichever attempt is first to find `memory.db` absent.
+- **The hook is a genuine exception to "every later connection has a real `store_id` to compare against"** —
+  every one of its connections is, from its own point of view, a first connection, because it is a fresh,
+  single-shot process on every invocation with no connection of its own from an earlier call to have learned
+  anything from (§"Degraded modes": "no direct store access under any circumstance" rules out reading
+  `meta.store_id` from `memory.db` directly, the only other source). Its identity check therefore stays
+  **path-only** — comparing `store_db_path` against `health()`'s own reported `store_path` — on every
+  connection, not only a store's first-ever one. This was tried two other ways and both were rejected on
+  measurement, not merely on style: reading `meta.store_id` directly (both from the critical-path hook and
+  from the detached warm helper) violates the unconditional no-store-access rule this whole client exists to
+  hold, and a small sidecar file the hook writes and reads itself to remember a `store_id` across invocations
+  is circular — whatever it would compare against on a later call was itself written from an earlier call to
+  the *same* service, so a service that has gone stale without restarting reports the identical value both
+  times and the sidecar never disagrees with itself. Path-only comparison genuinely cannot distinguish a
+  correctly-running service from one serving a store that was deleted and recreated at the identical
+  path — see §"Idle self-stop" for why that gap is closed on the *service* side instead, which is the only
+  side with an independent way to notice.
 
 ## Filesystem security
 
@@ -539,7 +555,9 @@ Both thin clients may race to start the service. Sequence:
 4. Still dead: vet the runtime directory (§"Filesystem security"), unlink the stale socket if present, spawn
    the service detached (`start_new_session=True`, stdio to the log), then poll `health()` until a deadline.
 5. Release the lock.
-6. **Verify `store_id` and `store_path` from `health()`** before the first real request.
+6. **Verify `store_path` from `health()` unconditionally, and `store_id` too whenever this client has an
+   independent one to compare against** (§"Store identity is verified, not assumed") — before the first real
+   request.
 
 `ECONNREFUSED` on an existing socket file is the signature of a service that died without cleaning up —
 unlink and respawn rather than reporting an error.
@@ -594,15 +612,103 @@ safety is never traded away to get one.
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
 is unlinked before the process ends.
 
+**The same poll also checks for the store having been replaced out from under it, and stops immediately if
+so — a second, independent exit condition alongside the idle one, not a variant of it.** `memory.db` being
+deleted and recreated at the identical path while this process still holds it open is possible and invisible
+to the service by any other means: SQLite's own open connection keeps its own already-open file descriptor
+bound to the original inode regardless of what a later `unlink`+create does to the *path* — confirmed
+directly, not merely assumed, though a further measurement below found this guarantee narrower than it first
+reads: a genuine WAL-mode operation issued *after* the replacement can still fail with a real I/O error,
+since a sidecar file WAL needs cannot be created next to a main file whose own directory entry is gone, so
+"keeps serving" describes the connection's own binding, not a promise that every subsequent operation on it
+will succeed regardless. Either way, nothing about a delete-and-recreate touches the running process
+directly, and this is exactly the gap the hook's own identity check cannot close on its own (§"Store
+identity is verified, not assumed") — a client comparing `store_path` alone against a stale service's
+`health()` response would see the identical path both before and after the replacement, since the path never
+changed; only comparing against the *file currently at that path* can tell the two apart, and that requires
+nothing more than a plain `stat`, no read of the store's own contents.
+
+**The baseline is read as a plain `stat()` of the path, immediately after `_open_connection`'s own
+`aiosqlite.connect()` returns, with no `await` between the connect and the read — captured once, on the
+operator's own explicit direction, rather than closed by further engineering.** Several deeper mechanisms
+were tried and each independently measured wrong, all in pursuit of a narrower race than the one this
+baseline actually needs to defend against: a replacement landing in the specific, sub-millisecond window
+inside `aiosqlite`'s own cross-thread connect handoff, between SQLite binding to a file on its worker thread
+and this coroutine resuming to read the path (`aiosqlite` queues the real `sqlite3.connect()` call onto its
+own dedicated worker thread and only resumes the awaiting coroutine once that thread hands the result back
+across `call_soon_threadsafe` — confirmed by reading `aiosqlite`'s own source, `Connection._connect`,
+directly). Pinning a file descriptor and connecting through its own `/proc/self/fd/<n>` path — reasoned to
+sidestep pathname resolution entirely, since that magic symlink resolves directly to the descriptor's own
+file rather than by re-walking the original name — was measured, empirically, to *not* actually do so:
+`PRAGMA database_list` shows SQLite canonicalizes that path back to the ordinary pathname internally, and a
+file replaced at the path while an existing connection is live can make even an *already established*
+connection fail on its next statement, proving the assumption the whole mechanism rested on was false, not
+merely incompletely implemented. Closing this properly would require controlling SQLite's own VFS-level file
+handle directly (a custom VFS or file-control integration), which the operator explicitly judged a
+materially larger undertaking than this race's own shape warrants: it requires an adversarial replacement to
+land inside a sub-millisecond window at process startup, not the ordinary case this whole mechanism exists
+for — a store deleted and recreated while the service has been sitting open and idle, which the poll closes
+completely, with no narrower timing assumption anywhere in it. **The decision, made on human authority: keep
+the simple capture, accept the narrow startup-instant gap as documented rather than pursued further.**
+
+Each idle poll thereafter re-`stat`s `memory.db` at the path this service resolved when it started, and
+compares the reported inode against `Store.opened_inode` — confirmed directly (not merely reasoned about
+SQLite's own fd semantics): an already-open connection's own `os.fstat` continues reporting the original
+inode after the path is unlinked and a new file created there, while a fresh `os.stat` on the path reports
+the new file's inode immediately. A mismatch, **or the path stat-ing as absent entirely**, means this
+process is serving a store that is no longer the one currently on disk at its own path, and the correct
+response is identical to idle self-stop's own: unlink the socket, shut the server down, and exit — never
+attempt to somehow "catch up," since the store this process has open is not the current one to catch up *to*.
+
+**Any other stat failure is not folded into this decision.** A genuine `PermissionError` or similar is not
+"replaced," and treating it as one would make an unconditional shutdown decision on behalf of a caller that
+may have wanted to know about a real, different problem instead — it propagates out of `idle_self_stop`
+uncaught. Two separate mechanisms in `main.py` are what turn a propagated failure like this into a genuine,
+surfaced process failure rather than either kind of silent discard: `_raise_if_any_task_genuinely_failed`
+handles the ordinary case, where the failing task is already in the `done` set `asyncio.wait` returned; and
+`_surface_any_genuine_task_failure` handles the narrower race where a signal wins that earlier snapshot while
+the failing task is concurrently being cancelled — its exception then arrives only as a *return value* of the
+cancellation `gather(..., return_exceptions=True)`, which converts every exception into a result and would
+otherwise let a non-`ShutdownTimeoutError` failure vanish silently exactly the way `ShutdownTimeoutError`
+alone used to be the only exception either mechanism routed anywhere.
+
+**`_surface_any_genuine_task_failure` must not itself become a second masking site — and checking only
+*whether* a primary was already active was itself found insufficient.** It runs from inside a `finally`
+block, and `raise outcome` there runs unconditionally regardless of whether a *different* exception was
+already propagating into that block — from `asyncio.wait` itself, or from `_raise_if_any_task_genuinely_
+failed` — which would otherwise **replace** that earlier, primary failure with whatever a task being
+cancelled happens to raise from its own teardown handler, surviving only as the secondary's `__context__`
+rather than as what the caller actually sees. This is the identical class `_close_context_preserving_any_
+active_failure` already guards against for the *outer* cleanup, applied here for this *inner* one: the
+caller reads `sys.exc_info()[1]` as the very first statement in the `finally`, before cancelling anything,
+and passes that exception *object* into `_surface_any_genuine_task_failure` explicitly — not only a boolean
+that one is active. A version keyed on a boolean was itself found wrong: `_raise_if_any_task_genuinely_
+failed`'s own raise leaves the failing task still `done()` and still holding that identical exception object,
+which `gather` genuinely reports again during cleanup for the *ordinary* case where nothing else concurrently
+failed — a boolean-only check could not distinguish that reappearance from a genuinely distinct secondary
+failure, and logged the ordinary case as a misleading "secondary failure" on every single lifecycle-task
+crash. Checking identity — `outcome is not primary_exception` — is what tells the two apart.
+`ShutdownTimeoutError` is exempt from this check and always routes to its own terminal path regardless — it
+calls `os._exit` and never returns, so there is no propagating caller for it to displace anything from. A
+genuine, *distinct* non-timeout secondary failure found while a primary is already active is logged rather
+than raised, so it stays visible to the operator without silently taking the primary's place. Whichever hook
+or MCP client next runs start-if-absent against the now-empty path spawns a fresh, correctly-identified
+service against whatever store now genuinely exists there, within one more poll cycle of the replacement at
+the very most.
+
 **The race this creates must be handled in the client, not wished away:** a client can connect just as the
-service decides to exit, and its request then fails. Clients retry once through the full start-if-absent
-sequence before falling back. **"Falling back" differs by client, and only the hook's own fallback is a
-degraded mode with no answer at all** (§"Degraded modes"): `zikaron-mcp` has no equivalent silent-failure
-requirement, since a tool call answers a model that is actively waiting on it rather than a background push
-nobody is watching for. A retry that still fails — the store genuinely unreachable, not merely a service
-that happened to exit between two requests — surfaces as an ordinary MCP tool error the calling model sees,
-naming the transport failure, exactly like any other rejection the service itself could have sent; there is
-no second, silent fallback path for the MCP client to take instead.
+service decides to exit, and its request then fails. `zikaron-mcp` retries once through the full
+start-if-absent sequence before falling back — a genuine second full attempt, since it is a long-running
+process with no reason not to. **The hook does not**: its own single outer attempt (§"Degraded modes") never
+retries the sequence, since a second attempt is exactly the wait D12's whole hook-thinness argument exists to
+avoid. **"Falling back" differs by client accordingly, and only the hook's own fallback logs to `hook.log`
+and relays a failure instruction rather than answering with anything read from the store** (§"Degraded
+modes"): `zikaron-mcp` has no equivalent requirement, since a tool call answers a model that is actively
+waiting on it rather than a background push nobody is watching for. A retry that still fails — the store
+genuinely unreachable, not merely a service that happened to exit between two requests — surfaces as an
+ordinary MCP tool error the calling model sees, naming the transport failure, exactly like any other
+rejection the service itself could have sent; there is no second, silent fallback path for the MCP client to
+take instead.
 
 An active consolidation run does **not** keep the service alive on its own — a run is a store-level lease
 (§"Consolidation lifecycle"), not process state, so a service that stops mid-run loses nothing.
@@ -740,9 +846,11 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
 1. RPC `surface(prompt, limit=5)`. On success, print what the service returned.
 2. **On any failure — transport, startup, contention, identity, or a store error** — `ENOENT`, `ECONNREFUSED`,
    spawn failure, `health()` never ready, the internal deadline, a `store_identity` mismatch, `−32020
-   store_busy`, `−32023 bad_config`, `−32022 reindexing`, or anything unexpected: **print nothing to stdout,
-   open nothing, read nothing, and append one line to its own `hook.log`** naming the failure kind and, where
-   one exists, the error code. This is a **direct file write, not `logging`**: `open(path, "a")` and one
+   store_busy`, `−32023 bad_config`, `−32022 reindexing`, or anything unexpected: **append one line to its own
+   `hook.log`** naming the failure kind and, where one exists, the error code, **and print a short,
+   model-facing instruction to stdout** asking the agent to relay the failure to the operator, naming the same
+   kind and pointing at `hook.log` for the exact detail. Never open the store, never read it, never write to
+   stderr. `hook.log`'s own line is a **direct file write, not `logging`**: `open(path, "a")` and one
    `.write()` call, then close — `logging`'s import cost is ~15 ms on this machine, measured directly against
    the same interpreter-cost argument that keeps this client stdlib-thin in the first place, and a process that
    writes exactly one line per invocation and then exits has no log lifecycle for `logging`'s formatters and
@@ -759,13 +867,40 @@ kind is strictly better for diagnosing *why* pushes are degraded than a silent, 
 have been: `hook.log` now says "reindexing" or "bad_config" or "ECONNREFUSED" in the exact moment it
 happened, rather than leaving an operator to infer the cause from an intermittently missing injection.
 
-Two hard rules:
+**Failure reporting went through three shapes before landing here, and the final one is measured
+rather than reasoned about.** The first shape was total silence on every channel, with the theory
+that a push failing quietly every message while the service stayed down would "nag" less than a
+visible warning would. A second shape tried reporting on stderr and exiting non-zero, reasoning
+from kiro's own documentation that a non-zero, non-two `userPromptSubmit` exit "shows STDERR to the
+user as a warning." **A live spike against a real kiro session measured that reasoning wrong.** A
+hook wired to a script that printed a distinct stdout instruction, printed a distinct stderr line,
+and exited 1 produced no sign of the stdout instruction in the model's own response (the identical
+script printing the identical stdout instruction on exit **0**, in the same session, *was* echoed
+back verbatim), and the operator reported the stderr line "nowhere visible" — no inline warning, no
+visible surfacing anywhere. So on this build, a non-zero exit suppresses the one channel already
+confirmed to work — exit-0 stdout, which the same spike confirmed reaches the model's context and
+gets relayed in its own response — while not visibly delivering on the channel it was traded for.
 
-- **Always exit 0, and never write to stderr.** Per the hooks research, exit codes other than 0 and 2 cause
-  stderr to be shown to the user as a warning. A memory system having a bad day must not nag on every
-  message. Writing to `hook.log` is not writing to stderr, and is required on every failure rather than
-  merely permitted.
-- **Enforce an internal deadline of ~2 s**, far under the 30 s `timeout_ms`. Failing fast and silently beats
+**The rule that survives that measurement:**
+
+- **Always exit 0, unconditionally.** Nothing about this hook's failure modes is the
+  `preToolUse`-only blocking case exit 2 exists for, and a non-zero exit is now confirmed to cost
+  the one channel that works rather than buy anything in return.
+- **Never write to stderr.** Confirmed, not merely reasoned about, not to surface visibly on this
+  build — there is nothing to gain by writing to a channel with no observed effect, and every
+  reason from the original design (a memory system having a bad day must not nag the user with a
+  warning line) still holds for whatever channel stderr does reach.
+- **On a failure, report it on *two* channels, both landing where they are each confirmed to
+  work: `hook.log`, unchanged — one line, naming the kind and, where one exists, the wire error
+  code, for whenever the operator wants the exact, verbatim record — and exit-0 **stdout**, a
+  short instruction asking the model to relay the failure to the operator in its own words.**
+  Paraphrasing here is accepted deliberately: the instruction's own job is a low-friction "something
+  is wrong, go look" nudge, and it explicitly points at `hook.log` for the operator who wants the
+  exact detail rather than the model's summary of it. This is not the same shape as an ordinary
+  push result — the model is told plainly that this is a notice to relay, not gists to reason
+  about — but it uses the identical channel `surface`'s own successful output already uses, since
+  that is the one channel this milestone measured actually reaching the model.
+- **Enforce an internal deadline of ~2 s**, far under the 30 s `timeout_ms`. Failing fast beats
   being correct and late, because the user is waiting.
 
 ## MCP tool surface (5 tools)
@@ -1483,9 +1618,9 @@ could not both hold.
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
 | −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
 | −32021 | `index_failed` | embedding or index maintenance failed; the transaction rolled back | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
-| −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook **prints nothing** on this, like every other failure (§"Degraded modes") |
-| −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook **prints nothing** on this, like every other failure |
-| −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook **prints nothing**. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
+| −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook never reads the store on this, like every other failure (§"Degraded modes") |
+| −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook never reads the store on this, like every other failure |
+| −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 
 **A read has no `index_failed`, and that is deliberate rather than an omission.** The table's store-level codes

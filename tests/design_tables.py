@@ -399,15 +399,19 @@ def parse_fenced_code(section: list[str], language: str) -> str:
     """
     blocks: list[list[str]] = []
     collecting: list[str] | None = None
+    matched = False
     for line in section:
         if line.startswith(_FENCE):
             if collecting is not None:
-                blocks.append(collecting)
+                if matched:
+                    blocks.append(collecting)
                 collecting = None
-            elif line.strip().removeprefix(_FENCE).strip() == language:
+                matched = False
+            else:
                 collecting = []
+                matched = line.strip().removeprefix(_FENCE).strip() == language
             continue
-        if collecting is not None:
+        if collecting is not None and matched:
             collecting.append(line)
     if collecting is not None:
         raise DesignTableError(f"a {language} fence is opened and never closed")
@@ -660,6 +664,17 @@ def toml_block(document: str, heading: str) -> dict[str, dict[str, object]]:
     """The fenced TOML sample in one section of a design document."""
     try:
         return parse_toml(section_lines(document, heading))
+    except DesignTableError as error:
+        raise _located(document, heading, error) from error
+
+
+def fenced_code(document: str, heading: str, language: str) -> str:
+    """The one fence tagged ` ```{language} ` in one section of a design document, with its
+    opening/closing lines cut — `language=""` for an untagged fence, as `write-policy.md`'s own
+    prompt block uses (a bare ` ``` `, no language identifier, since the block is prose to be
+    printed verbatim rather than a language a syntax highlighter should format)."""
+    try:
+        return parse_fenced_code(section_lines(document, heading), language)
     except DesignTableError as error:
         raise _located(document, heading, error) from error
 

@@ -14,6 +14,7 @@ hermetically.
 """
 
 import asyncio
+import logging
 import os
 import signal
 from collections.abc import Callable
@@ -235,6 +236,39 @@ async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_th
 
     with pytest.raises(RuntimeError, match="idle_self_stop failed"):
         await main.run(sock_path, store_dir)
+
+
+async def test_an_ordinary_already_done_task_failure_logs_no_false_secondary_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The converse of the masking-preservation test: an ordinary lifecycle-task failure — no
+    concurrent, distinct secondary failure at all — must propagate with **no** "a lifecycle task
+    raised ... while an earlier failure was already propagating" log record, even though `gather`
+    genuinely reports the identical, already-raised exception object again during cleanup.
+    Round-7 review found the version of this fix keyed only on a boolean "is a primary already
+    active" could not distinguish that reappearance from a genuinely distinct concurrent failure,
+    and would have logged this exact, ordinary case as if it were one.
+    """
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+
+    async def _idle_self_stop_always_fails_again(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("idle_self_stop failed, deliberately, for this test")
+
+    monkeypatch.setattr(
+        "zikaron.service.main.lifecycle.idle_self_stop", _idle_self_stop_always_fails_again
+    )
+
+    with (
+        caplog.at_level(logging.ERROR, logger="zikaron.service"),
+        pytest.raises(RuntimeError, match="idle_self_stop failed"),
+    ):
+        await main.run(sock_path, store_dir)
+    false_secondary_records = [
+        record
+        for record in caplog.records
+        if "while an earlier failure was already propagating" in record.getMessage()
+    ]
+    assert false_secondary_records == []
 
 
 async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserves_the_original(
@@ -709,8 +743,8 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
     its own `shut_down()`, that task's `ShutdownTimeoutError` arrives as a **return value** of
     `gather(..., return_exceptions=True)` in the cancellation `finally` — never inspected by
     `_raise_if_any_task_genuinely_failed`, which only saw the earlier `done` set — and would be
-    silently discarded without a further check. `_force_exit_if_shutdown_timed_out` is what routes
-    it to the terminal path instead."""
+    silently discarded without a further check. `_surface_any_genuine_task_failure` is what
+    routes it to the terminal path instead."""
     sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
@@ -759,3 +793,139 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
     # property of the code. What matters, and what this asserts, is that the terminal path is
     # reached at all rather than the failure being swallowed.
     assert len(forced_exit_calls) >= 1
+
+
+async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_still_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identical signal-wins-the-snapshot race as the test above, but for a genuine
+    exception that is **not** `ShutdownTimeoutError` — round-5 review found the first version of
+    `_surface_any_genuine_task_failure` (then named `_force_exit_if_shutdown_timed_out`) checked
+    only for that one exception type and silently discarded anything else found among `gather`'s
+    collected outcomes, which became newly reachable once M11's own inode-drift self-stop started
+    deliberately letting an unexpected `stat` failure (a genuine `PermissionError`, for one
+    concrete case) propagate out of `idle_self_stop` rather than swallowing it. A lifecycle task
+    raising something other than `ShutdownTimeoutError` while a signal wins the earlier
+    `asyncio.wait` snapshot must still reach this coroutine's own ordinary propagation, not vanish
+    silently the way `ShutdownTimeoutError` alone used to be the only exception routed anywhere.
+    """
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+
+    async def _idle_self_stop_raises_something_else_when_cancelled(
+        *_a: object, **_k: object
+    ) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Stands in for a task concurrently raising a genuine, unrelated exception at the
+            # exact moment a signal is winning the earlier snapshot — the inode-drift check's own
+            # `PermissionError` is the concrete real-world case this stands in for.
+            raise PermissionError("deliberately denied, for this test") from None
+
+    monkeypatch.setattr(
+        "zikaron.service.main.lifecycle.idle_self_stop",
+        _idle_self_stop_raises_something_else_when_cancelled,
+    )
+
+    real_add_signal_handler = (
+        asyncio.get_event_loop_policy().get_event_loop().__class__.add_signal_handler
+    )
+
+    def _add_and_fire_sigterm(
+        loop: asyncio.AbstractEventLoop,
+        sig: int,
+        callback: Callable[..., object],
+        *args: object,
+    ) -> None:
+        real_add_signal_handler(loop, sig, callback, *args)
+        if sig == signal.SIGTERM:
+            callback(*args)
+
+    monkeypatch.setattr(
+        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        "add_signal_handler",
+        _add_and_fire_sigterm,
+        raising=False,
+    )
+
+    with pytest.raises(PermissionError, match="deliberately denied, for this test"):
+        await main.run(sock_path, store_dir)
+
+
+async def test_a_secondary_cancellation_failure_does_not_mask_the_primary_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The exact interaction round-6 review found: a primary exception already propagating into
+    the task-cleanup `finally` must not be **replaced** by a distinct, secondary exception a
+    different task raises while being cancelled — `raise outcome` inside a `finally` block
+    displaces whatever was already in flight unconditionally, surviving only as the secondary's
+    own `__context__` rather than as what the caller actually sees, which is precisely the
+    exception-masking class `_close_context_preserving_any_active_failure` already exists to
+    avoid for the *outer* cleanup, now fixed here for this *inner* one too.
+
+    Constructed with a genuine primary and a genuine, distinct secondary, not a contrived
+    monkeypatch of the masking mechanism itself, and specifically ordered so a version that
+    merely iterates `outcomes` and raises the first non-`ShutdownTimeoutError` exception it finds
+    cannot pass by coincidence of iteration order: `asyncio.wait` itself is replaced with one that
+    raises `RuntimeError("primary failure")` directly, entering the `finally` with a real, active
+    primary exception while **both** `idle_task` and `signal_wait` are still genuinely running —
+    neither has completed naturally, so the `finally`'s own cancellation loop is what tears down
+    both. `idle_self_stop` is `idle_task`'s own coroutine, and it is the **first** entry in
+    `main.py`'s own `tasks` list — meaning its outcome is `outcomes[0]` in `gather`'s own
+    argument-order-preserving return, which a version of the fix that merely happened to iterate
+    the primary before the secondary would pass vacuously. Making `idle_self_stop` supply the
+    *secondary* failure (`PermissionError`, raised from its own `CancelledError` handler) is what
+    defeats that coincidence: the secondary is deliberately the one that would be seen *first* by
+    a naive iteration, so only a version that actually checks `primary_already_active` before
+    raising anything from `outcomes` at all can pass this specific ordering. `main.run()` must
+    still propagate the primary `RuntimeError`, never the secondary `PermissionError`.
+    """
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+
+    async def _idle_self_stop_raises_a_different_error_when_cancelled(
+        *_a: object, **_k: object
+    ) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            raise PermissionError("secondary failure") from None
+
+    real_wait = asyncio.wait
+    wait_call_count = 0
+
+    async def _wait_raises_the_primary_failure_once(
+        *args: object, **kwargs: object
+    ) -> tuple[set[asyncio.Task[object]], set[asyncio.Task[object]]]:
+        nonlocal wait_call_count
+        wait_call_count += 1
+        if wait_call_count == 1:
+            # A real yield first — not merely a synchronous raise — so both `idle_task` and
+            # `signal_wait` genuinely get scheduled and reach their own first `await` at least
+            # once before being cancelled. A task cancelled before it has ever run its first line
+            # never actually reaches its own `except CancelledError` handler at all (confirmed
+            # directly): `task.cancel()` on a task with no prior scheduling opportunity raises
+            # `CancelledError` at task-creation granularity, not inside the coroutine's own body,
+            # so the secondary failure this test depends on would never fire without this.
+            await asyncio.sleep(0)
+            raise RuntimeError("primary failure")
+        return await real_wait(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "zikaron.service.main.lifecycle.idle_self_stop",
+        _idle_self_stop_raises_a_different_error_when_cancelled,
+    )
+    monkeypatch.setattr(asyncio, "wait", _wait_raises_the_primary_failure_once)
+
+    with (
+        caplog.at_level(logging.ERROR, logger="zikaron.service"),
+        pytest.raises(RuntimeError, match="primary failure") as excinfo,
+    ):
+        await main.run(sock_path, store_dir)
+    assert not isinstance(excinfo.value, PermissionError)
+    # The secondary failure must still be visible to the operator, distinctly from the primary —
+    # round-7 review's own request: preserving the primary must not come at the cost of silently
+    # dropping the secondary altogether.
+    secondary_records = [
+        record for record in caplog.records if "secondary failure" in record.getMessage()
+    ]
+    assert len(secondary_records) == 1

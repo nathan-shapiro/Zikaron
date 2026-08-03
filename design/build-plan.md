@@ -251,10 +251,14 @@ Normative: `design/architecture.md` §RPC, §"Resolution is a preamble", §Lifec
 
 asyncio UDS server; newline-delimited JSON-RPC 2.0; the resolution preamble including required `pid`; the
 two-rung label ladder and derived `label_source`; `health()` with store identity; idle self-stop with in-flight
-protection; socket cleanup; the log.
+protection and inode-drift self-stop (M11's own round-3 review added this second exit condition after
+`zikaron-hook`'s own identity check was found unable to detect a same-path store replacement on its own);
+socket cleanup; the log.
 
 **Done when:** integration tests cover start-if-absent under two racing clients, the connect-as-server-exits
-race with one client retry, a stale socket file, and a foreign-store handshake being refused.
+race with one client retry, a stale socket file, a foreign-store handshake being refused, and a `memory.db`
+deleted and recreated at the identical path while the service still holds the old one open causing the
+service to self-stop within one idle-poll cycle.
 
 ---
 
@@ -287,19 +291,27 @@ first `plan_groups` answering `store_busy` leaves the client `unplanned` so the 
 
 Normative: `design/architecture.md` §"Degraded modes", §"Subagent sessions"; `design/write-policy.md`.
 
-`agentSpawn`: print the policy, warm the service, print nothing on failure. `userPromptSubmit`: subagent
+`agentSpawn`: print the policy — unconditionally, since holding a string constant cannot itself fail — and
+best-effort spawn a detached warm helper; a failure to spawn it changes nothing about the policy print, which
+always happens either way. `userPromptSubmit`: subagent
 suppression by comparing payload `session_id` against `KIRO_SESSION_ID`, then RPC, then — on any failure —
-silence plus one line appended to its own `hook.log` naming the failure, via a direct `open`/`write`, **not**
+one line appended to its own `hook.log` naming the failure, via a direct `open`/`write`, **not**
 `import logging` — `logging` costs ~15 ms of interpreter startup on this machine, measured against the same
 argument that keeps this client stdlib-thin, and a process writing one line per invocation has no log
-lifecycle for it to manage. No fallback query, no direct store access under any circumstance. Always exit 0,
-never stderr, internal deadline well under `timeout_ms`.
+lifecycle for it to manage — **and** a short, model-facing relay instruction printed to stdout, naming the
+same failure and pointing at `hook.log` for the exact detail. No fallback query, no direct store access under
+any circumstance. Always exit 0, never stderr — a live spike against a real kiro session (`design/
+architecture.md` §"Degraded modes") measured that a non-zero exit suppresses the confirmed-working stdout
+channel entirely and that stderr does not visibly surface on this build, which is why the relay instruction
+rides stdout on exit 0 rather than either of those. Internal deadline well under `timeout_ms`.
 
 **Done when:** a test asserts stdlib-only imports **and specifically that `logging` is not among them**; every
-failure mode exits 0 with empty stdout and no store access of any kind; a subagent payload produces no output;
-each of the failure kinds named in `architecture.md` §"Degraded modes" (transport, `bad_config`, `reindexing`,
-`store_busy`, an identity mismatch) is exercised with the service down or unhealthy and produces exactly one
-`hook.log` line naming it, with no read attempted.
+failure mode exits 0, writes nothing to stderr, and touches no store of any kind — stdout carries a
+model-facing relay instruction rather than staying empty, per the measured result in `architecture.md`
+§"Degraded modes"; a subagent payload produces no output at all (not even a relay instruction — it is not a
+failure); each of the failure kinds named in `architecture.md` §"Degraded modes" (transport, `bad_config`,
+`reindexing`, `store_busy`, an identity mismatch) is exercised with the service down or unhealthy and produces
+exactly one `hook.log` line naming it, with no read attempted, alongside the stdout relay.
 
 ---
 

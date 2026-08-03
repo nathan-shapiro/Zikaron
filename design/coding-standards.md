@@ -86,6 +86,23 @@ class is normally monkeypatched out for a tool-surface test; a test that instead
 service on the other end of `ServiceConnection` — start-if-absent, reconnect after the service dies —
 is real UDS-and-subprocess work and belongs in `integration`, per the rule above.
 
+**And the identical reasoning again for a real `AF_UNIX` socket bound entirely in-process, on a
+background thread of the same test process.** `socket.socketpair()`, or a `socket.socket(AF_UNIX,
+...)` bound by a small fake-server thread the test itself starts and joins, is a real socket — real
+`bind`/`connect`/`send`/`recv` calls, exercising the actual framing and error-handling code a mock
+would paper over — but it never leaves the test process, spawns a subprocess, or talks to anything
+outside it, which is exactly the property the tier boundary is defined by, not by whether a socket
+API happens to be involved. `zikaron.hook`'s own test suite uses this pattern extensively (a
+background-thread fake `zikaron-service` standing in for the real one) specifically to exercise
+`connect.py`/`rpc.py`'s real socket code paths — partial sends, malformed responses, the exact
+byte-level framing — at unit-test speed and determinism, reserving `integration` for what actually
+needs a second process: a real spawned `zikaron.service.main`, or two real racing clients whose
+concurrency guarantees only mean something across genuinely separate threads or processes
+contending for the same file descriptor. The consequence, stated the same way the store carve-out
+above states it: most of the hook client's own socket-framing behaviour is verified in the default
+run, and only its real process-lifecycle behaviour (start-if-absent against a real subprocess, the
+lock actually serializing two genuinely concurrent racers) needs `integration`.
+
 **A test holds its store with `async with`, for the reason §6 gives.** A test is the one caller whose cleanup
 is routinely skipped — a failing assertion jumps straight over whatever close follows it — so the fragile form
 is what turns a one-line failure into a session that never exits and never prints. `tests/conftest.py` fails
@@ -212,9 +229,13 @@ long-running or off the critical path; a direct minimal write for anything that 
 The design's numeric codes are a wire contract. One `IntEnum`, one mapping from code to message and payload
 shape, and every raise site references the enum. Never a bare integer at a call site.
 
-**Never swallow an exception silently** — except in the hook, where the design requires exit 0 and no stderr on
-any failure. Even there the failure goes to `hook.log`; "prints nothing to the user" is not "records
-nothing anywhere".
+**Never swallow an exception silently** — except in the hook, where the design requires exit 0 on
+any failure. Even there the failure is never lost: it goes to `hook.log` verbatim, and a short
+relay instruction goes to stdout so the model can tell the operator something is wrong — measured
+directly (a live spike against a real kiro session) to be the one channel that actually reaches
+the model on this build; stderr, tried first, was measured not to surface visibly at all.
+"prints nothing to the user" was the original design and no longer describes the failure path —
+see `design/architecture.md` §"Degraded modes" for the full history and the measurement.
 
 ## 8. SQL
 

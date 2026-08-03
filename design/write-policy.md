@@ -263,10 +263,10 @@ same direction:
    session whose every push failed emits no `surface_call` event at all, because the hook never reaches the
    service on a failure and therefore never emits the event the service would have written. This holds
    uniformly across every failure kind — transport, `bad_config`, `reindexing`, contention, identity — because
-   the hook's response to all of them is now identical: nothing printed, nothing read, one line to its own
-   `hook.log` (`architecture.md` §"Degraded modes"). So the rate is conditional on the service having been
-   reachable **and healthy**. Making the hook write would mean handing it a writable store handle, which is a
-   worse trade than a stated caveat.
+   the hook's response to all of them is now identical: one line to its own `hook.log` plus a model-facing
+   relay on stdout, never a read (`architecture.md` §"Degraded modes"). So the rate is conditional on the
+   service having been reachable **and healthy**. Making the hook write would mean handing it a writable
+   store handle, which is a worse trade than a stated caveat.
 2. Pushes come from `zikaron-hook` and writes come from `zikaron-mcp`, so **two of these six signals are
    cross-process joins** and only work when both clients resolved the same session label. Since 2026-08-01 they
    do so *by construction under kiro* — both read the same `KIRO_SESSION_ID` out of their own environment

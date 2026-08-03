@@ -52,15 +52,20 @@ def _is_absent_server(error: OSError) -> bool:
     return error.errno in _ABSENT_SERVER_ERRNOS
 
 
-async def idle_self_stop(ctx: ServiceContext, server: RunningServer, sock_path: Path) -> None:
-    """Poll until the store is idle past `idle_timeout` with nothing in flight, then stop.
+async def idle_self_stop(
+    ctx: ServiceContext, server: RunningServer, sock_path: Path, *, original_store_inode: int
+) -> None:
+    """Poll until the store is idle past `idle_timeout` with nothing in flight, or until the
+    store this process has open is no longer the one currently on disk at its own path — then
+    stop, for whichever reason fired first.
 
     Runs as a background task for the life of the process; cancel it to shut down without
-    triggering an idle exit, as `main.py`'s signal handler does. Unlinks `sock_path` **before**
-    closing the server, so no client's `connect()` can ever observe a socket file this process is
-    about to stop listening on without also finding it gone — a window there would be exactly the
-    "connect exactly as the server exits" race `architecture.md` requires the *client* to survive,
-    and closing that window here is strictly better than relying only on the client's retry.
+    triggering either exit condition, as `main.py`'s signal handler does. Unlinks `sock_path`
+    **before** closing the server, so no client's `connect()` can ever observe a socket file this
+    process is about to stop listening on without also finding it gone — a window there would be
+    exactly the "connect exactly as the server exits" race `architecture.md` requires the *client*
+    to survive, and closing that window here is strictly better than relying only on the client's
+    retry.
 
     `server.shut_down()` — not a bare `server.server.close(); await server.server.wait_closed()`
     — because a client that finished a request and kept its connection open (the documented norm:
@@ -69,14 +74,54 @@ async def idle_self_stop(ctx: ServiceContext, server: RunningServer, sock_path: 
     project's own pinned Python 3.12.3: `wait_closed()` explicitly waits until all accepted
     connections are dropped, not merely until new ones stop being accepted. `RunningServer.
     shut_down` closes every tracked connection first, which is what makes this actually return.
+
+    **`original_store_inode` is a required parameter, captured by the caller, not by this
+    function.** `main.py` reads it from `ctx.store.opened_inode` — a field `Store.open`/`Store.
+    create` set immediately after their own `aiosqlite.connect()` returned, with no `await` in
+    between (`zikaron.core.store.store._open_connection`'s own docstring has the full reasoning
+    for this capture point, including the narrow, human-authorized gap it deliberately accepts
+    rather than a materially larger VFS-level integration).
+
+    The check itself compares the *current* path's inode against `original_store_inode` — a
+    `memory.db` deleted and recreated at the identical path afterward gets a different inode at
+    that path immediately, while this process's own connection keeps its own file descriptor
+    bound to the original inode regardless — confirmed directly, not only reasoned about
+    SQLite's own fd semantics (`architecture.md` §"Idle self-stop", which also has the further
+    measurement that a real operation on that connection can still genuinely fail afterward,
+    rather than silently and successfully serving stale data forever — either outcome is exactly
+    "this connection is no longer the one to keep going", which is what this poll stops rather
+    than waits out). The file being briefly *absent* (deleted, nothing recreated yet) is treated
+    identically to a changed inode: either way, this process's own open store is not the one
+    currently on disk at its path, which is the condition this check exists to catch, not
+    specifically "was it replaced by another file."
     """
     idle_timeout = ctx.config.get_int("idle_timeout")
     while True:
         await asyncio.sleep(IDLE_POLL_INTERVAL_SECONDS)
-        if ctx.activity.may_stop(idle_timeout=idle_timeout):
+        if ctx.activity.may_stop(idle_timeout=idle_timeout) or _store_path_now_differs(
+            ctx.store.path, from_inode=original_store_inode
+        ):
             sock_path.unlink(missing_ok=True)
             await server.shut_down()
             return
+
+
+def _store_path_now_differs(store_path: Path, *, from_inode: int) -> bool:
+    """Whether `store_path` currently resolves to a different file than `from_inode` names.
+
+    Only `FileNotFoundError` is folded into "yes, differs" alongside a genuine inode mismatch —
+    the store being briefly absent (deleted, nothing recreated yet) is, like a changed inode,
+    "this process's own open store is not the one currently on disk at its path." Any *other*
+    `OSError` (`PermissionError`, `EIO`, a transient filesystem hiccup on an otherwise-untouched
+    path) is **not** treated as a replacement: it propagates, so a caller polling on a fixed
+    interval sees a genuine, unexpected stat failure rather than an unconditional, potentially
+    wrong shutdown decision made on its behalf. This mirrors `architecture.md` §"Idle self-stop",
+    which names only absence or a changed inode as the replacement signal.
+    """
+    try:
+        return store_path.stat().st_ino != from_inode
+    except FileNotFoundError:
+        return True
 
 
 def _connect(sock_path: Path, *, timeout: float) -> socket.socket:
@@ -191,18 +236,26 @@ def connect_start_if_absent(
         sock_path: where the socket should be, once the sequence completes.
         store_db_path: this client's own resolved `memory.db` path, checked against `health()`'s
             `store_path` at the very end.
-        store_id: this client's own resolved `meta.store_id` — read from the same store's own
-            `meta` table before this call, since `architecture.md` requires **both** `store_path`
-            *and* `store_id` verified: a path alone cannot rule out a store that was deleted and
-            recreated at the identical path with a different identity. **`None` means "this store
-            does not exist on disk yet"** — the one case with no prior identity to have read, since
-            `zikaron-service`'s own first startup is what mints it (§"First run" in
-            `architecture.md`). A caller passing `None` is trusting whichever identity this call's
-            *own* connection reports, which is sound specifically because that identity comes from
-            a connection this exact call either found already listening or itself spawned and
-            waited on synchronously — never from a value merely asserted by an unrelated,
-            previously-established connection. `store_db_path` is still compared unconditionally
-            either way, since that value is computable from `sock_path` alone with nothing to open.
+        store_id: this client's own resolved `meta.store_id`, when it has one to check — a path
+            alone cannot rule out a store that was deleted and recreated at the identical path
+            with a different identity, which is why `architecture.md` requires both checked
+            wherever a caller *can* supply an id. **`None` means "this caller has no independent
+            store id to compare against,"** which covers two distinct cases, not only one: the
+            ordinary bootstrap case (the store does not exist on disk yet, so there is nothing to
+            have read — `zikaron-service`'s own first startup is what mints one, §"First run" in
+            `architecture.md`), and `zikaron-hook`'s own **permanent** case (every invocation is a
+            fresh, single-shot process with no connection of its own from an earlier call to have
+            learned an id from, and reading one directly from `memory.db` would violate the no
+            store-access invariant that client holds — §"Store identity is verified, not assumed"
+            names this exception explicitly). A caller passing `None` in either case is trusting
+            whichever identity this call's *own* connection reports, which is sound specifically
+            because that identity comes from a connection this exact call either found already
+            listening or itself spawned and waited on synchronously — never from a value merely
+            asserted by an unrelated, previously-established connection. Whatever gap a purely
+            path-only check leaves for the permanent case is closed on the *service* side instead
+            (§"Idle self-stop"'s own inode-drift self-stop), not by strengthening this argument.
+            `store_db_path` is still compared unconditionally either way, since that value is
+            computable from `sock_path` alone with nothing to open.
         server_command: the argv to spawn if no server answers — the caller's own choice of
             interpreter and entry point, since this module has no opinion about how the service is
             packaged.
