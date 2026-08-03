@@ -486,6 +486,20 @@ sequence before falling back.
 An active consolidation run does **not** keep the service alive on its own — a run is a store-level lease
 (§"Consolidation lifecycle"), not process state, so a service that stops mid-run loses nothing.
 
+**Shutdown itself is bounded, and a failed graceful shutdown ends the process anyway.** Closing every open
+connection during shutdown — required so a client that finishes a request and keeps its socket open (the
+documented norm above) does not block `wait_closed()` forever — carries its own 5 s deadline, and that
+deadline raises loudly rather than hanging if a handler task never finishes cancelling. **Directed by the
+human operator** (M9's own review found this exact class of defect repeatedly during development, at
+increasing depth, culminating in a narrow accept-pipeline race inside `asyncio`'s own internals that would
+require replacing the whole connection-accepting mechanism to close provably): the graceful path stays
+exactly as built and is tried first and only once; if it has already tried and failed — the 5 s deadline
+elapsing — the process forces its own exit immediately rather than continuing to chase every asyncio-internals
+edge case that could theoretically leave something open. A deployed service has no one reading its log at the
+moment it needs to exit, and normal interpreter shutdown is not guaranteed to finish quickly either once
+something has already failed to close in time. This is a deliberate choice of engineering effort, not a claim
+that the graceful path is airtight against every internal race in a dependency this project does not own.
+
 ### Warming
 `agentSpawn` fires at session start (D18). The **hook process** prints the write policy — static text, no
 RPC, so it can never fail — and spawns a **detached warm helper**, then exits. (Both steps are skipped entirely

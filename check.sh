@@ -15,4 +15,8 @@ venv=.venv/bin
 "$venv/ruff" format --check .
 "$venv/ruff" check .
 "$venv/mypy" --strict zikaron tests
-"$venv/pytest" --cov=zikaron/core
+# Every shipped package, not only `core`. This said `--cov=zikaron/core` alone from M1, when
+# `core` was the only package there was, and stayed that way when M9 added `service/` — so the
+# ratchet in `[tool.coverage.report] fail_under` was silently not applied to a whole milestone's
+# production code. A floor that does not cover a package is not a floor.
+"$venv/pytest" --cov=zikaron/core --cov=zikaron/service

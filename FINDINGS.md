@@ -74,7 +74,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
 + the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
 (retrieval), M6 (write path + D15 dedup), M7 (consolidation) and M8 (D30's six signals as SQL)
-complete and reviewed to APPROVED; M9 (service) is next.** D1–D33 settled. Grounding from
+complete and reviewed to APPROVED. M9 (service) is built and its gate is green, but its review
+**did not converge** — see below; M10 (MCP client) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -451,6 +452,72 @@ specific line and confirmed no call site anywhere in the repository still refere
 dictionary or bare-tuple interfaces. 869 tests, 99% coverage repo-wide; `zikaron/core/signals`
 itself: 245 statements, 44 branches, 100% coverage, 74 tests.
 
+**M9 shipped `service/`** (`paths.py`, `security.py`, `envelope.py`, `rpc.py`, `context.py`,
+`params.py`, `serialize.py`, `dispatch.py`, `dispatch_consolidation.py`, `server.py`,
+`lifecycle.py`, `log.py`, `main.py`) — the long-running UDS JSON-RPC server: the resolution
+preamble, both tool surfaces dispatched by wire method name, start-if-absent, idle self-stop, and
+the degraded-mode error mapping. Every handler returns a typed `RpcResult` and never a bare
+`dict[str, object]`, so a wire shape is a dataclass with one `as_json()` seam rather than a dict
+literal built at each call site — a rule adopted mid-review, after an untyped boundary let
+`next_group`'s `candidates` ship the wrong shape. 1065 tests, 98.39% coverage across
+`zikaron/core` **and** `zikaron/service`.
+
+**The review did not converge, and that is the honest headline.** Fourteen rounds, every single one
+of which found at least one genuine, independently verified defect — there was no round that came
+back clean, so the loop was stopped by operator direction rather than by reaching `APPROVED`.
+`reviews/m9-service-review.md` has the blow-by-blow. What that means for whoever reads this next:
+the gate is green and every finding raised was fixed and verified, but nobody should treat this
+milestone as having earned the same "reviewed to APPROVED" confidence M1–M8 carry. **Four of the
+fourteen rounds found defects that would have broken the service in production**, and all four were
+in the same area — shutdown:
+- **Round 5:** start-if-absent released its `flock` after a bare TCP connect succeeded, without ever
+  confirming a real `health()` response while still holding the lock — directly against
+  `architecture.md`'s own step ordering, and a spawning client could hand back a socket whose first
+  real request failed.
+- **Round 8:** the three consolidator write methods were registered as `merge`/`promote`/`discard`,
+  but `architecture.md` §"Service RPC surface" names them `apply_merge`/`apply_promote`/
+  `apply_discard`. Any client built against the design would have received `METHOD_NOT_FOUND` for
+  every consolidator write. Invisible to the whole suite, because every consolidator test called the
+  Python handler functions directly and nothing exercised the wire name.
+- **Round 9:** an idle-but-connected client — the documented norm, since a client "adopts the
+  returned label and reuses it for its process lifetime" — hung shutdown **forever**, because
+  `asyncio.Server.wait_closed()` waits for every accepted connection to drop and nothing was closing
+  them.
+- **Round 11:** the fix for that then deadlocked against `asyncio.Server.serve_forever()`'s own
+  cancellation, which calls `close()` and awaits its *own* `wait_closed()` — a second, independent
+  wait for the same connections, which ran first. Resolved structurally: `serve_forever()` is now
+  never called at all, since `start_unix_server` already accepts and dispatches on its own and using
+  it as a stop-signal was backwards.
+
+**One decision was the operator's, not the reviewer's, and is recorded as such.** Round 12 found a
+narrow race inside `asyncio`'s own accept pipeline: a connection accepted at the raw-fd level before
+`Server._attach()` increments the private counter the drain loop polls. Closing it provably would
+mean replacing `asyncio.start_unix_server` with a hand-rolled accept loop. The operator asked the
+question that reframed it — do we need graceful shutdown airtight against every asyncio-internals
+edge case, when we already try our best and already fail loudly on a bounded deadline? — and
+directed **both**: keep the graceful path exactly as built, and force-terminate the process if its
+5 s deadline expires. That is now normative in `architecture.md` §"Idle self-stop", stated plainly as
+a choice of engineering effort rather than a claim of airtightness. Rounds 13 and 14 then found the
+*implementation* of that directed decision wrong twice, which is the useful part: the force-exit was
+first placed outside `asyncio.run`, where it is **unreachable** — `asyncio.run` cancels and awaits
+every remaining task before re-raising, and the task that made the deadline expire is by definition
+one that did not finish cancelling, so the runner hangs and the handler never runs (measured
+directly). It now fires from inside the coroutine, on a dedicated `ShutdownTimeoutError` raised only
+from the three shutdown deadline exits, and skips the retry and `ctx.close()` that would otherwise
+keep asking a path that already gave up. Round 14 confirmed skipping `ctx.close()` there is safe for
+the *next* opener: the kernel releases SQLite's fds and locks, WAL is the journal, committed frames
+stay recoverable, and an incomplete transaction is ignored rather than made durable.
+
+**The coverage floor had silently excluded this entire milestone.** `check.sh` said
+`--cov=zikaron/core`, written in M1 when `core` was the only package, and nobody updated it when
+`service/` was added — so `[tool.coverage.report] fail_under` was not applied to 2,886 lines of
+production code. Fixed (the gate now covers both packages), and enabling it immediately found a real
+gap: `fetch` was the one primary-agent RPC method with **no** service-level test at all, its twelve-
+field wire shape entirely unasserted — the same class as round 8's genuine defect. Now tested
+against the field set `architecture.md` states, as a set rather than by spot-checking keys. The
+lesson is narrower than "raise coverage": *a gate that names packages by hand stops covering the
+code the moment a package is added, and nothing fails to tell you.*
+
 ## Build plan — start here when writing code
 **Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
 definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
@@ -474,7 +541,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M6 | Write path + D15 dedup hand-back | a conflict returns the full record and its receipt in one round trip; rejection paths emit exactly the events the signals need | ✓ |
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` from `next_group` | ✓ |
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ✓ |
-| M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ☐ |
+| M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ✓ |
 | M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ☐ |
 | M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ☐ |
 | M12 | Distribution — agent config, skill, hook entries (stable + `--v3`), policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run | ☐ |
@@ -893,6 +960,53 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   property that is only *sometimes* the thing deciding the outcome needs a fixture where it is the
   *only* thing deciding it, and a fixture that happens to satisfy a guard is indistinguishable from
   the coverage report's point of view from one that defends it.
+- **Fourteen review rounds on one milestone, none of them clean, and the same defect class kept
+  surfacing: a cleanup path that was never exercised.** Not "untested" in the coverage sense — most of
+  these lines *ran* in tests. What went untested was the *exceptional* path through them: the store
+  left open when construction failed after it opened; the socket left unclosed when `connect()` raised;
+  the background tasks left running when the code that cancelled them was reachable only after a
+  normal return; the signal handlers never removed on any path; a retry whose own failure silently
+  replaced the failure it was retrying. Each was found by a reviewer asking the same question in a new
+  place — *what if this step fails?* — and each was invisible to a suite where nothing failed. The
+  practice this yields is a checklist, not a virtue: for every resource acquired, name the exceptions
+  that can occur between acquiring it and handing it to whatever will release it, and for every
+  cleanup that can itself fail, decide explicitly which exception the caller should see.
+- **The most expensive defects were all in one place, and the reason is structural: shutdown is the
+  one path with no client waiting for an answer.** Four of the fourteen rounds found
+  production-breaking bugs and all four were in shutdown — every other surface has a request/response
+  pair, so a wrong answer shows up as a wrong answer. Shutdown's only observable is "did the process
+  eventually stop," which no ordinary test asserts and no user reports until it hangs. Three separate
+  hangs shipped through review rounds because each fix's own test proved the *new* mechanism worked
+  without proving the *whole* sequence still terminated. What eventually worked was testing the
+  outcome rather than the mechanism: start the real thing, hold a real connection open, send a real
+  signal, and bound the wait.
+- **`asyncio` internals were wrong three times in a row about things that read as obviously true.**
+  `wait_for(gather(...), timeout=t)` is not a deadline if the awaited task suppresses cancellation —
+  its own docstring says so, and a handler that swallows `CancelledError` leaves it waiting forever.
+  `task.cancel()` does not reliably deliver `CancelledError` into a coroutine suspended in
+  `StreamReader.readline()` — it can surface as an ordinary empty read. `asyncio.run` cancels and
+  *awaits* every remaining task before re-raising, so an `except` around it never runs if the failing
+  task is the one that will not finish cancelling. Each was settled by a ten-line script measured
+  directly, and each had already been reasoned about confidently and wrongly first. For a dependency
+  this project does not own, "I read the source and it looks like X" is a hypothesis; running it is the
+  answer.
+- **A gate that names its packages by hand stops covering the code the moment a package is added, and
+  nothing fails to tell you.** `check.sh` said `--cov=zikaron/core` from M1, when `core` was the only
+  package. M9 added 2,886 lines of production code that the ratchet in
+  `[tool.coverage.report] fail_under` therefore never saw — for the whole milestone, through fourteen
+  review rounds, while every gate run reported a healthy number. Enabling it took one line and
+  immediately surfaced a real gap (`fetch` had no service-level test at all, its twelve-field wire
+  shape unasserted — the same class as the round-8 defect that would have broken every consolidator
+  client). The generalisable form: an enumerated allowlist in a quality gate is a silent opt-out for
+  anything added later, and the failure is invisible precisely because the gate still passes.
+- **A spy that returns cannot verify a function that never returns.** Three tests for the force-exit
+  fallback asserted the spy fired *exactly once* and two failed `2 == 1` — because in production
+  `os._exit` ends the process at the first call, so exactly-once holds by construction, while a
+  returning spy lets execution continue into whatever later terminal route the same failure also
+  reaches. The count was an artefact of the test double, not a property of the code. Worth naming
+  because the failing assertion looked like a bug in the code and was a bug in the test's model of it:
+  when you replace a terminal operation with a non-terminal one, every assertion downstream of it is
+  now measuring a different program.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
@@ -1063,4 +1177,16 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   returning a frozen `WriteSizeDistribution` ordered by `event.id` — and the determinism test
   written for the last fix caught a coincidentally-passing fixture in itself before shipping, per
   the dogfooding note above. Round 2 re-verified every fix at the specific line and found no call
+- **M9 code review** — **fourteen rounds, and it did not converge**: every round found at least one
+  genuine, independently verified defect, so the loop was stopped by operator direction rather than by
+  reaching `APPROVED`. Read it as the counter-example to M1–M8's trail: those ended clean, this one
+  never did. Four rounds found production-breaking defects and all four were in shutdown — a bare TCP
+  connect accepted as `health()` readiness before the start-if-absent lock was released (round 5); the
+  three consolidator writes registered under `merge`/`promote`/`discard` when the design names them
+  `apply_*`, which no test could catch because every consolidator test called the Python handlers
+  directly (round 8); an ordinary idle-but-connected client hanging shutdown forever on
+  `wait_closed()` (round 9); and the fix for *that* deadlocking against `serve_forever()`'s own
+  cancellation, resolved by never calling `serve_forever()` at all (round 11). Rounds 13–14 then found
+  the operator-directed force-exit fallback implemented in an unreachable place twice over, which is
+  the most instructive part of the whole trail — `reviews/m9-service-review.md`.
   site anywhere still referencing the removed interfaces — `reviews/m8-signals-review.md`.
