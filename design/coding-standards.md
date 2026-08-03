@@ -22,7 +22,7 @@ zikaron/
     config/             # layered resolution, declarative key schema
     errors.py           # the wire error codes, one enum
   service/              # asyncio UDS server, JSON-RPC, lifecycle
-  mcp/                  # thin MCP client
+  mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
 ```
 
@@ -76,6 +76,15 @@ leaves the process or loads a model — `fastembed`, a UDS socket, a subprocess 
 a developer skipping the slow tier is trying to skip. The consequence, stated so it is a choice
 rather than an accident: most store behaviour is verified in the default run, which is what makes
 that run worth having.
+
+**The identical reasoning places `fastmcp.Client(mcp)` in the default tier too.** Connecting an
+in-memory `Client` to a `FastMCP` instance built by `zikaron.mcp.server.build_server` never opens a
+socket, spawns a subprocess, or loads a model — it calls Python objects directly inside the test
+process, which is exactly what the default tier's own definition asks for. What a test built this
+way *cannot* exercise is `zikaron.mcp.connection.ServiceConnection`'s own real behaviour, since that
+class is normally monkeypatched out for a tool-surface test; a test that instead needs a real
+service on the other end of `ServiceConnection` — start-if-absent, reconnect after the service dies —
+is real UDS-and-subprocess work and belongs in `integration`, per the rule above.
 
 **A test holds its store with `async with`, for the reason §6 gives.** A test is the one caller whose cleanup
 is routinely skipped — a failing assertion jumps straight over whatever close follows it — so the fragile form
@@ -160,15 +169,28 @@ instead of hanging. Marking the thread a daemon was considered and rejected — 
 surgery on a pinned dependency to hide a convention we can simply hold, and it would trade a loud hang for a
 silent exit, when the loud version is what found this in the first place.
 
-**Minimal surface, and in the hook it is a design constraint rather than a preference.** `zikaron-hook` and
-`zikaron-mcp` are stdlib-only because their measured interpreter cost is the argument for the whole
-architecture. Adding a third-party import to the hook is a **design violation**, not a style question — it
-silently spends the budget the service exists to protect. `aiosqlite` is a `core` dependency, not a hook one:
-the hook opens no database connection at all, on any path (`design/architecture.md` §"Degraded modes") — on
-any RPC failure it logs to its own `hook.log` and stops, so the question of which SQLite driver the hook uses
-does not arise. An earlier version of the hook's degraded mode read the store directly on a transport failure,
-which was the reason a bare-stdlib-`sqlite3` carve-out existed here; that direct read is gone, and no
-carve-out replaces it.
+**Minimal surface in the hook is a design constraint, not a preference — and it does not extend to the MCP
+client.** `zikaron-hook` is stdlib-only because its measured interpreter cost is the argument for the whole
+push architecture: it fires on every `userPromptSubmit`, so its import cost is paid once per user message, and
+D12's whole case for keeping retrieval on that critical path only holds if that repeated cost stays near-zero.
+Adding a third-party import to the hook is a **design violation**, not a style question — it silently spends
+the budget the service exists to protect. `aiosqlite` is a `core` dependency, not a hook one: the hook opens
+no database connection at all, on any path (`design/architecture.md` §"Degraded modes") — on any RPC failure
+it logs to its own `hook.log` and stops, so the question of which SQLite driver the hook uses does not arise.
+An earlier version of the hook's degraded mode read the store directly on a transport failure, which was the
+reason a bare-stdlib-`sqlite3` carve-out existed here; that direct read is gone, and no carve-out replaces it.
+
+`zikaron-mcp` is a **deliberate exception to "minimal surface," decided by the operator, and the reason is a
+different cost model rather than a relaxed standard.** It takes an exact-pinned dependency on `fastmcp`
+(`design/architecture.md` §Components has the measurement: `import fastmcp` costs ~595 ms cold on this
+machine, in the same range as the cold embedder load that justifies the service's own existence). That cost is
+acceptable specifically because kiro spawns one MCP server process per agent instance — once per session or
+subagent, not once per message — so it is a one-time cost per spawn, never a per-turn tax the way the hook's
+import cost would be. The decision was made after M9's own fourteen-round review of a hand-rolled
+`asyncio.start_unix_server` failed to converge: reusing a maintained framework's own tested tool-registration,
+schema-generation and stdio-transport machinery, rather than re-deriving that surface by hand a second time
+inside `zikaron-mcp` too, was judged the better trade at this cost model. Nothing about this revises the
+hook's own rule, and nothing about the hook's rule should be read backward onto the MCP client.
 
 **Logging is split by process, on purpose, and it is a documented exception rather than an inconsistency.**
 `zikaron-service` and the `agentSpawn` hook's detached warm helper both use stdlib `logging` — each to its own

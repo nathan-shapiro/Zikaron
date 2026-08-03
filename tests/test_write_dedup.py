@@ -242,12 +242,12 @@ async def test_exact_directed_cosine_reads_the_minimum_across_all_of_a_candidate
     tmp_path: Path,
 ) -> None:
     """`schema.md`'s `s(X -> Y)` is the best cosine against **any** chunk of Y, not only Y's
-    first — the actual property round 2's finding asked to be pinned independently of the
-    lexical-only pool shape. A two-chunk candidate has its first chunk's vector pushed far and its
-    second set exactly to the query vector, so the true minimum distance is 0 (cosine 1.0) and is
-    reachable only by a computation that reads chunk 1 as well as chunk 0. `_exact_directed_
-    cosines` is exercised directly, independent of `offer`'s dense-arm-exclusion machinery, which
-    the sibling regression test above already covers for the pool-membership half of the fix."""
+    first — the actual property that must hold independently of the lexical-only pool shape. A
+    two-chunk candidate has its first chunk's vector pushed far and its second set exactly to the
+    query vector, so the true minimum distance is 0 (cosine 1.0) and is reachable only by a
+    computation that reads chunk 1 as well as chunk 0. `_exact_directed_cosines` is exercised
+    directly, independent of `offer`'s dense-arm-exclusion machinery, which the sibling regression
+    test above already covers for the pool-membership half of the property."""
     overrides = "[indexing]\nchunk_max_tokens = 64\n"
     async with harness(tmp_path, overrides=overrides) as h:
         # `FakeEncoder` counts whitespace-delimited tokens: 60 distinct words per paragraph stays
@@ -350,7 +350,8 @@ async def _vec_read_count_for_n_lexical_only_candidates(h: Harness, n: int) -> t
 async def test_lexical_only_candidate_scoring_cost_does_not_grow_with_candidate_count(
     tmp_path: Path,
 ) -> None:
-    """The round-2 cost fix, proved as scale-invariance rather than as one fixed magic number: the
+    """The batched candidate-scoring cost, proved as scale-invariance rather than as one fixed
+    magic number: the
     number of statements touching `memory_vec` must be the **same** whether the fused pool holds
     3 lexical-only candidates or 6 of them — never one further statement per additional candidate,
     which a one-read-per-candidate regression would show as growing linearly with the count."""

@@ -170,7 +170,7 @@ def _spawn_detached(server_command: Sequence[str]) -> None:
 
 
 def connect_start_if_absent(
-    sock_path: Path, *, store_db_path: Path, store_id: str, server_command: Sequence[str]
+    sock_path: Path, *, store_db_path: Path, store_id: str | None, server_command: Sequence[str]
 ) -> tuple[socket.socket, HealthCheck]:
     """`architecture.md`'s six-step sequence, exactly: vet the runtime directory, connect,
     `flock`, connect again, vet and spawn if still dead, release the lock, verify identity.
@@ -194,18 +194,27 @@ def connect_start_if_absent(
         store_id: this client's own resolved `meta.store_id` — read from the same store's own
             `meta` table before this call, since `architecture.md` requires **both** `store_path`
             *and* `store_id` verified: a path alone cannot rule out a store that was deleted and
-            recreated at the identical path with a different identity.
+            recreated at the identical path with a different identity. **`None` means "this store
+            does not exist on disk yet"** — the one case with no prior identity to have read, since
+            `zikaron-service`'s own first startup is what mints it (§"First run" in
+            `architecture.md`). A caller passing `None` is trusting whichever identity this call's
+            *own* connection reports, which is sound specifically because that identity comes from
+            a connection this exact call either found already listening or itself spawned and
+            waited on synchronously — never from a value merely asserted by an unrelated,
+            previously-established connection. `store_db_path` is still compared unconditionally
+            either way, since that value is computable from `sock_path` alone with nothing to open.
         server_command: the argv to spawn if no server answers — the caller's own choice of
             interpreter and entry point, since this module has no opinion about how the service is
             packaged.
 
     Returns:
-        `(sock, health)` — a connected socket and the identity it reported, already verified
-        against `store_db_path` and `store_id`.
+        `(sock, health)` — a connected socket and the identity it reported, checked against
+        `store_db_path` unconditionally and against `store_id` whenever one was given.
 
     Raises:
-        ZikaronError: `STORE_IDENTITY` — a server answered, but for a different store, exactly
-            `architecture.md`'s `{expected, actual}` payload shape for that code.
+        ZikaronError: `STORE_IDENTITY` — a server answered, but `store_db_path` disagreed, or
+            `store_id` was given and disagreed — exactly `architecture.md`'s `{expected, actual}`
+            payload shape for that code.
         ConnectionError: no server became reachable before the deadline.
     """
     sock, already_confirmed_health = _try_connect_twice_under_lock(
@@ -220,6 +229,13 @@ def connect_start_if_absent(
         # consumer that would have closed it, so closing it here is this function's job.
         sock.close()
         raise
+    if store_id is None:
+        if store_db_path != Path(health.store_path):
+            sock.close()
+            raise ZikaronError(
+                ErrorCode.STORE_IDENTITY, expected=str(store_db_path), actual=health.store_path
+            )
+        return sock, health
     expected = f"{store_db_path}#{store_id}"
     actual = f"{health.store_path}#{health.store_id}"
     if expected != actual:

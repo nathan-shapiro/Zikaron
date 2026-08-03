@@ -430,8 +430,9 @@ async def test_fetch_returns_the_documented_record_shape_and_reports_missing_uui
     """`fetch` was the one primary-agent method with **no** service-level test at all — found by
     enabling the coverage floor on `zikaron/service` (which had been silently excluded since M1,
     when `core` was the only package), and worth closing rather than noting because an unasserted
-    wire shape is exactly the class round 8 found a real defect in: three consolidator methods were
-    registered under names no client built against the design would ever call.
+    wire shape is exactly the class of defect a wrong RPC method name is: reachable only by a real
+    client sending the real method name, invisible to a test that calls a Python handler function
+    directly instead.
 
     Asserts the exact twelve-field record shape `architecture.md` §`zikaron_fetch` states, as a set
     rather than by spot-checking a few keys, so a field silently added or dropped fails here; and

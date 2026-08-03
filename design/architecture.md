@@ -11,7 +11,7 @@
 |---|---|---|
 | **`zikaron-core`** | Library. All logic: store, hybrid retrieval, chunking, embedding, dedup, consolidation grouping. No process concerns, no transport. | yes, on demand |
 | **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DB. Serves local RPC. Self-stops after idle. | **yes — the only one** |
-| **`zikaron-mcp`** | Thin MCP server. Translates MCP tool calls to RPC. Starts the service if absent. | no |
+| **`zikaron-mcp`** | MCP server, built on the `fastmcp` framework. Translates MCP tool calls to RPC. Starts the service if absent. | no |
 | **`zikaron-hook`** | Thin hook executable for `agentSpawn` and `userPromptSubmit`. Starts the service if absent. | no |
 
 The service exists for exactly one measured reason: cold whole-process `bge-small` is **783 ms**, and D12
@@ -20,10 +20,26 @@ puts retrieval on the critical path of every user message. Keeping the model res
 adopts. (Without the prefix it is 5.45 / 7.97 ms; quoting those for a prefixed deployment was a stale-figure
 finding in the corpus review.)
 
-Both thin clients are thin on purpose. Measured on this machine: `python -c pass` is **10.9 ms**,
-`import socket, json, os` is **20.6 ms**, adding `sqlite3` is **21.8 ms**. So a stdlib-only client costs
-~20 ms — which is the real argument against an HTTP/ASGI transport, since importing an HTTP client into the
-hook would spend more than the transport saves.
+**The hook is thin on purpose; the MCP server is not, and the difference is the cost model each one sits
+on.** Measured on this machine: `python -c pass` is **10.9 ms**, `import socket, json, os` is **20.6 ms**,
+adding `sqlite3` is **21.8 ms**. So a stdlib-only client costs ~20 ms — which is the real argument against an
+HTTP/ASGI transport for the hook, since importing an HTTP client into it would spend more than the transport
+saves. `zikaron-hook` fires on **every `userPromptSubmit`**, i.e. every user message in every turn, so its
+import cost is paid repeatedly within one session and D12's whole argument for keeping it on the critical
+path only holds if that repeated cost stays near-zero.
+
+`zikaron-mcp` does not have that shape. kiro spawns **one MCP server process per agent instance**
+(`research/kiro-mcp-lifecycle-probe.md`) — once per top-level session and once per subagent spawn, not once
+per message — so its import cost is a one-time cost per spawn rather than a per-turn tax. **Operator
+decision, after M9's fourteen-round review of a hand-rolled `asyncio.start_unix_server` did not converge**:
+`zikaron-mcp` takes a dependency on `fastmcp` (pinned exactly, per coding-standards.md §6) rather than
+re-deriving MCP's own framing, tool-schema generation and stdio transport by hand a second time. Measured
+directly on this machine: bare interpreter start is **27.9 ms** (median of 5), `import fastmcp` cold is
+**594.6 ms** (median of 5) — in the same range as the cold embedder load that justifies `zikaron-service`
+existing as a long-running process at all, and roughly 30× the bare interpreter. That cost is accepted
+because it is paid **once per spawn, not once per message** — the reasoning D12 uses to keep the hook
+stdlib-thin does not transfer, since nothing about the MCP server sits on a per-turn critical path the way
+`userPromptSubmit` does. `zikaron-hook` stays stdlib-only; nothing above revises that.
 
 ## RPC: Unix domain socket + newline-delimited JSON-RPC 2.0
 
@@ -55,6 +71,29 @@ the FTS5 amend and erasure sequences behave identically to the raw-`sqlite3` spi
 contention check that exposed the original deadlock succeeds cleanly through `aiosqlite` with no special
 handling — writer B's `waited_s` reflects real serialization through `busy_timeout`, not a frozen loop.
 `aiosqlite==0.22.1` is the version verified; pin it exactly per `design/coding-standards.md` §6.
+
+**The identical failure mode recurs on the client side of this same RPC, and `zikaron-mcp` closes it the
+same way `aiosqlite` closes it for the service — by running the blocking call off the event loop, through
+`asyncio.to_thread`, rather than by convention.** `zikaron.mcp.connection.ServiceConnection` is `async def`
+throughout, but its own socket I/O — `socket.send`, `socket.recv`, and `service.lifecycle.
+connect_start_if_absent` itself, which `lifecycle.py`'s own docstring states is "blocking, deliberately" for
+the short-lived, single-connection-attempt processes it was originally written to serve — are all
+synchronous. `zikaron-mcp` is not that kind of client: M10 holds one connection across many tool calls in one
+long-running process, so a blocking call anywhere inside its own request path holds the *same*
+single-threaded event loop every other coroutine in that process runs on, for as long as the service takes to
+answer — including the full 5 s `busy_timeout` window a contended write may legitimately need. **Measured
+directly, not merely reasoned about**, while building the very integration test meant to prove a request
+survives waiting out real contention: an earlier version of `ServiceConnection.request` called the blocking
+socket calls directly, and a concurrent `asyncio.sleep` in an unrelated task on the same loop — the test's own
+lock-holding fixture — was starved for the entire blocking wait rather than resuming on its own schedule,
+which let the *service's* own `busy_timeout` expire before the test's holder ever released its lock, and the
+call that should have waited out contention and succeeded instead received a — genuinely correct, but
+avoidably reached — `store_busy` rejection. `ServiceConnection` now wraps every blocking call
+(`_send_request`, `_read_response`, and `connect_start_if_absent`) in `asyncio.to_thread`; with that fix in
+place, the identical test waits out ~1.8 s of real contention and receives the request's actual success
+response in under 4 s total. `zikaron-hook`'s own client code has no equivalent obligation: it is a
+short-lived, single-request process exactly matching what `lifecycle.py`'s blocking design already assumes,
+so nothing else on its own event loop is ever waiting to be starved.
 
 ### The request envelope — where `session_id` comes from
 D27 keeps provenance out of the **agent-facing** call — the write verbs gain no parameters. But a
@@ -185,6 +224,28 @@ is the label itself, from which `label_source` is a pure function.
 
 - **`op_id`** is minted per call by the client (or by the service if absent) and stamped on every `event`
   row the call emits, which is what correlates a `remember` with the `dedup_offered` rows it produced.
+  **It is not an idempotency key.** The service performs no lookup against a stored `op_id` before executing
+  a mutation, so two requests carrying the identical value are two independent writes, not one deduplicated
+  into the other — `op_id` answers "which rows did this one call cause," after the fact, never "has this call
+  already run." A client that retries a mutating call whose *response* was lost, hoping the identical `op_id`
+  protects it, is wrong to hope that; nothing on the service side checks.
+- **A client's retry-once obligation (§Lifecycle) is therefore narrower than "retry the call."** It covers a
+  failure discovered *before any byte of the request's own encoding reached the socket* — the documented case
+  is a held connection found dead, where nothing of this exact call was necessarily sent — and does not
+  extend to a failure discovered once transmission has begun, including a partial send: `sendall`'s own
+  documentation states "if an error occurs, it's impossible to tell how much data has been sent," so a naive
+  client cannot tell "nothing reached the socket" from "most of it did, and the service may already be
+  running it" apart merely from `sendall` having raised. A conforming client tracks its own send progress
+  (`zikaron-mcp`'s own client does, with a manual send loop rather than trusting `sendall`) and treats *any*
+  positive progress, or a failure discovered while waiting for the *response*, as the case where the service
+  may already have received, run and committed the request. Retrying that case would risk a duplicate
+  `remember`, a spurious `amend` conflict against a version the first attempt already bumped, or two
+  consolidator writes racing each other, with no mechanism on either side to notice or prevent it.
+  `zikaron-mcp`'s own client (M10) surfaces this case as a distinct, named failure rather than silently
+  resolving it either way, and does not retry it. **A server-side idempotency mechanism — checking a
+  client-minted key against something durable before a mutation runs — would close this gap properly, and
+  does not exist yet**; recorded here as an open question rather than solved by a client-side workaround,
+  since the fix belongs on the side that can actually make the guarantee.
 - **Trust model.** The envelope is **transport-supplied, not authenticated.** A 0600 UDS already restricts
   callers to the owning uid (see §"Filesystem security"), and any process that could forge a `session_id`
   could equally call `remember` directly. The service validates *shape* — a string of ≤128 chars with no
@@ -425,6 +486,15 @@ different store. So identity is checked rather than inferred:
   was checking for, and then stamp that foreign label on every event in its own store — a cross-store
   contamination introduced by the very call that exists to prevent cross-store reads. Resolution therefore
   happens on the first request that is *about* this store, which is strictly after verification.
+- **The one case with no prior `store_id` to verify against: a client's very first connection for a store
+  that does not exist on disk yet.** §"First run" has the service create the store on demand, which means a
+  client resolving identity beforehand — the ordinary case above — has nothing recorded to read. That client
+  checks `store_path` alone on this one connection, and trusts whichever `store_id` this exact connection's
+  own `health()` reports: sound specifically because the connection came from this call's own attempt, either
+  found already listening or spawned and awaited synchronously by it, never from an unrelated prior
+  connection this client never verified. Every later connection this client makes — including any recovery
+  reconnect — has a real `store_id` to compare against, since the store now exists; the bootstrap case fires
+  at most once per client process, on whichever attempt is first to find `memory.db` absent.
 
 ## Filesystem security
 
@@ -474,6 +544,51 @@ Both thin clients may race to start the service. Sequence:
 `ECONNREFUSED` on an existing socket file is the signature of a service that died without cleaning up —
 unlink and respawn rather than reporting an error.
 
+### First run: the service creates the store itself if one is not there yet
+**Operator decision.** Nothing upstream of the service — no installer, no client, no separate bootstrap
+step — creates `memory.db`. A fresh `.zikaron` directory with nothing in it, or no `.zikaron` directory at
+all, is the ordinary state of a project that has never run Zikaron, not a misconfiguration to reject: a
+design that required something else to create the store before the service could start would mean the whole
+system can never reach its own working state from an empty directory unassisted.
+
+So `zikaron-service`'s own startup (`ServiceContext.assemble`) checks whether `store_dir/memory.db` already
+exists and calls `Store.create` instead of `Store.open` when it does not — `Store.create` itself creates
+`store_dir` too if that is also absent, so this reaches all the way from nothing Zikaron-related in the
+directory to a fully open, correctly-configured store. The check is the database file's own existence,
+not a broader "did `open` fail" catch: `Store.open` shares its `bad_config` code across several genuinely
+different causes (a missing required `meta` key, an unsupported `schema_version`), and only the specific
+absence of `memory.db` may be silently treated as "create one" — every other `bad_config` cause is still a
+real rejection.
+
+The encoder loads before this decision is made, not after — `Store.create` needs it (the configured
+embedder's actual width and model name, checked against the effective config before any table exists,
+§"Creating the dense index" in `schema.md`) — so first-run startup pays the cold model-load cost once,
+exactly as every other startup already does, and the create path costs nothing beyond that.
+
+A second `assemble` against the same directory finds `memory.db` already there and opens it, exactly as
+before this decision existed: creation happens at most once per store, on whichever startup is first to
+find the file absent.
+
+**A genuinely-empty directory reaches one step earlier than `ServiceContext.assemble` itself: `main.py`'s own
+log setup.** `run()` configures `service.log` before resolving config or opening the store, deliberately —
+either can fail, and a first-run `Store.create` failure must be as diagnosable from this process's own log as
+any other startup failure (§"Idle self-stop" states the same reasoning for a different step). But
+`log.configure_service_log` `touch`es `service.log` *inside* `store_dir`, so on a truly first-ever run —
+`.zikaron` absent entirely, not merely `memory.db` — that `touch` itself raised `FileNotFoundError` before
+`ServiceContext.assemble` was ever reached, which is exactly the case this whole section exists to support.
+Found by running the create-on-absent path end to end against a real spawned subprocess rather than only unit-
+testing `ServiceContext.assemble` in isolation, where a monkeypatched, pre-existing `tmp_path` had always
+stood in for the directory. **Fixed by running the same shared, symlink-refusing, `0700`-enforcing validator
+`Store.create` itself calls a moment later — `permissions.ensure_store_dir` — immediately before the log is
+configured, never a bare `mkdir`.** A bare `mkdir` was tried first and rejected on review: it would have let
+`log.configure_service_log` write into a directory reached through a symlink, or one left wider than `0700` by
+an earlier build, before either had ever been checked — exactly the refusal §"Filesystem security" requires.
+Calling the real validator here rather than a weaker one invented for this narrower purpose means
+`Store.create`'s own later call against the identical directory is a no-op against a path this step already
+left correctly vetted and at `0700`; the ordering the paragraph above states for *why* the log runs first is
+unchanged, only *where the log file can land* needed a directory to exist first, and that directory's own
+safety is never traded away to get one.
+
 ### Idle self-stop
 `last_activity` is refreshed when each request completes. A background task polls every 30 s and exits
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
@@ -481,7 +596,13 @@ is unlinked before the process ends.
 
 **The race this creates must be handled in the client, not wished away:** a client can connect just as the
 service decides to exit, and its request then fails. Clients retry once through the full start-if-absent
-sequence before falling back.
+sequence before falling back. **"Falling back" differs by client, and only the hook's own fallback is a
+degraded mode with no answer at all** (§"Degraded modes"): `zikaron-mcp` has no equivalent silent-failure
+requirement, since a tool call answers a model that is actively waiting on it rather than a background push
+nobody is watching for. A retry that still fails — the store genuinely unreachable, not merely a service
+that happened to exit between two requests — surfaces as an ordinary MCP tool error the calling model sees,
+naming the transport failure, exactly like any other rejection the service itself could have sent; there is
+no second, silent fallback path for the MCP client to take instead.
 
 An active consolidation run does **not** keep the service alive on its own — a run is a store-level lease
 (§"Consolidation lifecycle"), not process state, so a service that stops mid-run loses nothing.
@@ -758,6 +879,15 @@ itself an LLM subagent, so it needs tools of its own — see the next section.
 D10's consolidation subagent cannot use RPC directly; it needs tools. These are exposed by the same
 `zikaron-mcp` server but gated to a shipped `zikaron-consolidator` agent config, so the primary agent's
 allowlist never includes them.
+
+**"Provably cannot reach" is structural, not a filter, and the mechanism is where the tool set is decided:
+before either set of tools exists.** Each `zikaron-mcp` process is told which mode to run as at startup
+(`--mode primary` or `--mode consolidator`, one per shipped agent config), and decorates only that mode's
+own tools onto its one `FastMCP` instance — never both, and never all nine with the other five hidden. A
+consolidator process's `tools/list` cannot name `search`/`fetch`, because they were never registered as
+callables on that process at all; a `tools/call` naming either has no handler to dispatch to. This is
+different from an allowlist filtering nine registered tools down to four: there is no allowlist, and no
+moment at which the other five exist in that process to be filtered out of.
 
 Two rules run through all four signatures, and the first draft of this document had neither:
 

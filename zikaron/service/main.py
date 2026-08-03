@@ -23,6 +23,7 @@ from zikaron.core.config.resolution import (
     project_config_path,
     resolve,
 )
+from zikaron.core.store import permissions
 from zikaron.service import lifecycle, log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.paths import service_log_path
@@ -100,6 +101,34 @@ async def _assemble_or_log_and_raise(store_dir: Path) -> ServiceContext:
         raise
 
 
+def _ensure_store_dir_exists(store_dir: Path) -> Path:
+    """`store_dir`, created and vetted through the same path `Store.create` itself uses — never a
+    bare `mkdir`, which would let `log.configure_service_log` write into a directory reached
+    through a symlink, or one left wider than `0700` by an earlier build, before either has ever
+    been checked.
+
+    Exists only so `log.configure_service_log` — which must run **before** `ServiceContext.
+    assemble` so a first-run `Store.create` failure is itself diagnosable
+    (`run`'s own docstring) — has somewhere to `touch` `service.log` into. Without this, the very
+    case `architecture.md` §"First run" exists to support (an empty directory, `.zikaron` absent
+    entirely) would fail with a bare `FileNotFoundError` from the log setup itself, before the
+    store-creation path this whole function exists to reach is ever attempted — a real defect,
+    not a hypothetical, caught by running the create-on-absent path end to end rather than only
+    unit-testing `ServiceContext.assemble` in isolation. `permissions.ensure_store_dir` is what
+    `Store.create` itself calls for the identical directory a moment later, so this is the same
+    check running once earlier rather than a second, weaker one invented for this narrower purpose
+    — `Store.create`'s own call is then a no-op against a directory this function already left
+    correctly vetted and at `0700`.
+
+    Raises:
+        ZikaronError: `BAD_CONFIG` if `store_dir`, once resolved, is reached through a symlink
+            anywhere along its path — the identical refusal `permissions.ensure_store_dir` states
+            for `Store.create`, now enforced before the log is ever opened rather than after.
+    """
+    permissions.ensure_store_dir(store_dir)
+    return store_dir
+
+
 async def run(sock_path: Path, store_dir: Path) -> None:
     """Assemble the store, bind the socket, and serve until an idle exit or a signal.
 
@@ -120,14 +149,13 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     forever()` is deliberately never called at all** — `asyncio.start_unix_server` (inside
     `serve()`) already accepts and dispatches connections the instant it returns, with no separate
     "start serving" call needed; `serve_forever()` is only a convenience wrapper for blocking until
-    cancelled, and using it as this function's own third thing-to-wait-on created a real bug
-    (`reviews/m9-service-review.md` round 11, findings 1-3): cancelling it makes `asyncio.Server`
-    itself call `close()` and await its **own** `wait_closed()` before re-raising, which is a
-    second, independent wait for exactly the same connections `RunningServer.shut_down()` exists to
-    drain — and that second wait ran *first*, deadlocking against an idle open connection before
-    this function's own draining logic ever got a chance to run. Waiting only on `idle_task` and
-    `signal_wait`, and calling `server.shut_down()` directly, removes the competing wait entirely
-    rather than trying to sequence around it.
+    cancelled, and using it as this function's own third thing-to-wait-on created a real bug:
+    cancelling it makes `asyncio.Server` itself call `close()` and await its **own**
+    `wait_closed()` before re-raising, which is a second, independent wait for exactly the same
+    connections `RunningServer.shut_down()` exists to drain — and that second wait ran *first*,
+    deadlocking against an idle open connection before this function's own draining logic ever got
+    a chance to run. Waiting only on `idle_task` and `signal_wait`, and calling `server.shut_down()`
+    directly, removes the competing wait entirely rather than trying to sequence around it.
 
     The socket is unlinked exactly once — by `idle_self_stop` on the idle path (since it needs to
     unlink *before* closing the server to close the connect-during-exit race window, per its own
@@ -139,7 +167,7 @@ async def run(sock_path: Path, store_dir: Path) -> None:
             all. There is nothing useful to serve in that case, so the process exits with that
             exception rather than binding a socket for a store it could not open.
     """
-    log.configure_service_log(service_log_path(store_dir))
+    log.configure_service_log(service_log_path(_ensure_store_dir_exists(store_dir)))
     ctx = await _assemble_or_log_and_raise(store_dir)
 
     try:
@@ -193,8 +221,7 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                     # task's `ShutdownTimeoutError` arrives here as a *return value*, never seen
                     # by `_raise_if_any_task_genuinely_failed` (which only inspected the earlier
                     # `done` set). Inspecting the outcomes is what routes it to the directed
-                    # terminal path instead of dropping it on the floor
-                    # (`reviews/m9-service-review.md` round 14, finding 1).
+                    # terminal path instead of dropping it on the floor.
                     _force_exit_if_shutdown_timed_out(outcomes, sock_path)
         except ShutdownTimeoutError:
             _force_exit_after_failed_graceful_shutdown(sock_path)
@@ -203,10 +230,10 @@ async def run(sock_path: Path, store_dir: Path) -> None:
             # failure in any setup step between here and the signal-handler/task-installation
             # block above (`chmod`, signal handler installation, task creation) must not leave
             # that listener open with nobody holding it, nor its socket path behind on disk. The
-            # same resource-leak-on-exception-path class already fixed several times this review
-            # (the store in `ServiceContext.assemble`, the socket in `lifecycle._connect`, the
-            # background tasks just above); `shut_down()` here is safe to run unconditionally
-            # even if the idle-exit branch above already ran its own identical shutdown, since
+            # same resource-leak-on-exception-path shape recurs across this codebase (the store in
+            # `ServiceContext.assemble`, the socket in `lifecycle._connect`, the background tasks
+            # just above); `shut_down()` here is safe to run unconditionally even if the idle-exit
+            # branch above already ran its own identical shutdown, since
             # `asyncio.Server.close()`/`wait_closed()` are both themselves idempotent no-ops once
             # already closed (verified directly against the installed Python 3.12.3 source) and
             # `close_all_connections` against an already-empty connection set is trivially a
@@ -231,9 +258,8 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                 # broad handler would otherwise log it as a mere secondary failure and let
                 # execution fall through to ordinary propagation and `ctx.close()` — exactly the
                 # "keep going after the graceful path already gave up" the operator's direction
-                # rules out (`reviews/m9-service-review.md` round 14, finding 1). The primary
-                # exception that brought us into this clause is logged first, since forcing the
-                # exit means it will not propagate to anyone.
+                # rules out. The primary exception that brought us into this clause is logged
+                # first, since forcing the exit means it will not propagate to anyone.
                 logging.getLogger("zikaron.service").exception(
                     "shutdown deadline expired while handling an earlier failure"
                 )
@@ -282,8 +308,7 @@ def main() -> None:
     direct measurement why it cannot live here: `asyncio.run` cancels and awaits every remaining
     task before re-raising anything, and the very task that made shutdown's deadline expire is by
     definition one that did not finish cancelling — so `asyncio.run`'s own teardown hangs forever
-    and an `except` at this level is never reached at all
-    (`reviews/m9-service-review.md` round 13, finding 1). Every *other* failure — a startup
+    and an `except` at this level is never reached at all. Every *other* failure — a startup
     failure, a lifecycle crash, a store close failure — propagates from here normally, with its
     real traceback and a non-zero exit status, which is what makes it diagnosable.
     """
@@ -299,7 +324,7 @@ def _force_exit_if_shutdown_timed_out(outcomes: Sequence[object], sock_path: Pat
     `return_exceptions=True` is required where it is used — it keeps one task's failure from
     skipping the cancellation of the others — but it converts exceptions into *results*, and a
     shutdown deadline expiring inside a lifecycle task is the one exception that must never be
-    absorbed that way (`reviews/m9-service-review.md` round 14, finding 1).
+    absorbed that way.
     """
     for outcome in outcomes:
         if isinstance(outcome, ShutdownTimeoutError):
@@ -316,8 +341,7 @@ def _force_exit_after_failed_graceful_shutdown(sock_path: Path) -> None:
     Confirmed by direct measurement why the outer placement was wrong: `asyncio.run` cancels and
     awaits every remaining task before re-raising, and the very task that made this deadline expire
     is by definition one that did not finish cancelling — so `asyncio.run`'s own teardown hangs
-    forever and an `except` outside it is never reached at all
-    (`reviews/m9-service-review.md` round 13, finding 1).
+    forever and an `except` outside it is never reached at all.
 
     Deliberately skips both `run()`'s own `except BaseException:` shutdown retry and its outer
     `finally`'s `ctx.close()`: a second `shut_down()` with a fresh 5 s deadline and a store close
@@ -344,7 +368,7 @@ def _force_exit_after_shutdown_timeout() -> None:
     test run, not merely the code under test, which is exactly the mistake this indirection exists
     to make structurally hard to make by accident.
 
-    **Directed by the human operator** (2026-08-02): keep the graceful shutdown path exactly as
+    **Directed by the human operator:** keep the graceful shutdown path exactly as
     built — it stays the *first* thing tried, with its own real 5 s deadline — and if that deadline
     expires, end the process rather than chasing every `asyncio`-internals edge case that could
     theoretically leave something open (`design/architecture.md` §"Idle self-stop"). `os._exit` is

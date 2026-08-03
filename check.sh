@@ -18,5 +18,6 @@ venv=.venv/bin
 # Every shipped package, not only `core`. This said `--cov=zikaron/core` alone from M1, when
 # `core` was the only package there was, and stayed that way when M9 added `service/` — so the
 # ratchet in `[tool.coverage.report] fail_under` was silently not applied to a whole milestone's
-# production code. A floor that does not cover a package is not a floor.
-"$venv/pytest" --cov=zikaron/core --cov=zikaron/service
+# production code. A floor that does not cover a package is not a floor. `zikaron/mcp` is added
+# here at the same time M10 introduces it, rather than waiting for a coverage gap to surface it.
+"$venv/pytest" --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp

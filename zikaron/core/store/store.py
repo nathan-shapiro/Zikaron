@@ -9,6 +9,7 @@ pointing at the wrong culprit. Open re-validates `meta` on every call, per the s
 a process that died mid-reindex, or through a `schema_version` this build does not support.
 """
 
+import asyncio
 import re
 import uuid
 from pathlib import Path
@@ -305,7 +306,7 @@ class Store:
         if embedder.model_name != embed_model:
             raise _model_name_mismatch(config, embedder)
 
-        permissions.ensure_store_dir(store_dir)
+        await asyncio.to_thread(permissions.ensure_store_dir, store_dir)
         db_path = store_dir / _DB_FILENAME
         chunk_max_tokens = config.get_int("chunk_max_tokens")
 
@@ -316,7 +317,7 @@ class Store:
         # here and wide before this call started, and a failure partway through must not leave
         # that file exactly as wide as it found it.
         for name in (_DB_FILENAME, _DB_FILENAME + "-wal", _DB_FILENAME + "-shm"):
-            permissions.enforce_store_file_mode(store_dir / name)
+            await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
 
         with permissions.restrictive_umask():
             db = await _open_connection(db_path)
@@ -329,7 +330,7 @@ class Store:
                 raise
 
         for name in (_DB_FILENAME, _DB_FILENAME + "-wal", _DB_FILENAME + "-shm"):
-            permissions.enforce_store_file_mode(store_dir / name)
+            await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
 
         current_meta = meta.parse_and_validate(defaults)
         return cls(db, db_path, current_meta)
@@ -390,7 +391,16 @@ class Store:
                 the effective config (invariant 11); `SCHEMA_INCOMPATIBLE` if
                 `meta.schema_version` exceeds `SUPPORTED_SCHEMA_VERSION`.
         """
-        permissions.enforce_existing_store_permissions(store_dir)
+        # `enforce_existing_store_permissions` is itself synchronous filesystem I/O (symlink
+        # checks, `stat`, a possible `chmod` per ancestor and per store file) — run through
+        # `asyncio.to_thread` rather than called directly, so this coroutine's first blocking
+        # step does not hold the event loop of a caller that shares one across many concurrent
+        # requests, exactly as every other blocking call this `open` path makes already does
+        # (`_open_connection`'s own `aiosqlite.connect`, `_validate_on_open`'s SQL). A caller with
+        # no such sharing to protect (a short-lived script, one request at a time) pays this
+        # cost identically either way; only a caller like `zikaron-mcp` — one long-running
+        # process holding many concurrent tool calls on one loop — depends on it.
+        await asyncio.to_thread(permissions.enforce_existing_store_permissions, store_dir)
         db_path = store_dir / _DB_FILENAME
         db = await _open_connection(db_path, existing_only=True)
         try:

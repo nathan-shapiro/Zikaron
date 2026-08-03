@@ -75,7 +75,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 + the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
 (retrieval), M6 (write path + D15 dedup), M7 (consolidation) and M8 (D30's six signals as SQL)
 complete and reviewed to APPROVED. M9 (service) is built and its gate is green, but its review
-**did not converge** — see below; M10 (MCP client) is next.** D1–D33 settled. Grounding from
+**did not converge** — see below. M10 (MCP client) is built and reviewed to `APPROVED` over seven
+rounds — see below; M11 (hook client) is next.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -518,6 +519,99 @@ against the field set `architecture.md` states, as a set rather than by spot-che
 lesson is narrower than "raise coverage": *a gate that names packages by hand stops covering the
 code the moment a package is added, and nothing fails to tell you.*
 
+**M10 shipped `zikaron/mcp/`** (`connection.py`, `errors.py`, `primary.py`, `consolidator.py`,
+`server.py`, `main.py`) — the MCP client: five primary-agent tools, four consolidator tools, gated
+to two separate agent configs by never registering the other mode's tools on a given process's
+`FastMCP` instance at all, the lazy `plan_groups` bridge in front of the consolidator's first
+forwarded `next_group`, and reconnect-on-death for a service that stops mid-session. **Reviewed to
+`APPROVED` over seven rounds** (`reviews/m10-mcp-client-review.md`), with a genuine defect in each
+of the first six — the longest review trail of any milestone so far, and worth reading as one,
+since nearly every round's defect was in the identical area: correctness properties that only
+become observable under concurrency, cancellation, or genuine timing, which is exactly the class a
+suite of sequential, synchronous-looking unit tests cannot surface by construction.
+
+**Two operator-directed scope decisions, both settled before the code was written.**
+`zikaron-mcp` takes an exact-pinned dependency on `fastmcp==3.4.5` — the standalone jlowin/PrefectHQ
+package, not the official `mcp` SDK — breaking `coding-standards.md`'s previous "hook and MCP are
+both stdlib-only" rule for the MCP client specifically. The reasoning is a cost model, not a
+relaxed standard: measured on this machine, `import fastmcp` costs **594.6 ms** cold (~30× the bare
+interpreter), in the same range as the cold embedder load that justifies the service's own
+existence — but kiro spawns **one MCP process per agent instance** (`research/kiro-mcp-lifecycle-
+probe.md`), not once per message the way the hook fires, so the cost is paid once per spawn rather
+than repeatedly on the critical path D12's whole hook-thinness argument rests on. The decision
+followed directly from M9's own review history: fourteen rounds on a hand-rolled
+`asyncio.start_unix_server` that never converged, weighed against reusing a maintained framework's
+already-tested tool-registration and stdio-transport machinery for the client side too. Separately,
+**the service now creates the store on its own first startup if `memory.db` is absent** — settled
+because nothing else in the distribution ever called `Store.create` in production, and a design
+that required a separate bootstrap step before the service could start would mean the system could
+never reach its own working state from an empty directory unassisted. Building this surfaced a real,
+independent bug in the process: `main.py`'s own log setup ran *before* the store directory existed
+on a genuinely first-ever run, so the service crashed attempting to `touch` `service.log` into a
+directory that had never been created — invisible to every existing test, since all of them
+pre-created `store_dir` as part of their own setup. Both decisions, and the bug, are written into
+`design/architecture.md` §Components and §"First run" respectively.
+
+**The review's own shape is worth summarizing on its own terms, because a single "seven rounds"
+count understates what those rounds actually found.** Round 1's four blockers were a missing
+mechanism entirely (the client re-bootstrapped a fresh session label on every call instead of
+adopting the one the service returned, exactly the defect D31's own "the client adopts the
+returned label" sentence exists to prevent — it would have split one client process's own receipts
+and writes across multiple service-minted labels, and let a consolidator's own successful
+`plan_groups` be followed by a `next_group` that saw its own run as foreign), a forwarded `zk-`
+harness value violating the reserved-namespace contract, a symlink-bypassing bare `mkdir` in the
+first-run log-ordering fix, and an unlocked `_PlanBridge` allowing two concurrent takeovers from
+one process. Rounds 2–4 found, in turn: `socket.sendall`'s own documented inability to report
+partial-send progress meant a positive-progress send failure was being retried as if it were safe,
+risking a duplicate `remember`; a real `sock.send()` zero-return case (permitted by the socket API
+without raising) that would have spun forever while holding the connection lock; and an established
+socket that silently kept `lifecycle.py`'s own 1-second *connect-phase* timeout indefinitely, which
+would cut off any request waiting out the store's own documented 5-second contention window before
+it could resolve. **Round 5 found something no round asked for**: while writing the integration
+test for round 4's own fix, a concurrent `asyncio.sleep` in the test's own lock-holding fixture was
+measured resuming *later than its own coded duration* — the exact self-inflicted-deadlock shape
+`coding-standards.md` §6 already documents for the service's own blocking `sqlite3` calls (M0 spike
+3), now found on the MCP *client* side: every one of `ServiceConnection`'s own socket calls was
+fully synchronous inside `async def` methods, so any real wait for the service blocked the entire
+FastMCP event loop, not merely the calling coroutine. Round 6 found the identical defect class
+recurring twice more — synchronous filesystem calls still reachable from `_read_store_identity`,
+and (traced to its root) `Store.open`/`Store.create` themselves, two already-`APPROVED` M2 files,
+running their own permission checks synchronously as their literal first statement before any
+`await` — plus `asyncio.to_thread`'s own fundamental limitation (a cancelled awaiting coroutine
+cannot actually stop the underlying thread) meaning a cancelled tool call could orphan a worker
+thread still touching a live socket, or leak a socket a cancelled connection attempt establishes
+after its own caller has already given up on it; and the consolidator bridge had no cancellation
+handling at all, which could leave it retryable exactly when a takeover may already have committed.
+**Round 7 found no blocker**, one nitpick (a comment overclaiming that closing a socket promptly
+wakes an orphaned worker thread blocked on it, corrected to state the guarantee actually
+provided — detachment and non-reuse, with the worker's eventual exit bounded by its own request
+timeout rather than by the close itself) — and, distinctively, caught a genuine timing bug in the
+review's *own* test for round 6's fix (a cancellation test that awaited its cancelled task before
+releasing the gate meant to let it, so it was accidentally running out a five-second fallback
+rather than exercising a fast release at all), which is exactly the class of defect this whole
+review thread was about, this time in the test suite meant to prove the fix rather than in the
+fix itself.
+
+**One thing was found, weighed, and deliberately left as a disclosed, bounded risk rather than
+fixed further.** `close()`-ing a socket from one thread is not a portable, guaranteed way to
+interrupt another thread already blocked inside `send`/`recv` on it — real, and Linux-specific
+nuance the design does not paper over. It is accepted rather than layered with
+`shutdown(SHUT_RDWR)` or similar for three stated reasons: this project's whole transport is
+Unix-domain-socket-only with no cross-platform ambition anywhere in the corpus; the practical
+consequence is bounded regardless of whether `close()` wakes the orphaned worker promptly, since
+that worker's own socket already carries the 10-second request timeout the established-socket
+timeout fix installed, so its eventual exit is bounded either way; and the review had already spent six full
+rounds specifically on cancellation-safety edge cases, past the self-review skill's own stated
+three-iteration convergence guidance, with each successive finding narrower and lower-severity than
+the one before it. The reviewer's own round-7 judgment concurred this is the proportionate place to
+stop and disclose rather than continue chasing theoretical airtightness — the same shape of
+judgment call M9's own operator-directed shutdown tradeoff already established as precedent for
+this corpus.
+
+**1130 tests, 97.71% coverage on `zikaron/mcp` together with every other shipped package** — `check.sh`'s
+own `--cov` flags now name `zikaron/mcp` explicitly, added at M10's introduction rather than
+discovered as a gap the way M9's own `--cov=zikaron/service` omission was.
+
 ## Build plan — start here when writing code
 **Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
 definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
@@ -542,7 +636,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M7 | Consolidation — grouping, state machine, leases, the four verbs | invariants 12–17 tested; the A~B/B~C/A≁C chain does not over-merge; a second worker in one session with a different pid gets `{busy: true}` from `next_group` | ✓ |
 | M8 | D30's six signals as executable SQL | each runs against a fixture whose expected value is hand-computed in the test; a post-deadline follow-up cannot change a matured classification | ✓ |
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ✓ |
-| M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ☐ |
+| M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ✓ |
 | M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ☐ |
 | M12 | Distribution — agent config, skill, hook entries (stable + `--v3`), policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run | ☐ |
 
@@ -582,9 +676,16 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    reinvoking the skill is the only liveness evidence that exists. A targeted review caught that nothing
    *converted* that invocation into the call: a fresh consolidator's own first tool call is `next_group`,
    which refuses a live foreign run, so the takeover path was unreachable through the real client path.
-   The bridge is now specified — `zikaron-mcp` calls `plan_groups` with its own `(session_id, pid)`,
-   **lazily, immediately before the first `next_group` it forwards, and at most once *successfully* per
-   client process** — and it is an M10/M12 done-when.
+   The bridge is now **built and tested, not only specified** — `zikaron-mcp` calls `plan_groups` with its
+   own `(session_id, pid)`, **lazily, immediately before the first `next_group` it forwards, and at most
+   once *successfully* per client process**, exactly the three-state machine (`unplanned | ready | failed`)
+   M10's `_PlanBridge` implements, including its own awkward transition (a first `plan_groups` answering
+   `store_busy` leaves the client `unplanned` so a retry replans) and, found during M10's own review, its
+   cancellation edge: a tool call cancelled while `plan_groups`'s *response* is still in flight moves the
+   bridge straight to the terminal `failed` state rather than back to `unplanned`, since the takeover may
+   already have committed on the service side by the time the cancellation reached the client, and a
+   mistaken retry there would risk the second successful takeover the whole "at most one" bound exists to
+   rule out.
    **Both premises were measured 2026-08-02** (`research/kiro-mcp-lifecycle-probe.md`): kiro runs one MCP
    server process **per agent instance**, so each invocation carries its own fresh takeover guard — the
    process supplies the guard, not a limit on attempts, since a failed plan displaces nobody; and the handshake is
@@ -1007,6 +1108,63 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   because the failing assertion looked like a bug in the code and was a bug in the test's model of it:
   when you replace a terminal operation with a non-terminal one, every assertion downstream of it is
   now measuring a different program.
+- **A delegated summary reporting a clean exit is not the same claim as "nothing hung."** A subagent run
+  during M10 returned a proper pytest summary line (exit 1, 4 failed, 80.64 s) with no obvious sign of
+  trouble, and the operator watching the same terminal flagged it as *looking* stuck anyway — the long
+  silent wait with verbose output suppressed by design read as a freeze even though the process was
+  making progress the whole time. It was not a false alarm to investigate: those four failures were a
+  genuine first-run log-ordering bug (§"First run"), and each failing attempt was burning its own full
+  10 s health-poll deadline, which is exactly the shape a slow failure and a hang share from the
+  outside. After fixing the real defect, the identical class of run was re-verified twice more by
+  running the same command directly, wrapped in an explicit `timeout`, with a process list checked
+  before and after — both times fast (under 9 s) and clean. The lesson is not "delegation is
+  untrustworthy"; it is that *this specific failure mode* — did it hang, or did it just take a while
+  in silence — is one a returned summary cannot distinguish from the outside, so it is worth verifying
+  directly rather than only through a subagent's own report whenever a session is specifically
+  checking for it, which this whole milestone's own review trail gave repeated, independent reason to
+  do: one genuine hang inside the author's own test code (an `asyncio.Event` two tasks could never
+  both reach, since one of them was waiting on the exact lock the other held while parked on it — a
+  self-inflicted deadlock in the *test*, not the code under test), one genuine production bug
+  (event-loop starvation) found only because a concurrent `asyncio.sleep` was measured resuming later
+  than its own coded duration rather than the delay being attributed to "the lock is just slow," and
+  one genuine timing bug in the author's own review-fix test caught by the *reviewer* reading the
+  test's own await ordering rather than trusting that a passing assertion meant the right thing was
+  being exercised.
+- **The property "no blocking call reaches the event loop" is not established by fixing the call sites
+  you already suspect.** M10's own review found the identical defect class — a synchronous filesystem
+  or permission call reachable from inside an `async def` — three separate times in three separate
+  places across two consecutive rounds: the client's own `_read_store_identity`, and then, traced to
+  its root, two already-`APPROVED` M2 files' (`Store.open`/`Store.create`) own permission checks,
+  running as their literal first statement before any `await`. Each fix was locally correct and
+  incomplete in the identical direction: it closed the specific call site named, not the *property*
+  "this coroutine never blocks the loop it runs on," which is what let the next call site of the same
+  shape keep surfacing. The fix that actually stopped recurring was the one that traced a client-side
+  symptom back to a dependency two milestones upstream and fixed it at the root, benefiting every
+  caller rather than only the one that happened to notice.
+- **`asyncio.to_thread`'s own contract has a corollary nobody states plainly: cancelling the *coroutine*
+  does not stop the *thread*.** A cancelled tool call correctly unwinds and can release whatever lock
+  it held, while the worker thread underneath its `to_thread` call keeps running the blocking syscall
+  to completion regardless — meaning a socket that lock was protecting can still be read from or
+  written to by that orphaned thread after a *different* call has already acquired the lock and moved
+  on to a fresh one. Getting this right took two full review rounds and touched three separate call
+  sites (the ordinary send/receive path, and — a narrower case the same reasoning also applies to —
+  connection establishment itself, where a socket a cancelled caller never sees can still be
+  genuinely, successfully established moments later with nothing left holding it). The generalisable
+  form: adopting `asyncio.to_thread` to fix an event-loop-starvation bug is necessary but not
+  sufficient on its own — it trades a starvation bug for a cancellation-safety one, and only fixing
+  both closes the class rather than moving it.
+- **A residual risk disclosed with its bound stated is a legitimate stopping point; a residual risk
+  glossed over as already handled is not, even when the surrounding fix is real.** M10's review round
+  7 approved the milestone while explicitly flagging that `close()` is not a guaranteed way to wake an
+  already-blocked `send`/`recv` on a separate thread — accepted because the practical consequence is
+  bounded by an existing timeout regardless, and because the review had already spent six rounds on
+  narrowing cancellation-safety edges specifically. What the same round would not let stand was a
+  comment and a test docstring that had drifted into *overclaiming* the guarantee — stating that the
+  close reliably wakes the orphaned worker, when the actual guarantee provided is detachment and
+  non-reuse, with the worker's eventual exit merely *bounded* rather than *caused* by the close. The
+  distinction matters for the identical reason a stale design paragraph matters: a comment that claims
+  more certainty than the code actually provides is a confidently wrong memory of what was built,
+  and it will mislead the next reader exactly as reliably as a wrong design paragraph would.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
@@ -1189,4 +1347,26 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   cancellation, resolved by never calling `serve_forever()` at all (round 11). Rounds 13–14 then found
   the operator-directed force-exit fallback implemented in an unreachable place twice over, which is
   the most instructive part of the whole trail — `reviews/m9-service-review.md`.
+- **M10 code review** — **seven rounds, ending `VERDICT: APPROVED`**, with a genuine defect in each of
+  the first six — the longest *converging* trail of any milestone, distinct from M9's trail in that
+  every round found something and every round's fix held once made. Round 1: missing session-label
+  adoption (the client re-bootstrapped a fresh label every call instead of adopting the service's own
+  returned one — a functional break, not observability drift), a forwarded `zk`-prefixed harness value
+  violating the reserved namespace, a symlink-bypassing bare `mkdir` in the log-ordering fix, an
+  unlocked `_PlanBridge` permitting two concurrent takeovers. Rounds 2–4: `sendall`'s own documented
+  inability to report partial-send progress, a real `send()` zero-return case that could spin forever
+  holding the connection lock, and an established socket silently keeping a 1-second *connect-phase*
+  timeout that would cut off any request waiting out the store's own 5-second contention window. Round
+  5 found something nobody asked for while writing the test for round 4's own fix: a concurrent
+  `asyncio.sleep` measured resuming *later than its own coded duration*, exposing that
+  `ServiceConnection`'s socket I/O was fully synchronous inside `async def` methods — the identical
+  self-inflicted-deadlock shape `coding-standards.md` §6 documents for the service's own blocking SQL
+  calls, now found on the MCP client. Round 6 found the same defect class twice more (synchronous
+  filesystem calls, and — traced to its root — two already-`APPROVED` M2 files' own permission checks)
+  plus two cancellation-safety gaps `asyncio.to_thread`'s own inability to interrupt a running thread
+  makes possible. Round 7: no blocker, one nitpick, and a genuine timing bug caught in the review's
+  *own* test for round 6's fix. One risk — `close()` not reliably waking an already-blocked socket call
+  on a separate thread — was weighed and deliberately disclosed as bounded rather than layered with
+  further defenses, given six rounds already spent on cancellation-safety edges — `reviews/m10-mcp-
+  client-review.md`.
   site anywhere still referencing the removed interfaces — `reviews/m8-signals-review.md`.

@@ -11,6 +11,10 @@ dependencies = [
     "aiosqlite==0.22.1",
     "sqlite-vec==0.1.9",
     "fastembed==0.8.0",
+    # `zikaron-mcp` only. Deliberately not stdlib-only, unlike `zikaron-hook` — see
+    # coding-standards.md §6 for the cost-model reasoning (once per agent spawn, not once per
+    # message) and architecture.md §Components for the measured import cost.
+    "fastmcp==3.4.5",
 ]
 
 [project.optional-dependencies]

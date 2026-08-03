@@ -101,33 +101,55 @@ class ServiceContext:
 
     @classmethod
     async def assemble(cls, store_directory: Path, config: EffectiveConfig) -> Self:
-        """Open the store and build every downstream setting from it, in the required order.
+        """Open the store — creating it first if this is the very first time — and build every
+        downstream setting from it, in the required order.
 
-        The store opens first because `IndexingContext.for_store` reads `store.meta.embed_model`/
-        `embed_dim` — the *recorded* index identity — which does not exist before `Store.open` has
-        read it back. Loading the encoder is the expensive step (hundreds of milliseconds cold),
-        so it happens exactly once here rather than being re-derived per request.
+        **The service creates the store on its own first startup, rather than requiring some
+        separate bootstrap step to have run first.** Nothing else in the distribution creates
+        `memory.db` (`Store.create` had no production caller before this): a fresh `.zikaron`
+        directory with no store in it is the ordinary state of a project that has never run
+        Zikaron, not a misconfiguration, and a design that required an operator or an installer to
+        create the store before the service could ever start would mean the system can never reach
+        its own working state from an empty directory unassisted. `store_directory / "memory.db"`
+        existing is the signal this function uses to decide which of `Store.open`/`Store.create`
+        to call — checked directly rather than by attempting `open` and catching its "no such
+        store" failure, since that failure's `bad_config` code is shared with several genuinely
+        different causes (`Store.open`'s own docstring: a missing required `meta` key, a
+        `schema_version` this build does not support) that must not be silently treated as "create
+        one," only the specific absence of the database file itself.
 
-        Every step after the store opens runs inside a `try` that closes the store on any
-        failure: `coding-standards.md` §6's binding rule ("a `Store` is held with `async with`, or
-        closed in a `finally`") is a rule about process exit, not tidiness — `aiosqlite`'s worker
-        thread is non-daemon, so a store this function opened and then abandoned on a later
-        failure would keep the whole interpreter alive after `main.run()` has already logged the
-        failure and is trying to exit. `FastEmbedEncoder.load` failing is not a hypothetical: this
-        function's own `Raises` section already names the case.
+        The encoder loads **before** either store call now, rather than after `Store.open` as in
+        the open-only path this replaced: `Store.create` needs it (`embedder.dim`/`.model_name`
+        checked against the effective config before any table exists — `schema.md` §"Creating the
+        dense index"), and `Store.open` never depended on load order in the first place, so loading
+        it first costs the open path nothing while it is what makes the create path possible at
+        all. Loading is still the expensive step (hundreds of milliseconds cold) and still happens
+        exactly once here rather than being re-derived per request.
+
+        Every step after the encoder loads runs inside a `try` that closes whichever of the store
+        or the encoder already succeeded on any later failure: `coding-standards.md` §6's binding
+        rule ("a `Store` is held with `async with`, or closed in a `finally`") is a rule about
+        process exit, not tidiness — `aiosqlite`'s worker thread is non-daemon, so a store this
+        function opened or created and then abandoned on a later failure would keep the whole
+        interpreter alive after `main.run()` has already logged the failure and is trying to exit.
+        `FastEmbedEncoder.load` failing, or the encoder loading but the store call after it
+        failing, are not hypotheticals: this function's own `Raises` section already names both.
 
         Raises:
-            ZikaronError: whatever `Store.open` or `FastEmbedEncoder.load` raise — `REINDEXING`,
-                `BAD_CONFIG`, or `SCHEMA_INCOMPATIBLE` for the store; `BAD_CONFIG` naming
-                `embedding.embed_model` if the configured model exposes no usable tokenizer. The
-                store is closed before either propagates, and it is the **original** failure that
-                propagates even if closing the store itself also fails — a caller diagnosing why
-                startup failed is owed the construction error, not a close error that only exists
-                because construction had already failed.
+            ZikaronError: whatever `Store.open`/`Store.create` or `FastEmbedEncoder.load` raise —
+                `REINDEXING`, `BAD_CONFIG`, or `SCHEMA_INCOMPATIBLE` for an existing store;
+                `BAD_CONFIG` naming `embedding.embed_dim`/`embedding.embed_model` for a first-time
+                create whose configured embedder disagrees with itself; or `BAD_CONFIG` naming
+                `embedding.embed_model` if the configured model exposes no usable tokenizer. Any
+                store this function itself opened or created is closed before either propagates,
+                and it is the **original** failure that propagates even if closing the store
+                itself also fails — a caller diagnosing why startup failed is owed the
+                construction error, not a close error that only exists because construction had
+                already failed.
         """
-        store = await Store.open(store_directory, config)
+        encoder = FastEmbedEncoder.load(config.get_str("embed_model"))
+        store = await cls._open_or_create(store_directory, config, encoder)
         try:
-            encoder = FastEmbedEncoder.load(config.get_str("embed_model"))
             index = IndexingContext.for_store(store, config, encoder)
             return cls(
                 store=store,
@@ -153,6 +175,22 @@ class ServiceContext:
                     "failed to close the store while handling an earlier startup failure"
                 )
             raise
+
+    @staticmethod
+    async def _open_or_create(
+        store_directory: Path, config: EffectiveConfig, encoder: FastEmbedEncoder
+    ) -> Store:
+        """`Store.open` if `memory.db` already exists there, else `Store.create` it first.
+
+        The existence check is the database file itself, not `store_directory` — a `.zikaron`
+        directory can exist (created by an earlier, unrelated failure, or by nothing more than
+        `mkdir -p` in a deploy script) with no `memory.db` inside it, and that is exactly the state
+        this function's create branch exists to leave behind correctly rather than to special-case
+        away.
+        """
+        if (store_directory / "memory.db").exists():
+            return await Store.open(store_directory, config)
+        return await Store.create(store_directory, config, encoder)
 
     async def close(self) -> None:
         """Close the underlying store connection. Safe to call once."""

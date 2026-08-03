@@ -432,13 +432,13 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
 async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The exact deadlock round 11 finding 3 described and this test independently reproduced
-    before the fix landed: `main.run` used to wait on `asyncio.Server.serve_forever()` as one of
-    the three things that could mean "stop," and cancelling that task makes `asyncio.Server`
-    itself call `close()` and await its **own** `wait_closed()` before re-raising — a second,
-    independent wait for the same connections `RunningServer.shut_down()` exists to drain, which
-    ran *first* and deadlocked against an idle open connection before this coroutine's own
-    draining logic ever got a chance to run.
+    """The exact deadlock a version of `main.run` used to hang on, and this test independently
+    reproduces before the fix landed: `main.run` used to wait on `asyncio.Server.serve_forever()`
+    as one of the three things that could mean "stop," and cancelling that task makes
+    `asyncio.Server` itself call `close()` and await its **own** `wait_closed()` before
+    re-raising — a second, independent wait for the same connections `RunningServer.shut_down()`
+    exists to drain, which ran *first* and deadlocked against an idle open connection before this
+    coroutine's own draining logic ever got a chance to run.
 
     A real client connects, sends one request, reads its real response — proving the connection
     is genuinely registered server-side, not merely open — and then stays connected, deliberately
@@ -498,7 +498,7 @@ async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
 async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_coroutine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**Directed by the human operator** (2026-08-02): keep the graceful shutdown path exactly as
+    """**Directed by the human operator:** keep the graceful shutdown path exactly as
     already built, and if its own 5 s deadline expires, end the process rather than chasing every
     `asyncio`-internals edge case that could theoretically leave something open.
 
@@ -506,17 +506,16 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
     outside it — an earlier version caught `TimeoutError` around `asyncio.run(...)` and was proven
     unreachable by direct measurement: `asyncio.run` cancels and awaits every remaining task before
     re-raising, and the very task that made the deadline expire is by definition one that did not
-    finish cancelling, so the runner's own teardown hangs forever and the outer `except` never runs
-    (round 13, finding 1). This test therefore drives `run()` itself, with `shut_down` raising the
-    dedicated `ShutdownTimeoutError`, and asserts the spy fired — proving the handling is on a path
-    `run()` actually reaches.
+    finish cancelling, so the runner's own teardown hangs forever and the outer `except` never
+    runs. This test therefore drives `run()` itself, with `shut_down` raising the dedicated
+    `ShutdownTimeoutError`, and asserts the spy fired — proving the handling is on a path `run()`
+    actually reaches.
 
     Two separate safety measures, both deliberate: the spy replaces `main._force_exit_after_
     shutdown_timeout`, never the real `os._exit` (un-catchable, and would kill the `pytest` worker
     itself rather than merely the code under test); and `os._exit` itself is *additionally*
     replaced with a fail-fast sentinel, so if a future edit ever moved the real call out from
-    behind that indirection, this test fails loudly instead of terminating the test run (round 13,
-    finding 3).
+    behind that indirection, this test fails loudly instead of terminating the test run.
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
@@ -623,8 +622,8 @@ async def _prepared_store_and_paths(
 
 def _spy_on_force_exit(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     """Replace the force-exit indirection with a spy, and the real `os._exit` with a fail-fast
-    sentinel — the two-layer protection round 13's finding 3 asked for, needed by every test that
-    drives a terminal shutdown path."""
+    sentinel — the two-layer protection needed by every test that drives a terminal shutdown
+    path."""
 
     def _os_exit_must_never_be_called_for_real(_code: int) -> None:
         raise AssertionError(
@@ -645,8 +644,8 @@ async def test_an_idle_path_shutdown_timeout_reaches_the_terminal_path(
     """The idle exit calls `shut_down()` inside `lifecycle.idle_self_stop`, not in `run()`'s own
     body, so its `ShutdownTimeoutError` reaches `run()` by a different route than the signal
     path's: the task completes, lands in `asyncio.wait`'s `done` set, and
-    `_raise_if_any_task_genuinely_failed` re-raises it. Round 14 assessed this route as already
-    sound; this test pins it so it stays that way."""
+    `_raise_if_any_task_genuinely_failed` re-raises it. This test pins that route as sound so it
+    stays that way."""
     sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
@@ -673,8 +672,7 @@ async def test_a_shutdown_timeout_while_cleaning_up_another_failure_reaches_the_
     """An unrelated lifecycle failure enters `except BaseException:`, whose cleanup `shut_down()`
     then times out. That nested handler used to log the `ShutdownTimeoutError` as a mere secondary
     failure and fall through to ordinary propagation and `ctx.close()` — exactly the "keep going
-    after the graceful path already gave up" the operator's direction rules out
-    (round 14, finding 1)."""
+    after the graceful path already gave up" the operator's direction rules out."""
     sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
@@ -710,8 +708,8 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
     """If a signal won the `asyncio.wait` snapshot while `idle_self_stop` was concurrently inside
     its own `shut_down()`, that task's `ShutdownTimeoutError` arrives as a **return value** of
     `gather(..., return_exceptions=True)` in the cancellation `finally` — never inspected by
-    `_raise_if_any_task_genuinely_failed`, which only saw the earlier `done` set — and was
-    silently discarded (round 14, finding 1). `_force_exit_if_shutdown_timed_out` is what routes
+    `_raise_if_any_task_genuinely_failed`, which only saw the earlier `done` set — and would be
+    silently discarded without a further check. `_force_exit_if_shutdown_timed_out` is what routes
     it to the terminal path instead."""
     sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)

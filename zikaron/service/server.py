@@ -300,15 +300,14 @@ class RunningServer:
         will honour.
 
         This `ShutdownTimeoutError` is deliberately allowed to propagate rather than being caught
-        here: **directed by the human operator** (2026-08-02, in response to round 12's own
-        finding 2 — a narrow, low-severity accept-pipeline race inside `asyncio.Server`'s own
-        internals that would require replacing `asyncio.start_unix_server` entirely to close
-        provably), the graceful path stays exactly as built and stays the *first* thing tried;
-        `main.run` catches this one specific type at the point it attempts shutdown and turns it
-        into an unconditional `os._exit` there, rather than this method or anything above it
-        trying to make the accept-pipeline race provably airtight. It is a dedicated subclass, not
-        a bare `TimeoutError`, precisely so that boundary fires on this condition alone — see
-        `ShutdownTimeoutError`'s own docstring.
+        here: **directed by the human operator**, given a narrow, low-severity accept-pipeline
+        race inside `asyncio.Server`'s own internals that would require replacing
+        `asyncio.start_unix_server` entirely to close provably, the graceful path stays exactly as
+        built and stays the *first* thing tried; `main.run` catches this one specific type at the
+        point it attempts shutdown and turns it into an unconditional `os._exit` there, rather
+        than this method or anything above it trying to make the accept-pipeline race provably
+        airtight. It is a dedicated subclass, not a bare `TimeoutError`, precisely so that
+        boundary fires on this condition alone — see `ShutdownTimeoutError`'s own docstring.
         """
         deadline = (
             time.monotonic() + _SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS
@@ -346,10 +345,11 @@ class RunningServer:
 
         **One absolute deadline spans this whole method**, not one per step: `_SHUTDOWN_QUIESCENCE_
         DEADLINE_SECONDS` is the budget for *shutdown*, so it is computed once here and threaded
-        into `close_all_connections`, which leaves `wait_closed()` only whatever remains. An
-        earlier version restarted a fresh full budget at each step, which meant the single "5 s
-        deadline" the operator's directed policy names could in fact take nearly ten seconds before
-        the force-exit path ran (`reviews/m9-service-review.md` round 14, finding 2).
+        into `close_all_connections`, which leaves `wait_closed()` only whatever remains. A
+        version that instead restarted a fresh full budget at each step would let the single "5 s
+        deadline" the operator's directed policy names take nearly ten seconds in practice before
+        the force-exit path ran, since two steps would each get their own full allowance rather
+        than sharing one.
 
         The final `wait_closed()` is bounded rather than awaited unbounded: `close_all_connections`
         above having succeeded makes it *expected* to return immediately, but "expected" is not
