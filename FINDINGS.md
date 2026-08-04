@@ -881,8 +881,10 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    records consolidation made of them: journal entries ran **162–378 tokens** (median 259) against a
    `chunk_max_tokens` of 450, so **not one of them chunked at all**. The consolidated records run
    **184–1877 tokens**, and **9 of 15 chunk**, up to 6 parts. So the chunking path — and the dense
-   arm's `max` rollup over parts — is exercised by *merging*, not by individual writes, which is the
-   opposite of what the parameter was reasoned about. 450 looks comfortably above the natural length
+   arm's `max` rollup over parts — is exercised by **merging specifically**, not by individual writes,
+   which is the opposite of what the parameter was reasoned about. Confirmed by the A/B: run 1 (11
+   merges) produced 9 multi-chunk records of 15, up to 6 parts; run 2 (0 merges) produced **0
+   multi-chunk records of 31**, all 162–378 tokens. With no fusion, nothing chunks at all. 450 looks comfortably above the natural length
    of one written lesson and comfortably below a merged record. Original text below.
 3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
    parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
@@ -1001,6 +1003,30 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    cutoff so fewer unlike findings fuse; permitting a longer gist on a merged record; or having the
    block show something other than the gist for a multi-finding record. Nothing in the corpus named
    this before it happened.
+   **The lever was pulled and measured against a byte-identical store, and it over-shot: 11 merges
+   became 0.** Run 1 (old prompt) turned 31 journal entries into 15 long-term records — 13 created, 23
+   absorbed, 2 in-place flips, 5 merge targets. Run 2 (new prompt, same store restored from backup)
+   promoted all **31 in place**, byte-identical prose, zero merges and zero new rows: consolidation
+   flipped tier bits and did nothing else, so the long-term tier is now a copy of the journal.
+   **And on this corpus that may well be the better outcome**, which is what makes the result awkward
+   rather than clean. Run 1's merges look like exactly the over-fusing `consolidation.md` warns about —
+   "two appraiser pitfalls" fused two distinct failures of one component, and "three live-debugging
+   findings" fused three unrelated gotchas that merely shared arc vocabulary. Corroborating: **zero
+   identical gists** in the corpus, and the 7 dedup offers (0.80–0.84) were judged false positives
+   independently by the writing agent, the consolidator, and this session.
+   **The decisive limitation is that neither run tested what consolidation is for.** The motivating
+   case is the same lesson arriving twice, weeks apart — "the protobuf lesson learned today and the
+   protobuf lesson learned three weeks ago". All 31 entries were written in **one session by one
+   agent**, so no such pair exists. Run 1 merged things that should not have merged; run 2 merged
+   nothing; neither had a true duplicate available to merge. So this experiment cannot distinguish
+   "correctly refuses bad merges" from "refuses every merge", and tuning further against it would be
+   fitting to a corpus with no positive examples in it. The next real test needs a journal containing a
+   genuine repeat, which means a second working session rather than another prompt round. What the
+   prompt still lacks is the *positive* criterion — it now has reasons to split and none to merge.
+   **Operator decision 2026-08-04: the prompt stays as it is, and is not to be reverted on the strength
+   of this result.** Reverting would trade a measured over-correction for a measured over-fusion, on a
+   corpus that cannot adjudicate between them; the next consolidation runs against a journal grown by
+   real work on `~/Memory`, and that is when the positive criterion gets designed and tested.
    **First lever applied 2026-08-04, and both prompts gained a measured length rule alongside it.**
    The consolidator is now told that an inability to lead with one observable symptom is evidence the
    entries are not one finding, and to prefer two records with sharp gists over one with a table of
@@ -1561,6 +1587,14 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   rather than one that reproduces it under load. Recorded so the next person to see this failure does not
   spend the diagnosis again.
 
+- **Planning determinism is verified against real data, and it is the first time that claim has been
+  tested outside fixtures.** `consolidation.md` states planning is a pure function of the store plus its
+  parameters — same store, same groups, every time. Two independent runs against a byte-identical store
+  (restored from a `VACUUM INTO` backup, one prompt changed between them) produced **identical
+  partitions**: 18 groups, sizes `[1×6, 2×11, 3×1]`, same membership in each. Worth recording because
+  the consolidating agent's own report said "20 groups", and separately said 30 entries promoted where
+  31 were — it caught the second slip itself by verifying uuids against the store, and missed the
+  first. A model's count of its own tool calls is not a measurement; the store is.
 - **The first real consolidation run worked, and the most encouraging thing in it was an agent
   declining to write a memory.** 31 journal entries became 15 long-term records: 13 created plus **2
   in-place tier flips**, so both `promote` forms fired on real data; 11 merge events; **0 discards**
