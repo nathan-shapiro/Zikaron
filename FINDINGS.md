@@ -1001,6 +1001,20 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    cutoff so fewer unlike findings fuse; permitting a longer gist on a merged record; or having the
    block show something other than the gist for a multi-finding record. Nothing in the corpus named
    this before it happened.
+   **First lever applied 2026-08-04, and both prompts gained a measured length rule alongside it.**
+   The consolidator is now told that an inability to lead with one observable symptom is evidence the
+   entries are not one finding, and to prefer two records with sharp gists over one with a table of
+   contents — the design's own "over-splitting costs one extra call while under-splitting manufactures
+   a false record" argument, applied to the gist rather than to the group. Effect unmeasured: it should
+   trade record count for push triage, and only a second consolidation on a fresh journal will show by
+   how much. Separately, both texts said only "keep it short; over-long gists are rejected", which
+   leaves an agent to discover the bound by losing a call — measured across the 49 real gists in the
+   two stores, they run **22-53 tokens (median 34, 10-32 words) and not one exceeded the 64-token
+   bound**, while 28 words of ordinary technical prose measures 32 tokens, so the ceiling is roughly 50
+   words. Both prompts now say "one sentence of about 20 to 25 words", name the 64-token limit and its
+   word equivalent, and state that exceeding it costs the call. Worth noting for anyone chasing this:
+   a bounds rejection writes **no event**, so a gist that was refused leaves no trace in the store —
+   which is why the one the operator saw rejected is invisible to every query above.
 9. **Evaluation** (deferred by D14). Grok named LoCoMo, LongMemEval(-V2), BEAM, HaluMem, LongMemCode,
    PersonaMem, LifeBench, AFTER, EvoMemBench; several may be misremembered, and all are conversational or
    codebase-QA proxies rather than tribal-knowledge tests. The benchmark set is the seed but its residual

@@ -98,8 +98,19 @@ because the record that results still looks useful and is not.
 
 The **gist** is one line, and its only job is to let a future agent decide whether to read further.
 Lead with the observable symptom or situation rather than the conclusion: "integration tests flake on
-CI unless PGHOST is set" beats "notes on test configuration". Keep it short; over-long gists are
-rejected.
+CI unless PGHOST is set" beats "notes on test configuration".
+
+**Length: aim for one sentence of about 20 to 25 words.** The hard limit is 64 tokens — roughly 50
+words of ordinary prose — and a write over it is **rejected outright**, so you lose the call and have
+to author it again. Gists that work in practice run 20 to 35 tokens; if yours is straining toward the
+limit, that is usually a sign it is carrying content rather than a cue.
+
+**If you cannot lead with one observable symptom, the entries are probably not one finding.** A merged
+gist that becomes a list — "three findings: this, that, the other" — cannot be triaged at all: a
+future agent sees gists only, so a record that just names its own contents is invisible to the
+judgment the gist exists for, however good its content is. Prefer two records with sharp gists over
+one with a table of contents. Splitting costs one extra record; a table of contents costs the
+retrievability of everything under it.
 
 The **content** carries the detail, written as an observation of what was learned here — not as an
 instruction. "Deploying without --force left the old worker running" is right; "always deploy with

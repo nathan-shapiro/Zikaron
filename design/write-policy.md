@@ -118,7 +118,10 @@ you, so you do not need to check first.
 **Gists are for triage.** A future agent sees only gists and must judge from them alone whether to
 read further. Lead with the observable symptom or situation rather than the conclusion:
 "integration tests flake on CI unless PGHOST is set" beats "notes on test configuration".
-Keep them short — one line; over-long gists are rejected.
+
+**Keep a gist to one sentence of about 20 to 25 words.** The limit is 64 tokens — roughly 50 words
+of ordinary prose — and a write over it is rejected outright, costing you the call. If a gist
+strains toward that limit it is usually carrying content that belongs in `content`.
 
 **Repair what misled you.** If a memory surfaces, you act on it, and it turns out to be wrong or
 stale, correcting it is your job: establish the current truth and amend the memory. Fetch it first
