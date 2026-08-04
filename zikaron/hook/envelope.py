@@ -3,21 +3,59 @@
 `architecture.md` §"Subagent sessions — the push hook suppresses itself" is normative for
 `is_subagent_session`; §"The request envelope" for `build_envelope`.
 
-Reuses `zikaron.service.envelope.ClientEnvelope` for the envelope's *shape* — one dataclass, one
-definition of what a `client` object carries, rather than a second copy of the same four fields —
-and `zikaron.core.events.ClientKind` for the wire value `"hook"`. Neither pulls in anything beyond
-the standard library (verified directly: importing either does not add `aiosqlite`, `fastembed`,
-`sqlite_vec` or `fastmcp` to `sys.modules`), so reusing them here does not compromise this
-package's own stdlib-only contract the way reusing `zikaron.service.lifecycle` would — that module
-imports `zikaron.service.context`/`zikaron.service.server` for its unrelated `idle_self_stop`
-function, and importing it at all pulls in the full model-loading stack regardless of which of its
-functions a caller actually wants.
+**States the envelope's four fields locally rather than importing them, and the reason is
+measured.** This module originally reused `zikaron.service.envelope.ClientEnvelope` and
+`zikaron.core.events.ClientKind` on the argument that both are stdlib-only, so reuse cost nothing —
+verified at the time, and wrong about the cost that matters. Stdlib-only is not the same as cheap:
+measured on this machine, importing `zikaron.core.events` alone costs **28 ms** over a
+socket/json/os/pathlib/subprocess floor and `zikaron.service.envelope` **34 ms** (it pulls in
+`core.events`, `core.errors` and `dataclasses`, whose own `inspect` import is most of it), against a
+whole-process hook budget of ~48 ms without them and ~68 ms with. This client runs **once per user
+message**, so that is a per-turn tax on the exact critical path the design's argument for keeping
+the
+hook thin is about — and `architecture.md` §Components quotes ~20 ms for this client, a figure the
+reuse quietly tripled. `dataclasses` is avoided for the same reason `logging` is: a `NamedTuple`
+gives the same frozen, typed, four-field value for no measurable import.
+
+Two copies of a wire contract is exactly the drift this corpus keeps finding, so the copy is
+**guarded rather than trusted**: `tests/test_hook_envelope.py` asserts this module's field names and
+its `kind` literal against `ClientEnvelope`'s own fields and `ClientKind.HOOK.value`, which is the
+same drift-guard shape `tests/design_tables.py` uses for the design's own tables. The test pays the
+import
+cost; the hook does not.
 """
 
 import os
+from typing import NamedTuple
 
-from zikaron.core.events import ClientKind
-from zikaron.service.envelope import ClientEnvelope
+#: The wire value for this client's `client.kind`, i.e. `ClientKind.HOOK.value`. A literal here, an
+#: enum there, and a test that they agree — see this module's docstring.
+CLIENT_KIND = "hook"
+
+
+class HookEnvelope(NamedTuple):
+    """This client's `client` envelope: the four fields `architecture.md` §"The request envelope"
+    states, in the shape `zikaron.service.envelope.ClientEnvelope` declares them.
+
+    A `NamedTuple` rather than a frozen dataclass purely for import cost (module docstring); it is
+    immutable and typed either way. `as_client_object()` is the one place the wire spelling of these
+    fields is written, so `rpc.py` composes a request without restating them.
+    """
+
+    session_id: str | None
+    kind: str
+    pid: int
+    op_id: str | None
+
+    def as_client_object(self) -> dict[str, object]:
+        """The `client` member of an outgoing request's `params`."""
+        return {
+            "session_id": self.session_id,
+            "kind": self.kind,
+            "pid": self.pid,
+            "op_id": self.op_id,
+        }
+
 
 #: The environment variable both `zikaron-hook` and `zikaron-mcp` read for the `harness` rung of
 #: the two-rung session-label ladder (`architecture.md` §"Both clients resolve the same label").
@@ -76,10 +114,10 @@ def is_subagent_session(*, env_session_id: str | None, payload_session_id: objec
     return payload_session_id != env_session_id
 
 
-def build_envelope(*, session_id: str | None, pid: int) -> ClientEnvelope:
+def build_envelope(*, session_id: str | None, pid: int) -> HookEnvelope:
     """This request's `client` envelope: the resolved session label (or `None` for the bootstrap
     form), `kind="hook"`, this process's own pid, and no `op_id` — the service mints one per call
     when a client sends none (`zikaron.service.envelope.resolve`), and a single-request process has
     nothing of its own to correlate across calls the way a long-running MCP connection does.
     """
-    return ClientEnvelope(session_id=session_id, kind=str(ClientKind.HOOK), pid=pid, op_id=None)
+    return HookEnvelope(session_id=session_id, kind=CLIENT_KIND, pid=pid, op_id=None)

@@ -4,6 +4,10 @@
 *.pem
 *.key
 
+# Installer backups. `python -m zikaron.install --agent <config>` copies a config to
+# `<config>.bak` before merging into it; that copy is local recovery state, not a project artifact.
+*.bak
+
 # Editor / OS
 *.swp
 *~

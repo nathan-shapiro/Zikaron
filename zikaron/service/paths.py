@@ -24,6 +24,7 @@ _CONFIG_FILENAME = "config.toml"
 _SERVICE_LOG_FILENAME = "service.log"
 _WARMUP_LOG_FILENAME = "warmup.log"
 _HOOK_LOG_FILENAME = "hook.log"
+_WRITE_POLICY_FILENAME = "write-policy.md"
 
 
 def store_dir(cwd: Path) -> Path:
@@ -88,3 +89,13 @@ def warmup_log_path(store_directory: Path) -> Path:
 def hook_log_path(store_directory: Path) -> Path:
     """The `userPromptSubmit` hook's own failure record."""
     return store_directory / _HOOK_LOG_FILENAME
+
+
+def write_policy_override_path(store_directory: Path) -> Path:
+    """The optional operator-authored write policy the `agentSpawn` hook prefers when it exists.
+
+    `architecture.md` §"The install contract": D30 asks for the policy text to be experimented
+    against, and an experiment that requires editing installed Python is an experiment nobody runs.
+    Absent — which is the normal case — the hook prints its own constant.
+    """
+    return store_directory / _WRITE_POLICY_FILENAME

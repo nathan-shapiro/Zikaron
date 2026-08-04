@@ -1,0 +1,58 @@
+{
+  "name": "zikaron-dogfood",
+  "description": "General-purpose coding agent wired to Zikaron for dogfooding: push and pull retrieval through the hooks, the five memory tools through MCP, and the consolidation skill. Its prompt says nothing about memory on purpose, so the only guidance it gets is the shipped write policy.",
+  "model": "claude-opus-5",
+  "prompt": "You are a capable, direct coding agent working in this repository. Read before you write, prefer the project's existing conventions over your own, and verify your changes by running the project's own checks rather than by asserting they work.\n\nNothing in this prompt tells you how to use project memory. That is deliberate: whatever memory guidance you receive arrives from the environment itself, and the point of this agent is to find out whether that guidance is sufficient on its own.",
+  "tools": [
+    "read",
+    "write",
+    "shell",
+    "grep",
+    "glob",
+    "code",
+    "subagent",
+    "todo_list",
+    "@zikaron"
+  ],
+  "allowedTools": [
+    "read",
+    "grep",
+    "glob",
+    "code",
+    "todo_list",
+    "@zikaron"
+  ],
+  "welcomeMessage": "zikaron-dogfood ready. Memory is wired: gists are injected before each message, and the zikaron_* tools are available. Ask me to consolidate project memory when the journal has built up.",
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "/home/nathan/Zikaron/.venv/bin/zikaron-hook",
+        "timeout_ms": 10000,
+        "max_output_size": 65536
+      }
+    ],
+    "userPromptSubmit": [
+      {
+        "command": "/home/nathan/Zikaron/.venv/bin/zikaron-hook",
+        "timeout_ms": 10000,
+        "max_output_size": 65536
+      }
+    ]
+  },
+  "mcpServers": {
+    "zikaron": {
+      "command": "/home/nathan/Zikaron/.venv/bin/zikaron-mcp",
+      "args": [
+        "--mode",
+        "primary"
+      ]
+    }
+  },
+  "toolsSettings": {
+    "crew": {
+      "trustedAgents": [
+        "zikaron-consolidator"
+      ]
+    }
+  }
+}

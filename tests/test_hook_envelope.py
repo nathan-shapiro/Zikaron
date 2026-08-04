@@ -3,11 +3,20 @@
 `architecture.md` §"Subagent sessions" and §"The request envelope" are normative.
 """
 
+import dataclasses
 import os
 
 import pytest
 
-from zikaron.hook.envelope import build_envelope, harness_session_id, is_subagent_session
+from zikaron.core.events import ClientKind
+from zikaron.hook.envelope import (
+    CLIENT_KIND,
+    HookEnvelope,
+    build_envelope,
+    harness_session_id,
+    is_subagent_session,
+)
+from zikaron.service.envelope import ClientEnvelope, parse_envelope
 
 
 class TestIsSubagentSession:
@@ -81,3 +90,38 @@ class TestBuildEnvelope:
     def test_pid_is_this_processs_own_when_given_its_own_pid(self) -> None:
         envelope = build_envelope(session_id="s", pid=os.getpid())
         assert envelope.pid == os.getpid()
+
+
+class TestEnvelopeContractDoesNotDrift:
+    """The hook states the `client` envelope's four fields and its `kind` literal locally rather
+    than importing `zikaron.service.envelope.ClientEnvelope` and `zikaron.core.events.ClientKind`,
+    because importing either costs ~30 ms of a ~48 ms per-user-message process
+    (`zikaron/hook/envelope.py` module docstring). These are the guards that make the copy safe.
+
+    This test file pays the import cost the hook refuses to; that asymmetry is the whole point.
+    """
+
+    def test_kind_literal_equals_the_client_kind_enums_own_value(self) -> None:
+        assert ClientKind.HOOK.value == CLIENT_KIND
+
+    def test_field_names_and_order_match_the_service_side_dataclass(self) -> None:
+        service_side = tuple(f.name for f in dataclasses.fields(ClientEnvelope))
+        assert HookEnvelope._fields == service_side
+
+    def test_the_wire_object_carries_exactly_those_names(self) -> None:
+        """`as_client_object()` is the one place the wire spelling is written, so a field renamed on
+        the service side without renaming it here has to fail somewhere — here.
+        """
+        wire = build_envelope(session_id="s", pid=1).as_client_object()
+        assert set(wire) == {f.name for f in dataclasses.fields(ClientEnvelope)}
+
+    def test_the_wire_object_round_trips_through_the_services_own_parser(self) -> None:
+        """Shape agreement is not the same claim as acceptance: this asserts the service's own
+        envelope parser accepts what the hook actually sends, so the two sides agree about types
+        and optionality as well as about names.
+        """
+        parsed = parse_envelope(build_envelope(session_id="a-session", pid=4242).as_client_object())
+        assert parsed.session_id == "a-session"
+        assert parsed.kind == CLIENT_KIND
+        assert parsed.pid == 4242
+        assert parsed.op_id is None

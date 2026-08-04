@@ -17,6 +17,22 @@ dependencies = [
     "fastmcp==3.4.5",
 ]
 
+# The two commands a shipped kiro config names, and the reason they are console scripts rather
+# than `python -m` command lines: a hook entry's `command` and an `mcpServers` entry's `command`
+# each need one absolute path, and a console script's shebang pins the interpreter Zikaron is
+# installed into — which is also the interpreter start-if-absent will spawn the service with, via
+# `sys.executable`. Measured, so the choice costs nothing: a full hook process through the script
+# form is 68.6 ms median against 70.0 ms through `-m` (architecture.md §"The install contract").
+#
+# `zikaron-service` is deliberately *not* here. No config names it: it is spawned by
+# `sys.executable -m zikaron.service.main` from whichever client finds the socket absent, which is
+# the path the service and hook clients are already tested against. An entry point nothing invokes
+# is one more shipped surface with no
+# test behind it.
+[project.scripts]
+zikaron-hook = "zikaron.hook.main:main"
+zikaron-mcp = "zikaron.mcp.main:main"
+
 [project.optional-dependencies]
 dev = [
     "ruff==0.16.1",
@@ -79,6 +95,12 @@ ignore = [
 # Tests assert, and compare against literals transcribed from the design tables:
 # a named constant per expected number would hide the transcription it exists to check.
 "tests/**" = ["S101", "PLR2004"]
+# `install/assets.py` is shipped prose, not code: a model-facing system prompt and a skill file
+# whose YAML frontmatter must stay on one physical line. Its wrapping is chosen for the artifact
+# that gets installed, and reflowing a paragraph to satisfy a source-code column limit changes what
+# a model reads in order to satisfy a rule about reading code. The file contains no logic for a
+# long line to hide inside — two string constants and a docstring.
+"zikaron/install/assets.py" = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

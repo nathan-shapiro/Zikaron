@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from zikaron.hook import connect, spawn_warm
-from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
+from zikaron.hook import connect, failure, spawn_warm, write_policy
+from zikaron.hook.limits import MAX_OUTPUT_SIZE
+from zikaron.hook.write_policy import OVERRIDE_REFUSED, WRITE_POLICY_PROMPT
 
 
 def test_returns_the_write_policy_prompt_on_a_top_level_session(
@@ -108,3 +109,76 @@ def test_a_non_oserror_failure_in_path_derivation_does_not_suppress_the_policy(
     monkeypatch.setattr(connect, "resolve_sock_path", _raise_runtime_error)
     output = spawn_warm.run(cwd=tmp_path, payload_session_id=None)
     assert output == WRITE_POLICY_PROMPT
+
+
+class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
+    """`architecture.md` §"The install contract": the override is what gets printed, and a read that
+    was not simply "no override there" leaves one fixed label in `hook.log`.
+
+    `subprocess.Popen` is mocked in every case here for the reason the first test in this file
+    documents: `run()` spawns the real detached warm helper on any top-level session, whatever the
+    test is actually asserting.
+    """
+
+    @staticmethod
+    def _top_level(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
+        monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: None)
+
+    def test_a_clean_override_is_printed_instead_of_the_constant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._top_level(monkeypatch)
+        store = tmp_path / ".zikaron"
+        store.mkdir(mode=0o700)
+        store.chmod(0o700)
+        (store / "write-policy.md").write_text("## Operator policy\n")
+        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == "## Operator policy\n"
+        assert not (store / "hook.log").exists()
+
+    def test_a_refused_override_prints_the_constant_and_logs_one_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._top_level(monkeypatch)
+        store = tmp_path / ".zikaron"
+        store.mkdir(mode=0o700)
+        store.chmod(0o700)
+        (store / "write-policy.md").mkdir()
+        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
+        logged = (store / "hook.log").read_text().splitlines()
+        assert len(logged) == 1
+        assert logged[0].endswith(OVERRIDE_REFUSED)
+
+    def test_a_failure_inside_the_reader_still_prints_the_constant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole-body guard, forced: `read_policy` raising something none of its own six
+        conditions anticipated must not cost this hook the one thing `architecture.md` promises it
+        always does. `RuntimeError` specifically, so a guard narrowed to `OSError` would not pass.
+        """
+        self._top_level(monkeypatch)
+
+        def _raise(_store_dir: Path) -> object:
+            raise RuntimeError("an unanticipated reader failure")
+
+        monkeypatch.setattr(write_policy, "read_policy", _raise)
+        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
+
+    def test_a_failure_while_logging_the_label_still_prints_the_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`record_failure` is itself best-effort, but this asserts the *caller's* guarantee rather
+        than trusting that one: even if logging raised, the text this function resolved is what gets
+        printed. Otherwise a full disk would silently downgrade an operator's policy.
+        """
+        self._top_level(monkeypatch)
+        store = tmp_path / ".zikaron"
+        store.mkdir(mode=0o700)
+        oversize = "y" * (MAX_OUTPUT_SIZE + 1)
+        (store / "write-policy.md").write_text(oversize)
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(failure, "record_failure", _raise)
+        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == oversize

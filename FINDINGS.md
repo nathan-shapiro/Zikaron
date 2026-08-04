@@ -77,7 +77,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 complete and reviewed to APPROVED. M9 (service) is built and its gate is green, but its review
 **did not converge** — see below. M10 (MCP client) is built and reviewed to `APPROVED` over seven
 rounds — see below. M11 (hook client) is built and reviewed to `APPROVED` over eleven
-rounds — see below.** D1–D33 settled. Grounding from
+rounds — see below. M12 (distribution) is built and reviewed to `APPROVED` over seven rounds, and
+the system is installed into this repository for dogfooding.** D1–D33 settled. Grounding from
 `research/initial-brainstorm-transcript.md` and `~/Memory` complete; kiro hook
 capabilities verified by probe; the retrieval stack benchmarked and reviewed to approval; schema, architecture,
 retrieval, indexing, consolidation and write policy all specified in `design/`. **M0's four spikes all
@@ -768,6 +769,58 @@ several rounds of confident implementation had assumed), keep exploring the engi
 keeps finding something real, and know that a human calling "this is not worth closing further" is itself a
 legitimate, recorded design decision rather than a failure to converge.
 
+**M12 shipped `zikaron/install/`** (`assets.py`, `entries.py`, `harness.py`, `writer.py`, `main.py`,
+`__main__.py`) plus `zikaron/hook/limits.py`, the `[project.scripts]` entry points `zikaron-hook` and
+`zikaron-mcp`, the shipped `zikaron-consolidator` agent config and `zikaron-consolidate` skill, hook and
+`mcpServers` entries in both formats the harness accepts, an optional `.zikaron/write-policy.md` override,
+and `README.md` as the install documentation. **1435 tests, 98% coverage repo-wide. Reviewed to
+`APPROVED` over seven rounds** (`reviews/m12-distribution-review.md`), with genuine defects in each of the
+first six.
+
+**Four premises about the harness were wrong or unverified, and all four were settled by asking the
+installed binary rather than by reasoning.** (1) `mcpServers` **configures** a server while `tools`
+**selects** from it: an agent carrying the server entry with a `tools` list that did not name it reported
+its tools as `code, dummy, execute_bash, fs_read, fs_write, glob, grep, todo_list, use_subagent` — the
+entire memory surface absent, no warning anywhere — and reported all five `zikaron_*` tools once
+`@zikaron` was added. The installer now merges it in; `allowedTools` is still left to the user, with a note
+that skipping it means a prompt on every memory write. (2) A hook's `command` is **shell source**, run
+through `/bin/bash -c`: an unquoted path containing a space produced
+`/bin/bash: line 1: /tmp/.../my: No such file or directory`, exit 127, hook never ran — so both formats
+`shlex.quote` the executable, while `mcpServers`' own `command` stays raw because that field takes a
+program plus a separate `args` array. (3) The `timeout_ms` default is **10 s**, not the 30 s the corpus had
+recorded from the public docs, and there is a **`max_output_size`, default 10240 bytes, that truncates
+silently** — both now stated explicitly in every object-format entry rather than inherited. (4)
+`kiro-cli agent validate` accepts `"model": "not-a-real-model-xyz"` **silently**, so the design's
+no-silent-fallback rule needed its own mechanism: `kiro-cli chat --list-models -f json`, refused when the
+binary is absent rather than assumed good. The consolidator's v0 model is now **`claude-sonnet-5`** by
+operator decision — same 1.30x multiplier, 1M context against 200k.
+
+**One measured finding changed M11 code rather than M12's.** The shipped push hook cost **70 ms per user
+message**, not the ~20 ms `architecture.md` §Components quotes — `zikaron.core.events` alone is 28 ms over
+a stdlib floor, imported for one enum, and `zikaron.service.envelope` 34 ms. Stdlib-only is not the same as
+cheap. The hook now states the `client` envelope's four fields locally as a `NamedTuple` with a
+`CLIENT_KIND` literal, guarded by four drift tests that compare against the real dataclass and enum and
+round-trip through the service's own parser: **70.0 → 50.6 ms**, on the one path D12's whole thinness
+argument rests on.
+
+**The review's own shape is the instructive part, and it is a variant of a lesson this corpus already
+carries.** Rounds 1–6 each found real defects, and **three rounds' worth were defects created by the
+previous round's fix**: round 2's plan/commit split left the backup check *after* the shipped writes, so a
+blocked `<config>.bak` produced exactly the half-install the split existed to prevent; round 3's
+"exclusive" temporary file closed its descriptor and reopened the path by name; round 4's shipped-path
+preflight used `Path.exists()`, which is **false for a dangling symlink**, so a dangling `SKILL.md` link
+was reported as "kept" and the install exited 0 with no loadable skill. The known lesson is that a fix
+aimed at the reported case inherits that case's narrowness; the sharper corollary is that a fix which
+*restructures* creates new seams, and the new seams deserve the scrutiny the original defect got.
+
+**Two whole classes were closed by naming the quantity rather than by testing harder.** `is not None`
+conflates an absent JSON key with a present `null`, so `"hooks": null`, `"tools": null`,
+`"mcpServers": null` and `"mcpServers": {"zikaron": null}` were all silently replaced by guards written to
+refuse exactly that — JSON's fourth scalar, fixed by testing presence with `in`. And an existing Zikaron
+hook entry was compared by its *command* alone, so an operator's deliberate `timeout_ms` was silently
+reset; the comparison is now structural against the generated entry, and the refusal names the differing
+keys so a user can tell their own edit from a version change.
+
 ## Build plan — start here when writing code
 **Read `design/coding-standards.md` before writing any code; it is binding, and its check gate is the
 definition of done.** Per-milestone briefs — normative design sections, invariants to cover, done-when, and an
@@ -794,7 +847,7 @@ that fail when violated. M1, M8, M10 and M11 are *not* split further; the two cl
 | M9 | Service — UDS, JSON-RPC, preamble, lifecycle | integration tests cover the start-if-absent race, connect-as-server-exits, a stale socket, and a refused foreign-store handshake | ✓ |
 | M10 | MCP client — 5 primary tools, 4 consolidator tools | a consolidator config provably cannot reach `search` or `fetch` | ✓ |
 | M11 | Hook client — suppression, degraded chain, always-exit-0 | a test asserts stdlib-only imports; every failure mode exits 0 with empty stdout | ✓ |
-| M12 | Distribution — agent config, skill, hook entries (stable + `--v3`), policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run | ☐ |
+| M12 | Distribution — install command, agent config, skill, hook entries in both formats, policy asset | a clean install on a fresh directory does push, pull, write and a consolidation run, driven through the real shipped commands | ✓ |
 
 **M0 is first and is throwaway.** Four assumptions underpin the architecture and none has been exercised in
 code; finding a broken one in a 50-line spike costs an afternoon, finding it after M2 means rewriting the
@@ -873,8 +926,11 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    current-state item 4. The round-7 `session_client` resolution-write cost is gone with the write: the preamble
    no longer touches the store. And **where hook stdout lands is now partly answered**: it arrives as a context
    entry framed *"I have gathered this context from valuable programmatic script hooks"*, positioned **before**
-   the user message in the same turn. Two things that leaves open — whether any size cap applies, and that
-   placement is *early*, which contradicts `~/Memory`'s "place surfaced memories late" lesson; we cannot choose.
+   the user message in the same turn. **The size-cap half is now closed and the answer is a number**: every
+   object-format hook entry takes `max_output_size`, default **10240 bytes**, and overrunning it truncates
+   **silently**. Shipped entries state **65536** explicitly. What that does *not* buy is a proof — see open
+   question 11. What stays open here is that placement is *early*, which contradicts `~/Memory`'s "place
+   surfaced memories late" lesson; we cannot choose.
    Worth noting the framing instructs the model to follow requests found in the injected text, directly against
    the untrusted-reference-data preamble `retrieval.md` puts on the push block. Still to carry from
    `~/Memory`: keep surfacing ephemeral and exclude it from the summarizer input — kiro exposes
@@ -908,6 +964,20 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    bge-small` on that index is **+0.029, CI [−0.016, +0.062]** against a preregistered 0.15 bar, so no
    demonstrated remedy. But fastembed serves a *quantized* small against an *unquantized* large, so this
    compares deployed artifacts, **not** capacity. Matched fp32 exports of one family would settle it.
+11. **Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**
+   Found at distribution time, measured rather than reasoned: `gist_max_tokens` (default 64, maximum 256)
+   bounds **tokens**, and the deployed WordPiece tokenizer maps anything outside its vocabulary to a single
+   `[UNK]` — so an unbroken 4000-character run counts as **one token**, as do 256 emoji. A gist that passes
+   every bound the write path states can therefore be arbitrarily long in bytes, and five of them overflow
+   any `max_output_size`, after which the harness truncates the injected block in silence. Ordinary prose
+   is nowhere near it: the shipped policy is 2950 B and five prose gists at the 256-token ceiling are a few
+   kB, both far inside 65536. The fix is a byte bound on `gist` in `schema.md` §Bounds — a write-path
+   change, deliberately not made inside a distribution milestone. Asserted as a test
+   (`tests/test_install_limits.py`), stated in `architecture.md` §"The install contract", and named in the
+   README's troubleshooting notes so it is not a limit only a test knows. **An earlier version of that test
+   asserted the opposite**, by multiplying tokens by an invented four-bytes-per-token factor and calling the
+   product a worst case — the review caught it, and the lesson is the corpus's own: name the quantity before
+   quoting a number about it.
 9. **Evaluation** (deferred by D14). Grok named LoCoMo, LongMemEval(-V2), BEAM, HaluMem, LongMemCode,
    PersonaMem, LifeBench, AFTER, EvoMemBench; several may be misremembered, and all are conversational or
    codebase-QA proxies rather than tribal-knowledge tests. The benchmark set is the seed but its residual
@@ -1344,6 +1414,116 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   bug was fixed" without also remembering "and here is where we deliberately stopped, and why" would
   misinform whoever reads it next just as confidently as if the fix had never happened at all.
 
+- **Four premises about the harness were wrong, and every one was settled by asking the installed binary
+  instead of reasoning about it.** Distribution is where a design meets the thing it has to run inside, and
+  the corpus's own record had four claims about kiro that turned out to be stale, inverted, or never
+  checked: that configuring `mcpServers` makes its tools available (it does not — `tools` selects, and an
+  agent without `@zikaron` there reported *no* memory tools at all); that a hook's `command` is an
+  executable path (it is shell source, run through `/bin/bash -c`, so an ordinary project path with a space
+  loses both hooks with exit 127); that the hook timeout defaults to 30 s (10 s) and that no output cap was
+  documented (`max_output_size`, 10240 bytes, truncating in silence); and that `kiro-cli agent validate`
+  would catch a bad model id (it accepts one silently, and the harness then substitutes its default —
+  exactly the silent fallback the design forbids). Three came from the binary's own embedded documentation,
+  read through its `introspect` tool; two were confirmed by running one command and reading what happened.
+  This is the same lesson as `KIRO_SESSION_ID` and `PRAGMA database_list`, and its third instance is the
+  one that should make it a habit: **the local artifact is the authority on the local artifact**, and a
+  design corpus that cites public documentation is citing a different artifact.
+- **`gist_max_tokens` bounds tokens, and tokens do not bound bytes — my own test asserted otherwise by
+  inventing a conversion factor.** The push block has to fit the harness's `max_output_size` or it is
+  truncated silently, so I wrote a test "proving" five worst-case gists fit, using four bytes per token.
+  Measured against the deployed tokenizer, WordPiece maps anything outside its vocabulary to a single
+  `[UNK]`: an unbroken 4000-character run is **one token**, and so are 256 emoji. The bound was not
+  conservative, it was fictional. The replacement test states what is measurable (the policy's real byte
+  length; five gists of ordinary prose at the token ceiling) and *asserts the hole* for the adversarial
+  case, with the fix located where it belongs — a byte bound in the write path's own bounds ladder, not in
+  the hook's output cap. Directly the corpus's own "name the quantity before quoting a number about it",
+  and the first time I committed it in code rather than in prose.
+- **Seven review rounds, and three rounds' worth of defects were created by the previous round's fix.**
+  Round 2's plan/commit split — introduced to guarantee nothing is written until every check passes — left
+  the backup check *after* the shipped writes, producing exactly the half-install it existed to prevent.
+  Round 3's "exclusive" temporary file closed its descriptor and reopened the path by name, reinstating the
+  symlink-following hole the exclusive creation had closed. Round 4's shipped-path preflight used
+  `Path.exists()`, which is **false for a dangling symlink**, so the case it was written for walked
+  straight through it. The corpus already knows that a fix aimed at the reported case inherits that case's
+  narrowness; the sharper form is that **a fix which restructures creates new seams, and the new seams
+  deserve the scrutiny the original defect got** — none of these three was a narrowing of the original bug,
+  each was a fresh one at a join the fix had just made.
+- **A test whose execution model differs from production cannot see a whole class of defect, however
+  end-to-end it looks.** The distribution suite drives the real installed console scripts as real
+  subprocesses, which is why it caught real things — and it still could not see that a hook `command` is
+  shell source, because it invoked `[command]` as an argv while the harness runs the string through bash.
+  The fidelity that mattered was not "a real subprocess" but "the same *way* of starting it". Worth
+  generalising: when a test stands in for a caller you do not control, the thing to copy is its execution
+  model, and the parts you paraphrase are exactly where a defect can hide from you.
+- **`Path.exists()` is false for a dangling symlink, and it cost two separate defects in one milestone** —
+  a backup path that `shutil.copy2` would then have followed out of the project, and a shipped-target
+  preflight that reported a dangling `SKILL.md` link as "kept" while the install exited 0 with no loadable
+  skill. Both read naturally and both were wrong in the same direction: *absent* and *present but broken*
+  are different states, and the stdlib's most obvious predicate conflates them. The same shape appeared a
+  third time in the same milestone in a different vocabulary — `is not None` conflating an absent JSON key
+  with a present `null`, which silently replaced four different user-authored values. **A presence test
+  that cannot distinguish "nothing" from "something unusable" is a data-loss bug waiting for an unusual
+  input.**
+
+- **Ten minutes of real use found a design error seven review rounds had not, and it was one I had
+  argued for explicitly.** The installer put `@zikaron` in the agent's `tools` but deliberately left it
+  out of `allowedTools`, on the reasoning that auto-approving writes to a durable store is the user's
+  trust decision — stated in the design, in the README, and in the installer's own output. The operator
+  started dogfooding and reported it as a bug in the first session: every `remember` interrupts you for
+  approval, which suppresses exactly the behaviour D30 asks for ("err toward recording", against prior
+  art whose measured failure was recording too *little*) and trains the user to click through prompts.
+  The reasoning was a rule imported from the wrong case: it is right about `subagent`, whose reach is
+  genuinely wider than memory, and wrong about five tools that read and write rows in a local SQLite
+  file with every write reversible by `retire`. Now allowlisted by default with `--no-trust-tools` to
+  opt out. Two things worth carrying: the review loop pressure-tested whether the code did what the
+  design said, and could not tell me the design was wrong about a *person's* experience of it — the
+  same limit as "internal review pressure-tests consistency, not premises", in a new dimension. And the
+  finding cost one session to surface, which is the strongest argument yet for dogfooding early rather
+  than after a corpus is complete.
+
+- **First fresh-context recall worked exactly as designed, and produced a confidently stale directive in
+  the same breath.** Asked "Should I tune rrf_k?" in a session with no prior context, the dogfood agent
+  answered from the **injected gist alone** — no tool call — and then volunteered, unprompted: "If you want
+  the reasoning... I'd fetch the full record rather than go on the gist alone." That is D12's push arm,
+  D13's relevance triage and D4/D21's progressive disclosure all working end to end on a real question, and
+  the subsequent `fetch` quoted every figure from the content faithfully (+0.0705, 0.938 vs 0.922, 960/960,
+  ~28%/72%), hedging where the memory had not told it something rather than inventing it.
+  **The conclusion was defensible and the reasoning behind it was not what I first claimed.** My initial
+  read was that the agent had blindly obeyed a directive whose scope had expired — "post-build" is now, since
+  every milestone is complete, so tuning is precisely the parked work. The operator corrected that: the agent
+  had reasoned that the build was *not* over because the last milestone was still uncommitted, which it knew
+  from a **second** memory (the one recording a large uncommitted diff touching production modules, and that
+  "HEAD alone does not reflect the working code"). Two memories used jointly to scope a third claim is good
+  behaviour, not blind compliance, and the correction is recorded here rather than quietly amended because
+  getting it wrong in this file is the exact failure this file is about.
+  **What was genuinely wrong is narrower and still instructive.** The agent named the current phase **M5**,
+  which finished long ago — so the scope it recovered was right by accident of a different fact rather than
+  from the memory itself. And the recovery depended on an unrelated memory happening to be in the same store:
+  the gist alone said "do not tune ... it's a deliberate standing instruction", with **no condition at all**,
+  and on that basis the first answer was a flat "Don't tune rrf_k, fusion_depth, or arm weighting ... right
+  now". The **imperative lived in the gist while its scope lived in the content**, so what got injected was a
+  directive stripped of its qualifier; that a second memory rescued it is luck, not design.
+  This is the corpus's own "a claim whose qualifier lives in a different paragraph will be recalled without
+  its qualifier", realized in production with the **gist/content boundary as the paragraph boundary** —
+  which makes it structural rather than incidental, since every memory has that boundary and the gist is the
+  half that gets injected. Three consequences worth carrying: D30's prohibition on instruction-shaped gists
+  is now evidenced rather than argued, and needs strengthening from "write observations, not orders" to
+  something that also names **time-scoped** claims; a gist must carry its own qualifier or drop the claim,
+  because the content cannot rescue it; and Zikaron generated the exact failure mode it exists to prevent
+  within one session of first use, which is the most useful thing it could have done this early.
+
+- **A known intermittent, found by the gate under load and left unfixed deliberately.**
+  `test_idle_self_stop_unlinks_the_socket_before_the_process_exits` failed once during a full gate run that
+  shared the machine with a live service and several subagents, and passed 3/3 in isolation immediately
+  after, with neither `service/lifecycle.py` nor that test touched in the session. The mechanism is a real
+  ordering window rather than test noise: `main.run` binds the socket in `serve()` and installs the
+  `SIGTERM`/`SIGINT` handlers *after* it, while the test waits only for the socket to appear before calling
+  `terminate()` — so under load a signal can arrive before the handler exists, the default disposition kills
+  the process, and the socket is left on disk. Impact is low, since a stale socket is a case start-if-absent
+  already handles by design, and the fix wants its own change with a test that pins the race deterministically
+  rather than one that reproduces it under load. Recorded so the next person to see this failure does not
+  spend the diagnosis again.
+
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
@@ -1351,9 +1531,12 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
 - kiro-cli hooks + `introspect` — exactly 5 triggers (`agentSpawn`, `userPromptSubmit`, `preToolUse`,
   `postToolUse`, `stop`); **no compaction hook** (confirms D10); `userPromptSubmit` and `agentSpawn` are the
   only two whose stdout reaches context on exit 0; `preToolUse` can block via exit 2; hook entries take
-  `command` / `matcher` / `timeout_ms` (30 s default) / `cache_ttl_seconds`; **v3 mode uses an incompatible
-  standalone `.kiro/hooks/` schema** — a distribution concern —
-  `research/kiro-cli-hooks-and-introspect.md`.
+  `command` / `matcher` / `timeout_ms` / `cache_ttl_seconds`. **Three items in that file are superseded by
+  the installed binary's own embedded docs** (kiro-cli 2.16.0) and carry a dated erratum at its head: the
+  `timeout_ms` default is **10 s**, not 30; hook stdout has a documented cap, **`max_output_size`, default
+  10240 bytes, truncating silently**; and the "`--v3` uses an incompatible standalone `.kiro/hooks/`
+  schema" note is not the distribution problem it looked like — the **stable** agent config accepts *two*
+  interchangeable `hooks` formats (object and array) — `research/kiro-cli-hooks-and-introspect.md`.
 - Embedding models for technical prose — bge-small suboptimal not disqualified; **no published evidence
   either way on near-miss identifier discrimination**, closest adjacent result is embedder blindness to
   negation (Nikiema et al. 2025, arXiv:2509.09714, 96.2% FP rate); code embedders confirmed trained for
@@ -1575,3 +1758,25 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   approved with one cosmetic nitpick (a stale test-docstring cross-reference), fixed immediately —
   `reviews/m11-hook-client-review.md`.
   site anywhere still referencing the removed interfaces — `reviews/m8-signals-review.md`.
+- **M12 code review** — **seven rounds, ending `VERDICT: APPROVED` with no findings**, and a genuine defect
+  in each of the first six. Round 1: the installed primary agent got no memory tools at all, because
+  `mcpServers` configures a server and `tools` selects from it (measured both ways); the output-cap "proof"
+  multiplied tokens by an invented four-bytes-per-token factor; the README's secret-removal advice
+  contradicted the design's own erasure procedure; the skill contradicted itself on `busy`. Round 2: the
+  shipped files were written before the user's config was parsed; three shapes of user data were silently
+  dropped by defensive filtering on a write path; the atomic writer's `<target>.tmp` was a predictable name
+  a symlink could redirect. Round 3: a world- or group-writable store let another uid supply a policy file
+  that goes straight into a model's context, and the rejection of that finding in round 2 rested on a false
+  same-uid premise; an entry differing from ours in any field but the command was overwritten silently.
+  Round 4: a symlinked `--agent` was severed rather than merged or refused; the two shipped paths had no
+  preflight, so a directory at `SKILL.md` exited 0 with no loadable skill and a file at `.kiro/skills`
+  raised `NotADirectoryError` mid-install; `os.write` was called once and its return ignored. Round 5: the
+  preflight used `exists()`, false for a dangling symlink; the store directory was validated by pathname
+  and the override then read by resolving that pathname again; explicit JSON nulls bypassed every shape
+  guard; `--agent` could name the consolidator config and convert it into a primary agent. Round 6: the
+  hook `command` is shell source and was emitted unquoted, so an ordinary path with a space loses both
+  hooks — measured against the real harness, exit 127. Two findings were **rejected with reasons the review
+  accepted**: refusing a symlinked `.kiro` *ancestor* (a legitimate dotfile setup, and the threat model it
+  would close is already open upstream, since kiro reads agent configs out of that same tree), and having
+  the `agentSpawn` hook tighten store modes synchronously (a filesystem mutation on the one path whose
+  contract is that it cannot fail) — `reviews/m12-distribution-review.md`.

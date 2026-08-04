@@ -2,6 +2,34 @@
 
 Research date: 2026-07-31. Findings apply to the stable (non-v3) kiro-cli harness, which is what backs `~/.local/bin/kiro-cli` per local evidence (the five hook-trigger Set literal in `tui.js` matches the documented trigger list exactly). A separate, early-access "V3" harness (`kiro-cli --v3`) exists with a different, incompatible hooks model — flagged throughout below wherever it diverges.
 
+## Erratum — 2026-08-03, from the installed binary's own embedded documentation
+
+Three items below were sourced from the public documentation site and are **wrong or superseded** for the
+installed harness (kiro-cli **2.16.0**, embedded doc commit `106ed7591`, read through the `introspect` tool
+rather than the web). They are left in place unedited, because this file is a dated record of what the public
+docs said; the corrections are normative in `design/architecture.md` §"Two hook formats, both inside the
+stable agent config", §"Degraded modes" and §"The install contract".
+
+1. **Hook timeout default is 10 s, not 30 s.** §5 and §"Confirmed" below say `timeout_ms` defaults to
+   30000 ms. The installed harness documents **10000 ms**, and the array hook format's `timeout` field in
+   **seconds** with default 10.
+2. **Hook stdout has a documented size cap.** §4 records "treat any hook-output length limit as
+   unconfirmed". Object-format entries take **`max_output_size`, default 10240 bytes**, described as the
+   output ceiling before **truncation** — so exceeding it is silent, not an error.
+3. **The "V3 divergence" is not the distribution problem it looked like.** §2's V3 subsection describes hooks
+   moving to standalone `.kiro/hooks/` files under a versioned schema. The installed stable harness documents
+   **two interchangeable `hooks` formats inside the agent config** — an object keyed by trigger, and a flat
+   array of `{trigger, action: {type, command}}` documents with `timeout` in seconds and an `enabled` flag —
+   and mentions `.kiro/hooks/` only as a directory to keep a shell script that a `command` points at. Whether
+   the array format *is* what the V3 note was describing is not established here; what matters for
+   distribution is that one stable schema accepts both, and that a config is rewritten in whichever format it
+   was read from.
+
+Method note worth keeping: all three were found by asking the installed binary about itself rather than by
+re-reading the web docs, which is the same lesson the corpus already carries from the `KIRO_SESSION_ID` probe
+and from `PRAGMA database_list` — the local artifact answers questions about the local artifact.
+
+
 ## Brief
 
 Zikaron needs two things confirmed from docs, not inferred from the binary:

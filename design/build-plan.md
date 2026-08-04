@@ -317,12 +317,35 @@ exactly one `hook.log` line naming it, with no read attempted, alongside the std
 
 ## M12 — Distribution
 
-The `zikaron-consolidator` agent config, the consolidation skill, hook entries for both the stable and `--v3`
-formats, the write-policy text as a shipped asset, and install docs.
+Normative: `design/architecture.md` §"Distribution artefacts", §"Two hook formats", §"The consolidator's
+model is a shipped config field", §"The install contract"; `design/consolidation.md` §"Consolidator identity
+and model"; `design/write-policy.md`.
+
+Six shipped artefacts and one program. `[project.scripts]` gives `zikaron-hook` and `zikaron-mcp` console
+entry points, because a hook `command` and an `mcpServers` command need one absolute path whose shebang pins
+the interpreter Zikaron is installed into — the same interpreter start-if-absent will spawn the service with.
+`.kiro/agents/zikaron-consolidator.json` carries the explicit `model`, the four consolidation tools and
+nothing else, all pre-approved, and no `hooks`. `.kiro/skills/zikaron-consolidate/SKILL.md` is D10's trigger,
+and it is also the only place a user is told that re-invoking it **takes over** a stuck run. The `hooks` and
+`mcpServers` entries ship in both formats the harness accepts, with `timeout_ms` and `max_output_size` stated
+rather than inherited. D30's policy text stays a constant with an optional `.zikaron/write-policy.md`
+override. `python -m zikaron.install` writes all of it, validates the model id against
+`kiro-cli chat --list-models -f json` — measured: `kiro-cli agent validate` does **not** check model ids —
+and merges into an existing agent config only after backing it up.
 
 **Done when:** a clean install on a fresh directory produces a working push, pull, write and consolidation
-run — **and** an end-to-end takeover: hold a run from one worker, invoke the skill again through the real
-path, and observe the first run closed `taken_over` while the second serves the replanned groups.
+run, driven through the **real shipped commands** rather than in-process equivalents: the installed
+`zikaron-hook` as a subprocess for both triggers, and the installed `zikaron-mcp` as a stdio subprocess for
+both modes — **and** an end-to-end takeover: hold a run from one worker, invoke the skill's own path again
+through a real consolidator client, and observe the first run closed `taken_over` while the second serves the
+replanned groups. A drift guard reads the consolidator config's `model` against the design table rather than
+against a second copy of it, and another asserts the shipped entries' `max_output_size` bounds both the write
+policy's real byte length and a worst-case five-row push block. No test leaves a service process behind.
+
+**Scope fence:** the harness's own reading of these files is not testable from here — kiro is not driven by
+the suite. Everything installed is verified by exercising the same commands kiro would exercise, and the one
+claim that needs a live session (that kiro loads the config and fires the hooks) is the dogfooding
+checkpoint, not a test.
 
 ---
 

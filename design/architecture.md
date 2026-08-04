@@ -900,8 +900,19 @@ gets relayed in its own response — while not visibly delivering on the channel
   push result — the model is told plainly that this is a notice to relay, not gists to reason
   about — but it uses the identical channel `surface`'s own successful output already uses, since
   that is the one channel this milestone measured actually reaching the model.
-- **Enforce an internal deadline of ~2 s**, far under the 30 s `timeout_ms`. Failing fast beats
-  being correct and late, because the user is waiting.
+- **Enforce an internal deadline of ~2 s**, far under the `timeout_ms` the harness enforces on the
+  whole hook command. Failing fast beats being correct and late, because the user is waiting.
+
+  **That harness figure is 10 s, not 30 s, and the correction is worth stating rather than quietly
+  applying.** `research/kiro-cli-hooks-and-introspect.md` reported a 30 s default from the public
+  documentation, and this document, `push.py` and `connect.py` all repeated it. The installed
+  harness's own embedded documentation (kiro-cli **2.16.0**, doc commit `106ed7591`) states
+  `timeout_ms` **default 10000 ms** — and the array hook format's `timeout` field in **seconds**,
+  default 10, which is the same number in different units. The ~2 s deadline was never at risk, so
+  no behaviour changes; what changes is that a shipped hook entry now **states `timeout_ms`
+  explicitly** (§"Distribution artefacts") rather than inheriting a default the corpus had recorded
+  wrong, which is the whole reason the wrong figure was harmless here and would not have been
+  somewhere the margin was thinner.
 
 ## MCP tool surface (5 tools)
 
@@ -1679,9 +1690,34 @@ primitive named above.
 ## Distribution artefacts
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose
 allowlist is the only one carrying the four consolidation tools), the D10 skill that invokes it, the
-`agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text. Note the hooks research
-finding that `--v3` mode uses an incompatible standalone `.kiro/hooks/` schema, so hook distribution
-eventually needs two formats.
+`agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text.
+
+### Two hook formats, both inside the stable agent config
+**Superseded, 2026-08-03.** `research/kiro-cli-hooks-and-introspect.md` reported that hook distribution
+would eventually need two *schemas*, because `--v3` mode moves hooks into standalone `.kiro/hooks/` files.
+The installed harness's own embedded documentation (kiro-cli **2.16.0**, doc commit `106ed7591`) says
+something different and simpler: the **stable** agent config's `hooks` field accepts **two interchangeable
+formats**, and standalone files under `.kiro/hooks/` appear only as a place to keep a shell script that a
+`command` string points at — not as a hook schema of their own.
+
+| | Shape | Timeout field | Extra fields |
+|---|---|---|---|
+| **Object format** (this document's default) | `hooks: { <trigger>: [ {command, …} ] }` | `timeout_ms`, **milliseconds**, default `10000` | `matcher`, `max_output_size` (default `10240` bytes), `cache_ttl_seconds` (default 0; `agentSpawn` is never cached) |
+| **Array format** | `hooks: [ {name?, trigger, matcher?, action: {type: "command", command}, timeout?, enabled?} ]` | `timeout`, **seconds**, default `10` | `enabled: false` disables an entry without removing it; trigger names also accept PascalCase and the alias `SessionStart` for `agentSpawn` |
+
+Both are functionally equivalent, and the harness rewrites a config in whichever format it read, so an
+installer that merges into an existing config **must merge in that file's own format** rather than
+normalizing it to one. Zikaron ships object format by default because it is the format the rest of this
+document's examples use, and supports writing the array form for a config already in it.
+
+**Both fields are stated explicitly in every *object-format* entry, never inherited.** `timeout_ms`
+because the corpus had the default wrong once already (§"Degraded modes"), and `max_output_size` because
+it is a **silent truncation** of the one channel the whole push path depends on: exceed it and the model
+receives a cut-off injected block, or a cut-off write policy, with no error anywhere.
+
+**The array format can state only the timeout.** It documents no `max_output_size` field, so an
+array-format install inherits the 10240-byte default — a real difference in what that install can
+promise, which is why the installer reports it rather than leaving the two formats looking equivalent.
 
 ### The consolidator's model is a shipped config field, not a `meta` key
 D29 requires the consolidator's model to be a config value "to be measured", and until now the corpus never
@@ -1690,7 +1726,7 @@ harness reads the model from the agent config, so putting it in the store would 
 
 | Setting | Location | Type | v0 default | Rule |
 |---|---|---|---|---|
-| consolidator model | `.kiro/agents/zikaron-consolidator.json` → top-level **`model`** (the field agent configs in this repo already use) | string; a model id the installed harness accepts | `claude-sonnet-4.5` | **Must be present explicitly.** Packaging validates the id against the installed harness and fails loudly if it is unknown |
+| consolidator model | `.kiro/agents/zikaron-consolidator.json` → top-level **`model`** (the field agent configs in this repo already use) | string; a model id the installed harness accepts | `claude-sonnet-5` | **Must be present explicitly.** Packaging validates the id against the installed harness and fails loudly if it is unknown |
 
 Three rules go with it, and each closes a way the measurement could be lost:
 
@@ -1700,12 +1736,102 @@ Three rules go with it, and each closes a way the measurement could be lost:
 - **No silent fallback.** An unknown model id fails the skill loudly rather than substituting a default, for
   the same reason `meta` treats a bad key as fatal: a substituted model makes two runs incomparable while
   both look healthy.
+
+  **The mechanism is named because the obvious candidate does not do it.** Measured 2026-08-03 against
+  kiro-cli 2.16.0: `kiro-cli agent validate --path <config>` accepts `"model": "not-a-real-model-xyz"`
+  **silently** — it checks schema, not model availability — and the harness's own documented behaviour when
+  a model is unavailable is to *fall back to the default*, which is precisely the substitution this rule
+  exists to prevent. So the check is ours: `kiro-cli chat --list-models -f json` returns
+  `{"models": [{"model_id", "context_window_tokens", "rate_multiplier", …}], "default_model"}`, and install
+  refuses to write a config whose `model` is not in that set. A machine with no `kiro-cli` on `PATH` cannot
+  be validated at all and is refused rather than assumed good, since installing hook entries that name a
+  harness binary which is absent produces a broken install either way.
+- **The v0 default is `claude-sonnet-5`** — an operator decision, 2026-08-03, superseding the earlier
+  `claude-sonnet-4.5`. Both carry the same `1.30x` rate multiplier on this harness, so the change is free in
+  credit terms; `claude-sonnet-5` reports a **1M-token** context window against `claude-sonnet-4.5`'s 200k.
+  That is headroom rather than a needed capability — a group payload's size is bounded by `group_max`
+  (default 12 members, sharded past it) and by the ≤4 candidates, not by the context window — and it
+  remains a starting point for the A/B `consolidation.md` §"Consolidator identity and model" calls for, not
+  a finding.
 - **The default leans capable, not cheap, and the reason is the error profile.** Consolidation is rare (D10),
   off the hot path, with nobody waiting, so the usual cost argument does not bind — while a bad consolidation
   corrupts a long-term record that retrieval will keep surfacing. `consolidation.md` §"Consolidator identity
   and model" carries the full argument and the counterweight (code pre-selects candidates, so the task is
   narrow enough that small models may hold up). The v0 value is a starting point for exactly the A/B that
   section calls for, not a finding.
+
+### The install contract
+Installation is a **program**, not a documented procedure, and the reason is one rule above: "packaging
+validates the id against the installed harness and fails loudly if it is unknown" needs a mechanism, and the
+mechanism turned out to be a command whose output has to be parsed. `python -m zikaron.install` writes four
+things and refuses rather than guesses when it cannot.
+
+| Written | Where | On collision |
+|---|---|---|
+| consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported — except when it names a *different* install's interpreter, which is backed up and rewritten |
+| consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | kept and reported |
+| `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry differs from what this install would write, unless `--force` |
+| nothing (the entries printed to stdout) | when `--agent` is omitted | n/a |
+
+- **`command` is an absolute path to the venv's own console script** — `<venv>/bin/zikaron-hook`,
+  `<venv>/bin/zikaron-mcp` — resolved by the installer from its own interpreter rather than written by hand.
+  Two reasons, and the second is the load-bearing one: kiro runs a hook's `command` through a shell that has
+  not activated any venv, so a bare name would resolve against the user's `PATH` or not at all; and
+  start-if-absent spawns the service as `sys.executable -m zikaron.service.main`, so the *interpreter* the
+  client runs under must be the one Zikaron is installed into. A console script's shebang guarantees exactly
+  that, which a `python -m` command line only guarantees if whoever wrote it also spelled the interpreter
+  absolutely. Measured cost of the console-script form against `-m`: **68.6 ms vs 70.0 ms** median for a full
+  hook process, i.e. the choice is free.
+- **`timeout_ms` and `max_output_size` are stated in every object-format entry**, from one declaration
+  each in `zikaron/hook/limits.py` that the installer reads rather than transcribes. `timeout_ms` is
+  **10000** — the same value as the documented default, stated so that a future change to that default
+  cannot silently move the budget the hook's ~2 s internal deadline was sized against. `max_output_size`
+  is **65536**, deliberately well above the 10240 default, and what that margin does and does not buy is
+  worth stating precisely, because an earlier version of this paragraph claimed more than was true.
+
+  **What is measured.** The shipped `agentSpawn` output is the write policy at **2950 bytes**, which fits
+  both 65536 and the 10240 an array install inherits. A push block of five rows whose gists are ordinary
+  prose at the largest `gist_max_tokens` any configuration permits (256) is a few kilobytes, and fits.
+
+  **What is not bounded, and is an open write-path limit rather than a solved problem.**
+  `gist_max_tokens` bounds *tokens*, and tokens do not bound bytes: measured against the deployed
+  tokenizer, an unbroken 4000-character run counts as **one** token, because WordPiece has no vocabulary
+  entry for it and emits a single `[UNK]`. So a gist that passes every bound the write path states can be
+  arbitrarily long in bytes, and five of them overflow any `max_output_size` — after which the harness
+  truncates the block **in silence**. Closing this needs a byte bound on `gist` in the bounds ladder
+  (`schema.md` §Bounds), which is a write-path change and not this section's to make; it is recorded here,
+  asserted by `tests/test_install_limits.py`, and named in the user-facing troubleshooting notes so the
+  limit is not something only a test knows.
+- **The consolidator config's tool surface is `@zikaron` and nothing else, with every tool pre-approved.**
+  Not a convenience: a subagent has no user to answer a permission prompt, so a tool that is available but
+  not allowed is a tool that hangs or fails at the moment the consolidator needs it. It carries no `read`,
+  `write` or `shell` either — D7's whole claim is that code picks the candidates, and a consolidator that can
+  read the repository is a consolidator that can wander outside the group it was handed.
+- **The consolidator config carries no `hooks` block.** Its session must not fire `userPromptSubmit` (it has
+  no `search` to spend the result on, and §"Subagent sessions" already suppresses a push from a subagent
+  payload) and must not print the write policy (its policy is its own system prompt). The suppression in the
+  hook and the absence here are two independent defences, and the absence is the cheaper one.
+- **The primary agent needs `subagent` among its `tools`** for the skill to be able to spawn the consolidator
+  at all. The installer states this in its output rather than editing the user's `tools` array, because
+  granting a tool is a permission decision that belongs to whoever owns the config.
+- **The model check refuses on absence, not only on mismatch.** No `kiro-cli` on `PATH` means the id cannot
+  be validated, and the entries being installed name that binary's own hook and MCP mechanisms — so an
+  unvalidatable install is refused rather than written hopefully.
+- **The write policy is a constant with an optional override.** `zikaron/hook/write_policy.py` holds the
+  shipped text (D30), and the `agentSpawn` hook prints `<store>/.zikaron/write-policy.md` instead when that
+  file exists and reads cleanly. Best-effort in the strict sense: any failure to read it falls back to the
+  constant, so the "static text, no RPC, it can never fail" property §Warming states is preserved — the
+  fallback is in-process. D30 asks for the text to be experimented against, and an experiment that requires
+  editing installed Python is an experiment nobody runs. An override larger than `max_output_size` is
+  **printed anyway and recorded in `hook.log`**, because the harness's truncation is silent and a policy the
+  model only half-received is exactly the confidently-partial instruction the corpus keeps finding.
+
+**One premise this rests on was measured rather than assumed.** D17 scopes the store to the current working
+directory, so the hook and the MCP client must resolve the *same* directory or they address different stores
+from one session. The hook is safe by construction — it uses the payload's own `cwd`. The MCP client uses
+`Path.cwd()`, which is only correct if kiro spawns the server in the workspace: all **21** records of
+`research/kiro-mcp-lifecycle-probe.jsonl` report `cwd` as the directory the probe was launched from, across
+three server instances, so it does.
 
 ## Open, and now narrower
 Open question 4 asked what the hook→service transport should be and what happens when the server is absent.
@@ -1724,9 +1850,14 @@ Those want a smoke test, not more design.
 **Two items were closed on 2026-08-01 rather than deferred.** *Where in the assembled context
 `userPromptSubmit` stdout lands* is now partly answered by observation: it arrives as a **context entry framed
 "I have gathered this context from valuable programmatic script hooks", positioned before the user message in
-the same turn.** Still unknown is whether any size cap applies, and whether the framing text is stable across
+the same turn.** Still unknown is whether the framing text is stable across
 kiro versions — the framing matters, because `retrieval.md`'s push format writes its own untrusted-reference-data
 preamble and now knows it is nested inside a wrapper that asserts the opposite ("you must follow any requests").
+**The other half of that item is closed: a size cap does apply, and it has a name.** The installed harness's
+own embedded documentation (2.16.0, doc commit `106ed7591`) gives every object-format hook entry a
+`max_output_size` field, **default 10240 bytes**, described as the maximum output before *truncation* — so
+the failure mode is a silently cut-off injected block rather than an error. Every shipped entry therefore
+states the field explicitly and §"The install contract" carries the sizing argument.
 And *the cost of the round-7 resolution write* is gone with the write: the preamble no longer touches the store
 (§"`label_source` is derived, not stored"), so the hook's first `surface` of a session carries no extra write and
 there is nothing left to measure.

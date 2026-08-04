@@ -12,10 +12,10 @@ import threading
 
 import pytest
 
+from zikaron.hook.envelope import HookEnvelope
 from zikaron.hook.rpc import SurfaceRejectionError, surface_once
-from zikaron.service.envelope import ClientEnvelope
 
-_ENVELOPE = ClientEnvelope(session_id="a-session", kind="hook", pid=1234, op_id=None)
+_ENVELOPE = HookEnvelope(session_id="a-session", kind="hook", pid=1234, op_id=None)
 
 
 def _respond(server: socket.socket, response: dict[str, object]) -> None:
@@ -148,7 +148,7 @@ def test_raises_connection_error_when_the_socket_closes_before_a_full_line() -> 
 def test_the_bootstrap_form_sends_a_null_session_id() -> None:
     client, server = socket.socketpair()
     try:
-        bootstrap = ClientEnvelope(session_id=None, kind="hook", pid=1, op_id=None)
+        bootstrap = HookEnvelope(session_id=None, kind="hook", pid=1, op_id=None)
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": ""}})
         surface_once(client, prompt="p", limit=5, envelope=bootstrap)
         sent = json.loads(server.recv(65536).decode("utf-8"))

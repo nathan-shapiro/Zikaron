@@ -25,7 +25,9 @@ from zikaron.core.errors import ZikaronError
 from zikaron.hook import connect, envelope, failure, rpc
 from zikaron.service import paths
 
-#: `architecture.md`: "enforce an internal deadline of ~2 s, far under the 30 s `timeout_ms`."
+#: `architecture.md`: "enforce an internal deadline of ~2 s, far under the `timeout_ms` the harness
+#: enforces on the whole hook command" — 10 s on this harness, and stated explicitly in the shipped
+#: hook entry rather than inherited (`architecture.md` §"The install contract").
 #: Budgets the *whole* sequence below — connect, spawn-if-absent, health poll, the `surface`
 #: request itself — not only the connect phase `connect.HEALTH_POLL_DEADLINE_SECONDS` bounds on
 #: its own. Checked once, right before the one blocking sequence that can exceed it, rather than

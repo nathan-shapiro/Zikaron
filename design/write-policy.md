@@ -16,6 +16,22 @@
 
 ## 1. Why this text is shaped the way it is
 
+**One rule is here because of a measured production failure rather than an argument, and it is the
+newest.** "If a claim expires, the gist has to say so" was added 2026-08-03, in the first hour of real
+dogfooding. An agent asked to record project knowledge wrote the gist *"do not tune rrf_k/fusion_depth/arm
+weighting during retrieval work — it's a deliberate standing instruction"*, with the condition that makes
+it true ("during M5") left in the `content`. A later session with no other context was asked "should I tune
+rrf_k?", answered from the gist alone — correctly, as retrieval triage — and told the operator **not to**,
+which by then was wrong: the build was complete and that work was precisely what had been parked. It then
+fetched the content, read "during M5", and *still* concluded the current phase was M5, because nothing in
+the memory said otherwise and the gist had already framed the prohibition as live.
+
+Two prohibitions were already in this text and neither caught it. "Write observations, not orders" names
+the imperative but not the expiry; nothing named the expiry at all. The structural point is what makes the
+new rule a rule rather than an emphasis: **every memory has a gist/content boundary, the gist is the half
+that gets injected, and a qualifier on the far side of that boundary is a qualifier that will be recalled
+without its claim.** The content cannot rescue a gist that has already been believed.
+
 **The dominant failure mode is under-writing, and we have evidence, not a hunch.** `~/Memory`'s first live
 run found `REMEMBER` **under-triggered**: the model funnelled durable facts — even improvised self-details —
 into its scratchpad and never called the memory verb at all, which forced a per-turn `LTM_NUDGE` to be added.
@@ -86,6 +102,14 @@ rather than about this project.
 --force left the old worker running" — rather than standing instructions to future agents. Other
 agents read these as reference material, and a memory phrased as a command will be obeyed by
 someone with less context than you have.
+
+**If a claim expires, the gist has to say so.** Some things are true only for now — during a
+migration, until a fix lands, for one version of a dependency. A future agent sees the gist first
+and often sees nothing else, so a condition you leave in the content is a condition that gets
+dropped: "do not use the new API" recalled without "until the 2.0 release" becomes a permanent rule
+nobody intended. Put the condition in the gist itself, or do not record the claim. If it will not
+fit in one line, that is a sign the observation is about a passing situation rather than about this
+project, and the right move is to leave it out.
 
 **Err toward writing.** The common failure is recording nothing, not recording too much. If you just
 spent real time discovering something, record it — near-duplicates are detected and handed back to

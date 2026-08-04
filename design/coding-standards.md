@@ -24,6 +24,7 @@ zikaron/
   service/              # asyncio UDS server, JSON-RPC, lifecycle
   mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
+  install/              # the shipped kiro artefacts and the command that writes them (M12)
 ```
 
 **No `utils.py`, no `helpers.py`, no `common.py`.** Those names are where cohesion goes to die: they attract

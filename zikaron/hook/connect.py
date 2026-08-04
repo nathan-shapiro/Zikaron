@@ -54,7 +54,8 @@ from zikaron.service import paths, security
 #: `userPromptSubmit` hook, connect-through-print included, so this value must leave room for the
 #: request and response after it. Set well under that: a cold spawn racing this deadline and
 #: losing is exactly the case that must degrade (log to `hook.log`, relay on stdout) rather than
-#: make the user wait for the general 30 s `timeout_ms` kiro enforces on the whole hook command.
+#: make the user wait for the `timeout_ms` kiro enforces on the whole hook command — 10 s on this
+#: harness, and stated explicitly in the shipped entry (`architecture.md` §"The install contract").
 HEALTH_POLL_DEADLINE_SECONDS = 1.2
 _HEALTH_POLL_INTERVAL_SECONDS = 0.05
 _CONNECT_TIMEOUT_SECONDS = 0.3

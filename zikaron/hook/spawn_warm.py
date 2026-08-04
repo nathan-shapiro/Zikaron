@@ -17,8 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from zikaron.hook import connect, envelope
-from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
+from zikaron.hook import connect, envelope, failure, write_policy
 from zikaron.service import paths
 
 
@@ -32,6 +31,12 @@ def run(*, cwd: Path, payload_session_id: object) -> str | None:
     `architecture.md` gives the warm helper no observable effect on this hook's own behaviour one
     way or the other. It exists purely to make the *next* `userPromptSubmit` warmer than it would
     otherwise be; failing to start it changes nothing about what `agentSpawn` itself prints.
+
+    The one part that is not a bare constant is the operator's optional
+    `.zikaron/write-policy.md` override (`write_policy.read_policy`), and it is read inside the same
+    kind of whole-body guard as the spawn — so the never-fail property survives even a reader that
+    raises for a reason its own six documented conditions did not anticipate: this function still
+    returns the shipped text.
     """
     env_session_id = envelope.harness_session_id()
     if envelope.is_subagent_session(
@@ -39,7 +44,25 @@ def run(*, cwd: Path, payload_session_id: object) -> str | None:
     ):
         return None
     _spawn_warm_helper_best_effort(cwd)
-    return WRITE_POLICY_PROMPT
+    return _policy_text_best_effort(cwd)
+
+
+def _policy_text_best_effort(cwd: Path) -> str:
+    """The override when it reads cleanly, else the shipped constant — plus one `hook.log` line
+    naming why, whenever the answer was something other than "no override is there".
+
+    Guarded whole rather than per-step, for `_spawn_warm_helper_best_effort`'s reason: this hook's
+    one guarantee is that it prints a policy, and no failure inside here — including a failure while
+    logging another failure — may cost it that.
+    """
+    text = write_policy.WRITE_POLICY_PROMPT
+    with contextlib.suppress(Exception):
+        store_dir = paths.store_dir(cwd)
+        policy = write_policy.read_policy(store_dir)
+        text = policy.text
+        if policy.note is not None:
+            failure.record_failure(paths.hook_log_path(store_dir), policy.note)
+    return text
 
 
 def _spawn_warm_helper_best_effort(cwd: Path) -> None:

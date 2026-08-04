@@ -14,7 +14,7 @@ docstring gives.
 import json
 import socket
 
-from zikaron.service.envelope import ClientEnvelope
+from zikaron.hook.envelope import HookEnvelope
 
 
 class SurfaceRejectionError(Exception):
@@ -32,7 +32,7 @@ class SurfaceRejectionError(Exception):
         super().__init__(f"{code}: {message}")
 
 
-def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: ClientEnvelope) -> str:
+def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope) -> str:
     """Send one `surface(prompt, limit)` request and return the text it answered with.
 
     A single `sendall`/`recv`-until-newline round trip — this client makes exactly one request per
@@ -56,12 +56,7 @@ def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: Clie
         "params": {
             "prompt": prompt,
             "limit": limit,
-            "client": {
-                "session_id": envelope.session_id,
-                "kind": envelope.kind,
-                "pid": envelope.pid,
-                "op_id": envelope.op_id,
-            },
+            "client": envelope.as_client_object(),
         },
     }
     sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
