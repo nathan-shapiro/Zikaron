@@ -53,6 +53,12 @@ what is still undecided, so keep going until `group_complete` is `true`. Never m
 left over, and never stop in the middle of a group: an entry you leave behind stays in the journal
 and will be served again.
 
+**Issue write calls one at a time, and read each answer before making the next.** Two writes sent
+together are not guaranteed to run in the order you listed them, so `remaining_uuids` on one of them
+can reflect a moment before the other — which makes your own bookkeeping unreliable even though the
+store itself stays correct. Nothing is lost either way; what you lose is the ability to trust what
+you are being told about what is left.
+
 ## The three verbs
 
 **`zikaron_merge(group_id, target, gist, content, absorb)`** — fold entries into an existing

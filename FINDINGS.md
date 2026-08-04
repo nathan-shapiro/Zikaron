@@ -876,6 +876,14 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    depth deserve their own pass; plausibly worth more than any model swap. All three are now named `meta`
    keys (`rrf_k` 60, `fusion_depth` 50) rather than constants, so the pass is a config sweep. Needs no
    reindex, so it is safely post-build. Detail in `design/retrieval.md`.
+3. **The real length distribution of memories is now partly measured, and chunking turns out to be a
+   *post-consolidation* phenomenon.** First real data, from 31 journal entries and the 15 long-term
+   records consolidation made of them: journal entries ran **162–378 tokens** (median 259) against a
+   `chunk_max_tokens` of 450, so **not one of them chunked at all**. The consolidated records run
+   **184–1877 tokens**, and **9 of 15 chunk**, up to 6 parts. So the chunking path — and the dense
+   arm's `max` rollup over parts — is exercised by *merging*, not by individual writes, which is the
+   opposite of what the parameter was reasoned about. 450 looks comfortably above the natural length
+   of one written lesson and comfortably below a merged record. Original text below.
 3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
    parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
    template wearing six hats. `token_count` and the `truncated` canary are instrumented so revisiting
@@ -978,6 +986,21 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    asserted the opposite**, by multiplying tokens by an invented four-bytes-per-token factor and calling the
    product a worst case — the review caught it, and the lesson is the corpus's own: name the quantity before
    quoting a number about it.
+12. **Merging degrades the gist's triage value, and the tension is structural.** Measured on the first
+   real consolidation: **6 of 15** long-term gists came back index-shaped — "three live-debugging
+   findings: …, …, …" and, worst, "illness/felt-state+energy findings: placement, attribution,
+   code-vs-prompt, severity scale, time-freeze, chronotype calibration" in front of 1877 tokens of
+   content. The originals were symptom-first one-liners ("grepping session.log for prompt text returns
+   zero because it never logs assembled prompts"), and the consolidator kept that shape wherever it
+   promoted a single entry. It could not for a merge, and that is arithmetic rather than disobedience:
+   one 64-token gist cannot lead with the observable symptom of six different findings. **The damage is
+   asymmetric between the two read arms**, which is what makes it a design question rather than a
+   prompt tweak: D21 embeds gist *and* content, so pull survives — a symptom-shaped query still
+   returned the right record at rank 1 — while the injected block shows gists **only**, so push
+   degrades exactly where D13's relevance triage lives. Levers, none yet tried: a stricter merge
+   cutoff so fewer unlike findings fuse; permitting a longer gist on a merged record; or having the
+   block show something other than the gist for a multi-finding record. Nothing in the corpus named
+   this before it happened.
 9. **Evaluation** (deferred by D14). Grok named LoCoMo, LongMemEval(-V2), BEAM, HaluMem, LongMemCode,
    PersonaMem, LifeBench, AFTER, EvoMemBench; several may be misremembered, and all are conversational or
    codebase-QA proxies rather than tribal-knowledge tests. The benchmark set is the seed but its residual
@@ -1523,6 +1546,40 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   already handles by design, and the fix wants its own change with a test that pins the race deterministically
   rather than one that reproduces it under load. Recorded so the next person to see this failure does not
   spend the diagnosis again.
+
+- **The first real consolidation run worked, and the most encouraging thing in it was an agent
+  declining to write a memory.** 31 journal entries became 15 long-term records: 13 created plus **2
+  in-place tier flips**, so both `promote` forms fired on real data; 11 merge events; **0 discards**
+  (it judged everything specific enough to keep, which is what "when in doubt, keep" asks for); 18
+  groups all `complete`, every one served exactly **once**, 0 undispositioned members, and 93
+  `group_served` rows delivered across them. Two runs exist and both are `complete` — the second
+  planned nothing because there was nothing left, which is the correct shape for a re-invocation.
+  **The consolidator hit a real tooling oddity and deliberately did not record it.** It issued two
+  write calls in parallel within one turn and observed the second call's `remaining_uuids` reflecting
+  a pre-first-call state; it verified correctness with a follow-up serve, lost nothing, and reported it
+  to the operator as a bug **rather than as a memory** — reasoning explicitly that "don't parallelize
+  consolidation writes" would outlive the fix and become a permanent rule whose condition had been
+  dropped. That is the expiring-claim rule this project added hours earlier, applied unprompted, by a
+  different agent, in a fresh context, to a case nobody had enumerated. The rule changed behaviour.
+  **On the oddity itself, the store's committed record is verifiably correct**, which is worth stating
+  precisely rather than either dismissing or accepting the diagnosis: the two suspect pairs commit as
+  contiguous event ids with no interleaving (121–122 then 123–124, 122 ms apart; 181–182 then 183–184,
+  665 ms apart), and there are **zero** `version_conflict` and **zero** `no_receipt` events in the
+  whole store. So no transaction was mis-serialized and nothing was lost.
+  **The mechanism converged from two directions and needs no store change.** The operator's own reading
+  — the harness pushes agents to do work concurrently, so the model emitted both writes in one turn —
+  meets what the client already does: `zikaron.mcp.connection` serializes concurrent calls on a
+  connection lock, and an `asyncio.Lock` grants in *arrival* order, which for two coroutines dispatched
+  together is not the order the model listed them in. So the call the model thinks of as second may
+  have executed **first**, and its `remaining_uuids` legitimately predates the other write; the model,
+  seeing results rendered in its own call order, reads that as staleness. No guarantee was violated
+  because none exists. The fix is therefore in the **shipped consolidator prompt** — issue writes one
+  at a time and read each answer before the next, stated with its reason (the store stays correct
+  either way; what concurrency costs is the model's ability to trust its own bookkeeping). That is a
+  versioned prompt rule, which is exactly the kind of thing the consolidator was right *not* to write
+  as a durable memory. Still unconfirmed, and cheap to settle if it recurs: whether the two calls
+  really did commit in the reverse of the listed order, which needs a reproduction logging both raw
+  responses beside the event ids.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`

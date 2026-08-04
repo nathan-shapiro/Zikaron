@@ -1141,6 +1141,17 @@ zikaron_discard(group_id, absorb: [{uuid, expected_version}, ...], reason: str)
      recorded in the event log, not in the store — a discarded row keeps its own prose.
 ```
 
+**Concurrent write calls are correct but not ordered, and the shipped prompt says so.** Observed on the
+first real consolidation run: a consolidator that emitted two write verbs in one turn saw one response's
+`remaining_uuids` predate the other write. Nothing was mis-serialized — the committed event ids are
+contiguous per call with no interleaving, and the store recorded zero `version_conflict` and zero
+`no_receipt` — because `zikaron.mcp.connection` serializes concurrent calls on a connection lock and an
+`asyncio.Lock` grants in arrival order, which for two coroutines dispatched together is not the order the
+model listed them. So the second-listed call can run first and answer honestly about a moment before the
+other. The store needs no change; what breaks is the model's own bookkeeping, so the consolidator's
+prompt asks for one write at a time and gives that reason. Recorded here because the *absence* of an
+ordering guarantee is easy to mistake for a store defect, and was.
+
 **No `search` and no `fetch` for the consolidator.** Full content arrives in the group payload, and D7's
 whole point is that *code* picks the candidates — giving the consolidator retrieval would let it wander
 outside the group it was handed.
