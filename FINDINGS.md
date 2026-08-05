@@ -881,10 +881,16 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
    records consolidation made of them: journal entries ran **162–378 tokens** (median 259) against a
    `chunk_max_tokens` of 450, so **not one of them chunked at all**. The consolidated records run
    **184–1877 tokens**, and **9 of 15 chunk**, up to 6 parts. So the chunking path — and the dense
-   arm's `max` rollup over parts — is exercised by **merging specifically**, not by individual writes,
-   which is the opposite of what the parameter was reasoned about. Confirmed by the A/B: run 1 (11
-   merges) produced 9 multi-chunk records of 15, up to 6 parts; run 2 (0 merges) produced **0
-   multi-chunk records of 31**, all 162–378 tokens. With no fusion, nothing chunks at all. 450 looks comfortably above the natural length
+   arm's `max` rollup over parts — was at first credited to **merging specifically**, on the strength of
+   the A/B: run 1 (11 merges) produced 9 multi-chunk records of 15, up to 6 parts, while run 2 (0
+   merges) produced **0 of 31**, all 162–378 tokens. **That attribution was wrong, and a second working
+   session refuted it within a day.** 26 entries written during real work ran **230–879 tokens** and
+   **8 of them chunk**, one into 3 parts, with no merging involved at all. So chunking follows entry
+   *length*, regardless of provenance, and the first day's corpus was simply uniformly short — a
+   seeding session summarising known facts produces shorter entries than live work does. The
+   distribution over all 93 authored writes so far: **162–879 tokens, median 273**, against a
+   `chunk_max_tokens` of 450. The lesson about the claim rather than the parameter: one day of one
+   corpus attributed a phenomenon to the wrong cause, and only a differently-shaped session could tell. 450 looks comfortably above the natural length
    of one written lesson and comfortably below a merged record. Original text below.
 3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
    parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
@@ -1628,6 +1634,34 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   as a durable memory. Still unconfirmed, and cheap to settle if it recurs: whether the two calls
   really did commit in the reverse of the listed order, which needs a reproduction logging both raw
   responses beside the event ids.
+
+- **Day two: the repair loop fired for the first time, and one of the five amends is the exact failure
+  this project was built around.** After a full working session in `~/Memory` — 114 pushes injecting 560
+  gists (~4.9 of the 5-slot budget per message), 18 `fetch` calls against 10 `search` calls, 26 new
+  memories, 36 receipt-gated mutation calls with **zero** conflicts and zero `no_receipt` — five
+  `amend`s landed where the previous day had none. Four were journal rows refined after surfacing 3, 7
+  and 20 times. **The fifth amended a long-term record to attach the condition its claim depends on**:
+  "verify every reviewer finding against real code before applying it — the *twice wrong on mechanism*
+  record was under claude-opus-4.8, not the current gpt-5.6-sol". That is a memory whose claim had
+  silently become version-scoped, caught and repaired **in band, on a long-term row, after eight
+  surfacings** — D11 doing exactly what it exists for, and the repaired gist now carries its own
+  qualifier, which is what the write policy's newest rule asks for. Zero retires against five amends,
+  which is also the policy's stated preference (repair in place; retire only when a claim is simply no
+  longer true).
+  **The new gist-length guidance landed on target.** The 26 new gists run 20–30 words (median **24**)
+  and 27–43 tokens, against a stated target of "one sentence of about 20 to 25 words" and a 64-token
+  bound none of them approached. The previous day's corpus, written before the rule existed, ran 10–32
+  words.
+  **And the dedup instrument cannot report for a month, which is a property worth knowing before
+  relying on it.** All 18 offers sit in `pending`: only the `fully_resolved` outcome (amend **and**
+  retire) closes early, so an offer resolved by an amend alone stays pending until
+  `signal_horizon_days` elapses. Correct by design — a later retire would change the classification —
+  but it means the signal gives no reading for 30 days on a store being actively tuned. The key is
+  configurable down to 1, so an early-stage store that wants readings tomorrow can set it.
+  **One number needs its qualifier quoted with it:** amend-after-surface reports `rate=1.00`, which
+  means *3 of the 3 pairs that have resolved so far resolved by an amend* — with **51 still pending**
+  and nothing yet aged out. Read as "the repair loop catches everything" it would be badly wrong, and
+  that is exactly the shape of misreading this corpus keeps recording.
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
