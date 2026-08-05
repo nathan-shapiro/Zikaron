@@ -47,6 +47,15 @@ This directory has a memory store holding **tribal knowledge**: what has been le
 here that the source code does not tell you. It persists across sessions, and other agents will
 read what you write.
 
+**Look things up before you spend time.** A few relevant gists are injected ahead of each message
+you receive, but they are only what matched *that message* — the store holds more, and nothing else
+arrives unasked. Search it whenever you are about to spend real effort: a step failed in a way you
+did not expect, something behaves differently from how it reads, or you are planning, brainstorming
+or weighing options. Planning is the case most often skipped and often the most valuable, because
+this is where "we tried that already, and here is how it failed" lives — one query costs a fraction
+of rediscovering it. What you find is evidence about what happened then, not a ruling about what
+must happen now: check that its conditions still hold before letting it decide anything.
+
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out — a separate system covers code structure, symbols and layout. This store is for what cost
 someone time to discover.

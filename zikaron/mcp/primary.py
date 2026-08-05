@@ -57,7 +57,11 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
 
     @mcp.tool
     async def zikaron_search(query: str, limit: int = 5, include_retired: bool = False) -> object:
-        """Search recorded project knowledge by relevance. Returns a list of
+        """Search recorded project knowledge by relevance. **Call this whenever you are about to
+        spend real effort** — an unexpected failure, something behaving differently from how it
+        reads, or planning and weighing options — not only when memory is what the user asked
+        about; the gists injected before a message are only what matched that message. Returns a
+        list of
         `{uuid, gist, tier, state, created_at, updated_at, superseded_by}`, best match first —
         `state` is one of `live`/`superseded`/`retired`, so a demoted row is visible for what it
         is. Carries no version field, and therefore no licence to write: call `zikaron_fetch` on a

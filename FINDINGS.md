@@ -859,6 +859,28 @@ becomes a wrong number instead of a prose ambiguity. And **do not tune RRF durin
 largest known quality lever, it needs no reindex, and it is deliberately post-build.
 
 ## Open questions
+1. **Pull is not merely awkward to reach mid-inference — it is not used at all, which is measured.**
+   The gap has two halves and the behavioural one is worse. `zikaron_search` is callable at any point
+   in the agent's loop, twenty tool calls deep, at no cost but one call. Across **17 hours of real work
+   in `~/Memory` and 121 pushes, it was called zero times.** Every one of the 10 searches in that store
+   happened in the first two hours, while the store was being seeded and consolidated deliberately;
+   `fetch` shows the same shape — 14 during consolidation verification, then 6 in the whole working
+   session, all of them following a pushed gist. So the *pushed-gist → fetch* path works and gets used,
+   and the agent never once formulates a question of its own. The explanation is that nothing told it
+   to: the injected text is a **write** policy, covering what to record, gist shape, secrets and repair,
+   with not a word about when to go looking. This is the exact mirror of the prior-art finding the whole
+   design rests on — `~/Memory`'s first run found `REMEMBER` under-triggered and needed a nudge — now
+   measured on the read side. **Fixed 2026-08-05 by the cheap half first**, since a new injection point
+   is worthless if the agent would not use the one it has: the policy gained a "look things up before
+   you spend time" paragraph naming the moments (an unexpected failure, behaviour that differs from
+   how the code reads, and — at the operator's request, and probably the strongest case — planning,
+   brainstorming or weighing options, because "we tried that already and here is how it failed" is a
+   *planning* input), and `zikaron_search`'s own tool description now carries the same trigger at the
+   point of decision. Both also say that a memory is evidence about what happened then rather than a
+   ruling about what must happen now, which is the read-side counterpart of the expiring-claim rule —
+   without it, planning-time recall can foreclose an approach that has since become viable, which is
+   precisely how the `rrf_k` gist misled a session. **The instrument is the `search` count per session,
+   and its pre-change value is 0.** Unchanged below: the mechanism half.
 1. **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires **once per
    user message** with `{hook_event_name, cwd, session_id, prompt}`. Good: the query is clean human text.
    Bad: one user message spawns dozens of agent turns, and the moment a memory is most needed ("this
