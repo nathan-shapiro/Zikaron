@@ -304,23 +304,22 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path), report)
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == ["helper-a", "helper-b", CONSOLIDATOR_AGENT_NAME]
-        assert crew["trustedAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
+        assert crew["trustedAgents"] == ["helper-a"], "spawn trust is a separate grant, not ours"
         assert any("availableAgents" in note for note in report.notes)
+        assert any("ask your permission once" in note for note in report.notes)
 
     def test_an_absent_available_list_is_left_alone_rather_than_narrowed(
         self, tmp_path: Path
     ) -> None:
         """The trap. An absent list means every agent is available; writing one entry into it would
         restrict the config to the consolidator alone and silently break every other subagent the
-        user has. Trust is still granted, because that only widens.
+        user has. Nothing is added at all in that case, so no `toolsSettings` block appears either.
         """
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine"})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert "availableAgents" not in crew
-        assert crew["trustedAgents"] == [CONSOLIDATOR_AGENT_NAME]
+        assert "toolsSettings" not in json.loads(config.read_text())
         assert any("every* agent" in note or "every agent" in note for note in report.notes)
 
     def test_an_empty_available_list_is_treated_the_same_as_an_absent_one(
@@ -333,7 +332,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == []
-        assert crew["trustedAgents"] == [CONSOLIDATOR_AGENT_NAME]
+        assert "trustedAgents" not in crew
 
     def test_the_agent_crew_alias_is_updated_in_place(self, tmp_path: Path) -> None:
         """`agent_crew` is a documented alias for the same block. Writing a second `crew` key beside
@@ -365,7 +364,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         settings = json.loads(config.read_text())["toolsSettings"]
         assert settings["write"] == {"allowedPaths": ["src/**"]}
 
-    def test_a_second_install_does_not_duplicate_either_entry(self, tmp_path: Path) -> None:
+    def test_a_second_install_does_not_duplicate_the_entry(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
         _write_agent(
             config, {"name": "mine", "toolsSettings": {"crew": {"availableAgents": ["helper-a"]}}}
@@ -374,7 +373,37 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
-        assert crew["trustedAgents"] == [CONSOLIDATOR_AGENT_NAME]
+
+    def test_an_existing_trusted_agents_list_is_never_touched(self, tmp_path: Path) -> None:
+        """Spawn trust is a wider grant than the memory tools — its own model invocation and four
+        mutation verbs — so it stays the user's decision even under `--force`, and the install says
+        that starting a consolidation will ask once.
+        """
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "toolsSettings": {"crew": {"availableAgents": ["a"], "trustedAgents": ["a"]}},
+            },
+        )
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path, force=True), report)
+        crew = json.loads(config.read_text())["toolsSettings"]["crew"]
+        assert crew["trustedAgents"] == ["a"]
+        assert any("ask your permission once" in note for note in report.notes)
+
+    def test_the_alias_with_no_available_list_is_left_alone_and_named_in_the_note(
+        self, tmp_path: Path
+    ) -> None:
+        """The note has to name the key the config actually uses, or it points at a block the user
+        does not have."""
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "toolsSettings": {"agent_crew": {}}})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert json.loads(config.read_text())["toolsSettings"] == {"agent_crew": {}}
+        assert any("agent_crew.availableAgents" in note for note in report.notes)
 
     def test_no_tools_settings_block_is_invented_when_nothing_is_trusted(
         self, tmp_path: Path
@@ -403,20 +432,27 @@ class TestTheConsolidatorIsAddedToTheCrew:
         assert "trustedAgents" not in crew
 
 
-class TestTheSkillIsDeclaredWhenDeclaringItMatters:
-    """Skills reach an agent through `resources`, but also arrive by inheritance without one.
+class TestTheSkillIsAlwaysDeclared:
+    """Skills reach an agent through `resources`, and also arrive by inheritance without one.
 
-    That makes this latent rather than broken — the opposite of the crew list — so the rule is to
-    add the entry only where a config's own explicit declarations decide, and to say so otherwise.
+    The entry is written whenever nothing already covers it, because the one documented
+    configuration where inheritance is off would otherwise get a warning instead of a working
+    skill — and declaring resources does not disable inheritance, so adding it narrows nothing.
     """
 
-    def test_a_config_with_no_resources_is_left_alone_with_a_note(self, tmp_path: Path) -> None:
+    def test_a_config_with_no_resources_gets_the_skill_declared(self, tmp_path: Path) -> None:
+        """Inheritance usually covers the skill, but `chat.disableInheritingDefaultResources` turns
+        that off — and a note is not a delivered skill. The entry is additive, since declaring
+        resources does not disable inheritance, so it is written either way.
+        """
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine"})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert "resources" not in json.loads(config.read_text())
-        assert any("inherited by default" in note for note in report.notes)
+        assert json.loads(config.read_text())["resources"] == [
+            "skill://.kiro/skills/zikaron-consolidate/SKILL.md"
+        ]
+        assert any("reachable whether or not" in note for note in report.notes)
 
     def test_a_glob_that_already_covers_the_skill_is_not_duplicated(self, tmp_path: Path) -> None:
         """The common case in this repo's own configs: a `**` glob over every workspace skill."""
@@ -1035,16 +1071,24 @@ class TestMergeRefusals:
 
 
 class TestTheSubagentToolNote:
+    """Asserted on the note's own clause rather than on the word "subagent".
+
+    The crew note also mentions a subagent spawn, so a substring test on the bare word passes or
+    fails for reasons that have nothing to do with whether *this* note fired.
+    """
+
+    CLAUSE = "does not list the `subagent` tool"
+
     def test_it_says_so_when_the_tool_is_missing(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine", "tools": ["read"]})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert any("subagent" in note for note in report.notes)
+        assert any(self.CLAUSE in note for note in report.notes)
 
     def test_it_stays_quiet_when_the_tool_is_there(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine", "tools": ["read", "subagent"]})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert not any("subagent" in note for note in report.notes)
+        assert not any(self.CLAUSE in note for note in report.notes)

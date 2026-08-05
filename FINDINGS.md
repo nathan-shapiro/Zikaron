@@ -1685,6 +1685,18 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   and nothing yet aged out. Read as "the repair loop catches everything" it would be badly wrong, and
   that is exactly the shape of misreading this corpus keeps recording.
 
+- **Two `str.replace` edits reported success and changed nothing, and the cause was my own formatter.**
+  Both were anchors copied from a file I had read earlier in the session; in between, the AST-guarded
+  line-reflow helper I use to hold the column limit had rewrapped the paragraph — once leaving a single
+  word alone on its own line — so the anchor no longer existed. One miss silently left a superseded
+  claim ("every write reversible by `retire`") in a docstring after the design, the README and the code
+  comment around it had all been corrected; only an independent reviewer reading the file caught it. The
+  other silently dropped a test into the gap between a `@parametrize` decorator and the function it
+  decorated, which at least failed loudly at collection. The practice: **assert that a substitution took
+  effect**, and prefer line-range edits over text anchors in any file a formatter may have touched since
+  it was read. The corpus already knows that a text tool which cannot parse its target corrupts it; this
+  is the quieter sibling — a tool that changes nothing while reporting success.
+
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).

@@ -60,7 +60,9 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
         """Search recorded project knowledge by relevance. **Call this whenever you are about to
         spend real effort** — an unexpected failure, something behaving differently from how it
         reads, or planning and weighing options — not only when memory is what the user asked
-        about; the gists injected before a message are only what matched that message. Returns a
+        about; the gists injected before a message are only what matched that message. A hit is
+        historical evidence rather than a veto: it tells you what to re-check, so fetch the record
+        and confirm the conditions still hold before ruling an option out. Returns a
         list of
         `{uuid, gist, tier, state, created_at, updated_at, superseded_by}`, best match first —
         `state` is one of `live`/`superseded`/`retired`, so a demoted row is visible for what it

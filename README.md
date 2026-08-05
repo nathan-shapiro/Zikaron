@@ -115,15 +115,25 @@ by the harness's default.
 *configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
 agent can record without interrupting you. That is deliberate rather than lax — the whole design leans
 on the agent writing freely, and a permission prompt per write both suppresses that and trains you to
-click through prompts. What it trusts is five tools reading and writing rows in a local database, with
-every write reversible. Pass `--no-trust-tools` if you would rather approve each one.
+click through prompts. What it trusts is narrow: five tools reading and writing rows in a local
+database, with no network and no effect outside the project. A mistaken write is *recoverable* rather
+than undoable — `zikaron_retire` withdraws a record from ordinary retrieval and leaves it auditable,
+while an amend overwrites prose that nothing restores. Pass `--no-trust-tools` if you would rather
+approve each one.
+
+**That trust stops at the memory tools.** Spawning the consolidator is a separate grant — a subagent
+with its own model invocation and four mutation verbs — so the installer never adds it to
+`trustedAgents`, and starting a consolidation asks your permission once. Add
+`zikaron-consolidator` there yourself if you would rather it did not.
 
 The consolidator also has to be reachable by the `subagent` tool, so if your config already restricts
 which agents may be spawned (`toolsSettings.crew.availableAgents`), the installer adds
 `zikaron-consolidator` to that list. If you have no such restriction it leaves it alone — an empty list
 means *every* agent is available, and writing one entry into it would restrict you to just this one.
-The consolidation skill itself arrives through inherited resources, so it needs no `resources` entry
-unless you have turned inheritance off.
+The skill is also declared in the agent's `resources` unless something there already covers it. Skills
+normally arrive by inheritance, so that entry is usually redundant — but it is the only thing that
+makes the skill loadable if you have set `chat.disableInheritingDefaultResources`, and declaring a
+resource does not disable inheritance, so it can only help.
 
 **One thing it deliberately does not do:** add the `subagent` tool itself, which the consolidation
 skill needs in order to spawn the consolidator. Its reach is much wider than memory, so that grant

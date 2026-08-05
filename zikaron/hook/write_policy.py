@@ -54,7 +54,8 @@ did not expect, something behaves differently from how it reads, or you are plan
 or weighing options. Planning is the case most often skipped and often the most valuable, because
 this is where "we tried that already, and here is how it failed" lives — one query costs a fraction
 of rediscovering it. What you find is evidence about what happened then, not a ruling about what
-must happen now: check that its conditions still hold before letting it decide anything.
+must happen now. A recorded failure tells you what to re-check, not which option to drop: confirm
+its conditions still hold before letting it rule anything out.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out — a separate system covers code structure, symbols and layout. This store is for what cost

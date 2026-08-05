@@ -38,6 +38,17 @@ _MS_PER_SECOND = 1000
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
 
+def _flat(text: str) -> str:
+    """`text` with every run of whitespace collapsed to one space.
+
+    Every prose assertion below goes through this. The shipped texts are hard-wrapped, so a clause
+    that spans a line break is invisible to a plain substring test — and rewrapping a paragraph,
+    which
+    happens whenever one is edited, would otherwise silently disarm the guard that defends it.
+    """
+    return re.sub(r"\s+", " ", text)
+
+
 def _design_model_default() -> str:
     table = table_with_columns("architecture.md", _DISTRIBUTION_HEADING, _MODEL_TABLE_COLUMNS)
     rows = [row for row in table if "consolidator model" in row["Setting"]]
@@ -111,28 +122,89 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
     def test_the_prompt_never_names_a_tool_the_consolidator_cannot_reach(self) -> None:
         """`search` and `fetch` are not registered on a consolidator process at all, so naming
         either would instruct a call whose absence is structural."""
-        assert "zikaron_search" not in CONSOLIDATOR_PROMPT
-        assert "zikaron_fetch" not in CONSOLIDATOR_PROMPT
+        assert "zikaron_search" not in _flat(CONSOLIDATOR_PROMPT)
+        assert "zikaron_fetch" not in _flat(CONSOLIDATOR_PROMPT)
 
 
-class TestTheThreeSharedProhibitions:
+class TestTheSharedRulesAreInBothTexts:
     """Both texts must carry them, because the consolidator never sees the injected write policy.
 
     Asserted as a property of each text rather than as one being a copy of the other: the audiences
     differ, so the wording should too, and a copy test would force them to converge or be deleted.
+
+    **Each assertion names the operative clause, not a worked example's token.** Earlier versions
+    checked that `--force` and `PGHOST` appeared — tokens that survive the deletion or inversion of
+    the very instruction they illustrate, so the test would have stayed green while the rule went
+    away.
     """
 
     @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
     def test_it_prohibits_recording_secrets(self, text: str) -> None:
-        assert "Never record a secret" in text
+        assert "Never record a secret" in _flat(text)
+        assert "plaintext on disk" in _flat(text), "the reason travels with the rule"
 
     @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
     def test_it_asks_for_observations_rather_than_orders(self, text: str) -> None:
-        assert "--force" in text, "both texts use the same worked example of an order"
+        assert "less context than" in _flat(text), "the rule's reason must travel with it"
+        assert "--force" in _flat(text), "and the worked example that makes it concrete"
 
     @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
     def test_it_states_what_a_gist_is_for(self, text: str) -> None:
-        assert "PGHOST" in text, "both texts use the same worked example of a cue-shaped gist"
+        assert "whether to read further" in _flat(text)
+        assert "Lead with the observable symptom" in _flat(text)
+
+    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
+    def test_it_bounds_a_gist_with_a_number_an_agent_can_act_on(self, text: str) -> None:
+        """ "Keep it short" left an agent to discover the bound by losing a call, and one did."""
+        assert "20 to 25 words" in _flat(text)
+        assert "64 tokens" in _flat(text)
+
+    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
+    def test_it_requires_an_expiring_claim_to_carry_its_condition_in_the_gist(
+        self, text: str
+    ) -> None:
+        """The fourth shared rule, and the one the consolidator was missing: it rewrites gists
+        during
+        a merge, so it can strip a condition the write policy required — recreating the measured
+        failure where an expired prohibition was recalled as a permanent one.
+        """
+        flat = _flat(text)
+        assert "permanent rule" in flat
+        assert "until a fix lands" in flat, "both illustrate the condition concretely"
+        assert "gist" in flat
+
+
+class TestTheRulesEachTextCarriesAlone:
+    def test_only_the_policy_tells_the_primary_agent_when_to_search(self) -> None:
+        """The consolidator has no search tool, so a recall instruction there would name a
+        capability
+        it does not have."""
+        assert "Look things up before you spend time" in _flat(WRITE_POLICY_PROMPT)
+        assert "planning, brainstorming" in _flat(WRITE_POLICY_PROMPT)
+        assert "Look things up" not in _flat(CONSOLIDATOR_PROMPT)
+
+    def test_the_policy_says_a_memory_is_evidence_rather_than_a_ruling(self) -> None:
+        """Without this, telling an agent to consult memory while planning makes a stale claim more
+        consequential rather than less."""
+        flat = _flat(WRITE_POLICY_PROMPT)
+        assert "not a ruling about what must happen now" in flat
+        assert "what to re-check, not which option to drop" in flat
+
+    def test_only_the_consolidator_is_told_to_write_one_verb_at_a_time(self) -> None:
+        flat = _flat(CONSOLIDATOR_PROMPT)
+        assert "one at a time" in flat
+        assert "not guaranteed to run in the order" in flat
+        assert "one at a time" not in _flat(WRITE_POLICY_PROMPT)
+
+    def test_the_consolidator_prefers_splitting_over_a_table_of_contents(self) -> None:
+        flat = _flat(CONSOLIDATOR_PROMPT)
+        assert "probably not one finding" in flat
+        assert "table of contents" in flat
+
+    def test_the_split_rule_accepts_a_situation_and_not_only_a_symptom(self) -> None:
+        """A build procedure or a settled convention has a sharp situation and no symptom; the
+        narrower wording would have biased the store toward failure records only."""
+        assert "one observable symptom or situation" in _flat(CONSOLIDATOR_PROMPT)
 
 
 class TestTheSkillFile:

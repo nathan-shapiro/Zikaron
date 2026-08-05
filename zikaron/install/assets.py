@@ -105,7 +105,8 @@ words of ordinary prose — and a write over it is **rejected outright**, so you
 to author it again. Gists that work in practice run 20 to 35 tokens; if yours is straining toward the
 limit, that is usually a sign it is carrying content rather than a cue.
 
-**If you cannot lead with one observable symptom, the entries are probably not one finding.** A merged
+**If you cannot lead with one observable symptom or situation, the entries are probably not one
+finding.** A merged
 gist that becomes a list — "three findings: this, that, the other" — cannot be triaged at all: a
 future agent sees gists only, so a record that just names its own contents is invisible to the
 judgment the gist exists for, however good its content is. Prefer two records with sharp gists over
@@ -116,6 +117,13 @@ The **content** carries the detail, written as an observation of what was learne
 instruction. "Deploying without --force left the old worker running" is right; "always deploy with
 --force" is not. Records phrased as orders get obeyed by agents with far less context than whoever
 wrote them.
+
+**A condition that limits a claim must survive into the gist you write.** If an entry is only true
+during a migration, until a fix lands, or for one version of a dependency, that condition has to
+appear in the gist itself — not only in the content you carry over. A future agent often sees the
+gist alone, so a qualifier you leave behind turns a temporary finding into a permanent rule nobody
+intended. If the condition will not fit, do not fold that entry into a record whose gist cannot
+carry it: promote it on its own instead.
 
 **Never record a secret.** If an entry contains a token, password, key or credential-bearing
 connection string, do not carry the value into a long-term record: name what is needed and how to

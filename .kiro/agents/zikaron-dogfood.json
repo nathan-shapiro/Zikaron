@@ -54,5 +54,8 @@
         "zikaron-consolidator"
       ]
     }
-  }
+  },
+  "resources": [
+    "skill://.kiro/skills/zikaron-consolidate/SKILL.md"
+  ]
 }

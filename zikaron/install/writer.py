@@ -403,7 +403,7 @@ def plan_merge(path: Path, plan: Plan) -> MergePlan:
     merged["tools"] = _selecting(document, "tools")
     if plan.trust_tools:
         merged["allowedTools"] = _selecting(document, "allowedTools")
-    settings, crew_notes = _merged_tools_settings(document, trust_tools=plan.trust_tools)
+    settings, crew_notes = _merged_tools_settings(document)
     if settings is not None:
         merged["toolsSettings"] = settings
     resources, resource_notes = _merged_resources(document, plan.targets)
@@ -802,44 +802,39 @@ def _merged_resources(
 ) -> tuple[list[object] | None, list[str]]:
     """The agent's `resources` with the skill declared, when declaring it is what makes it load.
 
-    Skills reach an agent through `resources` — but **by default they also arrive without one**: the
+    Skills reach an agent through `resources`, and by default they *also* arrive without one: the
     harness appends inherited resources (workspace skills among them) to whatever a config declares,
-    and only the `chat.disableInheritingDefaultResources` setting turns that off. So this is latent
-    rather than broken, unlike the crew list, and it is treated accordingly:
+    and only the `chat.disableInheritingDefaultResources` setting turns that off.
 
-    - `resources` **absent** — left alone. Inheritance covers the skill, and the note names the one
-      setting that would stop it.
-    - `resources` **present and already covering** the skill, typically through a
-      `skill://.kiro/skills/**/SKILL.md` glob — left alone, so no config gains a redundant
-      entry.
-    - `resources` **present and not covering** it — the explicit path is appended. A config that
-      declares resources explicitly is the one most likely to have inheritance turned off, and the
-      entry is additive, so it cannot restrict anything.
+    **The entry is written whenever nothing already covers the skill, including when `resources` is
+    absent.** An earlier version only left a note in that case, reasoning that inheritance covers
+    it — which leaves a *deterministically broken* install for the one documented configuration
+    where it does not, and a warning is not a delivered skill. Declaring resources does not disable
+    inheritance (the harness appends to what a config declares), so the entry is purely additive and
+    cannot narrow anything; the only cost is a redundant declaration in the common case, against a
+    skill that silently fails to load in the uncommon one.
+
+    A `skill://.kiro/skills/**/SKILL.md` glob already covers it, so a config carrying one gains
+    nothing.
 
     Coverage is tested with `fnmatch`, whose `*` spans separators and so treats the `**` glob above
     as matching. Both directions of error are benign: over-matching leaves the entry off a config
     that inherits it anyway, and under-matching adds one that is redundant.
     """
     declared = document.get("resources")
-    if not isinstance(declared, list):
-        return None, [
-            "Skills are inherited by default, so the consolidation skill needs no `resources` "
-            "entry — unless `chat.disableInheritingDefaultResources` is set, in which case add "
-            f"`{_skill_resource(targets)}` to that agent's `resources`."
-        ]
+    listed: list[object] = list(declared) if isinstance(declared, list) else []
     target = str(targets.skill_file.relative_to(targets.project))
     covered = any(
         isinstance(entry, str)
         and entry.startswith(_SKILL_SCHEME)
         and fnmatch(target, entry.removeprefix(_SKILL_SCHEME))
-        for entry in declared
+        for entry in listed
     )
     if covered:
         return None, []
-    return [*declared, _skill_resource(targets)], [
-        f"Added `{_skill_resource(targets)}` to `resources` — this config declares its resources "
-        "explicitly, which is what makes the consolidation skill loadable if inherited "
-        "resources are switched off."
+    return [*listed, _skill_resource(targets)], [
+        f"Added `{_skill_resource(targets)}` to `resources`, so the consolidation skill is "
+        "reachable whether or not inherited resources are switched on."
     ]
 
 
@@ -857,7 +852,7 @@ _CREW_KEYS: Final = ("crew", "agent_crew")
 
 
 def _merged_tools_settings(
-    document: dict[str, object], *, trust_tools: bool
+    document: dict[str, object],
 ) -> tuple[dict[str, object] | None, list[str]]:
     """The agent's `toolsSettings` with the consolidator added to its crew, and what to report.
 
@@ -900,22 +895,18 @@ def _merged_tools_settings(
                 f"`toolsSettings.{crew_key}.availableAgents` — the consolidation skill spawns it "
                 "through the `subagent` tool, and that list gates which agents may be spawned."
             )
-    elif trust_tools:
+    else:
         notes.append(
             f"`toolsSettings.{crew_key}.availableAgents` is unset, which the harness reads as "
             "*every* agent being available, so it was left alone rather than narrowed to one entry."
         )
 
-    if trust_tools:
-        trusted = crew_dict.get("trustedAgents")
-        listed: list[object] = list(trusted) if isinstance(trusted, list) else []
-        if CONSOLIDATOR_AGENT_NAME not in _string_list(trusted):
-            crew_dict["trustedAgents"] = [*listed, CONSOLIDATOR_AGENT_NAME]
-            changed = True
-    elif CONSOLIDATOR_AGENT_NAME not in _string_list(crew_dict.get("trustedAgents")):
+    if CONSOLIDATOR_AGENT_NAME not in _string_list(crew_dict.get("trustedAgents")):
         notes.append(
-            f"`{CONSOLIDATOR_AGENT_NAME}` is not in `toolsSettings.{crew_key}.trustedAgents` "
-            "(--no-trust-tools), so starting a consolidation will ask your permission."
+            f"Starting a consolidation will ask your permission once, because "
+            f"`{CONSOLIDATOR_AGENT_NAME}` is not in `toolsSettings.{crew_key}.trustedAgents`. Add "
+            "it there if you would rather it did not — that grants a subagent spawn, which is a "
+            "wider thing than the memory tools and so is left to you."
         )
 
     if not changed:
@@ -944,11 +935,13 @@ def _selecting(document: dict[str, object], key: str) -> list[object]:
     than
     not asking at all.
 
-    What is being trusted is narrow: five tools that read and write rows in a SQLite file under the
-    project, with no network and no effect outside it, every write reversible by `retire` and
-    reviewed
-    by consolidation. `--no-trust-tools` leaves it out for anyone who wants the prompts, and the
-    install reports which it did either way.
+    What is being trusted is narrow, and worth stating precisely rather than generously: five tools
+    that read and write rows in a SQLite file under the project, with no network and no effect
+    outside it. A mistaken write is **recoverable, not undoable** — `retire` withdraws a row from
+    ordinary retrieval and leaves it auditable, while an `amend` overwrites prose that nothing
+    restores. That is a weaker guarantee than "reversible", which is the word this used first and
+    which overstated it. `--no-trust-tools` leaves the entry out for anyone who wants the prompts,
+    and the install reports which it did either way.
     """
     existing = document.get(key)
     listed: list[object] = list(existing) if isinstance(existing, list) else []

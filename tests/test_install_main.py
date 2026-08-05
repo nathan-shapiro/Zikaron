@@ -166,8 +166,10 @@ class TestASuccessfulInstall:
         assert main(["--project", str(project), "--agent", str(agent)]) == 0
         crew = json.loads(agent.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == ["helper-a", "zikaron-consolidator"]
-        assert crew["trustedAgents"] == ["zikaron-consolidator"]
-        assert "availableAgents" in capsys.readouterr().out
+        assert "trustedAgents" not in crew, "spawn trust is a separate grant, left to the user"
+        printed = capsys.readouterr().out
+        assert "availableAgents" in printed
+        assert "ask your permission once" in printed
 
     def test_no_trust_tools_leaves_the_allowlist_alone_and_says_so(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -371,6 +373,39 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
                 id="nested hooks",
             ),
             pytest.param({"name": "m", "tools": "read"}, "not an array", id="tools"),
+            pytest.param(
+                {"name": "m", "allowedTools": "read"},
+                "`allowedTools` value that is not an array",
+                id="allowedTools",
+            ),
+            pytest.param(
+                {"name": "m", "toolsSettings": "nope"},
+                "`toolsSettings` value that is not an object",
+                id="toolsSettings",
+            ),
+            pytest.param(
+                {"name": "m", "toolsSettings": {"crew": []}},
+                "`toolsSettings.crew` value that is not an object",
+                id="crew",
+            ),
+            pytest.param(
+                {"name": "m", "toolsSettings": {"crew": {"availableAgents": "a"}}},
+                "availableAgents",
+                id="availableAgents",
+            ),
+            pytest.param(
+                {
+                    "name": "m",
+                    "toolsSettings": {"crew": {"a": 1}, "agent_crew": {"b": 2}},
+                },
+                "both `toolsSettings.crew` and",
+                id="both crew spellings",
+            ),
+            pytest.param(
+                {"name": "m", "resources": "file://x"},
+                "`resources` value that is not an array",
+                id="resources",
+            ),
             pytest.param(
                 {
                     "name": "m",
