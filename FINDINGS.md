@@ -71,6 +71,46 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 
 ## Current state — resume here
+
+### Phase: dogfooding. No milestone is outstanding.
+Every milestone M0–M12 is built and reviewed; the build is finished. Since then the work has been
+**using** the system on two real stores and fixing what use exposed. Two review trails cover it and
+should not be re-run: `reviews/m12-distribution-review.md` (seven rounds, APPROVED) for the milestone,
+and `reviews/m12-dogfooding-delta-review.md` (two rounds, APPROVED) for everything changed afterwards.
+Read the dogfooding notes below before proposing anything — most of what a fresh session would think to
+try has already been measured.
+
+**Where the stores are.** `<project>/.zikaron/`, one per directory, no global tier. This repository has
+a small store from a seeding experiment. `~/Memory` is the **primary real-work store** — 31 long-term
+records and 26 journal entries at last count, one consolidation run completed (all 31 promoted in place,
+zero merges), and it is the corpus the next consolidation should run against. `~/Memory` is otherwise
+**read-only for this agent**; writing there needs the operator's explicit say-so, which has been given
+once, per-task.
+Two snapshots exist for comparison, **in `/tmp`, so they will not survive a reboot**:
+`memory-backup-before-consolidation.db` (31 journal, pre-run-1) and `memory-run1-post-consolidation.db`
+(15 records, the merge-heavy run). Move them somewhere durable if the A/B still matters.
+
+**What to do next, in priority order.**
+1. **The next consolidation, on a journal grown by real work.** That is when open question 12's *positive*
+   merge criterion gets designed and tested. The prompt currently has reasons to split and none to merge,
+   deliberately, on operator decision — do not revert it on the strength of the 11-merges-to-0 result.
+2. **Read the recall instrument.** `search` calls per session; its pre-change value is **0** across 17
+   hours of real work, which is what the recall paragraph was added to move. One working session answers
+   whether prose was enough or whether the mechanism half of open question 1 is the real work.
+3. **A byte bound on `gist`** in `schema.md` §Bounds — the one deliberately deferred write-path change
+   (open question 11). Tokens do not bound bytes, so no output cap is provable today.
+4. **The installer has no notion of *same install, older version*.** It asks only whether a shipped file
+   names a *different* interpreter, so upgrading Zikaron and re-running the installer silently keeps a
+   stale consolidator prompt unless `--force` is passed. The fix is to compare shipped content.
+5. **A known intermittent**, diagnosed and left: `test_idle_self_stop_unlinks_the_socket_before_the_process_exits`
+   fails under load because the signal handlers are installed after the socket is bound. Low impact, wants
+   a test that pins the race deterministically.
+
+**Two instrument properties worth knowing before quoting a number.** The dedup signal reports nothing for
+30 days unless `signal_horizon_days` is lowered (only the fully-resolved outcome closes early), and
+amend-after-surface currently reads `rate=1.00` meaning *3 of 3 resolved pairs* with 51 still pending.
+
+### Build history
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
 + the three singletons), M2 (store + configuration), M3 (records, versioning, receipts), M4 (indexing), M5
 (retrieval), M6 (write path + D15 dedup), M7 (consolidation) and M8 (D30's six signals as SQL)
