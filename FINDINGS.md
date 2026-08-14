@@ -899,28 +899,55 @@ becomes a wrong number instead of a prose ambiguity. And **do not tune RRF durin
 largest known quality lever, it needs no reindex, and it is deliberately post-build.
 
 ## Open questions
-1. **Pull is not merely awkward to reach mid-inference — it is not used at all, which is measured.**
-   The gap has two halves and the behavioural one is worse. `zikaron_search` is callable at any point
-   in the agent's loop, twenty tool calls deep, at no cost but one call. Across **17 hours of real work
-   in `~/Memory` and 121 pushes, it was called zero times.** Every one of the 10 searches in that store
-   happened in the first two hours, while the store was being seeded and consolidated deliberately;
-   `fetch` shows the same shape — 14 during consolidation verification, then 6 in the whole working
-   session, all of them following a pushed gist. So the *pushed-gist → fetch* path works and gets used,
-   and the agent never once formulates a question of its own. The explanation is that nothing told it
-   to: the injected text is a **write** policy, covering what to record, gist shape, secrets and repair,
-   with not a word about when to go looking. This is the exact mirror of the prior-art finding the whole
-   design rests on — `~/Memory`'s first run found `REMEMBER` under-triggered and needed a nudge — now
-   measured on the read side. **Fixed 2026-08-05 by the cheap half first**, since a new injection point
-   is worthless if the agent would not use the one it has: the policy gained a "look things up before
-   you spend time" paragraph naming the moments (an unexpected failure, behaviour that differs from
-   how the code reads, and — at the operator's request, and probably the strongest case — planning,
-   brainstorming or weighing options, because "we tried that already and here is how it failed" is a
-   *planning* input), and `zikaron_search`'s own tool description now carries the same trigger at the
-   point of decision. Both also say that a memory is evidence about what happened then rather than a
-   ruling about what must happen now, which is the read-side counterpart of the expiring-claim rule —
-   without it, planning-time recall can foreclose an approach that has since become viable, which is
-   precisely how the `rrf_k` gist misled a session. **The instrument is the `search` count per session,
-   and its pre-change value is 0.** Unchanged below: the mechanism half.
+1. **Pull is now used, and the instrument cannot say by whom or why — so the question it exists to
+   answer is still open.** Recall went from **10 searches to 188** after the 2026-08-05 policy
+   change (fetch 17 → 90), measured on `~/Memory` across 898 turns and 4,490 pushed gists: 64, 77
+   and 46 in the three real working sessions, spread from turn 29 to turn 443 rather than clustered
+   at the start, and productive — **0 of 188 came back empty**, 165 hit the 5-result limit, 32% were
+   followed closely by a `fetch` and 32% by a write. On its face the prose fix worked.
+   **Two operator corrections removed almost all of that as evidence, and the first reading of it
+   here was wrong.** Many of those searches were **explicitly nudged by the operator**, and the
+   `search` event records no occasion, so a prompted search and a self-initiated one are the same
+   row. And a large share came from **`memory-reviewer`, which runs a different model family
+   (gpt-5.6) and searches eagerly**, while the Claude primary agent needs nudging — but every agent
+   instance in a session shares one `KIRO_SESSION_ID` (measured in the MCP lifecycle probe), all
+   five sessions contain both searches and pushes with no pure-subagent session among them, and
+   `client_kind` separates only `mcp` from `hook`. So the log **cannot attribute a search to an
+   actor or to an occasion**, and 188 does not measure autonomous recall by the primary agent. An
+   earlier revision of this entry claimed the store refuted the agent's self-report; that claim is
+   **withdrawn**, and it is this corpus's own "name the quantity before quoting a number about it"
+   committed against a live store rather than in a design document.
+   **Attribution without new instrumentation, by operator direction: read the time clustering.** The
+   researcher works for a stretch and then goes through review rounds, so the reviewer's searches
+   arrive in dense intervals. That fits the one shape the data does show whoever searched: recall is
+   **bursty** — only **6–11% of turns contain any search**, in bursts of up to 9. If the bursts are
+   the review rounds, the primary agent's unprompted rate is *lower* than 6–11%, not higher.
+   Recording the caller's pid and an `occasion` argument were both considered and **deliberately
+   deferred**: pid is the only discriminator the lifecycle probe found between agent instances, and
+   `(session_id, pid)` already exists for consolidation ownership, so the fix stays cheap for
+   whenever clustering stops being enough.
+   **What changed 2026-08-14, from the using agent's own account of why it does not reach out
+   unprompted.** Three things, all prose, none in the schema. (a) **The trigger was a category
+   requiring a self-assessment** — "search whenever you are about to spend real effort" — and the
+   agent's report is that this judgement fails mid-task because *effort feels like progress*. It is
+   now four detectable occasions: something surprised you; you are about to propose a design,
+   mechanism or plan; you are about to say an approach will not work; you are about to rename, move
+   or delete something other work depends on. The third is new and is what the store is most
+   directly for. (b) **The injection creates a sufficiency illusion**: five on-point gists make
+   memory feel already consulted, while they matched *the user's words* and go stale the moment the
+   problem is reframed, with nothing arriving to say so. That is now stated in the **injected block
+   itself** (+187 bytes on every push against a 65536-byte cap) rather than only in the policy,
+   because the block fires once per message and the policy once per session. (c) **A gate**, which
+   the agent ranked first by a distance and which is the only lever carrying its own check: a
+   design, a plan, or a claim that an approach is a dead end must state what was searched for and
+   what came back, including "found nothing relevant" so silence is not compliance. I argued against
+   putting the gate in Zikaron's own policy on scope grounds — a memory system dictating the shape
+   of every proposal — and the **operator overruled it, to be wound down if it overfires**; it is
+   one sentence, so that is a one-line revert.
+   **How we will know if the gate overfires:** searches per turn rising while the fetch-follow rate
+   falls below the current 32%, and the burst structure flattening toward one search per proposal.
+   The agent predicted that shape itself, about numeric floors: "I would satisfy it hollowly."
+   Unchanged below: the mechanism half.
 1. **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires **once per
    user message** with `{hook_event_name, cwd, session_id, prompt}`. Good: the query is clean human text.
    Bad: one user message spawns dozens of agent turns, and the moment a memory is most needed ("this
@@ -1736,6 +1763,30 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   effect**, and prefer line-range edits over text anchors in any file a formatter may have touched since
   it was read. The corpus already knows that a text tool which cannot parse its target corrupts it; this
   is the quieter sibling — a tool that changes nothing while reporting success.
+
+- **An agent's account of its own tool use was wrong by roughly 60×, and I nearly built on it.** Asked
+  what would make it reach for memory unprompted, the `~/Memory` agent gave a careful, mechanistic
+  answer that opened "why I don't" — and the store held **188 searches** by that session's agents in
+  the period it was describing, spread from turn 29 to turn 443. This is the second instance of the
+  same failure in this project: the consolidator reported "20 groups" and "30 promoted" where the
+  store said 18 and 31. **A model's report about its own behaviour is a hypothesis; the log is the
+  measurement.** Two practices follow. Ask **when did you and when didn't you**, not **why don't
+  you** — the question I relayed supplied the premise, and a capable agent will build a coherent
+  causal story on a premise it was handed. And separate the *mechanisms* an agent names, which are
+  worth taking seriously because it has privileged access to them, from its *frequency claims* and
+  its *ranking of remedies*, which it does not.
+- **Then the correction went the other way, and my own number was measuring the wrong thing.** The
+  operator pointed out that many of those 188 searches were nudged by him, and that a large share of
+  the rest came from `memory-reviewer` on a different model family that searches eagerly. Neither is
+  recoverable from the store: the `search` event records no occasion, and every agent instance in a
+  session shares one `KIRO_SESSION_ID`, so a subagent's recall is indistinguishable from the primary
+  agent's. So I had quoted a real number from a real store for an axis it does not measure, which is
+  exactly the estimand failure this corpus records twice in its own design review — **third
+  instance, first one committed against production data.** The tell I missed: I never asked what
+  would make 188 *large* before treating it as large. The generalisable rule is the one already
+  written down and evidently not yet learned — name the quantity, then quote the number — with a
+  corollary about instruments specifically: **an instrument that cannot attribute an event to an
+  actor or an occasion cannot answer a question about autonomy, however many events it counts.**
 
 ## References
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`

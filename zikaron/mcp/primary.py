@@ -57,10 +57,15 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
 
     @mcp.tool
     async def zikaron_search(query: str, limit: int = 5, include_retired: bool = False) -> object:
-        """Search recorded project knowledge by relevance. **Call this whenever you are about to
-        spend real effort** — an unexpected failure, something behaving differently from how it
-        reads, or planning and weighing options — not only when memory is what the user asked
-        about; the gists injected before a message are only what matched that message. A hit is
+        """Search recorded project knowledge by relevance. **Call this on an occasion, not on a
+        feeling about how much effort is ahead**: something surprised you (a step failed in a way
+        you did not predict, or code behaves differently from how it reads); you are about to
+        propose a design, a mechanism or a plan; you are about to say an approach will not work;
+        or you are about to rename, move or delete something other work may depend on. When you
+        propose a design or a plan, or argue that an approach is a dead end, say what you searched
+        for and what came back, including "searched X, found nothing relevant". The gists injected
+        before a message were selected for *that message*, so once the problem is reframed that set
+        may no longer cover it and no new one arrives. A hit is
         historical evidence rather than a veto: it tells you what to re-check, so fetch the record
         and confirm the conditions still hold before ruling an option out. Returns a
         list of

@@ -48,14 +48,26 @@ here that the source code does not tell you. It persists across sessions, and ot
 read what you write.
 
 **Look things up before you spend time.** A few relevant gists are injected ahead of each message
-you receive, but they are only what matched *that message* — the store holds more, and nothing else
-arrives unasked. Search it whenever you are about to spend real effort: a step failed in a way you
-did not expect, something behaves differently from how it reads, or you are planning, brainstorming
-or weighing options. Planning is the case most often skipped and often the most valuable, because
-this is where "we tried that already, and here is how it failed" lives — one query costs a fraction
-of rediscovering it. What you find is evidence about what happened then, not a ruling about what
-must happen now. A recorded failure tells you what to re-check, not which option to drop: confirm
-its conditions still hold before letting it rule anything out.
+you receive, but they were selected for the *user's words*, not for the problem as you understand
+it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
+gists arrive, and nothing tells you the set has stopped covering the problem. The records
+themselves are not suspect — the choice of which five you were shown is. They are a starting
+point, never evidence that memory has already been consulted.
+
+Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
+— effort feels like progress, so that judgement arrives too late to act on:
+- **Something surprised you.** A step failed in a way you did not predict, or code behaves
+  differently from how it reads. This is the highest-yield moment there is.
+- **You are about to propose** a design, a mechanism, or a plan.
+- **You are about to say an approach will not work**, or is not worth trying. This is exactly what
+  the store holds: "we tried that already, and here is how it failed".
+- **You are about to rename, move or delete** something other work may depend on.
+
+When you propose a design or a plan, or argue that an approach is a dead end, say what you searched
+for and what came back — including "searched X, found nothing relevant". One query costs a fraction
+of rediscovering what it finds. What comes back is evidence about what happened then, not a ruling
+about what must happen now: a recorded failure tells you what to re-check, not which option to
+drop, so confirm its conditions still hold before letting it rule anything out.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out — a separate system covers code structure, symbols and layout. This store is for what cost

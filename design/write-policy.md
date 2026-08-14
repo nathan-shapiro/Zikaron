@@ -76,14 +76,26 @@ here that the source code does not tell you. It persists across sessions, and ot
 read what you write.
 
 **Look things up before you spend time.** A few relevant gists are injected ahead of each message
-you receive, but they are only what matched *that message* — the store holds more, and nothing else
-arrives unasked. Search it whenever you are about to spend real effort: a step failed in a way you
-did not expect, something behaves differently from how it reads, or you are planning, brainstorming
-or weighing options. Planning is the case most often skipped and often the most valuable, because
-this is where "we tried that already, and here is how it failed" lives — one query costs a fraction
-of rediscovering it. What you find is evidence about what happened then, not a ruling about what
-must happen now. A recorded failure tells you what to re-check, not which option to drop: confirm
-its conditions still hold before letting it rule anything out.
+you receive, but they were selected for the *user's words*, not for the problem as you understand
+it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
+gists arrive, and nothing tells you the set has stopped covering the problem. The records
+themselves are not suspect — the choice of which five you were shown is. They are a starting
+point, never evidence that memory has already been consulted.
+
+Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
+— effort feels like progress, so that judgement arrives too late to act on:
+- **Something surprised you.** A step failed in a way you did not predict, or code behaves
+  differently from how it reads. This is the highest-yield moment there is.
+- **You are about to propose** a design, a mechanism, or a plan.
+- **You are about to say an approach will not work**, or is not worth trying. This is exactly what
+  the store holds: "we tried that already, and here is how it failed".
+- **You are about to rename, move or delete** something other work may depend on.
+
+When you propose a design or a plan, or argue that an approach is a dead end, say what you searched
+for and what came back — including "searched X, found nothing relevant". One query costs a fraction
+of rediscovering what it finds. What comes back is evidence about what happened then, not a ruling
+about what must happen now: a recorded failure tells you what to re-check, not which option to
+drop, so confirm its conditions still hold before letting it rule anything out.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out — a separate system covers code structure, symbols and layout. This store is for what cost
@@ -274,6 +286,30 @@ logically by invariant 9.
 Any rate computed over a window straddling the cutoff is wrong, which is why `earliest_surviving_event` is
 worth recording: it is what a later signal query needs in order to state the window it is actually reporting
 on.
+
+### Why the recall rule names occasions rather than a category
+
+The first version told the agent to search "whenever you are about to spend real effort", and the
+agent that uses this store reported back why that fails: it requires noticing that effort is coming,
+and *effort feels like progress*, so the judgement arrives after the work it was meant to precede.
+The rule is now four things an agent can observe itself doing — a surprise, a proposal, a rejection,
+a destructive edit — because a trigger conditioned on an observable event does not depend on
+correctly appraising your own state. The rejection case is the one the store is most directly for:
+"we tried that already, and here is how it failed" is the memory a confident dead-end claim would
+otherwise waste.
+
+Two supports sit beside it, both from the same account. The **sufficiency illusion** is stated in the
+injected block and not only here: five on-point gists make memory feel already consulted, while they
+matched the *user's words* and go stale as soon as the problem is reframed, and nothing arrives to
+say so. The policy is read once per session; the block prints once per message, which is where the
+impression is actually formed, at a cost of 187 bytes against the harness's own output cap. And a
+**gate** — a design, plan or dead-end claim must state what was searched for and what came back,
+including that nothing relevant did — because it is the only lever with a checking mechanism, and
+the agent ranked it first on the evidence that everything it did reliably was gated. The scope
+objection to putting it here is real and was overruled deliberately: a memory system is shaping the
+form of the agent's proposals, which is broader than memory. It is one sentence so that winding it
+down is one deletion, and the signal that it is overfiring is searches rising while the share
+followed by a `fetch` falls.
 
 ## 3. How we find out which way it errs
 

@@ -14,6 +14,7 @@ import pytest
 from fastmcp import Client
 
 from tests.design_tables import literal, table_with_columns
+from zikaron.core.retrieval.block import PREAMBLE
 from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.install.assets import CONSOLIDATOR_PROMPT, SKILL_MARKDOWN, SKILL_NAME
@@ -176,12 +177,63 @@ class TestTheSharedRulesAreInBothTexts:
 
 class TestTheRulesEachTextCarriesAlone:
     def test_only_the_policy_tells_the_primary_agent_when_to_search(self) -> None:
-        """The consolidator has no search tool, so a recall instruction there would name a
-        capability
-        it does not have."""
+        """The consolidator has no search tool, so a recall rule there would name a capability it
+        does not have."""
         assert "Look things up before you spend time" in _flat(WRITE_POLICY_PROMPT)
-        assert "planning, brainstorming" in _flat(WRITE_POLICY_PROMPT)
         assert "Look things up" not in _flat(CONSOLIDATOR_PROMPT)
+
+    @pytest.mark.parametrize(
+        "occasion",
+        [
+            "Something surprised you",
+            "You are about to propose",
+            "You are about to say an approach will not work",
+            "You are about to rename, move or delete",
+        ],
+    )
+    def test_the_policy_names_recall_occasions_the_agent_can_detect(self, occasion: str) -> None:
+        """Each trigger has to be an event, not a self-assessment.
+
+        The rule this replaced said to search "whenever you are about to spend real effort", which
+        requires noticing that effort is coming — a judgement the agent using this store reported
+        making badly mid-task, because effort feels like progress. These four are things it can
+        observe itself doing.
+        """
+        assert occasion in _flat(WRITE_POLICY_PROMPT)
+
+    def test_the_policy_disarms_the_effort_judgement_rather_than_only_replacing_it(self) -> None:
+        """Naming events is not enough alone: the old category reads as permission to defer until
+        the effort feels big, so the reason it fails is stated beside the events."""
+        assert "effort feels like progress" in _flat(WRITE_POLICY_PROMPT)
+
+    def test_the_policy_requires_a_proposal_to_state_what_recall_returned(self) -> None:
+        """A claim that has to carry its own search cannot be satisfied by not searching, and
+        "found nothing relevant" is spelled out so silence is not a way to comply."""
+        flat = _flat(WRITE_POLICY_PROMPT)
+        assert "say what you searched for and what came back" in flat
+        assert "found nothing relevant" in flat
+
+    def test_both_the_policy_and_the_block_say_the_selection_stops_covering_the_task(self) -> None:
+        """The sufficiency illusion is created by the block, once per message, so the block is where
+        it has to be answered — the policy is read once per session and then competes with every
+        push after it. Asserted of both, since either alone leaves a gap.
+        """
+        assert "not for the problem as you understand" in _flat(WRITE_POLICY_PROMPT)
+        assert "Once you reframe the problem the selection no longer follows" in _flat(PREAMBLE)
+        assert "no new one arrives" in _flat(PREAMBLE)
+
+    def test_only_a_record_whose_claim_is_untrue_is_ever_called_stale(self) -> None:
+        """Two different unreliabilities, and one word was doing both jobs.
+
+        The policy's repair rule uses "stale" for a memory whose claim is no longer true, which the
+        agent is asked to amend. The first draft of the recall rule then called the *injected gists*
+        stale once the problem was reframed — but reframing does not make a record untrue, it makes
+        the selection incomplete, and telling an agent otherwise invites an amend on prose that was
+        correct. The word is reserved for the repair sense, and the recall text puts the
+        unreliability on the choice of which records were shown.
+        """
+        assert "stale" not in PREAMBLE
+        assert WRITE_POLICY_PROMPT.count("stale") == 1, "only the repair rule may use the word"
 
     def test_the_policy_says_a_memory_is_evidence_rather_than_a_ruling(self) -> None:
         """Without this, telling an agent to consult memory while planning makes a stale claim more
