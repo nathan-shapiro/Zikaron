@@ -1,0 +1,73 @@
+=== mcp server start pid=2256657 ppid=2256639 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256639.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=6ae2167dcef7a7a0986c4b2d27d5aa8c
+  CLAUDE_CODE_SESSION_ID=ba129a77-1b28-49d4-b09b-3e225f7ea4dd
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe
+=== mcp server start pid=2256689 ppid=2256639 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256639.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=6ae2167dcef7a7a0986c4b2d27d5aa8c
+  CLAUDE_CODE_SESSION_ID=ba129a77-1b28-49d4-b09b-3e225f7ea4dd
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe
+--- tool call pid=2256689 sid='ba129a77-1b28-49d4-b09b-3e225f7ea4dd'
+=== mcp server start pid=2256895 ppid=2256878 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256878.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=339b888638d97be00fc86842cc011b69
+  CLAUDE_CODE_SESSION_ID=f2335937-87b2-45bc-887b-44b856b5c1eb
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe
+=== mcp server start pid=2256921 ppid=2256878 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256878.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=339b888638d97be00fc86842cc011b69
+  CLAUDE_CODE_SESSION_ID=f2335937-87b2-45bc-887b-44b856b5c1eb
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe
+=== mcp server start pid=2256985 ppid=2256968 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256968.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=4df37995237c99dd6ccf26beb925835c
+  CLAUDE_CODE_SESSION_ID=3076a376-44a8-46f1-9402-4f57d2719318
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe
+=== mcp server start pid=2257011 ppid=2256968 cwd=/tmp/zk-ccprobe
+  AI_AGENT=claude-code_2-1-233_harness
+  CLAUDECODE=1
+  CLAUDE_CODE_AGENT=memory-researcher
+  CLAUDE_CODE_ENTRYPOINT=sdk-cli
+  CLAUDE_CODE_EXECPATH=/home/nathan/.local/share/claude/versions/2.1.233
+  CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/2256968.sock
+  CLAUDE_CODE_MESSAGING_TOKEN=4df37995237c99dd6ccf26beb925835c
+  CLAUDE_CODE_SESSION_ID=3076a376-44a8-46f1-9402-4f57d2719318
+  CLAUDE_EFFORT=high
+  CLAUDE_PID=2255833
+  CLAUDE_PROJECT_DIR=/tmp/zk-ccprobe

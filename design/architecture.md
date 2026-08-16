@@ -151,6 +151,16 @@ envelope, resolves and returns no label, and nothing is adopted from it. Full ar
 §"`label_source` is derived, not stored".
 
 #### Both clients resolve the same label, and as of 2026-08-01 they do so by construction
+
+> **Harness delta (D34).** This holds verbatim on Claude Code with one more variable name in it:
+> `CLAUDE_CODE_SESSION_ID` is exported into every process it spawns — both hooks, subagent subprocesses and
+> **the MCP stdio server** — and equals the hook payload's `session_id` (measured,
+> `research/claude-code-harness-probe.md` §1). The ladder, `label_source`, the `zk-` reserved namespace and
+> the linked-session guarantees are unchanged; only the variable read differs, selected by the `CLAUDECODE`
+> marker. **`CLAUDE_PID` is not overridden for children and must never be read.** The one new residual —
+> a nested session of one harness inside the other inheriting a stale id, which link coverage **cannot**
+> detect — is in `design/harness.md`.
+
 This is not a stability problem, and treating it as one was a real defect. Each client holding *its own*
 stable label is not enough: **pushes are emitted by `zikaron-hook` and writes by `zikaron-mcp`**, so D30's
 "zero-write sessions" and "amend after surface" are joins across two processes. Under mismatched labels every
@@ -747,6 +757,13 @@ second job — a `register_session` call feeding the ladder's derived rung — a
 
 ## Subagent sessions — the push hook suppresses itself
 
+> **Harness delta (D34).** Everything in this section describes **kiro**. Under Claude Code
+> `UserPromptSubmit` does not fire for subagents at all, so this rule is **inert** rather than ported — the
+> door it guards is closed by the harness — and `SubagentStart`/`SubagentStop` carry `agent_type`, so the
+> over-breadth accepted below (suppressing *all* subagents because the payload carries no agent identity)
+> **does not apply there and must not be copied into it**. `design/harness.md` is normative.
+
+
 **Hooks fire for subagent sessions.** Measured 2026-08-01 (§"Both clients resolve the same label"): a `py-runner`
 subagent's `agentSpawn` and `userPromptSubmit` both fired, each carrying the subagent's *own* `session_id` in the
 payload while `KIRO_SESSION_ID` still held the top-level session's. That is a problem, and not a small one.
@@ -1183,6 +1200,16 @@ the right granularity:
   bounding deliveries at `max_group_serves` gives up on a group *within this run*, never on its rows.
 
 ### Consolidation lifecycle — one transactional state machine
+
+> **Harness delta (D34).** `pid` discriminates two consolidators in one session **only under kiro**, whose
+> MCP server runs one process per agent instance. Under Claude Code one shared server process serves the
+> whole session, so `(session_id, pid)` cannot tell them apart and `_PlanBridge`'s "at most once
+> successfully per client process" bound becomes **per session**; a restarted *serving* process would be a
+> spurious self-takeover of the session's own live run. Both are **accepted limits**, bounded — a spurious
+> self-takeover costs in-flight reasoning and a replan, never a journal row — and cross-session mutual
+> exclusion, the case this lease was built for, is untouched.
+> `design/harness.md` §"Consolidation ownership under a shared MCP process".
+
 `group_id` in the first draft was an opaque token with no owner, no lifetime and no persistence. Persisting
 runs and groups closed that (`schema.md`), but persistence alone left four questions unanswered — what
 happens to a member that changed between plan and serve, where the merge authorization set lives, whether an
@@ -1704,6 +1731,11 @@ allowlist is the only one carrying the four consolidation tools), the D10 skill 
 `agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text.
 
 ### Two hook formats, both inside the stable agent config
+
+> **Harness delta (D34).** Both formats are **kiro's**. Claude Code has one shape, in
+> `.claude/settings.local.json`, with **no `max_output_size` field** — its injection budget is a fixed
+> **10,000 characters** (not bytes) and overrun is loud rather than silent. `design/harness.md`.
+
 **Superseded, 2026-08-03.** `research/kiro-cli-hooks-and-introspect.md` reported that hook distribution
 would eventually need two *schemas*, because `--v3` mode moves hooks into standalone `.kiro/hooks/` files.
 The installed harness's own embedded documentation (kiro-cli **2.16.0**, doc commit `106ed7591`) says
@@ -1731,6 +1763,15 @@ array-format install inherits the 10240-byte default — a real difference in wh
 promise, which is why the installer reports it rather than leaving the two formats looking equivalent.
 
 ### The consolidator's model is a shipped config field, not a `meta` key
+
+> **Harness delta (D34).** The two rules below — no silent inheritance, no silent fallback — are satisfied on
+> Claude Code by the **harness itself**: an unknown model id is refused at spawn, loudly, before any turn runs
+> (measured, `research/claude-code-harness-probe.md` §7d), which is the opposite of kiro's silent
+> substitution and removes the need for an install-time `--list-models` check there. An **alias** satisfies
+> both rules as written — the field is present explicitly, and the harness serves exactly what was asked for
+> — so the shipped default may be one; a third rule, *the value must be stable over time*, is **not** stated
+> here and should not be inferred. Experiments pin. `design/harness.md`.
+
 D29 requires the consolidator's model to be a config value "to be measured", and until now the corpus never
 said *where*. It is **not** in `meta`: the store does not spawn the subagent — D10's skill does, and the
 harness reads the model from the agent config, so putting it in the store would create a value nothing reads.
@@ -1772,6 +1813,12 @@ Three rules go with it, and each closes a way the measurement could be lost:
   section calls for, not a finding.
 
 ### The install contract
+
+> **Harness delta (D34).** This contract is kiro's. Claude Code writes four artefacts — two JSON (`.claude/settings.local.json`, `.mcp.json`)
+> and two YAML-frontmatter Markdown files and needs no
+> model-id validation. The collision, backup and refuse-on-difference discipline below is harness-independent
+> and applies to both. `design/harness.md`.
+
 Installation is a **program**, not a documented procedure, and the reason is one rule above: "packaging
 validates the id against the installed harness and fails loudly if it is unknown" needs a mechanism, and the
 mechanism turned out to be a command whose output has to be parsed. `python -m zikaron.install` writes four

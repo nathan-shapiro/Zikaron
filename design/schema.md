@@ -639,6 +639,18 @@ So `consolidation_group_member.version_served` is NULL **iff** the member has ne
 is exactly one `group_served` event per (serve, delivered row) pair.
 
 ### Linked sessions — what makes a cross-client signal computable
+
+> **Harness delta (D34).** The "by construction under kiro" guarantee below holds identically under Claude
+> Code, reading `CLAUDE_CODE_SESSION_ID` instead — measured in both hook processes **and the MCP server**
+> (`research/claude-code-harness-probe.md` §1) — so the expectation stays ~1.0 and a shortfall keeps its
+> one-line diagnosis. **One case is invisible to this instrument and is not to be claimed otherwise:** a
+> non-Claude-Code process tree — a kiro session, for instance — launched inside a Claude Code session
+> inherits `CLAUDECODE` and a *stale* `CLAUDE_CODE_SESSION_ID`, while the reverse direction is measured
+> **safe** (probe §1). Both clients then read the same stale value, they **agree**, coverage reads ~1.0, and that session's events are
+> silently attributed to the outer session. Agreement-by-construction is exactly what hides it. The hook's
+> payload-versus-environment tripwire in `design/harness.md` is the only evidence available.
+
+
 Two of D30's six signals join events emitted by **different clients** under one session: a push comes from
 `zikaron-hook`, while `remember`/`amend` come from `zikaron-mcp`. That join only works if both clients
 resolved the *same* session label. As of 2026-08-01 they do, **by construction under kiro** — both read
