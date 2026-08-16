@@ -93,7 +93,10 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
 
 - **`.kiro/` stays in the repository and is not to be edited.** It is the reference for what the shipped
   product still installs, and the fallback if the migration goes badly. `.claude/` is the live crew.
-- **Zikaron itself is still a kiro-only product.** Its hook client reads kiro's `agentSpawn` /
-  `userPromptSubmit` payloads and its installer writes kiro config. Making it work under Claude Code is
-  separate, scoped work — see FINDINGS.md §"Current state". Do not assume the memory tools or the push
-  hook are live in this harness.
+- **The clients speak both harnesses; the installer speaks one.** As of M14 both thin clients read
+  trigger names, session variables, output channels and injection budgets through `zikaron/harness/` —
+  the one seam, stdlib-only, where a harness difference is allowed to live. Add a harness difference
+  *there*, as data, never as a branch downstream of it. The **installer** is still kiro-only and is
+  M15's subject. Practical consequence, unchanged: nothing has installed a Claude Code hook or
+  `.mcp.json`, so **do not assume the memory tools or the push hook are live in this harness** — but the
+  reason is the missing installer, not a client that cannot speak it.

@@ -295,11 +295,16 @@ never blocks your message, and it never reads the store directly.
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |
 
-**One known limit.** kiro truncates a hook's output past a byte cap and says nothing when it does.
-Gist length is bounded in *tokens*, and tokens do not bound bytes — a single unbroken 4000-character
-string counts as one token — so a pathologically long gist can push the injected block past that cap
-and lose the tail of it silently. Ordinary prose gists are nowhere near it. If you see a
-truncated-looking block, look for an over-long gist with `zikaron_search` and amend it.
+**One known limit, now narrow.** kiro truncates a hook's output past a byte cap and says nothing when
+it does. Gist length is bounded in *tokens*, and tokens bound neither characters nor bytes — a single
+unbroken 4000-character string counts as one token — so a pathologically long gist could once push the
+injected block past that cap and lose the tail of it silently. **New writes can no longer do this:** a
+gist over 1,024 characters is rejected outright, which keeps a five-row block comfortably inside every
+supported harness's budget. (Emoji and other characters outside the common range count as two each, so
+a gist made mostly of them is capped nearer 512 — the stricter count is deliberate, because the
+harness's own budget may count them that way too.) What remains is history — a record written before that bound existed can
+still be over-long. If you see a truncated-looking block, look for such a gist with `zikaron_search`
+and amend it; the amend will be rejected until the gist is shortened, which is the intended nudge.
 
 ### Secrets
 

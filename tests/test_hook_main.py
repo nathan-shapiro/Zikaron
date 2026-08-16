@@ -22,8 +22,9 @@ from typing import Final
 
 import pytest
 
+from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import main as main_module
-from zikaron.hook import push, spawn_warm
+from zikaron.hook import push, spawn_warm, subagent_policy
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.service import paths
 
@@ -319,6 +320,152 @@ class TestRunDispatchesOnHookEventName:
         a future kiro version ever omitted it."""
         monkeypatch.setattr(spawn_warm, "run", lambda **_kwargs: None)
         _run_with_payload({"hook_event_name": "agentSpawn"}, monkeypatch)  # must not raise
+
+
+def _run_capturing_stdout(payload: object, monkeypatch: pytest.MonkeyPatch) -> str:
+    """`_run()` against a payload, returning exactly what it wrote to stdout."""
+    written = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", written)
+    _run_with_payload(payload, monkeypatch)
+    return written.getvalue()
+
+
+class TestTriggerNamesNormalizeAcrossBothHarnesses:
+    """One implementation serves both harnesses, so each harness's own trigger names must reach the
+    same module. A ladder of string comparisons per harness is exactly what this replaces.
+    """
+
+    @pytest.mark.parametrize("trigger", [KIRO.spawn_trigger, CLAUDE_CODE.spawn_trigger])
+    def test_either_harnesss_spawn_trigger_calls_spawn_warm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: str
+    ) -> None:
+        called: list[object] = []
+        monkeypatch.setattr(spawn_warm, "run", lambda **kwargs: called.append(kwargs))
+        _run_with_payload({"hook_event_name": trigger, "cwd": str(tmp_path)}, monkeypatch)
+        assert len(called) == 1
+
+    @pytest.mark.parametrize("trigger", [KIRO.prompt_trigger, CLAUDE_CODE.prompt_trigger])
+    def test_either_harnesss_prompt_trigger_calls_push(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: str
+    ) -> None:
+        called: list[object] = []
+        monkeypatch.setattr(push, "run", lambda **kwargs: called.append(kwargs))
+        _run_with_payload(
+            {"hook_event_name": trigger, "cwd": str(tmp_path), "prompt": "what failed"},
+            monkeypatch,
+        )
+        assert len(called) == 1
+
+    def test_the_subagent_trigger_calls_only_the_policy_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Policy-only: no warm helper spawn, no push. A second warm spawn per subagent would be
+        pure cost, and no retrieval belongs in a subagent's context by this route.
+        """
+        policy_called: list[object] = []
+        spawn_called: list[object] = []
+        push_called: list[object] = []
+        monkeypatch.setattr(subagent_policy, "run", lambda **kwargs: policy_called.append(kwargs))
+        monkeypatch.setattr(spawn_warm, "run", lambda **kwargs: spawn_called.append(kwargs))
+        monkeypatch.setattr(push, "run", lambda **kwargs: push_called.append(kwargs))
+        _run_with_payload(
+            {
+                "hook_event_name": CLAUDE_CODE.subagent_start_trigger,
+                "cwd": str(tmp_path),
+                "agent_type": "some-agent",
+            },
+            monkeypatch,
+        )
+        assert len(policy_called) == 1
+        assert spawn_called == []
+        assert push_called == []
+
+    def test_subagent_stop_reaches_nothing_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A real trigger one harness sends and this hook has no work for. The hook having no write
+        path at all depends on it staying unrecognised rather than merely unhandled downstream.
+        """
+        called: list[object] = []
+        for module in (spawn_warm, push, subagent_policy):
+            monkeypatch.setattr(module, "run", lambda **kwargs: called.append(kwargs))
+        _run_with_payload(
+            {"hook_event_name": "SubagentStop", "cwd": str(tmp_path)},
+            monkeypatch,
+        )
+        assert called == []
+
+
+class TestOutputGoesOutOnTheEventsOwnChannel:
+    """Plain stdout from the subagent trigger reaches nobody — not the subagent, not the parent —
+    while the same text under `hookSpecificOutput.additionalContext` reaches the subagent verbatim.
+    So the channel is a property of the event, and writing stdout unconditionally silently delivers
+    nothing for one of the three.
+    """
+
+    @pytest.mark.parametrize(
+        "trigger", [KIRO.spawn_trigger, CLAUDE_CODE.spawn_trigger, KIRO.prompt_trigger]
+    )
+    def test_spawn_and_prompt_write_the_returned_text_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: str
+    ) -> None:
+        monkeypatch.setattr(spawn_warm, "run", lambda **_kwargs: "policy text")
+        monkeypatch.setattr(push, "run", lambda **_kwargs: "policy text")
+        written = _run_capturing_stdout(
+            {"hook_event_name": trigger, "cwd": str(tmp_path), "prompt": "p"}, monkeypatch
+        )
+        assert written == "policy text"
+
+    def test_the_subagent_trigger_wraps_its_text_in_the_structured_channel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(subagent_policy, "run", lambda **_kwargs: "policy text")
+        trigger = CLAUDE_CODE.subagent_start_trigger
+        written = _run_capturing_stdout(
+            {"hook_event_name": trigger, "cwd": str(tmp_path), "agent_type": "some-agent"},
+            monkeypatch,
+        )
+        assert json.loads(written) == {
+            "hookSpecificOutput": {
+                "hookEventName": trigger,
+                "additionalContext": "policy text",
+            }
+        }
+
+    def test_the_subagent_trigger_never_writes_bare_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression this whole class exists for: bare text here is delivered to nobody, and
+        it fails silently rather than erroring, so only an assertion on the shape catches it.
+        """
+        monkeypatch.setattr(subagent_policy, "run", lambda **_kwargs: "policy text")
+        written = _run_capturing_stdout(
+            {
+                "hook_event_name": CLAUDE_CODE.subagent_start_trigger,
+                "cwd": str(tmp_path),
+                "agent_type": "some-agent",
+            },
+            monkeypatch,
+        )
+        assert written != "policy text"
+        assert written.startswith("{")
+
+    def test_nothing_is_written_at_all_when_a_path_returns_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`None` means print nothing — not an empty structured envelope, which for the subagent
+        trigger would still deliver an empty context block rather than staying silent.
+        """
+        monkeypatch.setattr(subagent_policy, "run", lambda **_kwargs: None)
+        written = _run_capturing_stdout(
+            {
+                "hook_event_name": CLAUDE_CODE.subagent_start_trigger,
+                "cwd": str(tmp_path),
+                "agent_type": subagent_policy.CONSOLIDATOR_AGENT_TYPE,
+            },
+            monkeypatch,
+        )
+        assert written == ""
 
 
 class TestMainAsARealSubprocess:

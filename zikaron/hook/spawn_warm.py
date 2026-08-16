@@ -17,7 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from zikaron.hook import connect, envelope, failure, write_policy
+from zikaron.harness import detect
+from zikaron.hook import connect, envelope, tripwire, write_policy
 from zikaron.service import paths
 
 
@@ -38,31 +39,15 @@ def run(*, cwd: Path, payload_session_id: object) -> str | None:
     raises for a reason its own six documented conditions did not anticipate: this function still
     returns the shipped text.
     """
-    env_session_id = envelope.harness_session_id()
+    spec = detect.current_spec()
+    env_session_id = detect.session_label(spec)
     if envelope.is_subagent_session(
         env_session_id=env_session_id, payload_session_id=payload_session_id
     ):
+        tripwire.record_if_misdetected(spec=spec, cwd=cwd)
         return None
     _spawn_warm_helper_best_effort(cwd)
-    return _policy_text_best_effort(cwd)
-
-
-def _policy_text_best_effort(cwd: Path) -> str:
-    """The override when it reads cleanly, else the shipped constant — plus one `hook.log` line
-    naming why, whenever the answer was something other than "no override is there".
-
-    Guarded whole rather than per-step, for `_spawn_warm_helper_best_effort`'s reason: this hook's
-    one guarantee is that it prints a policy, and no failure inside here — including a failure while
-    logging another failure — may cost it that.
-    """
-    text = write_policy.WRITE_POLICY_PROMPT
-    with contextlib.suppress(Exception):
-        store_dir = paths.store_dir(cwd)
-        policy = write_policy.read_policy(store_dir)
-        text = policy.text
-        if policy.note is not None:
-            failure.record_failure(paths.hook_log_path(store_dir), policy.note)
-    return text
+    return write_policy.resolved_policy_text(cwd, spec=spec)
 
 
 def _spawn_warm_helper_best_effort(cwd: Path) -> None:

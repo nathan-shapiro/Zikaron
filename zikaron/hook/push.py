@@ -22,7 +22,8 @@ import time
 from pathlib import Path
 
 from zikaron.core.errors import ZikaronError
-from zikaron.hook import connect, envelope, failure, rpc
+from zikaron.harness import detect
+from zikaron.hook import connect, envelope, failure, rpc, tripwire
 from zikaron.service import paths
 
 #: `architecture.md`: "enforce an internal deadline of ~2 s, far under the `timeout_ms` the harness
@@ -57,12 +58,17 @@ def run(*, cwd: Path, payload_session_id: object, prompt: str, pid: int) -> str 
     `main.py`'s own outermost catch-all, which reports nothing on either channel.
     """
     started_at = time.monotonic()
-    env_session_id = envelope.harness_session_id()
+    spec = detect.current_spec()
+    env_session_id = detect.session_label(spec)
     if envelope.is_subagent_session(
         env_session_id=env_session_id, payload_session_id=payload_session_id
     ):
-        # architecture.md §"Subagent sessions": "print nothing, stop... No RPC, no log line. This
-        # is unrelated to the failure path below; it is not a failure at all."
+        # Print nothing, make no RPC. Under a harness that fires this hook for subagent sessions
+        # that is the whole story and not a failure at all. Under one where payload and
+        # environment session ids are invariantly equal it instead means the harness was
+        # misdetected — the single case `tripwire` records, and the only one that writes a line
+        # here.
+        tripwire.record_if_misdetected(spec=spec, cwd=cwd)
         return None
 
     # `hook_log_path` is resolved *before* the degraded boundary, deliberately: it is the one

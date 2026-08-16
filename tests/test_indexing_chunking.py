@@ -16,15 +16,17 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from tests.design_tables import document_lines
+from tests.design_tables import document_lines, table_with_columns
 from tests.fake_encoder import FakeEncoder
 from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.indexing.chunking import (
+    GIST_MAX_CHARACTERS,
     GIST_SEPARATOR,
     SEPARATOR_TOKENS,
     ChunkPlan,
     paragraphs,
     plan_chunks,
+    utf16_units,
 )
 
 DESIGN_DOCUMENT: Final = "indexing.md"
@@ -225,6 +227,117 @@ def test_a_gist_over_its_bound_is_rejected_naming_the_limit_and_the_actual_count
 def test_a_gist_exactly_at_its_bound_is_accepted() -> None:
     plan = _plan("content", gist=_words(64), gist_max_tokens=64)
     assert plan.gist_tokens == 64
+
+
+def test_a_gist_over_the_character_bound_is_rejected_naming_the_unit_in_the_field() -> None:
+    """The bound that exists because tokens constrain neither characters nor bytes. The field name
+    carries the unit because the error payload does not: two bounds on `gist` reporting only a
+    limit and an actual would be indistinguishable to the agent reading them.
+    """
+    with pytest.raises(ZikaronError) as raised:
+        _plan("content", gist="a" * (GIST_MAX_CHARACTERS + 1), gist_max_tokens=256)
+    assert raised.value.code is ErrorCode.BOUNDS
+    assert dict(raised.value.data) == {
+        "field": "gist.characters",
+        "limit": GIST_MAX_CHARACTERS,
+        "actual": GIST_MAX_CHARACTERS + 1,
+    }
+
+
+def test_the_character_bound_counts_utf16_units_so_astral_characters_cost_two() -> None:
+    """The bound and the injection budget must count in one unit, or the bound stops proving
+    anything about the budget.
+
+    Half the bound in astral characters is exactly at it; one more is over. A code-point count
+    would admit twice as many, and five such gists would then overrun the very budget this bound
+    exists to keep the injected block inside.
+    """
+    astral = "\U00010348"
+    assert len(astral) == 1, "one code point, two UTF-16 units"
+    exactly_at = astral * (GIST_MAX_CHARACTERS // 2)
+    assert _plan("content", gist=exactly_at, gist_max_tokens=256) is not None
+    with pytest.raises(ZikaronError) as raised:
+        _plan("content", gist=exactly_at + astral, gist_max_tokens=256)
+    assert dict(raised.value.data) == {
+        "field": "gist.characters",
+        "limit": GIST_MAX_CHARACTERS,
+        "actual": GIST_MAX_CHARACTERS + 2,
+    }
+
+
+def test_utf16_units_never_under_reports_and_tolerates_a_lone_surrogate() -> None:
+    """Total by construction: a lone surrogate is legal in a string decoded from JSON, and a
+    counter that raised on one would turn a bound check into an exception at the write path.
+    """
+    for text in ("", "ascii", "— dashes —", "漢字", "\U00010348", "\ud800"):
+        assert utf16_units(text) >= len(text)
+    assert utf16_units("\ud800") == 1
+    assert utf16_units("\U00010348") == 2
+
+
+def test_a_gist_exactly_at_the_character_bound_is_accepted() -> None:
+    """Inclusive, like every other bound here. One character over and exactly at is what separates
+    the two, since a fixture merely "long" passes either way.
+    """
+    assert _plan("content", gist="a" * GIST_MAX_CHARACTERS, gist_max_tokens=256) is not None
+
+
+def test_the_character_bound_catches_what_the_token_bound_structurally_cannot() -> None:
+    """The whole reason the character bound exists, stated as a test rather than as a comment.
+
+    A tokenizer maps an unbroken run outside its vocabulary to a single unknown token, so an
+    arbitrarily long gist can satisfy every token bound the write path states. Without a bound in a
+    unit that actually constrains size, no claim about the injected block fitting a harness budget
+    is provable at all.
+    """
+    pathological = "a" * 4000
+    encoder = FakeEncoder()
+    assert encoder.count_tokens(pathological) <= 256, (
+        "the premise: this passes the token bound comfortably"
+    )
+    with pytest.raises(ZikaronError) as raised:
+        _plan("content", gist=pathological, gist_max_tokens=256)
+    assert dict(raised.value.data)["field"] == "gist.characters"
+
+
+def test_characters_are_checked_before_tokens() -> None:
+    """A validation-precedence question, and the order is observable so it is behaviour. Characters
+    first because it is the cheaper check — no tokenizer — and the more actionable rejection, since
+    an agent can count the characters it just wrote and cannot count subword tokens.
+    """
+    over_both = "word " * 400
+    assert len(over_both) > GIST_MAX_CHARACTERS
+    with pytest.raises(ZikaronError) as raised:
+        _plan("content", gist=over_both, gist_max_tokens=64)
+    assert dict(raised.value.data)["field"] == "gist.characters"
+
+
+def test_the_character_bound_matches_the_number_the_design_states() -> None:
+    """Read from `schema.md` §Bounds itself rather than from a second transcription of it, so the
+    design being revised while this constant stays put is a failing test rather than a silent
+    disagreement about what the write path enforces.
+
+    **This imposes a constraint on the design document, and the failure message is the only place a
+    future editor will meet it:** the Value cell must contain exactly one number, so a unit whose
+    name contains a digit cannot be written there — spell it in the Why column instead. Failing
+    closed on an ambiguous cell is deliberate; picking one of two candidate numbers would let this
+    guard go on passing while checking the wrong one.
+    """
+    rows = table_with_columns("schema.md", "## Bounds", ("Bound", "Value", "Why"))
+    stated = [row["Value"] for row in rows if "gist.characters" in row["Bound"]]
+    assert len(stated) == 1, "schema.md must state the gist character bound exactly once"
+    numbers = re.findall(r"\d[\d,]*", stated[0])
+    assert len(numbers) == 1, f"expected exactly one number in {stated[0]!r}, found {numbers}"
+    assert int(numbers[0].replace(",", "")) == GIST_MAX_CHARACTERS
+
+
+def test_emptiness_is_still_checked_before_either_length_bound() -> None:
+    """A blank gist reports emptiness rather than a length, which is the more useful of the two
+    answers and was the existing order before a second length bound joined it.
+    """
+    with pytest.raises(ZikaronError) as raised:
+        _plan("content", gist="   ")
+    assert dict(raised.value.data) == {"field": "gist", "limit": 1, "actual": 0}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t\n"])

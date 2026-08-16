@@ -33,6 +33,59 @@ GIST_SEPARATOR: Final = "\n"
 #: that discovers a future model whose separator does tokenize.
 SEPARATOR_TOKENS: Final = 1
 
+#: The gist's hard character bound, and the only bound here that is a fixed constant rather than
+#: configuration.
+#:
+#: **It exists because tokens bound neither characters nor bytes.** The deployed WordPiece
+#: tokenizer maps anything outside its vocabulary to a single `[UNK]`, so an unbroken
+#: 4,000-character run counts as one token and 256 emoji count as 256 — a gist can satisfy every
+#: token bound the write path states and still be arbitrarily long. Without a second bound in a
+#: unit that actually constrains size, no claim about the injected block fitting a harness's
+#: injection budget is provable, and the failure it guards against is a block silently truncated
+#: mid-memory.
+#:
+#: **Fixed rather than configurable, deliberately**: an output cap cannot be proven against a limit
+#: an operator can raise, so making this a config key would defeat the only reason it exists.
+#:
+#: **Counted in UTF-16 code units, the same conservative unit the injection budgets use.** A
+#: character-denominated harness budget was pinned with text where a code point and a UTF-16 unit
+#: coincide, so which of the two such a harness counts is unmeasured; counting the larger keeps
+#: every claim below a bound rather than a guess. Counting code points here while the budget
+#: counted units would leave the two halves of one argument in different units, and the worst case
+#: — five gists of astral characters — would exceed the budget it is supposed to prove.
+#:
+#: **The number, and what it buys.** A five-row injected block's fixed framing measures 967 units,
+#: so five gists at this bound come to 6,087 — 61% of the smallest injection budget any supported
+#: harness states. UTF-8 needs at most three bytes per UTF-16 unit (a Basic-Multilingual-Plane
+#: character is one unit and at most three bytes; an astral character is two units and four bytes),
+#: so the same block is at most 18,261 bytes against the largest byte-denominated budget, 28% of
+#: it.
+#:
+#: **The trade it makes.** Measured across prose styles at 3.89 to 6.55 characters per token, this
+#: binds above roughly 156 tokens of plain English: comfortably clear of the default gist token
+#: bound of 64 (worst case 363 characters), and genuinely the binding constraint near the top of
+#: that key's range. Admitting prose at the highest configurable token bound would need ~1,584
+#: characters per gist, which puts the same block at 89% of budget — a rejection naming the count
+#: is the better failure than a block that fits by luck.
+GIST_MAX_CHARACTERS: Final = 1024
+
+
+def utf16_units(text: str) -> int:
+    """How many UTF-16 code units `text` occupies — the conservative character count.
+
+    One per Basic-Multilingual-Plane character and two per astral character, so it never
+    under-reports against a code-point count. `surrogatepass` keeps the function total: a lone
+    surrogate is legal in a Python string decoded from JSON and would otherwise raise here rather
+    than being counted as the one unit it occupies.
+
+    Deliberately duplicated by `zikaron.harness.spec.HarnessSpec.exceeds_injection_budget` rather
+    than shared: that module is the hook's stdlib-only seam and may not import from `core` at any
+    price. A test asserts the two agree, which is the arrangement this codebase already uses for
+    every other copy it cannot avoid.
+    """
+    return len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
 #: The separator paragraphs are rejoined with when several share one chunk. Blank-line-separated,
 #: because that is what the author wrote and what the boundary detection above reads back.
 _PARAGRAPH_JOIN: Final = "\n\n"
@@ -234,9 +287,12 @@ def plan_chunks(
         content yields at least one paragraph.
 
     Raises:
-        ZikaronError: `BOUNDS` if `gist` or `content` is empty or whitespace-only, or if `gist`
-            exceeds `gist_max_tokens` — naming the limit and the actual count, so the agent can
-            shorten its gist in the same turn. `INDEX_FAILED` at stage `budget` if the model's cap
+        ZikaronError: `BOUNDS` if `gist` or `content` is empty or whitespace-only, if `gist`
+            exceeds `GIST_MAX_CHARACTERS` (reported against field `gist.characters`), or if `gist`
+            exceeds `gist_max_tokens` — each naming the limit and the actual count, so the agent
+            can shorten its gist in the same turn. The character bound is checked first; a gist
+            over both reports characters, which is the unit the agent can act on directly.
+            `INDEX_FAILED` at stage `budget` if the model's cap
             leaves no room for content once the gist and separator are charged for, or at stage
             `assembly` if the plan the packing produced does not in fact satisfy its own budget or
             the model's cap, which is a defect in this module rather than something a caller can
@@ -248,6 +304,14 @@ def plan_chunks(
     content_length = _non_whitespace_length(content)
     if content_length == 0:
         raise _reject_bounds("content", 1, 0)
+
+    # Characters before tokens, for two reasons. It is the cheaper check — no tokenizer — and it is
+    # the more actionable rejection, since an agent can count the characters it just wrote and
+    # cannot count WordPiece tokens. The field name carries the unit because the error payload does
+    # not: two bounds on one field reporting only a limit and an actual would be indistinguishable.
+    gist_units = utf16_units(gist)
+    if gist_units > GIST_MAX_CHARACTERS:
+        raise _reject_bounds("gist.characters", GIST_MAX_CHARACTERS, gist_units)
 
     gist_tokens = encoder.count_tokens(gist)
     if gist_tokens > gist_max_tokens:

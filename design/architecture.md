@@ -1847,19 +1847,24 @@ things and refuses rather than guesses when it cannot.
   is **65536**, deliberately well above the 10240 default, and what that margin does and does not buy is
   worth stating precisely, because an earlier version of this paragraph claimed more than was true.
 
-  **What is measured.** The shipped `agentSpawn` output is the write policy at **2950 bytes**, which fits
-  both 65536 and the 10240 an array install inherits. A push block of five rows whose gists are ordinary
+  **What is measured.** The shipped `agentSpawn` output is the write policy at **5487 bytes** (5461
+  characters), which fits 65536, the 10240 an array install inherits, and Claude Code's 10,000-unit
+  budget. It read 2950 until the recall-trigger and search-gate paragraphs were added to the shipped
+  constant, which is the hazard of quoting a measured size for a text that is still being edited: the
+  suite asserts the *fits* rather than the figure, so the number went stale without failing anything. A push block of five rows whose gists are ordinary
   prose at the largest `gist_max_tokens` any configuration permits (256) is a few kilobytes, and fits.
 
-  **What is not bounded, and is an open write-path limit rather than a solved problem.**
-  `gist_max_tokens` bounds *tokens*, and tokens do not bound bytes: measured against the deployed
-  tokenizer, an unbroken 4000-character run counts as **one** token, because WordPiece has no vocabulary
-  entry for it and emits a single `[UNK]`. So a gist that passes every bound the write path states can be
-  arbitrarily long in bytes, and five of them overflow any `max_output_size` — after which the harness
-  truncates the block **in silence**. Closing this needs a byte bound on `gist` in the bounds ladder
-  (`schema.md` §Bounds), which is a write-path change and not this section's to make; it is recorded here,
-  asserted by `tests/test_install_limits.py`, and named in the user-facing troubleshooting notes so the
-  limit is not something only a test knows.
+  **What tokens do not bound, and the second bound that does.** `gist_max_tokens` bounds *tokens*, and
+  tokens bound neither characters nor bytes: measured against the deployed tokenizer, an unbroken
+  4000-character run counts as **one** token, because WordPiece has no vocabulary entry for it and emits a
+  single `[UNK]`. A gist satisfying every *token* bound could therefore be arbitrarily long, and five of
+  them would overflow any `max_output_size` — after which the harness truncates the block **in silence**.
+  The write path therefore also enforces `GIST_MAX_CHARACTERS`, in UTF-16 code units, ahead of the token
+  bound and reported against field `gist.characters` (`schema.md` §Bounds). That is what makes this
+  section's margin claim provable rather than merely observed: a five-row block is at most 6,087 units, and
+  UTF-8 needs at most 3 bytes per unit, so at most 18,261 bytes against the shipped 65,536. Asserted by
+  `tests/test_install_limits.py`, and named in the user-facing troubleshooting notes so the bound is not
+  something only a test knows.
 - **The consolidator config's tool surface is `@zikaron` and nothing else, with every tool pre-approved.**
   Not a convenience: a subagent has no user to answer a permission prompt, so a tool that is available but
   not allowed is a tool that hangs or fails at the moment the consolidator needs it. It carries no `read`,

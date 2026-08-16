@@ -54,10 +54,25 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-### Phase: dogfooding. No milestone is outstanding.
-Every milestone M0–M12 is built and reviewed; the build is finished. Since then the work has been
-**using** the system on two real stores and fixing what use exposed. Two review trails cover it and
-should not be re-run: `reviews/m12-distribution-review.md` (seven rounds, APPROVED) for the milestone,
+### Phase: porting to Claude Code. **M14 is complete; M15 is the next milestone.**
+Every milestone M0–M12 is built and reviewed; **M13** (the Claude Code design delta) landed
+2026-08-16, APPROVED after three review rounds
+(`reviews/claude-code-harness-design-review.md`); and **M14** (the harness seam, both clients, and
+the gist character bound) landed 2026-08-16, APPROVED after **four** rounds
+(`reviews/m14-harness-seam-review.md`). **M15–M16 are outstanding** — see item 0 below.
+**What M14's four rounds are evidence of, since the count is unusual:** the gate was green while
+something material was wrong three separate times — a test asserting two things agree that could
+pass vacuously, a universal claim proven only by its best-case fixture, and this always-loaded file
+saying both "closed" and "open" about one defect. `check.sh` can see none of those. The practice
+that caught the first two, and is worth keeping: **verify an agreement-test by breaking the code it
+guards** — every such test in M14 was confirmed to fail on a deliberate mutation before being
+trusted.
+`design/harness.md` is now **normative for every harness-coupled fact**; read it before touching the
+hook, the MCP client or the installer, and do not re-derive a harness fact from an older section of
+`architecture.md`.
+
+Between the build finishing and the port starting, the work was **using** the system on two real stores
+and fixing what use exposed. Two review trails cover that period and should not be re-run: `reviews/m12-distribution-review.md` (seven rounds, APPROVED) for the milestone,
 and `reviews/m12-dogfooding-delta-review.md` (two rounds, APPROVED) for everything changed afterwards.
 Read `FINDINGS-archive.md` §"Dogfooding notes" before proposing anything — most of what a fresh session
 would think to try has already been measured, and several plausible ideas are already refuted there.
@@ -75,22 +90,68 @@ Two snapshots exist for comparison, **in `/tmp`, so they will not survive a rebo
 **What to do next, in priority order.**
 0. **Make Zikaron work under Claude Code**, keeping kiro working — **one codebase, two harnesses**
    (operator decision 2026-08-16; harness differences are data, not forked code paths). Scoped as four
-   briefs in `design/build-plan.md`: **M13** the design delta, **M14** the harness seam and both clients,
-   **M15** the installer adapter, **M16** the dogfooding checkpoint. **No schema change is required** —
+   briefs in `design/build-plan.md`: ~~**M13** the design delta~~ **done**, ~~**M14** the harness seam and
+   both clients~~ **done**, **M15** the installer adapter ← **next**, **M16** the dogfooding checkpoint.
+   **M15 inherits three things from M14**, all named in this file: the two unmeasured harness facts in
+   (b) and (c) below, and the fact that `zikaron/harness/` now exists as the one place a harness
+   difference is allowed to live — the installer's adapter is the *only* remaining place a difference may
+   take a different shape rather than a different value. **No schema change is required** —
    an interim plan added a migration milestone to record the consolidator's model, and a measurement
    deleted it (see §Harness). Measured evidence:
-   `research/claude-code-harness-probe.md`. This gates items 1 and 2, which both need the memory tools and
+   `research/claude-code-harness-probe.md` (eleven facts, three probe rounds; raw logs in
+   `spikes/claude-code-harness/`, force-added past `.gitignore`'s `*.log` because a grep that cannot see
+   the evidence re-litigates it). This gates items 1 and 2, which both need the memory tools and
    the push hook live in whichever harness the work happens in.
+   **Two things to carry into M15 that a fresh session would otherwise re-derive:**
+   (a) ~~**The seam must stay stdlib-only and trivial**~~ — **now guarded, in M14.**
+   `tests/test_hook_stdlib_only.py` discovers `zikaron/harness/*.py` as well as `zikaron/hook/*.py`
+   from disk, so a new module in either package is enforced by default rather than when someone
+   remembers to list it. The seam takes `enum` and `typing` only, and both were measured before being
+   taken: against a 24 ms bare interpreter and the hook's existing 30 ms floor, `enum` costs **nothing
+   measurable** (`socket` already imports it) and `typing` ~2 ms. That is what made real `Enum` closed
+   sets affordable where a frozen dataclass would not have been (`dataclasses` pulls in `inspect`).
+   (b) **Claude Code's hook timeout is `documented, unmeasured`, and it is the one unknown that can
+   surprise the installer.** `push.py` sizes its ~2 s internal deadline to fire *before* the harness
+   kills the hook — under kiro that is `timeout_ms`, 10000, stated explicitly in every shipped entry.
+   The Claude Code field, its unit and its default are **not probed**, so the fires-before-the-kill
+   property is unverified there. Measure it before M15 writes a `settings.local.json` entry that relies
+   on it.
+   (c) **A second unmeasured harness fact, found in M14's review and now the other thing M16 should
+   probe.** The 10,000 injection budget was pinned to *characters not bytes* with 9,016 `漢` — but `漢`
+   is a BMP character, one code point **and** one UTF-16 code unit, so the probe cannot distinguish
+   those two, and Claude Code is a Node application whose native string length is UTF-16 units. Every
+   astral character (emoji included, and real gists contain them) would then count two where `len()`
+   counts one. The code takes the conservative reading — `exceeds_injection_budget` measures UTF-16
+   code units, an upper bound on both — so nothing is unsound; what is missing is the measurement.
+   **The decisive experiment is one bisection run with an astral character, which separates all three
+   candidate units at once.** Recorded because a careful reading got the *bytes* half right and this
+   half wrong by not noticing the fixture could not discriminate.
 1. **The next consolidation, on a journal grown by real work.** That is when open question 12's *positive*
    merge criterion gets designed and tested. The prompt currently has reasons to split and none to merge,
    deliberately, on operator decision — do not revert it on the strength of the 11-merges-to-0 result.
 2. **Read the recall instrument.** `search` calls per session; its pre-change value is **0** across 17
    hours of real work, which is what the recall paragraph was added to move. One working session answers
    whether prose was enough or whether the mechanism half of open question 1 is the real work.
-3. **A byte bound on `gist`** in `schema.md` §Bounds — the one deliberately deferred write-path change
-   (open question 11). Tokens do not bound bytes, so no output cap is provable today. **No longer
-   deferrable, and now folded into M14:** Claude Code's injection budget is a fixed 10,000 characters
-   against kiro's 65,536, so the margin this defect eats narrowed 6.5×.
+3. ~~**A byte bound on `gist`**~~ **— done in M14, and it is a *character* bound rather than a byte one.**
+   `GIST_MAX_CHARACTERS = 1024`, a fixed constant in `core/indexing/chunking.py`, enforced in the
+   preflight ahead of the token bound and reported against field `gist.characters` (the error payload
+   carries no unit, so the field name must). **Counted in UTF-16 code units, not code points** — the same
+   conservative unit the injection budget uses, because the two halves of one argument must measure the
+   same thing; the review caught the first version counting code points here while the budget counted
+   units, which made the worst case (five all-astral gists, 11,207 units) exceed the budget the bound
+   exists to prove. Units bound bytes because UTF-8 needs at most **3 bytes per UTF-16 unit** — and the
+   widest per unit is therefore a 3-byte BMP character, *not* a 4-byte astral one, which is asserted
+   rather than assumed. This closes open question 11 for **both** harnesses at once. Two things measured
+   while choosing the number, neither previously in the corpus: the injected block's fixed framing for
+   five demoted rows is **967 units**, and prose runs **3.89–6.55 characters per token** by style. So the
+   ceiling is 1,806/gist, and 1024 puts a five-row block at 6,087 units (61% of 10,000) and 18,261 bytes
+   at the 3×/unit worst case (28% of 65,536) — both now asserted rather than hoped.
+   **The trade, recorded because it is observable and was not foreseen:** at 1024 the bound cannot be
+   reached at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding
+   constraint near the top of that key's 8–256 range — admitting prose at 256 tokens needs ≥1,584
+   characters per gist, which puts the same block at 89% of budget. A loud rejection naming the character
+   count was judged the better failure than a block that fits by luck. If raising `gist_max_tokens` ever
+   becomes real practice, this is the number to revisit.
 4. **The installer has no notion of *same install, older version*.** It asks only whether a shipped file
    names a *different* interpreter, so upgrading Zikaron and re-running the installer silently keeps a
    stale consolidator prompt unless `--force` is passed. The fix is to compare shipped content. **Folded
@@ -373,7 +434,13 @@ lives.
    bge-small` on that index is **+0.029, CI [−0.016, +0.062]** against a preregistered 0.15 bar, so no
    demonstrated remedy. But fastembed serves a *quantized* small against an *unquantized* large, so this
    compares deployed artifacts, **not** capacity. Matched fp32 exports of one family would settle it.
-11. **Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**
+11. ~~**Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**~~
+   **CLOSED in M14** — by a **character** bound rather than the byte bound this entry proposed, counted in
+   UTF-16 code units, which bounds bytes for both harnesses at once. Detail and the arithmetic: current-state
+   item 3. The original text stands below, per this project's withdraw-in-place rule; the diagnosis was right
+   and only the unit was wrong.
+   Original text:
+   **Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**
    Found at distribution time, measured rather than reasoned: `gist_max_tokens` (default 64, maximum 256)
    bounds **tokens**, and the deployed WordPiece tokenizer maps anything outside its vocabulary to a single
    `[UNK]` — so an unbroken 4000-character run counts as **one token**, as do 256 emoji. A gist that passes

@@ -156,7 +156,9 @@ async def prepare(rewrite: Rewrite, *, index: IndexingContext) -> PreparedIndex:
     """Run the chunking preflight and embed every chunk, before any transaction opens.
 
     Raises:
-        ZikaronError: `BOUNDS` if the gist or content is empty or the gist is over
+        ZikaronError: `BOUNDS` if the gist or content is empty, if the gist is over
+            `GIST_MAX_CHARACTERS` (reported against field `gist.characters`, checked first because
+            it is the unit a caller can act on directly), or if the gist is over
             `gist_max_tokens`; `INDEX_FAILED` if the token arithmetic leaves no room for content,
             an assembled sequence overran the model's cap, or the embedder failed or returned the
             wrong shape.
@@ -416,9 +418,10 @@ async def remember(
     inside it.
 
     Raises:
-        ZikaronError: `BOUNDS` if the gist or content is empty or the gist exceeds
-            `gist_max_tokens` — refused before anything is written, and refusable precisely because
-            the agent still holds its own text and can shorten a gist in the same turn.
+        ZikaronError: `BOUNDS` exactly as `prepare` states it — empty prose, or a gist over
+            `GIST_MAX_CHARACTERS` or `gist_max_tokens` — refused before anything is written, and
+            refusable precisely because the agent still holds its own text and can shorten a gist
+            in the same turn.
             `INDEX_FAILED` if the budget arithmetic, the chunk-budget assertion or the embedder
             failed, or if the store failed while the transaction was being written;
             `STORE_BUSY` if the store was locked, which the caller may retry. Nothing is left

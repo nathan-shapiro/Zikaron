@@ -803,6 +803,31 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
 
 
 ## Dogfooding notes (evidence from our own sessions)
+- **An authored memory can name a capability the harness does not have, and nothing detects it.** This
+  agent's own definition instructs it to work from a task list via `TaskCreate`/`TaskUpdate`, hedging that
+  "the names differ between versions, so check what is actually exposed rather than assuming". Checked, four
+  ways, under Claude Code: no such tool exists by any name — `select:` lookups on `TodoWrite`, `TodoRead`,
+  `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` all miss, and a keyword search returns only background-task
+  and scheduling tools. The operator independently asserted the tools existed and were merely deferred; that
+  was also wrong. So **two parties held the same stale belief about a capability, and the only reason it
+  surfaced is that acting on it produced an immediate error** — an instruction that merely *degrades* would
+  have gone unnoticed indefinitely.
+  This is a distinct staleness class from open question 6, which is about memory going stale against *the
+  code*. Here memory went stale against *the harness's capabilities*, where D11's repair loop cannot fire
+  because there is no loud failure to attribute — the agent simply cannot comply, and silence looks like
+  compliance. It has a direct product analogue now in scope: under Claude Code the write policy is injected at
+  `SessionStart` whether or not `.mcp.json` was approved, so an unapproved server yields a policy instructing
+  the agent to call four tools it does not hold, with no signal anywhere. Same shape, our own product.
+- **The test suite was never hermetic against the harness running it, and only a harness that exports
+  variables could reveal that.** Four `test_hook_main.py` tests that spawn a real `zikaron.hook.main`
+  subprocess began failing during M14 for a reason unrelated to what they asserted: Claude Code exports
+  `CLAUDECODE` and `CLAUDE_CODE_SESSION_ID` into every process it spawns, including pytest and every
+  subprocess pytest spawns, so the hook detected the *enclosing* session's harness, read its session id, found
+  it differed from the test's own payload, and correctly suppressed itself. The tests had passed for twelve
+  milestones only because nothing had ever exported those variables. The fix is an autouse `conftest.py`
+  fixture stripping every harness marker and session variable, and the finding is the same environment
+  inheritance `design/harness.md` describes under the nesting limit — reproduced, unprompted, inside our own
+  suite. **A test suite that reads the environment is an inner session**, and the corpus had not said so.
 - **A self-delegated subagent does not inherit the `subagent` tool.** The crew system strips it, so a
   spawned `memory-researcher` cannot delegate further. A brief instructing one to obtain an independent
   review was therefore unsatisfiable; it degraded to self-critique and disclosed that clearly. Verify a
@@ -1704,3 +1729,15 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   would close is already open upstream, since kiro reads agent configs out of that same tree), and having
   the `agentSpawn` hook tighten store modes synchronously (a filesystem mutation on the one path whose
   contract is that it cannot fail) — `reviews/m12-distribution-review.md`.
+- **M14, the harness seam.** Round 1 found the milestone's own central property unpinned: nothing asserted
+  that the *hook* sends the seam-resolved session label, because the fake service parsed each request and
+  discarded the `client` envelope unread — so passing the payload's id instead of the environment's, one
+  argument, passed the whole suite. The cross-client claim had been demonstrated for the MCP client only.
+  Confirmed by breaking `push.py` deliberately: two tests fail, and pass again on restore. The other
+  finding worth carrying: the injected-budget unit was pinned to *characters not bytes* by a fixture that
+  could not distinguish code points from UTF-16 code units, so a correct-looking measurement left the real
+  question open — the code now counts the larger of the two and the experiment is named for M16. Also
+  caught: a module docstring justifying payload dispatch with a harness fact that is false (both harnesses
+  do accept a per-trigger flag), and an exported-but-empty session variable silently suppressing every
+  push because the seam forwarded `""` while the service treats it as no label —
+  `reviews/m14-harness-seam-review.md`.

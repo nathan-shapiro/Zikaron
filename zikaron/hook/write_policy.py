@@ -18,14 +18,16 @@ constant — the same drift-guard shape `tests/design_tables.py` already uses fo
 tables, applied here to a piece of text rather than a table.
 """
 
+import contextlib
 import errno
 import os
 import stat
 from pathlib import Path
 from typing import NamedTuple
 
-from zikaron.hook.limits import MAX_OUTPUT_SIZE
-from zikaron.service.paths import write_policy_override_path
+from zikaron.harness.spec import HarnessSpec
+from zikaron.hook import failure
+from zikaron.service.paths import hook_log_path, store_dir, write_policy_override_path
 
 #: The override's own file name, derived from the one place its path is constructed so the two
 #: cannot
@@ -233,7 +235,7 @@ class Policy(NamedTuple):
     note: str | None
 
 
-def read_policy(store_directory: Path) -> Policy:
+def read_policy(store_directory: Path, *, spec: HarnessSpec) -> Policy:
     """The policy text to print: the override at `<store>/write-policy.md`, or the shipped constant.
 
     Six conditions, and only the first is silent, because only the first is normal:
@@ -257,10 +259,13 @@ def read_policy(store_directory: Path) -> Policy:
     - **blank** — the constant. An empty override is far likelier an accident than an instruction to
       inject no policy at all, and silently dropping the write policy entirely is the worse of the
       two readings to be wrong about.
-    - **larger than `MAX_OUTPUT_SIZE`** — used **anyway**, with a label. The harness truncates past
-      that bound silently, so an operator would otherwise be left with a policy the model received
-      half of and nothing anywhere saying so. Truncating it ourselves would be the same failure with
-      our name on it; refusing it would discard the operator's stated intent.
+    - **larger than this harness will inject** — used **anyway**, with a label. An operator would
+      otherwise be left with a policy the model received part of and nothing anywhere saying so.
+      Truncating it ourselves would be the same failure with our name on it; refusing it would
+      discard the operator's stated intent. **The bound is the running harness's, in the running
+      harness's unit**, which is why `spec` is a parameter rather than a module constant: the two
+      supported harnesses differ by more than sixfold *and* by unit, so a single hard-coded byte
+      figure would label almost nothing under the smaller of the two.
     """
     try:
         text = _read_override(store_directory)
@@ -270,13 +275,37 @@ def read_policy(store_directory: Path) -> Policy:
         return Policy(WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
     except (OSError, UnicodeDecodeError):
         return Policy(WRITE_POLICY_PROMPT, OVERRIDE_UNREADABLE)
-    return _classify(text)
+    return _classify(text, spec)
 
 
-def _classify(text: str) -> Policy:
+def _classify(text: str, spec: HarnessSpec) -> Policy:
     """An override that was read: blank, oversize, or good as it is."""
     if not text.strip():
         return Policy(WRITE_POLICY_PROMPT, OVERRIDE_EMPTY)
-    if len(text.encode("utf-8")) > MAX_OUTPUT_SIZE:
+    if spec.exceeds_injection_budget(text):
         return Policy(text, OVERRIDE_OVERSIZE)
     return Policy(text, None)
+
+
+def resolved_policy_text(cwd: Path, *, spec: HarnessSpec) -> str:
+    """The policy text to inject: the override when it reads cleanly, else the shipped constant —
+    plus one `hook.log` line naming why, whenever the answer was something other than "no override
+    is there".
+
+    The impure companion to `read_policy`, which stays a pure function of the directory it is
+    pointed at so it can be tested with no log path and no directory creation. Every caller that
+    actually injects a policy wants the same three steps in the same order, and every one of them
+    must survive a failure in any of them, so they are stated once here rather than repeated per
+    trigger.
+
+    Guarded whole rather than per-step: a caller's one guarantee is that it produces a policy, and
+    no failure inside here — including a failure while logging another failure — may cost it that.
+    """
+    text = WRITE_POLICY_PROMPT
+    with contextlib.suppress(Exception):
+        directory = store_dir(cwd)
+        policy = read_policy(directory, spec=spec)
+        text = policy.text
+        if policy.note is not None:
+            failure.record_failure(hook_log_path(directory), policy.note)
+    return text

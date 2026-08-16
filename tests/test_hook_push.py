@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from zikaron.hook import connect, push
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
+from zikaron.hook import connect, push, tripwire
+from zikaron.service import paths
 
 
 class _FakeSurfaceService:
@@ -28,6 +30,11 @@ class _FakeSurfaceService:
     ) -> None:
         self._store_db_path = store_db_path
         self._respond_with = respond_with
+        #: Every request this server parsed, in arrival order. Retained rather than discarded so a
+        #: test can assert what the *client* actually sent — the envelope in particular, which is
+        #: otherwise invisible to every assertion here and so could carry the wrong session label
+        #: through a whole green suite.
+        self.requests: list[dict[str, object]] = []
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(str(sock_path))
         self._server.listen(4)
@@ -65,6 +72,7 @@ class _FakeSurfaceService:
         return parsed
 
     def _answer(self, connection: socket.socket, request: dict[str, object]) -> None:
+        self.requests.append(request)
         method = request.get("method")
         response: dict[str, object]
         if method == "health":
@@ -133,6 +141,99 @@ def test_a_subagent_session_is_suppressed_with_no_rpc_at_all(
     # here is only possible if the RPC path was never reached.
     output = push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1)
     assert output is None
+
+
+def _surface_envelope(service: _FakeSurfaceService) -> dict[str, object]:
+    """The `client` envelope of the one `surface` request the hook actually sent."""
+    surfaces = [request for request in service.requests if request.get("method") == "surface"]
+    assert len(surfaces) == 1, f"expected exactly one surface request, got {len(surfaces)}"
+    params = surfaces[0]["params"]
+    assert isinstance(params, dict)
+    client = params["client"]
+    assert isinstance(client, dict)
+    return client
+
+
+@pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+def test_the_hook_sends_the_seam_resolved_label_under_each_harnesss_own_variable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
+    spec: HarnessSpec,
+) -> None:
+    """The other half of the milestone's cross-client property, and the half nothing pinned.
+
+    Every other test here asserts what came *back*; none asserted what went *out*, and the fake
+    service discarded the envelope unread. So passing the payload's session id — or any constant —
+    into the envelope instead of the environment-resolved one would have satisfied the entire
+    suite, because on every non-suppressed path the two values happen to be equal. Asserting the
+    wire value under each harness's own variable is what makes "both clients resolve an identical
+    label" a claim about this client rather than only about the MCP one.
+    """
+    if spec.marker_variable is not None:
+        monkeypatch.setenv(spec.marker_variable, "1")
+    monkeypatch.setenv(spec.session_variable, "shared-session-label")
+    service = fake_service({"result": {"text": ""}})
+    try:
+        assert (
+            push.run(
+                cwd=tmp_path,
+                payload_session_id="shared-session-label",
+                prompt="p",
+                pid=1,
+            )
+            == ""
+        )
+        assert _surface_envelope(service)["session_id"] == "shared-session-label"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+def test_the_hook_bootstraps_when_no_session_variable_is_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
+    spec: HarnessSpec,
+) -> None:
+    """`None` on the wire is the bootstrap form — send null, adopt what the service mints. The hook
+    must reach it under either harness rather than forwarding the payload's id as a substitute.
+    """
+    if spec.marker_variable is not None:
+        monkeypatch.setenv(spec.marker_variable, "1")
+    service = fake_service({"result": {"text": ""}})
+    try:
+        push.run(cwd=tmp_path, payload_session_id="a-payload-id", prompt="p", pid=1)
+        assert _surface_envelope(service)["session_id"] is None
+    finally:
+        service.close()
+
+
+def test_the_same_divergence_suppresses_under_both_harnesses_and_logs_under_only_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One payload/environment divergence, two harnesses, deliberately different readings.
+
+    Under the harness that fires this hook *for* subagent sessions the divergence is the routine
+    subagent case: suppress, and write nothing, because a line per subagent turn would drown a log
+    whose value is a closed vocabulary. Under the harness where the two ids are invariantly equal
+    the same divergence means the harness was misdetected — a genuine anomaly, and the one thing
+    that writes here.
+
+    Both suppress. No fake service is bound, so reaching the RPC path at all would raise rather
+    than pass quietly, which is what makes "output is None" evidence that no call was made.
+    """
+    log = paths.hook_log_path(paths.store_dir(tmp_path))
+
+    monkeypatch.setenv(KIRO.session_variable, "top-level")
+    assert push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
+    assert not log.exists(), "a routine subagent turn must leave the log untouched"
+
+    monkeypatch.delenv(KIRO.session_variable, raising=False)
+    monkeypatch.setenv(CLAUDE_CODE.marker_variable or "", "1")
+    monkeypatch.setenv(CLAUDE_CODE.session_variable, "top-level")
+    assert push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
+    assert log.read_text(encoding="utf-8").strip().endswith(tripwire.SESSION_ENV_MISMATCH)
 
 
 def test_a_missing_kiro_session_id_never_suppresses(

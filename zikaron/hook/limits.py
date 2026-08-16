@@ -1,34 +1,37 @@
-"""The two numbers a shipped hook entry states, declared once.
+"""The two numbers a shipped kiro hook entry states.
 
-`architecture.md` §"The install contract" is normative. Both are written into every installed hook
-entry rather than inherited from the harness's own defaults, and both live here rather than in
-`zikaron/install/` so there is exactly one declaration: the installer reads these constants when it
-writes an entry, and `write_policy.py` reads `MAX_OUTPUT_SIZE` at runtime to notice an override it
-knows the harness will truncate. A value transcribed into the installer *and* asserted in the hook
-would be two agreeing declarations of one contract, which is the drift shape this corpus has already
-paid for once (`reviews/m7-consolidation-review.md`, round 2).
+`architecture.md` §"The install contract" is normative. Both are written into every installed kiro
+hook entry rather than inherited from the harness's own defaults, and both live here rather than in
+`zikaron/install/` so there is exactly one place the installer reads them from.
 
-Its own module, not a constant inside `write_policy.py`, because the `userPromptSubmit` entry needs
-the same two numbers and has nothing to do with the write policy. Two ints and a docstring cost
-nothing measurable to import, which is the only reason a separate module is affordable on a path
-this cost-sensitive (§Components, and `envelope.py`'s own docstring for what "cost-sensitive" turned
-out to mean in practice).
+**Only kiro's entries state either number.** Claude Code offers no field to raise its injection
+budget and its hook timeout is a separate, unprobed question, so this module is deliberately not
+the general home for "what a harness will accept" — `zikaron.harness.spec` is, and the runtime
+budget check reads it there.
 """
 
 from typing import Final
 
-#: `timeout_ms` for both shipped entries. Equal to the harness's own documented default (kiro-cli
-#: 2.16.0), and stated anyway: the corpus recorded that default as 30 s for two milestones on the
-#: strength of the public docs, and a budget the hook's ~2 s internal deadline is sized against
-#: should not be a number a harness release can move underneath it. Five times the internal
-#: deadline, so our own failure path — which produces a `hook.log` line *and* a model-facing relay —
-#: always fires before the harness's kill, which produces neither.
+from zikaron.harness.spec import KIRO
+
+#: `timeout_ms` for both shipped entries. Equal to the harness's own documented default, and stated
+#: anyway: the corpus recorded that default as 30 s for two milestones on the strength of the public
+#: docs, and a budget the hook's ~2 s internal deadline is sized against should not be a number a
+#: harness release can move underneath it. Five times the internal deadline, so our own failure path
+#: — which produces a `hook.log` line *and* a model-facing relay — always fires before the harness's
+#: kill, which produces neither.
 TIMEOUT_MS: Final = 10_000
 
-#: `max_output_size` for both shipped entries, in bytes. The harness default is 10240 and the
-#: overrun behaviour is **truncation, not an error**, so the cost of being wrong is a silently
-#: half-delivered write policy or a cut-off injected block. Set well above both real worst cases —
-#: the shipped policy text is ~3 kB, and a five-row push block is a few kB at the largest
-#: `gist_max_tokens` the config permits — because the margin is what makes the failure
-#: unreachable rather than merely unlikely, and `tests/test_install_limits.py` asserts both fit.
-MAX_OUTPUT_SIZE: Final = 65_536
+#: `max_output_size` for a shipped kiro entry, in bytes. **Read from the harness table rather than
+#: declared here**, because the same number is what the runtime oversize check measures an
+#: operator's policy override against: two agreeing declarations of one harness's budget is the
+#: drift shape this corpus has already paid for, and the table is the side that a design-document
+#: test reads.
+#:
+#: Its margin is what makes overrun unreachable rather than merely unlikely, and both real worst
+#: cases are asserted in the suite rather than estimated: the shipped policy text is ~5.5 kB, and a
+#: five-row push block is bounded by the `gist` character bound at 6,087 UTF-16 code units — at most
+#: ~18 kB of UTF-8 at the 3-bytes-per-unit ceiling. Both figures are stated in the unit they are
+#: measured in, which this module of all places has to get right: a units count wearing a byte
+#: suffix is exactly the conflation the runtime budget check exists to prevent.
+MAX_OUTPUT_SIZE: Final = KIRO.injection_budget

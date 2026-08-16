@@ -1,19 +1,18 @@
-"""`zikaron.hook.envelope`: subagent suppression, the harness session id, and the `client` envelope.
+"""`zikaron.hook.envelope`: subagent suppression and the `client` envelope.
 
-`architecture.md` §"Subagent sessions" and §"The request envelope" are normative.
+`architecture.md` §"Subagent sessions" and §"The request envelope" are normative. Resolving the
+session label itself is the harness seam's job, not this module's — those tests live in
+`test_harness_detect.py`, with the variable names they read.
 """
 
 import dataclasses
 import os
-
-import pytest
 
 from zikaron.core.events import ClientKind
 from zikaron.hook.envelope import (
     CLIENT_KIND,
     HookEnvelope,
     build_envelope,
-    harness_session_id,
     is_subagent_session,
 )
 from zikaron.service.envelope import ClientEnvelope, parse_envelope
@@ -46,33 +45,6 @@ class TestIsSubagentSession:
 
     def test_env_present_and_payload_absent_is_a_subagent_session(self) -> None:
         assert is_subagent_session(env_session_id="top-level", payload_session_id=None)
-
-
-class TestHarnessSessionId:
-    def test_returns_the_environment_value_when_present(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("KIRO_SESSION_ID", "a-real-harness-id")
-        assert harness_session_id() == "a-real-harness-id"
-
-    def test_returns_none_when_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
-        assert harness_session_id() is None
-
-    def test_a_zk_prefixed_value_is_treated_as_absent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """`architecture.md`'s client contract: "a client that finds a `zk-`-prefixed value in
-        `KIRO_SESSION_ID` must treat it as absent" — mirrors `zikaron.mcp.connection`'s identical
-        rule so both clients honour the reserved namespace the same way."""
-        monkeypatch.setenv("KIRO_SESSION_ID", "zk-00000000-0000-0000-0000-000000000000")
-        assert harness_session_id() is None
-
-    def test_a_value_merely_containing_zk_but_not_prefixed_by_it_is_not_treated_as_absent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("KIRO_SESSION_ID", "not-zk-but-contains-it")
-        assert harness_session_id() == "not-zk-but-contains-it"
 
 
 class TestBuildEnvelope:

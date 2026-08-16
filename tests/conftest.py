@@ -1,4 +1,20 @@
-"""Suite-wide guard: a store left open must fail its test, never hang the run.
+"""Suite-wide guards: a store left open must fail its test, and the enclosing harness must not
+leak into it.
+
+The second guard is here because it was found the hard way, and by exactly the mechanism it now
+prevents. This suite is routinely run *inside* one of the harnesses Zikaron supports, and a harness
+exports its marker and session variables into every process it spawns — including pytest, and
+including any subprocess a test spawns from pytest. Four tests that ran a real `zikaron.hook.main`
+subprocess began failing for a reason that had nothing to do with what they asserted: the hook
+detected the *enclosing* session's harness, read its session id, found it differed from the test's
+own payload, and correctly suppressed itself. The tests were never hermetic; nothing had exported
+those variables before.
+
+That is the same environment-inheritance mechanism `design/harness.md` describes under the nesting
+limit, so the fixture below is not merely test hygiene — it is the suite declining to be the
+misdetected inner session.
+
+The first guard, on store connections:
 
 `aiosqlite.Connection` runs its SQL on a **non-daemon** worker thread, so a connection that is never
 closed keeps the interpreter alive after the last test finishes. The failure mode that produces is
@@ -24,6 +40,26 @@ from collections.abc import Iterator
 import aiosqlite
 import pytest
 from aiosqlite.core import _connection_worker_thread
+
+from zikaron.harness.spec import SPECS
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every harness marker and session variable before each test.
+
+    Autouse and suite-wide rather than per-file, because the contamination is per-*process*: any
+    test that reads the environment, and any test that spawns a subprocess which does, inherits
+    whatever harness launched pytest. A test asserting "no marker means the unmarked harness" would
+    otherwise pass or fail according to which terminal the suite was started from.
+
+    Deleting rather than pinning a value: a test that needs a harness present sets exactly the
+    variables it means, and starting from nothing is what makes that set complete.
+    """
+    for spec in SPECS.values():
+        if spec.marker_variable is not None:
+            monkeypatch.delenv(spec.marker_variable, raising=False)
+        monkeypatch.delenv(spec.session_variable, raising=False)
 
 
 def _live_connection_threads() -> list[threading.Thread]:

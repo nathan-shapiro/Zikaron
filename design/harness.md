@@ -43,7 +43,7 @@ against someone adding an expensive import.
 
 ## The table
 
-| | **kiro-cli** | **Claude Code** |
+| Fact | **kiro-cli** | **Claude Code** |
 |---|---|---|
 | Marker variable (detection) | absent | `CLAUDECODE` (§1) |
 | Session variable | `KIRO_SESSION_ID` | `CLAUDE_CODE_SESSION_ID` (§1) |
@@ -266,12 +266,24 @@ is **characters, not bytes** — bisected on ASCII (9,503 intact, 10,502 truncat
 because the ASCII bisection could not distinguish the units and this corpus has been burned by exactly that
 conflation: 9,016 characters of `漢`, **27,016 bytes**, arrived whole (§5, §7a).
 
+**Which *kind* of character is unmeasured, and the code takes the conservative reading.** `漢` is a Basic
+Multilingual Plane character, so it is one code point *and* one UTF-16 code unit; §7a therefore separates
+characters from bytes and says nothing about code points versus UTF-16 code units. Claude Code is a Node
+application, whose native string length is UTF-16 code units, so the second reading is live rather than
+theoretical: every astral character — emoji included, and real gists contain them — would count two there
+and one under a naive `len()`. `HarnessSpec.exceeds_injection_budget` measures UTF-16 code units, which
+upper-bounds both readings, so the budget holds whichever is true. **The decisive experiment, for M16:**
+rerun the bisection with an astral character, which separates all three candidate units at once.
+
 **A character bound closes open question 11 for both harnesses**, and the derivation belongs in writing
-rather than in anyone's head: UTF-8 encodes any character in at most **4 bytes**, so a five-row block fitting
-10,000 characters is at most ~40,000 bytes, comfortably inside kiro's shipped 65,536. That ×4 is a real
-ceiling from the encoding — worth distinguishing from the invented "four bytes per token" factor an earlier
-`tests/test_install_limits.py` asserted, which was a guess and was wrong in the opposite direction. Same
-number, entirely different standing.
+rather than in anyone's head. Both the bound and the budget count **UTF-16 code units**, per the paragraph
+above, and UTF-8 needs at most **3 bytes per UTF-16 unit** — a Basic-Multilingual-Plane character is one unit
+and at most three bytes, an astral character is two units and four bytes, so the widest *per unit* is the
+three-byte BMP character rather than the four-byte astral one. A five-row block fitting 10,000 units is
+therefore at most 30,000 bytes, comfortably inside kiro's shipped 65,536; at the gist bound the real figure
+is 18,261. That ×3 is a real ceiling from the encoding — worth distinguishing from the invented "four bytes
+per token" factor an earlier `tests/test_install_limits.py` asserted, which was a guess and was wrong in the
+opposite direction. Entirely different standing.
 
 The bound `gist` therefore needs is a **character** bound, since it is *tokens* that bound neither characters
 nor bytes: the deployed WordPiece tokenizer maps an unbroken 4,000-character run to a single `[UNK]`.

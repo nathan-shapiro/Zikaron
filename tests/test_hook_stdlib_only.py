@@ -40,21 +40,30 @@ import pytest
 #: enforcement rather than silently skipped.
 _DELIBERATE_EXCEPTION = "warm_helper"
 
-_HOOK_PACKAGE_DIR = Path(__file__).resolve().parent.parent / "zikaron" / "hook"
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "zikaron"
+
+#: Both packages on the critical path, not only the hook's own. `zikaron.harness` is imported by
+#: `zikaron-hook` on every trigger it serves, so an expensive import added there costs exactly what
+#: one added to `zikaron.hook` would — and the whole enforcement claim of this file is that a new
+#: module is covered by default rather than when someone remembers to list it. A seam that is
+#: stdlib-only by intent and unguarded in fact is the gap this closes.
+_CRITICAL_PATH_PACKAGES = ("hook", "harness")
 
 
 def _discover_critical_path_modules() -> frozenset[str]:
-    """Every `zikaron.hook.*` module that actually exists on disk right now, minus the one
+    """Every module on the critical path that actually exists on disk right now, minus the one
     documented exception — computed fresh each run rather than hand-maintained, so a new module
-    added to the package is enforced by default rather than silently exempt until a test file is
+    added to either package is enforced by default rather than silently exempt until a test file is
     remembered and edited.
     """
-    modules = {"zikaron.hook"}
-    for path in _HOOK_PACKAGE_DIR.glob("*.py"):
-        stem = path.stem
-        if stem in ("__init__", _DELIBERATE_EXCEPTION):
-            continue
-        modules.add(f"zikaron.hook.{stem}")
+    modules: set[str] = set()
+    for package in _CRITICAL_PATH_PACKAGES:
+        modules.add(f"zikaron.{package}")
+        for path in (_PACKAGE_ROOT / package).glob("*.py"):
+            stem = path.stem
+            if stem in ("__init__", _DELIBERATE_EXCEPTION):
+                continue
+            modules.add(f"zikaron.{package}.{stem}")
     return frozenset(modules)
 
 
@@ -125,11 +134,16 @@ class TestDiscoveredModuleSetMatchesThePackageDirectory:
             "zikaron.hook.main",
             "zikaron.hook.push",
             "zikaron.hook.spawn_warm",
+            "zikaron.hook.subagent_policy",
             "zikaron.hook.connect",
             "zikaron.hook.rpc",
             "zikaron.hook.envelope",
             "zikaron.hook.failure",
+            "zikaron.hook.tripwire",
             "zikaron.hook.write_policy",
+            "zikaron.harness",
+            "zikaron.harness.spec",
+            "zikaron.harness.detect",
         }
         assert expected_present <= _CRITICAL_PATH_MODULES
 

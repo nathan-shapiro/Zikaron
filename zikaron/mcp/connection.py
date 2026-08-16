@@ -29,6 +29,7 @@ from zikaron.core.config.resolution import (
     resolve,
 )
 from zikaron.core.store.store import Store
+from zikaron.harness import detect
 from zikaron.service import paths
 from zikaron.service.envelope import ClientEnvelope
 from zikaron.service.lifecycle import connect_start_if_absent, default_server_command
@@ -132,30 +133,15 @@ def resolve_effective_config(store_dir: Path) -> EffectiveConfig:
     )
 
 
-def _harness_session_id() -> str | None:
-    """`KIRO_SESSION_ID` from this process's own environment, or `None` if it is absent **or**
-    intrudes on the service's reserved `zk-` namespace.
-
-    `architecture.md`'s client contract, stated plainly for exactly this case: "a client that
-    finds a `zk-`-prefixed value in `KIRO_SESSION_ID` must treat it as absent — send the bootstrap
-    form and adopt a fresh service-minted label." The `zk-` prefix is how the service tells its
-    own minted labels apart from a harness's, and that distinction is only truthful if every
-    client honours it rather than forwarding whatever the environment happens to hold.
-    """
-    value = os.environ.get("KIRO_SESSION_ID")
-    if value is not None and value.startswith("zk-"):
-        return None
-    return value
-
-
 class ServiceConnection:
     """One live socket to `zikaron-service`, opened lazily and reconnected once on death — and
     the one process-lifetime session label every request through it carries.
 
     `architecture.md`: "the client adopts the returned label and reuses it for its process
-    lifetime." A fresh `client_envelope()` call per request that re-read `KIRO_SESSION_ID` every
+    lifetime." A fresh `client_envelope()` call per request that re-read the harness's session
+    variable every
     time would be correct only under `harness` resolution (the environment variable does not
-    change mid-process); under `minted` resolution — no `KIRO_SESSION_ID` at all, the common case
+    change mid-process); under `minted` resolution — no session variable at all, the common case
     for a client that is not a genuine kiro-spawned process, and reachable even under one if the
     variable were ever absent — every call would instead bootstrap with `session_id: null` and the
     service would mint a **new** `zk-<uuid4>` label each time, silently breaking every
@@ -179,7 +165,11 @@ class ServiceConnection:
     def __init__(self, cwd: Path) -> None:
         self._location = StoreLocation.resolve(cwd)
         self._sock: socket.socket | None = None
-        self._session_id: str | None = _harness_session_id()
+        # Resolved through the harness seam, which is what makes this client and `zikaron-hook`
+        # speak as one session: each reads whichever variable the harness it detected actually
+        # exports, so the two arrive at an identical label under either harness rather than one
+        # of them falling back to a minted one and silently splitting the session's instruments.
+        self._session_id: str | None = detect.session_label(detect.current_spec())
         # Every `request()` call runs its whole body — obtain-or-establish a socket, send,
         # receive, adopt the label — under this one lock, never partially: two `tools/call`
         # dispatches can otherwise run concurrently on FastMCP's own event loop, and each `await`

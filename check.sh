@@ -30,4 +30,4 @@ venv=.venv/bin
 # loading and real subprocess spawns in the `integration` tier — comfortable margin for a slower
 # machine without masking a genuine hang for minutes on this one.
 timeout 300 "$venv/pytest" --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
-    --cov=zikaron/hook --cov=zikaron/install
+    --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness

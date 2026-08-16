@@ -25,7 +25,6 @@ import
 cost; the hook does not.
 """
 
-import os
 from typing import NamedTuple
 
 #: The wire value for this client's `client.kind`, i.e. `ClientKind.HOOK.value`. A literal here, an
@@ -57,37 +56,22 @@ class HookEnvelope(NamedTuple):
         }
 
 
-#: The environment variable both `zikaron-hook` and `zikaron-mcp` read for the `harness` rung of
-#: the two-rung session-label ladder (`architecture.md` §"Both clients resolve the same label").
-_KIRO_SESSION_ID_VAR = "KIRO_SESSION_ID"
-
-#: The reserved namespace a service-minted label always falls in. `architecture.md`'s client
-#: contract: "a client that finds a `zk-`-prefixed value in `KIRO_SESSION_ID` must treat it as
-#: absent" — mirrored here exactly as `zikaron.mcp.connection._harness_session_id` already
-#: enforces it, so both clients honour the same rule rather than one trusting the environment
-#: literally.
-_MINTED_PREFIX = "zk-"
-
-
-def harness_session_id() -> str | None:
-    """`KIRO_SESSION_ID` from this process's own environment, or `None` if it is absent **or**
-    intrudes on the service's reserved `zk-` namespace.
-
-    `None` here means the bootstrap form: `build_envelope` sends `session_id: null` and the
-    service mints one. Under kiro this practically never happens for the hook — `architecture.md`:
-    "`zikaron-hook` never bootstraps under kiro: the id is in its payload and in its
-    environment" — but the client-side contract holds regardless of harness.
-    """
-    value = os.environ.get(_KIRO_SESSION_ID_VAR)
-    if value is not None and value.startswith(_MINTED_PREFIX):
-        return None
-    return value
-
-
 def is_subagent_session(*, env_session_id: str | None, payload_session_id: object) -> bool:
     """Whether this invocation is running inside a subagent session, per
-    `architecture.md`'s exact rule: "the hook reads `KIRO_SESSION_ID` from its environment and
-    compares it to its payload's `session_id`. When they **differ**, this is a subagent session."
+    `architecture.md`'s exact rule: the hook reads the harness's session variable from its
+    environment and compares it to its payload's `session_id`. When they **differ**, this is a
+    subagent session.
+
+    **Under Claude Code this comparison is never reached for a genuine subagent**, because
+    `UserPromptSubmit` does not fire for subagents at all — the harness closes the door this rule
+    was built to guard. The rule stays because kiro still needs it, and because under Claude Code
+    a divergence means something else entirely: payload and environment are invariantly equal
+    there, so a difference is a misdetected harness rather than a subagent. `tripwire.py` owns
+    that reading; this function only states the comparison.
+
+    Resolving the environment side is `zikaron.harness.detect.session_label`'s job, not this
+    module's — the variable's *name* is harness-varying data and belongs in the one table that
+    carries such data.
 
     A pure comparison, deliberately taking both values as already-extracted arguments rather than
     reading the environment or a payload dict itself — the caller (`push.py`, `spawn_warm.py`)

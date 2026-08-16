@@ -494,7 +494,7 @@ that result is the phase's first priority. Open question 2 (fusion) is not opene
 
 ---
 
-## M14 — The harness seam, both clients, and the gist byte bound
+## M14 — The harness seam, both clients, and the gist character bound — **complete**
 
 Normative: `design/harness.md`; `design/schema.md` §Bounds; `design/architecture.md` §"Degraded modes",
 §"Subagent sessions".
@@ -532,7 +532,10 @@ it overflows just narrowed from 65,536 to 10,000 — measured to be counted in c
 (probe §7a), which is the unit the bound must therefore be stated and asserted in.
 
 **A character bound closes the question for *both* harnesses, and the derivation belongs in writing rather
-than in the author's head.** Kiro's `max_output_size` counts **bytes**, so a character bound only helps there
+than in the author's head.** *(Superseded during the build: the unit tightened to UTF-16 code units, and the
+byte ceiling to ×3 per unit rather than ×4 per character — see the done-when annotation below and
+`harness.md` §"Injection budgets". The paragraph stands as written, since the reasoning is right and only
+the unit was wrong.)* Kiro's `max_output_size` counts **bytes**, so a character bound only helps there
 if characters bound bytes — and they do: UTF-8 encodes any character in **at most 4 bytes**, so a five-row
 block fitting 10,000 characters is at most ~40,000 bytes, comfortably inside the shipped 65,536. That ×4 is a
 real ceiling from the encoding, and it is worth distinguishing in writing from the ×4 this corpus already
@@ -547,8 +550,13 @@ variable and both fall to `minted` when neither is present; the suppression rule
 harnesses and is asserted inert under Claude Code; the `SubagentStart` path emits the policy **on the
 `additionalContext` channel** for an ordinary `agent_type` and nothing at all for `zikaron-consolidator`; the
 gist character bound is asserted at the write path, and a worst-case five-row push block is
-asserted to fit 10,000 characters **and, at 4 bytes per character, to fit the shipped kiro
-`max_output_size`** — so M12's byte assertion becomes provable rather than accidental; and the nesting
+asserted to fit 10,000 characters **and, at 3 bytes per UTF-16 code unit, to fit the shipped kiro
+`max_output_size`** — so M12's byte assertion becomes provable rather than accidental. *(This clause
+said "at 4 bytes per character" when the brief was written. Both halves tightened during the build:
+the unit is UTF-16 code units, because the experiment that pinned the budget to characters used
+Basic-Multilingual-Plane text and so could not separate code points from UTF-16 units; and the byte
+ceiling is 3 per unit rather than 4 per character, since a 3-byte BMP character is one unit while a
+4-byte astral character is two. The criterion is strictly stronger, not weaker.)* And the nesting
 tripwire writes exactly one `session_env_mismatch` line to `hook.log` when payload and environment diverge
 **and the detected harness is Claude Code**, while a kiro subagent turn — the same divergence, routinely —
 writes **nothing**, since sharing the suppression rule's predicate unscoped would log on every subagent turn
