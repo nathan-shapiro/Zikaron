@@ -1,0 +1,17 @@
+{
+  "autoMemoryEnabled": false,
+
+  "permissions": {
+    "deny": [
+      "Edit(~/Memory/**)",
+      "Edit(~/.kiro/**)",
+      "Edit(**/.git/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(**/.env*)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa*)",
+      "Read(**/secrets/**)"
+    ]
+  }
+}

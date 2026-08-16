@@ -17,6 +17,10 @@
 # project convention. The rest of .kiro/ (agents, skills) is tracked deliberately.
 .kiro/settings/lsp.json
 
+# Per-machine Claude Code overrides. The rest of .claude/ (agents, skills, shared
+# settings) is tracked deliberately, the same way .kiro/ is.
+.claude/settings.local.json
+
 # Python
 .venv/
 venv/
