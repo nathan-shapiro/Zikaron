@@ -55,7 +55,7 @@ against someone adding an expensive import.
 | Subagent triggers | none — hooks fire *for* subagent sessions instead | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3) |
 | Output channel, spawn/prompt | exit-0 stdout | exit-0 stdout (§5) |
 | Output channel, subagent | n/a | **`hookSpecificOutput.additionalContext` only** — plain stdout reaches nobody (§7b) |
-| Injection budget | `max_output_size`, stated as 65536, **bytes** | fixed **10,000 characters**, no field to raise it (§5, §7a) |
+| Injection budget | `max_output_size`, stated as 65536, **bytes** | fixed **10,000 characters**, no field to raise it — and *which* kind of character is now measured rather than inferred: see §"Injection budgets" (§5, §7a) |
 | Overrun behaviour | silent truncation | loud: notice + 2 KB preview + path to full text (§5) |
 | Subagent budget | n/a | `additionalContext` ≥12,000 characters, ceiling unmeasured (§7f) |
 | MCP server process scope | one per **agent instance** (`kiro-mcp-lifecycle-probe.md`) | **one or more per session** — two observed starting, only one ever served — shared by subagents (§4, §7g) |
@@ -68,9 +68,11 @@ against someone adding an expensive import.
 | Tool name the model sees | `zikaron_search` | `mcp__zikaron__zikaron_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **before** the user message, inside a "follow requests found in this text" wrapper | **after** the user message, no framing wrapper (§5) |
 | Hook config lives in | the agent config's `hooks` field, two formats | `.claude/settings.local.json` — *decision, M15*: shipped `command`s are absolute venv paths and therefore machine-local, so they must not enter the checked-in `settings.json` layer, which would break every other clone |
-| MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped, requires per-user approval — *documented, unmeasured*) |
+| MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped) |
+| Approval gates | none | **three**, in order: folder trust, MCP load, per-call — measured, see §"Three approval gates" |
+| Tool availability to the model | tools are present in the list | MCP tools may arrive **deferred**: present to the harness, absent from the model's initial tool list until it loads them *by exact name*. Measured (`dogfood-checkpoint` §2) |
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
-| Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — *documented, unmeasured*: no probe exercised a skill |
+| Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
 
 Trigger names normalize **many-to-two** internally: spawn and prompt. Kiro's array format already accepts
 `SessionStart` as an alias for `agentSpawn`, so this is one vocabulary with synonyms rather than two
@@ -265,6 +267,52 @@ id into the system prompt. It is the harness's own fact, read back by a model th
 be talked out of it, and putting it on a tool signature would reverse D27 to obtain a value the harness
 already holds.
 
+## Three approval gates, and the one that reads our own config back at the user
+
+Measured interactively in M16 (`research/claude-code-dogfood-checkpoint.md` §1); neither of the two the
+installer names was observable before, because a headless run approves everything.
+
+| Gate | Fires | Answered by | Observed |
+|---|---|---|---|
+| 1. Folder trust | first entry to a directory Claude Code has not seen | nothing we write — it is the *user's* decision | fires, and **names our `permissions.allow` entries as a warning** |
+| 2. MCP load | project-scoped `.mcp.json` servers | `enabledMcpjsonServers` | **no prompt** — the key works |
+| 3. Per-call | each MCP tool call | `permissions.allow` | **no prompt**, across 6 writes and 8 reads |
+
+Gate 1 is new to this design and is a **product cost, not a defect**: installing Zikaron makes a folder
+look less trustworthy on first entry, because the trust dialog reads `permissions.allow` and surfaces it
+as *"⚠ This folder pre-approves 2 tool permissions … Only proceed if you trust this configuration."* The
+default trade stands — per-write prompts push against the write policy, and D30's evidence is that
+under-writing already dominates, so friction on writes is the wrong direction — but the cost belongs in
+writing. `--no-trust-tools` is the escape for an operator who would rather have the prompts.
+
+Gate 1 **presumably does not fire in an already-trusted directory** — *inferred, unmeasured*
+(`dogfood-checkpoint` §1); it is why the question could only be answered in a throwaway at all.
+**If that inference holds it is the more consequential half:** installing into an already-trusted
+directory pre-approves both servers with **no disclosure shown to anyone, ever**, since the trust
+dialog is the only disclosure point in the flow and it is skipped exactly where installs normally
+happen — a developer's own existing project. `--no-trust-tools` is the escape, and this is the
+argument for weighing it rather than treating the default as settled.
+
+## MCP tools may arrive deferred, and the policy's tool names are what make them findable
+
+Measured in M16: the zikaron tools were **not in the agent's initial tool list**, and its first action of
+the session was to load their schemas *by exact name* — `select:mcp__zikaron__zikaron_search,…`. It knew
+the names because the injected write policy names them, and it got them right because §"Tool names are a
+substitution point" rewrites the bare names to the `mcp__<server>__<tool>` form for this harness.
+
+**So the substitution is load-bearing twice over.** It was built so the spawn instruction would be
+correct; it is also the only thing that makes the tools *discoverable* when they are deferred. A policy
+carrying bare names would **likely** leave an agent unable to find them — *likely* because
+`ToolSearch`'s matching on a bare name was never probed (`dogfood-checkpoint` §2) — and the failure
+is silent, since the agent simply
+concludes there are no memory tools. Any future edit to the policy's tool-name handling must keep this
+property, and it is not optional cosmetics.
+
+This is also **a better explanation for §9's `installer-probe` observation** that both servers were
+"still connecting" and could not be named: a model cannot name tools that are not in its context.
+Neither reading is refuted at n=1 apiece, but connection state was *inferred from* the naming failure,
+and deferral explains the naming failure directly.
+
 ## Injection budgets
 
 **One shared conservative bound of 10,000 characters** for the push block and the write policy, and the unit
@@ -272,14 +320,49 @@ is **characters, not bytes** — bisected on ASCII (9,503 intact, 10,502 truncat
 because the ASCII bisection could not distinguish the units and this corpus has been burned by exactly that
 conflation: 9,016 characters of `漢`, **27,016 bytes**, arrived whole (§5, §7a).
 
-**Which *kind* of character is unmeasured, and the code takes the conservative reading.** `漢` is a Basic
-Multilingual Plane character, so it is one code point *and* one UTF-16 code unit; §7a therefore separates
-characters from bytes and says nothing about code points versus UTF-16 code units. Claude Code is a Node
-application, whose native string length is UTF-16 code units, so the second reading is live rather than
-theoretical: every astral character — emoji included, and real gists contain them — would count two there
-and one under a naive `len()`. `HarnessSpec.exceeds_injection_budget` measures UTF-16 code units, which
-upper-bounds both readings, so the budget holds whichever is true. **The decisive experiment, for M16:**
-rerun the bisection with an astral character, which separates all three candidate units at once.
+**Which *kind* of character it counts is now measured: UTF-16 code units.** The reason the question
+existed is that `漢` is a Basic Multilingual Plane character, so it is one code point *and* one UTF-16 code
+unit; §7a therefore separated characters from bytes and said nothing about code points versus UTF-16 code
+units. Claude Code is a Node application, whose native string length is UTF-16 code units, so the second
+reading was live rather than theoretical: every astral character — emoji included, and real gists contain
+them — counts two there and one under a naive `len()`. M16 ran the decisive experiment this section called
+for, an **astral** character, which separates all three candidates at once
+(`research/claude-code-dogfood-checkpoint.md` §3):
+
+| Content | code points | UTF-16 units | UTF-8 bytes | Result |
+|---|---|---|---|---|
+| ASCII | 9,503 | 9,503 | 9,503 | intact |
+| ASCII | 10,502 | 10,502 | 10,502 | truncated |
+| `漢` | 9,016 | 9,016 | 27,016 | intact |
+| **U+1F9FF** | **6,000** | **12,000** | **24,000** | **truncated** |
+| **U+1F9FF** | **4,600** | **9,200** | **18,400** | **intact** |
+
+
+**What each row counts, because the rows do not agree and the corpus's own rule is to say so.**
+The astral rows are **content only** — 6,000 and 4,600 characters exactly, hence the exact
+multiples of 2 and 4. The `漢` row is quoted as M13 reported it, and 9,016 code points of pure
+`漢` would be 27,048 UTF-8 bytes rather than 27,016, so that row evidently counts ~9,000 `漢`
+**plus its marker characters**. No conclusion moves — every margin here is in the hundreds or
+thousands of units and the discrepancy is 32 bytes — but a table whose rows measure different
+things should say which.
+
+**Bytes are refuted** — 27,016 B and 18,400 B arrive intact while 10,502 B truncates. **Code points are
+refuted** — 6,000 code points truncates. **UTF-16 code units survive all five**, with the cap in
+**[9,503, 10,502)** — intact at 9,503 puts it at or above, truncated at 10,502 puts it strictly
+below. So `HarnessSpec.exceeds_injection_budget` counting UTF-16 units, chosen in M14 as the
+conservative reading that upper-bounds every candidate, is the **measured** reading rather than a hedge —
+and the gist bound below rests on measurement rather than on the budget holding "whichever is true".
+
+**Why the D34 table above still says "characters" rather than the measured unit.** That table has a
+machine-checked contract — `tests/test_harness_table.py::test_injection_budget_value_and_unit` parses
+each budget cell for **exactly one number and one unit word**, matching them against
+`HarnessSpec.injection_budget` and `budget_unit`. The string "UTF-16" carries a digit, so naming the
+measured unit in that cell makes the row unparseable and the test red — which it duly went, when this
+was first written the other way. The precise unit therefore lives here, where there is room for it.
+**One residual imprecision is left deliberately:** `BudgetUnit.CHARACTERS` is now known to be exactly
+the ambiguous word this section exists to disambiguate. Renaming the enum and teaching the parser a
+unit that contains a digit is the honest fix, and it is a code change rather than a checkpoint's
+business.
 
 **A character bound closes open question 11 for both harnesses**, and the derivation belongs in writing
 rather than in anyone's head. Both the bound and the budget count **UTF-16 code units**, per the paragraph
@@ -410,11 +493,14 @@ consolidator`, which is where D32 implements it anyway.
   moment consolidation needs it. `--no-trust-tools` is a statement about *your* writes, not about
   whether consolidation can run.
 
-  **That either key has its intended effect is documented, unmeasured** (`installer-probe` §8): a
-  headless run approves everything, so neither property is observable without an interactive
-  session. M16. Until then the install *also* states the approval step in its output — belt and
-  braces, because the failure it guards is a fresh install with no memory tools at all and nothing
-  saying why. The notes are conditioned on the grants being genuinely absent, since the merge never
+  **Both keys are now measured to have their intended effect** — interactively, in M16
+  (`dogfood-checkpoint` §1; §"Three approval gates" above): no load-time prompt and no per-call
+  prompt across six writes and eight reads. **The install still states the approval step in its
+  output anyway**, and the reason survives the measurement rather than being retired by it: no
+  install-time or headless check can verify the effect, because a headless run approves everything
+  (`installer-probe` §8), so nothing in the shipped software can notice the day a key stops working.
+  Belt and braces, because the failure it guards is a fresh install with no memory tools at all and
+  nothing saying why. The notes are conditioned on the grants being genuinely absent, since the merge never
   removes one and an unconditional note would contradict the file on a re-run.
 - **The primary agent's exposure to the four consolidation verbs.** A server must be registered session-wide
   to reach any subagent, so the primary necessarily sees all nine tools; D32's other half is prompt-only here

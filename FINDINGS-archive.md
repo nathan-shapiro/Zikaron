@@ -11,6 +11,10 @@
 >
 > Append to this file rather than rewriting it: it is a record of what was believed and when.
 > Claims withdrawn in `FINDINGS.md` keep their original text here, with the refutation beside them.
+>
+> **Sections, so you can jump rather than scroll 190 kB:** §"Build history" · §"Build plan — start
+> here when writing code" · §"The Claude Code probe, and the documentation reading it refuted" ·
+> §"M15 as built" · §"Dogfooding notes" · §"References".
 
 ## Build history
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
@@ -802,7 +806,169 @@ becomes a wrong number instead of a prose ambiguity. And **do not tune RRF durin
 largest known quality lever, it needs no reindex, and it is deliberately post-build.
 
 
+## The Claude Code probe, and the documentation reading it refuted
+
+Moved out of FINDINGS 2026-08-16, once M14 and M15 had consumed every item. Kept **as written**, with
+each refutation in place, because the fact that a careful documentation reading got these wrong is
+itself the evidence — the same shape as `research/kiro-mcp-lifecycle-probe.md`. Normative now:
+`design/harness.md`.
+
+**Probed 2026-08-16 against Claude Code 2.1.233, and the probe refuted three of the claims below.**
+Full measurement: `research/claude-code-harness-probe.md`; scripts and raw logs
+`spikes/claude-code-harness/`. The list that follows is kept **as it was written**, with each refuted
+item marked in place, because the fact that a careful documentation reading got these wrong is itself
+the evidence — the same shape as `research/kiro-mcp-lifecycle-probe.md`. A `claude-code-guide`
+documentation reading (`research/claude-code-harness-contract.md`) independently repeated the
+session-id error, so it is the weaker source of the two.
+
+- **REFUTED — the prompt field is `prompt`, not `user_input`.** `hook/main.py` needs no change there.
+- **REFUTED — a session-id environment variable exists.** `CLAUDE_CODE_SESSION_ID` is exported into
+  every process Claude Code spawns — both hooks, a subagent's subprocesses, and **the MCP stdio
+  server** — and equals the hook payload's `session_id`. The two-rung ladder ports as a **rename**;
+  linked sessions, link coverage, both cross-client D30 signals and the recall instrument all survive.
+  (`CLAUDE_PID` is *not* overridden for children and must never be read.)
+- **REFUTED — the subagent-suppression rule needs no re-derivation.** `UserPromptSubmit` does not fire
+  for subagents at all, so the door D32 guards is closed by the harness and the rule is simply inert
+  here. `SubagentStart`/`SubagentStop` carry `agent_id` **and `agent_type`**, so the write policy can
+  now be injected for every subagent *except* the consolidator — the precise rule kiro's payload could
+  not express.
+- **NEW, and nobody had it — the injection budget is a fixed 10,000 characters.** Bisected: 9,503 B
+  intact, 10,502 B truncated to a 2 KB preview. There is no `max_output_size` field, so 65,536 has no
+  analogue. Overrun is **loud** (a notice, a preview, and a path to the full text), unlike kiro's
+  silent truncation — but the margin protecting the unbounded-gist defect narrowed 6.5×.
+- **NEW — the real structural break is MCP process scope.** Claude Code runs one MCP server per
+  **session**, shared by every subagent, not one per agent instance as kiro does. `(session_id, pid)`
+  therefore cannot tell two consolidators in one session apart, and `_PlanBridge`'s per-process
+  takeover guard becomes per-session. **Operator decision 2026-08-16: accept it** — cross-session
+  exclusion is untouched, the lease still lapses, and a run-token fix is named but not built.
+- **NEW — D32's tool gating only half ports.** Subagent frontmatter `tools:` genuinely restricts MCP
+  tools, so withholding `search`/`fetch` from the consolidator stays mechanical. Withholding the four
+  verbs from the primary agent does not: a server must be registered session-wide to reach any
+  subagent, `permissions.deny` is global and breaks the subagent too, and per-subagent MCP
+  registration does not exist. That half becomes **prompt-only**.
+- **NEW — the injected block lands *after* the user message**, with no coercive framing sentence. Under
+  kiro it landed before, framed *"I have gathered this context from valuable programmatic script
+  hooks"*. Open question 4's stated tension resolves in our favour, by the harness's choice not ours.
+
+Original text, as written before the probe:
+- ~~**`userPromptSubmit` → `UserPromptSubmit`, and the prompt field is `user_input`, not `prompt`.**~~
+  **[REFUTED by probe §2 — the field is `prompt`. Kept for the record; do not act on it.]**
+  `hook/main.py` returns quietly when that field is not a string, so under Claude Code the push path
+  fails as *no output and exit 0* — invisible, by the same always-exit-0 design that makes a genuine
+  failure relayable. `agentSpawn` → `SessionStart`, same silent-return path.
+- ~~**No session-id environment variable exists.**~~ **[REFUTED by probe §1 — `CLAUDE_CODE_SESSION_ID` is
+  in every process, MCP server included. Kept for the record; do not act on it.]** `KIRO_SESSION_ID` was the shared key that made the hook
+  and the MCP tools speak as one session. Claude Code documents `CLAUDE_PROJECT_DIR` and `CLAUDE_EFFORT`
+  among others, and nothing carrying a session id — so the hook would use its payload's real `session_id`
+  while the MCP client falls back to its minted `zk-<uuid4>`, and they diverge. That breaks linked
+  sessions and **breaks the recall instrument**, which counts `search` calls *per session*. This is the
+  first thing to probe and the one most likely to force a design change.
+- ~~**The subagent-suppression rule dissolves rather than ports.**~~ **[REFUTED by probe §3 —
+  `UserPromptSubmit` never fires for a subagent, so the rule is simply inert. Kept for the record.]** It compares env session id to payload
+  session id; Claude Code instead scopes hooks per subagent via frontmatter and has `SubagentStart`/
+  `SubagentStop` carrying `agent_id` and `agent_type`. Re-derive it; do not translate it.
+- **Hook placement changes who gets memory.** Kiro put hooks inside each agent config, which is what made
+  `zikaron-dogfood` a controlled experiment. Claude Code's project `settings.json` hooks fire for every
+  session in the directory. Preserving the experiment needs subagent-frontmatter hooks or a deliberate
+  decision to drop the distinction.
+- **D10's premise is false here: `PreCompact` and `PostCompact` exist.** The manually-invoked
+  consolidation trigger becomes a choice rather than a constraint.
+- **Open question 1's mechanism half gets new options.** `PostToolUse`, `PostToolUseFailure`,
+  `PostToolBatch` and `Stop` all exist, and `PostToolUseFailure`'s exit-2 stderr is documented as
+  reaching the model — which is precisely the "this protobuf step just failed silently" moment that
+  `userPromptSubmit` cannot serve. Probe it before believing it.
+- **The installer's model check has no analogue.** `kiro-cli chat --list-models -f json` exists because
+  `agent validate` accepts an unknown model silently; Claude Code offers no equivalent list, so the
+  no-silent-fallback rule needs a new mechanism.
+- **Simplification:** the two hook formats (object vs array, with the seconds-versus-milliseconds trap)
+  collapse to one. That is code to delete.
+
+**Two decisions that sat here are now in `FINDINGS.md` §Harness, where they are still live:** the
+recall-instrument baseline reset at the migration boundary, and the crew fidelity deliberately given
+up in the move (memory-reviewer's model family, and per-agent write scoping). They are decisions a
+session still has to honour, so they belong in the hub rather than the record.
+
+## M15 as built (moved out of FINDINGS 2026-08-16, once it stopped being live)
+
+Commit subject: **`M15: one installer, two harnesses, and a check that had never once said no`**.
+Review: `reviews/m15-installer-adapter-review.md` (6 rounds, APPROVED).
+Measurements: `research/claude-code-installer-probe.md`; scripts and logs
+`spikes/claude-code-installer/`.
+
+**M15 landed 2026-08-16, APPROVED after six review rounds** (`reviews/m15-installer-adapter-review.md`;
+rounds 4–6 followed two operator questions — see below).
+The installer writes either harness's artefacts through `zikaron/install/targets.py` — the one place a
+harness difference may take a different *shape* rather than a different value. `mypy --strict` clean,
+**1663 passed / 0 failed**, coverage **97%** against the 90% ratchet.
+**One thing is outstanding and it is not ours: `check.sh` cannot exit 0 on this machine.** Six tests
+across `test_install_harness.py`, `test_install_e2e.py` and `test_install_takeover.py` drive a real
+`kiro-cli`, which answers *"You are not logged in, please log in with kiro-cli login"*. All three files
+are **untouched by M15** (`git diff HEAD` empty for each), so this is environmental and needs a
+re-authentication only a browser can do. Do not read those six failures as an M15 regression, and do
+not "fix" them in code.
+
+**Two operator questions changed the milestone after it was first approved**, and both are now
+settled behaviour: an install can be run **from a plain shell with no harness running** (resolution
+reads the *project* first, the environment marker only as a fallback), and it is **refused when the
+harness's own binary is absent** — one shared rule parameterized by `HarnessSpec.harness_binary`,
+symmetric across harnesses, downgraded to a note under `--print-only` so a machine can still be
+provisioned before its harness. The binary-dependent tests moved into `integration_kiro` /
+`integration_claude`, **excluded from `check.sh`**, under the rule that nothing may live only there.
+**The gate is now hermetic and that is verified, not assumed:** the whole default suite passes with
+neither binary on `PATH`.
+
+**What M15's six rounds are evidence of, since M14's four were recorded the same way.** The gate was
+green over a defect **four** separate times, and each was found by a human-shaped read rather than by a
+tool. Two merge defects were caught by re-reading new code against rules the *old* code already stated
+— a settings merge that would have deleted a user's own `SessionStart` hook, and wrong-shaped values
+treated as absent and written over (`writer.py`'s own `TestShapesThatWouldBeSilentlyDropped` rule).
+The third and worst: **a review fix that was a docstring over an unchanged method body** — the
+`--model` YAML-injection guard's regex was compiled and never referenced, the docstring asserted a
+refusal, the body still said `del model`. Neither `ruff` nor `mypy --strict` flags an unused
+module-level `Final`, and no test exercised it, so the artefact affirmatively documented a guard that
+did not exist. The fourth was found *by* the test written for the third: `--model ""` silently became
+the harness default, because the value was selected with `or` rather than `is None`.
+A fifth, found in the later rounds and the most consequential of all: **`validate_agent_config` had
+been inert since M12.** `kiro-cli agent validate` signals a complaint by writing to **stderr while
+exiting 0**, and the function returned "clean" on a zero exit — so every install reported a
+successful validation regardless of what it wrote. Nothing caught it because every unit fixture
+built its fake around a *non-zero exit*, a value the real binary never produces, and the single test
+against the real binary asserted `is None` and so passed *because* the function was broken. It
+surfaced only from asking one follow-up question about a passing test: **can this validator ever say
+no?**
+
+**The practice that closes all of this, and it is M14's own, now actually in the suite rather than in
+the narrative:** `TestTheFixesFromReviewRoundOneAreWatchedFailing` exists so that every review fix is
+watched failing on revert, and the harness tiers cannot report success for a machine that could not
+run them — `conftest.pytest_runtest_makereport` turns a skip in either tier into a failure, because
+*stating* that rule in `coding-standards.md` had already failed twice. Everything above was
+mutation-verified in both directions, the backstop included.
+
+**Three harness facts M15 measured, all in `research/claude-code-installer-probe.md`.** The hook
+`timeout` is **seconds** and the `UserPromptSubmit` default is **30 s**, not the 600 s that applies
+elsewhere — so kiro's `timeout_ms: 10000` copied across would install a 10,000-*second* budget, and
+`hook/limits.py` now holds one canonical seconds constant with each format converting at its own edge.
+A timed-out hook is **silent**: output discarded, nothing on stderr, nothing in the result object.
+And a **bracketed long-context alias** (`model: sonnet[1m]`) spawns normally — which refuted the
+installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id either harness serves.
+
 ## Dogfooding notes (evidence from our own sessions)
+
+- **Scripted string-replacement edits produce incoherent prose, and nothing in the gate can see
+  it.** Three instances in one M16 review round, in the normative `design/harness.md` and in shipped
+  code: a paragraph inserted **mid-sentence** in `design/harness.md` (the anchor matched inside a
+  sentence, so the conclusion was split and its ending orphaned eleven lines below); a replacement
+  that ended one clause short, leaving `chunking.py` reading *"Counting code points counted units
+  would leave…"*; and a docstring left with a dangling *"Superseded text, kept for the shape of the
+  argument"* that referred to nothing. **All three passed `ruff format`, `ruff check`, `mypy
+  --strict` and 1702 tests.** Formatters do not reflow prose and no linter checks that a comment
+  reads. The operator named the practice: **read every edit back in context before moving on** — the
+  diff is not the artifact, the rendered paragraph is. Two of the three were caught by the reviewer
+  or the operator rather than by the agent that wrote them, which is the same outside-the-loop
+  pattern that caught the truncated WAL snapshot. Two corollaries, both learned by violating them in
+  the very round that recorded this: anchor on paragraph boundaries, never mid-sentence; and when a
+  patch changes a paragraph's shape, **rewrap the whole paragraph** rather than editing line by
+  line, which strands widow words the formatter will never touch.
 - **A shipped check was a no-op for three milestones, and the thing that exposed it was refusing to
   let a passing assertion stand unexamined.** M15 round 4, 2026-08-16. A review asked the installer
   to validate the *real* shipped consolidator config rather than a four-key toy. The rewritten test
@@ -1548,7 +1714,7 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
   **byte-identical** to the `mcp__<server>__<tool>` config form; a whole-server wildcard in subagent
   frontmatter grants that server's tools and **excludes** the other server's, which is D7's enforcement
   half surviving mechanically. `enabledMcpjsonServers` is accepted but headless runs cannot test the
-  approval gate it exists to bypass — that stays **documented, unmeasured** for M16 —
+  approval gate it exists to bypass — that stays **documented, unmeasured** for M16 — *M16 measured it: `dogfood-checkpoint` §1* —
   `research/claude-code-installer-probe.md`.
 - **Claude Code install artefact contract** — the documentation reading of the same five artefacts
   (hooks schema, `timeout`, `.mcp.json` and its approval flow, MCP tool naming, agent and skill

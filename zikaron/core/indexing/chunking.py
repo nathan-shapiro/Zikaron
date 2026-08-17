@@ -47,12 +47,13 @@ SEPARATOR_TOKENS: Final = 1
 #: **Fixed rather than configurable, deliberately**: an output cap cannot be proven against a limit
 #: an operator can raise, so making this a config key would defeat the only reason it exists.
 #:
-#: **Counted in UTF-16 code units, the same conservative unit the injection budgets use.** A
-#: character-denominated harness budget was pinned with text where a code point and a UTF-16 unit
-#: coincide, so which of the two such a harness counts is unmeasured; counting the larger keeps
-#: every claim below a bound rather than a guess. Counting code points here while the budget
-#: counted units would leave the two halves of one argument in different units, and the worst case
-#: — five gists of astral characters — would exceed the budget it is supposed to prove.
+#: **Counted in UTF-16 code units, the same unit the injection budgets were measured to use.** The
+#: earlier pin used text where a code point and a UTF-16 unit coincide and so could not separate
+#: them; the astral rerun did (`research/claude-code-dogfood-checkpoint.md` §3), and UTF-16 units
+#: is the answer. So this is the *correct* count, not a conservative one. Counting code points here
+#: while the budget counted units would leave the two halves of one argument in different units, and
+#: the worst case — five gists of astral characters — would exceed the budget it is supposed to
+#: prove.
 #:
 #: **The number, and what it buys.** A five-row injected block's fixed framing measures 967 units,
 #: so five gists at this bound come to 6,087 — 61% of the smallest injection budget any supported
@@ -71,7 +72,8 @@ GIST_MAX_CHARACTERS: Final = 1024
 
 
 def utf16_units(text: str) -> int:
-    """How many UTF-16 code units `text` occupies — the conservative character count.
+    """How many UTF-16 code units `text` occupies — the unit a character budget was measured to
+    count (`research/claude-code-dogfood-checkpoint.md` §3).
 
     One per Basic-Multilingual-Plane character and two per astral character, so it never
     under-reports against a code-point count. `surrogatepass` keeps the function total: a lone

@@ -54,68 +54,58 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-### Phase: porting to Claude Code. **M15 is complete; M16 is the last milestone.**
-**M15 landed 2026-08-16, APPROVED after six review rounds** (`reviews/m15-installer-adapter-review.md`;
-rounds 4–6 followed two operator questions — see below).
-The installer writes either harness's artefacts through `zikaron/install/targets.py` — the one place a
-harness difference may take a different *shape* rather than a different value. `mypy --strict` clean,
-**1663 passed / 0 failed**, coverage **97%** against the 90% ratchet.
-**One thing is outstanding and it is not ours: `check.sh` cannot exit 0 on this machine.** Six tests
-across `test_install_harness.py`, `test_install_e2e.py` and `test_install_takeover.py` drive a real
-`kiro-cli`, which answers *"You are not logged in, please log in with kiro-cli login"*. All three files
-are **untouched by M15** (`git diff HEAD` empty for each), so this is environmental and needs a
-re-authentication only a browser can do. Do not read those six failures as an M15 regression, and do
-not "fix" them in code.
+### Phase: porting to Claude Code. **M16 is the last milestone, and it is landing.**
+Every milestone **M0–M15 is built and reviewed**, and **M16's measurement half is done** — the
+dogfooding checkpoint ran on 2026-08-16 and its evidence is
+`research/claude-code-dogfood-checkpoint.md`. What remains of M16 is the review round it is in.
+M15 (the installer adapter) landed 2026-08-16,
+APPROVED after six rounds; what it built and what its rounds taught is in `FINDINGS-archive.md`
+§"M15 as built" — read that only if you need the history, not to start M16.
 
-**Two operator questions changed the milestone after it was first approved**, and both are now
-settled behaviour: an install can be run **from a plain shell with no harness running** (resolution
-reads the *project* first, the environment marker only as a fallback), and it is **refused when the
-harness's own binary is absent** — one shared rule parameterized by `HarnessSpec.harness_binary`,
-symmetric across harnesses, downgraded to a note under `--print-only` so a machine can still be
-provisioned before its harness. The binary-dependent tests moved into `integration_kiro` /
-`integration_claude`, **excluded from `check.sh`**, under the rule that nothing may live only there.
-**The gate is now hermetic and that is verified, not assumed:** the whole default suite passes with
-neither binary on `PATH`.
+**Where M16 starts: `design/build-plan.md` §M16.** Read the brief, then `design/harness.md`, which is
+normative for every harness-coupled fact — do not re-derive one from an older section of
+`architecture.md`.
 
-**What M15's six rounds are evidence of, since M14's four were recorded the same way.** The gate was
-green over a defect **four** separate times, and each was found by a human-shaped read rather than by a
-tool. Two merge defects were caught by re-reading new code against rules the *old* code already stated
-— a settings merge that would have deleted a user's own `SessionStart` hook, and wrong-shaped values
-treated as absent and written over (`writer.py`'s own `TestShapesThatWouldBeSilentlyDropped` rule).
-The third and worst: **a review fix that was a docstring over an unchanged method body** — the
-`--model` YAML-injection guard's regex was compiled and never referenced, the docstring asserted a
-refusal, the body still said `del model`. Neither `ruff` nor `mypy --strict` flags an unused
-module-level `Final`, and no test exercised it, so the artefact affirmatively documented a guard that
-did not exist. The fourth was found *by* the test written for the third: `--model ""` silently became
-the harness default, because the value was selected with `or` rather than `is None`.
-A fifth, found in the later rounds and the most consequential of all: **`validate_agent_config` had
-been inert since M12.** `kiro-cli agent validate` signals a complaint by writing to **stderr while
-exiting 0**, and the function returned "clean" on a zero exit — so every install reported a
-successful validation regardless of what it wrote. Nothing caught it because every unit fixture
-built its fake around a *non-zero exit*, a value the real binary never produces, and the single test
-against the real binary asserted `is None` and so passed *because* the function was broken. It
-surfaced only from asking one follow-up question about a passing test: **can this validator ever say
-no?**
+**What is true of the product right now, which M15 changed.** Both thin clients *and* the installer
+speak both harnesses. `python -m zikaron.install --project .` writes either harness's artefacts, runs
+from a plain shell with no harness process, and refuses when the harness's own binary is absent.
+**But nothing is installed into this repository yet** — that is a choice, not a gap. Until someone
+runs it, the memory tools and the push hook are **not live in this session**, and M16's first act is
+to change that:
 
-**The practice that closes all of this, and it is M14's own, now actually in the suite rather than in
-the narrative:** `TestTheFixesFromReviewRoundOneAreWatchedFailing` exists so that every review fix is
-watched failing on revert, and the harness tiers cannot report success for a machine that could not
-run them — `conftest.pytest_runtest_makereport` turns a skip in either tier into a failure, because
-*stating* that rule in `coding-standards.md` had already failed twice. Everything above was
-mutation-verified in both directions, the backstop included.
+```bash
+.venv/bin/python -m zikaron.install --project . --harness claude-code
+```
 
-**Three harness facts M15 measured, all in `research/claude-code-installer-probe.md`.** The hook
-`timeout` is **seconds** and the `UserPromptSubmit` default is **30 s**, not the 600 s that applies
-elsewhere — so kiro's `timeout_ms: 10000` copied across would install a 10,000-*second* budget, and
-`hook/limits.py` now holds one canonical seconds constant with each format converting at its own edge.
-A timed-out hook is **silent**: output discarded, nothing on stderr, nothing in the result object.
-And a **bracketed long-context alias** (`model: sonnet[1m]`) spawns normally — which refuted the
-installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id either harness serves.
+`--harness` is stated because `auto` deliberately **refuses here**: this repo carries both `.kiro/`
+and `.claude/`, which is genuinely ambiguous. Add `--print-only` first if you want to see the four
+artefacts before they land. Then **restart the session** — hooks and `.mcp.json` are read at start.
+
+**M16 inherited four open things, and answered all four** (detail:
+`research/claude-code-dogfood-checkpoint.md`):
+(a) both `.mcp.json` **approval** properties are **measured** — no load-time prompt, no per-call
+prompt — and a **third gate** nobody had named turned up first: Claude Code's folder-trust dialog,
+which reads our `permissions.allow` back to the user as a warning (§1);
+(b) **MCP server readiness** did not reproduce interactively, and the n=1 *"still connecting"*
+observation now has a better explanation than connection state — the tools arrive **deferred** and a
+model cannot name what is not in its context (§2). Neither reading is refuted at n=1 apiece;
+(c) the **astral-character bisection** ran and closed the question: the budget counts **UTF-16 code
+units**, refuting both bytes and code points (§3);
+(d) the **recall baseline reset** was taken as a new baseline — 0.83 searches per user turn, with
+conditions — and the pre-migration numbers remain **not to be compared against**, in either
+direction.
+
+**The gate is hermetic and that is verified, not assumed.** `./check.sh` excludes `integration_kiro`
+and `integration_claude`; the whole default suite passes with **neither harness binary on `PATH`**.
+Run the tiers by name when you mean to. Nothing lives only in those tiers, and a skip inside one is
+converted to a failure by `conftest.pytest_runtest_makereport` — see `coding-standards.md`
+§"five tiers", which is binding.
+
 Every milestone M0–M12 is built and reviewed; **M13** (the Claude Code design delta) landed
 2026-08-16, APPROVED after three review rounds
 (`reviews/claude-code-harness-design-review.md`); and **M14** (the harness seam, both clients, and
 the gist character bound) landed 2026-08-16, APPROVED after **four** rounds
-(`reviews/m14-harness-seam-review.md`). **M15–M16 are outstanding** — see item 0 below.
+(`reviews/m14-harness-seam-review.md`). **M16's measurement half is done** and it is in review — see item 0 below.
 **Milestones are cited here by commit *subject*, not by hash, and that is deliberate.** This file
 recorded M13 as commit `7628946`; that hash does not exist in the repository — the history was
 rebased, as `backup-pre-rebase` and `backup-pre-rebase-2` attest. A hash is the most confident-looking
@@ -146,68 +136,108 @@ zero merges), and it is the corpus the next consolidation should run against. `~
 once, per-task.
 Two snapshots exist for comparison, **in `/tmp`, so they will not survive a reboot**:
 `memory-backup-before-consolidation.db` (31 journal, pre-run-1) and `memory-run1-post-consolidation.db`
-(15 records, the merge-heavy run). Move them somewhere durable if the A/B still matters.
+(15 long-term + 29 journal, the merge-heavy run). Move them somewhere durable if the A/B still matters.
+Both were **checked in M16 and are intact**, which was not a given — see the next paragraph.
+
+**Never snapshot a store with `cp memory.db`.** Measured in M16, against a live store: copying that
+file alone while the service holds a WAL produced **27 events and 2 memories** against the live **38
+and 4** — an entire working session missing. Nothing announces it; the truncated copy opens cleanly
+and answers every query. Use `sqlite3.Connection.backup()` or `VACUUM INTO`, which are consistent by
+construction, or copy **all three** of `memory.db`, `-wal` and `-shm` together. This matters here
+specifically because this file tells sessions to snapshot stores before consolidation experiments,
+and a silently-truncated baseline would corrupt exactly the A/B it was taken for.
+**How far the failure can go, from the same store 18 minutes earlier:** `memory.db` was **4,096
+bytes** with a **3.8 MB** `-wal`, so a `cp` of the main file at that moment would have yielded a
+database that opens, answers, and contains *nothing*. The later copy only looked plausible because a
+checkpoint had flushed most of it first — the bug's visibility depends on checkpoint timing, which is
+why it cannot be caught by looking at the copy.
+**What actually caught it is the part worth recording.** Not `check.sh`, which cannot see it, and not
+verification — the copy passed every check available, which is what made it dangerous. It was caught
+by the **operator independently backing the store up because he did not trust the agent's snapshot**
+(`~/zk-dogfood-backup`, all three files, and the only surviving capture of the pre-consolidation
+state at 13 events / 2 journal records), and by a **review finding forcing a recount against the live
+store**. Both lie outside the loop the agent controls.
 
 **What to do next, in priority order.**
-0. **Make Zikaron work under Claude Code**, keeping kiro working — **one codebase, two harnesses**
-   (operator decision 2026-08-16; harness differences are data, not forked code paths). Scoped as four
-   briefs in `design/build-plan.md`: ~~**M13** the design delta~~ **done**, ~~**M14** the harness seam and
-   both clients~~ **done**, ~~**M15** the installer adapter~~ **done**, **M16** the dogfooding
-   checkpoint ← **next, and the last**.
-   **M16 inherits four things**, all measured or observed during M15 rather than guessed:
-   (a) the `.mcp.json` **approval** properties — that `enabledMcpjsonServers` removes the load-time
-   prompt and `permissions.allow` removes the per-call one — are **documented, unmeasured**, because a
-   headless run approves everything and neither is observable without an interactive session;
-   (b) **MCP server readiness at session start**, observed n=1: a real session reported both zikaron
-   servers *"still connecting"* and could not name their tools, while the `SessionStart` hook had
-   already reached the service and created a store — if that generalises, early turns have **push
-   working and pull unavailable**, an asymmetry the agent cannot see;
-   (c) the **astral-character injection-budget** bisection, still open from M14 item (c);
-   (d) the recall instrument's fresh baseline, which resets at this boundary.
-   **M15's four settled decisions and the fifth thing the build found are in
-   `design/build-plan.md` §M15**, with the two review rounds' findings annotated in place. Moved
-   there rather than kept here now that they are implemented: this file is the hub, and a decision
-   that has shipped is brief material.
-   **M15 inherits three things from M14**, all named in this file: the two unmeasured harness facts in
-   (b) and (c) below, and the fact that `zikaron/harness/` now exists as the one place a harness
-   difference is allowed to live — the installer's adapter is the *only* remaining place a difference may
-   take a different shape rather than a different value. **No schema change is required** —
-   an interim plan added a migration milestone to record the consolidator's model, and a measurement
-   deleted it (see §Harness). Measured evidence:
-   `research/claude-code-harness-probe.md` (eleven facts, three probe rounds; raw logs in
-   `spikes/claude-code-harness/`, force-added past `.gitignore`'s `*.log` because a grep that cannot see
-   the evidence re-litigates it). This gates items 1 and 2, which both need the memory tools and
-   the push hook live in whichever harness the work happens in.
-   **Two things to carry into M15 that a fresh session would otherwise re-derive:**
-   (a) ~~**The seam must stay stdlib-only and trivial**~~ — **now guarded, in M14.**
-   `tests/test_hook_stdlib_only.py` discovers `zikaron/harness/*.py` as well as `zikaron/hook/*.py`
-   from disk, so a new module in either package is enforced by default rather than when someone
-   remembers to list it. The seam takes `enum` and `typing` only, and both were measured before being
-   taken: against a 24 ms bare interpreter and the hook's existing 30 ms floor, `enum` costs **nothing
-   measurable** (`socket` already imports it) and `typing` ~2 ms. That is what made real `Enum` closed
-   sets affordable where a frozen dataclass would not have been (`dataclasses` pulls in `inspect`).
-   (b) **Claude Code's hook timeout is `documented, unmeasured`, and it is the one unknown that can
-   surprise the installer.** `push.py` sizes its ~2 s internal deadline to fire *before* the harness
-   kills the hook — under kiro that is `timeout_ms`, 10000, stated explicitly in every shipped entry.
-   The Claude Code field, its unit and its default are **not probed**, so the fires-before-the-kill
-   property is unverified there. Measure it before M15 writes a `settings.local.json` entry that relies
-   on it.
-   (c) **A second unmeasured harness fact, found in M14's review and now the other thing M16 should
-   probe.** The 10,000 injection budget was pinned to *characters not bytes* with 9,016 `漢` — but `漢`
-   is a BMP character, one code point **and** one UTF-16 code unit, so the probe cannot distinguish
-   those two, and Claude Code is a Node application whose native string length is UTF-16 units. Every
-   astral character (emoji included, and real gists contain them) would then count two where `len()`
-   counts one. The code takes the conservative reading — `exceeds_injection_budget` measures UTF-16
-   code units, an upper bound on both — so nothing is unsound; what is missing is the measurement.
-   **The decisive experiment is one bisection run with an astral character, which separates all three
-   candidate units at once.** Recorded because a careful reading got the *bytes* half right and this
-   half wrong by not noticing the fixture could not discriminate.
+0. **M16 — the dogfooding checkpoint under Claude Code**, the last milestone of the port. Brief:
+   `design/build-plan.md` §M16; what it inherits is in the resume block above. It **gates items 1
+   and 2**, which both need the memory tools and the push hook live in whichever harness the work
+   happens in — and after M15 that is a matter of running the installer, not of building anything.
+   The M13–M15 detail a fresh session might go looking for is in the briefs and in
+   `FINDINGS-archive.md`; nothing outstanding remains in any of them.
+
+   **M16's dogfooding half is DONE, 2026-08-16. Evidence:
+   `research/claude-code-dogfood-checkpoint.md`; raw artefacts in `~/zikaron-m16-evidence/` —
+   `store.db` plus both session transcripts and the consolidator's, since Claude Code prunes
+   `~/.claude/projects/` on `cleanupPeriodDays` and the note's every quoted line came from there.** Every done-when clause is met and five findings arrived
+   that the brief did not ask for. **Read the note before proposing anything about the write
+   policy, the budget, or recall** — it is the only measurement of this system under real use by an
+   agent that was never told to use it.
+   What it settled: **three** approval gates, not two (folder trust reads our `permissions.allow`
+   back at the user as a warning); MCP tools arrive **deferred**, so the policy's tool-name
+   substitution is what makes them discoverable at all; the injection budget counts **UTF-16 code
+   units**, measured by astral bisection, closing open question 11 outright; **link coverage 1.00**;
+   the consolidator ran under the alias `sonnet` resolving to `claude-sonnet-5` **in the harness's
+   own transcript**, which measures `harness.md`'s no-column escape hatch true.
+   What it opened: open questions 13–15 below.
+
+   **How M16 was executed, and why the obvious reading of the brief is wrong.** The brief says
+   "against this repository's own seeded store or a throwaway"; a fresh session reads that as
+   *install into this repo*, which is what this session first proposed and the operator corrected.
+   - **Under kiro, dogfooding was a *controlled* experiment and the control is easy to lose.**
+     `.kiro/agents/zikaron-dogfood.json` carried its **own** `hooks` and `mcpServers`, and its
+     prompt says nothing about memory *on purpose*, so the only guidance it gets is the shipped
+     write policy. The crew agents were never the subject here. `FINDINGS-archive.md` line ~871
+     flagged that Claude Code's directory-scoped settings would destroy this, and it was never
+     resolved until now.
+   - **The direct translation is dead twice over.** A Claude Code subagent gets no MCP registration
+     of its own (frontmatter `mcpServers:` is *silently ignored*) and `UserPromptSubmit` never
+     fires for subagents, so a subagent cannot receive push at all. The dogfood agent must be a
+     **top-level** session (`claude --agent zikaron-dogfood`).
+   - **The arrangement: an empty throwaway at `~/zk-dogfood`**, project-wide install, operator
+     driving a memory-naive agent. Not this repo (the crew's wiring and my own memory-saturated
+     prompt are confounds) and not a clone of it (drags in the same confounds plus a store).
+     A throwaway also tests the **shipped** arrangement rather than a bespoke one, and is the only
+     place the inherited approval-gate question is cleanly askable, since this repo may hold cached
+     approvals.
+   - **The corpus is shell scripting**, operator's choice: conventions plus the gotchas that are
+     unlearnable from code (`set -e` not firing in a pipeline without `pipefail`, `[[ ]]` under
+     `#!/bin/sh`, `local x=$(cmd)` swallowing the exit code). Fast to test, and it sets up a real
+     test of D30's scope line — a convention is *not* derivable from an empty project but *is*
+     derivable once three scripts exist.
+   - **Recall needs two sessions, not one.** Session 1 works and writes; session 2 starts cold on
+     related work while we watch whether it searches unprompted. The baseline is **opened** at this
+     boundary, not established. **Done, and the answer was push rather than pull**: the restarted
+     session had the convention in its *first thought*, four seconds before it called any tool,
+     from the injected block alone — then pulled for the detail. Push triaged, pull deepened.
+   - **Measured on the way, and new to this corpus** (`/tmp/zk-settings-probe`, n=1): `claude -p
+     --settings <file>` fires a `UserPromptSubmit` hook declared in that file and its stdout reaches
+     the model, while the identical command in the same directory **without** the flag gets nothing.
+     So hook wiring can be scoped **per launch**, not only per directory — the mechanism that would
+     preserve a kiro-style control arm inside a directory hosting other sessions. Descoped from M16
+     by the throwaway decision; recorded so it is not re-derived.
+
 1. **The next consolidation, on a journal grown by real work.** That is when open question 12's *positive*
    merge criterion gets designed and tested. The prompt currently has reasons to split and none to merge,
    deliberately, on operator decision — do not revert it on the strength of the 11-merges-to-0 result.
-2. **Read the recall instrument.** `search` calls per session; its pre-change value is **0** across 17
+2. ~~**Read the recall instrument.**~~ **— done in M16, and the number is a fresh baseline that must
+   not be compared across the harness boundary.** Claude Code, memory-naive `zikaron-dogfood` agent,
+   **zero operator nudges**: **0.83 searches per user turn** over 2 sessions and 6 turns, every turn
+   containing a search or a write, and of the **3** searches issued after the store held anything
+   **0 came back empty** — the other 2 hit an empty store on turn 1. The
+   conditions are the number — tiny n, one task family, a store that grew 0 → 4 records *during* the
+   measurement. Full table and caveats: `research/claude-code-dogfood-checkpoint.md` §10.
+   **The prose was enough for the framing half.** Recall fired on turn 1, unprompted, and the agent
+   *named the policy's own occasion in its reasoning first*: "Since I'm about to propose a script
+   design, it's worth doing a quick memory search." The proposal gate fired twice in user-facing
+   text, including the "found nothing relevant" case it was written for. **Fired as designed, twice,
+   unprompted** — deliberately not "it earns its sentence", since the keep-or-wind-down decision has
+   its own named criterion and two firings do not settle it; the researcher's objection is withdrawn. **The mechanism half is untouched**: every search
+   in the checkpoint happened at task-framing time, so open question 1's mid-task moment — twenty
+   tool calls in, where no injectable hook fires — is still the real work.
+   Original text: *"`search` calls per session; its pre-change value is **0** across 17
    hours of real work, which is what the recall paragraph was added to move. One working session answers
-   whether prose was enough or whether the mechanism half of open question 1 is the real work.
+   whether prose was enough or whether the mechanism half of open question 1 is the real work."*
 3. ~~**A byte bound on `gist`**~~ **— done in M14, and it is a *character* bound rather than a byte one.**
    `GIST_MAX_CHARACTERS = 1024`, a fixed constant in `core/indexing/chunking.py`, enforced in the
    preflight ahead of the token bound and reported against field `gist.characters` (the error payload
@@ -228,130 +258,79 @@ Two snapshots exist for comparison, **in `/tmp`, so they will not survive a rebo
    characters per gist, which puts the same block at 89% of budget. A loud rejection naming the character
    count was judged the better failure than a block that fits by luck. If raising `gist_max_tokens` ever
    becomes real practice, this is the number to revisit.
-4. **The installer has no notion of *same install, older version*.** It asks only whether a shipped file
-   names a *different* interpreter, so upgrading Zikaron and re-running the installer silently keeps a
-   stale consolidator prompt unless `--force` is passed. The fix is to compare shipped content. **Folded
-   into M15**, which is the installer milestone anyway.
-5. **A known intermittent**, diagnosed and left: `test_idle_self_stop_unlinks_the_socket_before_the_process_exits`
+4. ~~**The installer has no notion of *same install, older version*.**~~ **— fixed in M15.**
+   Staleness is now a **content comparison**, which subsumes the old interpreter check and extends it
+   to every shipped file — kiro's skill could previously never be refreshed at all, its staleness
+   predicate being the constant `False`. It is a **trade**, recorded because the losing side is real:
+   content is the only evidence available, so a hand-edited artefact is backed up and reverted rather
+   than kept. `architecture.md` §"The install contract" carries the argument and names two ways to
+   remove the trade that were deliberately **not** built.
+
+5. **`BudgetUnit.CHARACTERS` is now known to be the ambiguous word, and the D34 table cannot say
+   otherwise.** M16 measured the Claude Code injection budget in **UTF-16 code units**, which is
+   exactly the distinction "characters" fails to make — and `exceeds_injection_budget` already
+   implements it. But `tests/test_harness_table.py::test_injection_budget_value_and_unit` parses that
+   table cell for **one number and one unit word**, and the string "UTF-16" carries a digit, so
+   naming the measured unit there turns the row unparseable and the test red. Found by doing it.
+   The precise unit lives in `harness.md` §"Injection budgets" instead. The honest fix — rename the
+   enum and teach the parser a unit containing a digit — is small, is a code change rather than a
+   documentation one, and was deliberately not made inside a checkpoint milestone.
+6. **A known intermittent**, diagnosed and left: `test_idle_self_stop_unlinks_the_socket_before_the_process_exits`
    fails under load because the signal handlers are installed after the socket is bound. Low impact, wants
    a test that pins the race deterministically.
+   **Timing nondeterminism's impact is wider than this one flaky test: the coverage number itself
+   varies.** Measured in M16 over three consecutive `./check.sh` runs on a tree whose only diffs
+   were comments — **97.64%, 96.85%, 97.64%** — with all 1702 tests passing every time. 0.79 points
+   of 5,882 statements is ~46 statements, and the per-file report points at the same *class* of
+   cause: `service/server.py` (85%) and `service/lifecycle.py` (90%) are socket-and-timing code
+   whose error branches are taken or not depending on how a race lands. **Which** race is not
+   localised — no cross-run per-file diff was taken — so do not read this as a prediction that
+   pinning the intermittent above would end the flap. **The consequence is about the ratchet, not
+   the tests:** `fail_under` is 90% against an actual ~97%, so today the margin absorbs the flap —
+   but that margin is the only thing preventing a red gate for reasons unrelated to the change under
+   test, and this project has already been burned once by a floor that was not doing its job
+   (`check.sh`'s own comment records it). Do not raise `fail_under` close to the observed value
+   without pinning the race first.
 
 **Two instrument properties worth knowing before quoting a number.** The dedup signal reports nothing for
 30 days unless `signal_horizon_days` is lowered (only the fully-resolved outcome closes early), and
 amend-after-surface currently reads `rate=1.00` meaning *3 of 3 resolved pairs* with 51 still pending.
 
-### Harness: migrating from kiro-cli to Claude Code
-**The crew has moved, and as of M14 so has half the product.** `.claude/` carries memory-researcher,
-memory-reviewer, memory-assistant, py-runner and the `self-review` skill, plus a `CLAUDE.md` holding the
-static half of this document. `.kiro/` stays in the repository unedited — it is the reference for what
-the installer still ships, and the fallback.
+### Harness: kiro-cli and Claude Code, both supported
+**The crew moved in M13, and the product finished moving in M15.** `.claude/` carries
+memory-researcher, memory-reviewer, memory-assistant, py-runner and the `self-review` skill, plus a
+`CLAUDE.md` holding the static half of this document. `.kiro/` stays in the repository unedited — it
+is the reference for what the installer ships for that harness, and the fallback.
 
-**What is true after M14, stated precisely, because the previous version of this paragraph is now
-half-false and a fresh session would act on it.** The *clients* are harness-aware: `zikaron-hook` reads
+**What is true now.** Both thin clients and the installer speak both harnesses. `zikaron-hook` reads
 either harness's trigger names through `zikaron/harness/`, resolves the session label from whichever
-variable that harness exports, writes each event on the channel that harness actually delivers, and
-`zikaron-mcp` resolves the same label the same way. So the code no longer assumes kiro anywhere.
-**The installer does not**: it still writes kiro config and only kiro config, which is M15's whole
-subject. The operative consequence for a session working here **right now** is unchanged in practice —
-nothing has installed a Claude Code hook or `.mcp.json`, so the memory tools and the push hook are still
-**not live in this harness** — but the reason is now "the installer has not been ported" rather than
-"the client cannot speak this harness". Do not read the old sentence and conclude the hook needs porting;
-it does not.
+variable that harness exports, and writes each event on the channel that harness delivers;
+`zikaron-mcp` resolves the same label the same way; and `zikaron/install/targets.py` writes either
+harness's artefacts. **`design/harness.md` is normative for every harness-coupled fact** — read it
+before touching the hook, the MCP client or the installer, and do not re-derive one from an older
+section of `architecture.md`. The probe evidence that settled these, with the documentation reading
+it refuted, is in `FINDINGS-archive.md` §"The Claude Code probe".
 
-Original text, superseded 2026-08-16 by M14: *"**Zikaron itself remains kiro-only**: the hook client
-reads kiro's `agentSpawn`/`userPromptSubmit` payloads and the installer writes kiro config, so the memory
-tools and the push hook are **not live under Claude Code**."*
+**Nothing is installed into this repository**, which is a choice rather than a gap: the memory tools
+and the push hook are **not live in this session** until someone runs the installer. `--harness auto`
+refuses here, since this repo carries both dotdirs.
 
-**Probed 2026-08-16 against Claude Code 2.1.233, and the probe refuted three of the claims below.**
-Full measurement: `research/claude-code-harness-probe.md`; scripts and raw logs
-`spikes/claude-code-harness/`. The list that follows is kept **as it was written**, with each refuted
-item marked in place, because the fact that a careful documentation reading got these wrong is itself
-the evidence — the same shape as `research/kiro-mcp-lifecycle-probe.md`. A `claude-code-guide`
-documentation reading (`research/claude-code-harness-contract.md`) independently repeated the
-session-id error, so it is the weaker source of the two.
+Original text, superseded 2026-08-16 by M15: *"**The installer does not**: it still writes kiro
+config and only kiro config, which is M15's whole subject."* Kept because it is exactly the
+confidently-stale claim this file exists to avoid — a fresh session reading it would have built M15
+a second time.
 
-- **REFUTED — the prompt field is `prompt`, not `user_input`.** `hook/main.py` needs no change there.
-- **REFUTED — a session-id environment variable exists.** `CLAUDE_CODE_SESSION_ID` is exported into
-  every process Claude Code spawns — both hooks, a subagent's subprocesses, and **the MCP stdio
-  server** — and equals the hook payload's `session_id`. The two-rung ladder ports as a **rename**;
-  linked sessions, link coverage, both cross-client D30 signals and the recall instrument all survive.
-  (`CLAUDE_PID` is *not* overridden for children and must never be read.)
-- **REFUTED — the subagent-suppression rule needs no re-derivation.** `UserPromptSubmit` does not fire
-  for subagents at all, so the door D32 guards is closed by the harness and the rule is simply inert
-  here. `SubagentStart`/`SubagentStop` carry `agent_id` **and `agent_type`**, so the write policy can
-  now be injected for every subagent *except* the consolidator — the precise rule kiro's payload could
-  not express.
-- **NEW, and nobody had it — the injection budget is a fixed 10,000 characters.** Bisected: 9,503 B
-  intact, 10,502 B truncated to a 2 KB preview. There is no `max_output_size` field, so 65,536 has no
-  analogue. Overrun is **loud** (a notice, a preview, and a path to the full text), unlike kiro's
-  silent truncation — but the margin protecting the unbounded-gist defect narrowed 6.5×.
-- **NEW — the real structural break is MCP process scope.** Claude Code runs one MCP server per
-  **session**, shared by every subagent, not one per agent instance as kiro does. `(session_id, pid)`
-  therefore cannot tell two consolidators in one session apart, and `_PlanBridge`'s per-process
-  takeover guard becomes per-session. **Operator decision 2026-08-16: accept it** — cross-session
-  exclusion is untouched, the lease still lapses, and a run-token fix is named but not built.
-- **NEW — D32's tool gating only half ports.** Subagent frontmatter `tools:` genuinely restricts MCP
-  tools, so withholding `search`/`fetch` from the consolidator stays mechanical. Withholding the four
-  verbs from the primary agent does not: a server must be registered session-wide to reach any
-  subagent, `permissions.deny` is global and breaks the subagent too, and per-subagent MCP
-  registration does not exist. That half becomes **prompt-only**.
-- **NEW — the injected block lands *after* the user message**, with no coercive framing sentence. Under
-  kiro it landed before, framed *"I have gathered this context from valuable programmatic script
-  hooks"*. Open question 4's stated tension resolves in our favour, by the harness's choice not ours.
+**Decided 2026-08-16: accept a baseline reset.** The recall instrument is read fresh under Claude
+Code (M16), and the pre-migration numbers are recorded as a **different-harness baseline that is not
+to be compared against** — the harness, the model, the injection position and the write-policy
+delivery all change at once. **Do not quietly compare across the boundary.**
 
-Original text, as written before the probe:
-- ~~**`userPromptSubmit` → `UserPromptSubmit`, and the prompt field is `user_input`, not `prompt`.**~~
-  **[REFUTED by probe §2 — the field is `prompt`. Kept for the record; do not act on it.]**
-  `hook/main.py` returns quietly when that field is not a string, so under Claude Code the push path
-  fails as *no output and exit 0* — invisible, by the same always-exit-0 design that makes a genuine
-  failure relayable. `agentSpawn` → `SessionStart`, same silent-return path.
-- ~~**No session-id environment variable exists.**~~ **[REFUTED by probe §1 — `CLAUDE_CODE_SESSION_ID` is
-  in every process, MCP server included. Kept for the record; do not act on it.]** `KIRO_SESSION_ID` was the shared key that made the hook
-  and the MCP tools speak as one session. Claude Code documents `CLAUDE_PROJECT_DIR` and `CLAUDE_EFFORT`
-  among others, and nothing carrying a session id — so the hook would use its payload's real `session_id`
-  while the MCP client falls back to its minted `zk-<uuid4>`, and they diverge. That breaks linked
-  sessions and **breaks the recall instrument**, which counts `search` calls *per session*. This is the
-  first thing to probe and the one most likely to force a design change.
-- ~~**The subagent-suppression rule dissolves rather than ports.**~~ **[REFUTED by probe §3 —
-  `UserPromptSubmit` never fires for a subagent, so the rule is simply inert. Kept for the record.]** It compares env session id to payload
-  session id; Claude Code instead scopes hooks per subagent via frontmatter and has `SubagentStart`/
-  `SubagentStop` carrying `agent_id` and `agent_type`. Re-derive it; do not translate it.
-- **Hook placement changes who gets memory.** Kiro put hooks inside each agent config, which is what made
-  `zikaron-dogfood` a controlled experiment. Claude Code's project `settings.json` hooks fire for every
-  session in the directory. Preserving the experiment needs subagent-frontmatter hooks or a deliberate
-  decision to drop the distinction.
-- **D10's premise is false here: `PreCompact` and `PostCompact` exist.** The manually-invoked
-  consolidation trigger becomes a choice rather than a constraint.
-- **Open question 1's mechanism half gets new options.** `PostToolUse`, `PostToolUseFailure`,
-  `PostToolBatch` and `Stop` all exist, and `PostToolUseFailure`'s exit-2 stderr is documented as
-  reaching the model — which is precisely the "this protobuf step just failed silently" moment that
-  `userPromptSubmit` cannot serve. Probe it before believing it.
-- **The installer's model check has no analogue.** `kiro-cli chat --list-models -f json` exists because
-  `agent validate` accepts an unknown model silently; Claude Code offers no equivalent list, so the
-  no-silent-fallback rule needs a new mechanism.
-- **Simplification:** the two hook formats (object vs array, with the seconds-versus-milliseconds trap)
-  collapse to one. That is code to delete.
-
-**Decided 2026-08-16: accept a baseline reset.** The recall instrument is read fresh under Claude Code
-(M16), and the pre-migration numbers are recorded as a **different-harness baseline that is not to be
-compared against** — the harness, the model, the injection position and the write-policy delivery all
-change at once. The caution below became the decision. Original text:
-
-**Undecided, and it should be decided before the migration work starts.** Priority item 2 — reading the
-recall instrument after the 2026-08-14 prose change — was calibrated on kiro sessions sharing one
-`KIRO_SESSION_ID`. Migrating first confounds that reading, and per the point above it may not be
-measurable at all until the session-label question is resolved. Either take the reading in kiro-cli
-first (one working session closes it cleanly), or accept a baseline reset and record here that
-pre-migration numbers are from a different harness and are not comparable. **Do not quietly compare
-across the boundary.**
-
-**Crew fidelity lost in the move, both deliberate.** memory-reviewer ran `gpt-5.6-sol`; Claude Code takes
-Claude models only, so it now runs `fable` — a different model, same family, so **cross-family
-independence is gone** and an `APPROVED` is weaker evidence than it used to be on anything where
-shared-family blind spots are plausible. And per-agent write scoping (`allowedPaths: ["reviews/**"]`,
-`["research/**"]`) has no frontmatter equivalent; it is now stated in each agent's prompt and enforced by
-nothing. Both are recorded in `.claude/skills/self-review/SKILL.md` where the loop that depends on them
-lives.
+**Crew fidelity lost in the move, both deliberate.** memory-reviewer ran `gpt-5.6-sol`; Claude Code
+takes Claude models only, so it now runs `fable` — same family, so **cross-family independence is
+gone** and an `APPROVED` is weaker evidence than it used to be wherever shared-family blind spots are
+plausible. And per-agent write scoping (`allowedPaths`) has no frontmatter equivalent; it is now
+stated in each agent's prompt and enforced by nothing. Both are recorded in
+`.claude/skills/self-review/SKILL.md`, where the loop that depends on them lives.
 
 ## Open questions
 1. **Pull is now used, and the instrument cannot say by whom or why — so the question it exists to
@@ -381,6 +360,18 @@ lives.
    deferred**: pid is the only discriminator the lifecycle probe found between agent instances, and
    `(session_id, pid)` already exists for consolidation ownership, so the fix stays cheap for
    whenever clustering stops being enough.
+   **Under Claude Code the attribution problem is answerable outside the store, for free — for as
+   long as the transcripts survive** (M16). *Solved* would overstate it: Claude Code prunes
+   `~/.claude/projects/` on `cleanupPeriodDays` (default ~30), so the affordance expires; M16's own
+   transcripts are copied into `~/zikaron-m16-evidence/` for that reason. The
+   `session_id` is **byte-identical** to the harness's transcript filename —
+   `~/.claude/projects/<escaped-cwd>/<session_id>.jsonl`, with subagent transcripts under
+   `<session_id>/subagents/` — so a `search` row joins to a full record of who searched and what they
+   were thinking when they did. Every quoted line of reasoning in
+   `research/claude-code-dogfood-checkpoint.md` came from there, including the agent naming the
+   policy's own occasion *before* it searched. That is exactly the "the log cannot attribute a search
+   to an actor or to an occasion" limitation above, answered — **externally, and only for this
+   harness**, which is why the `occasion` argument stays deferred rather than cancelled.
    **What changed 2026-08-14, from the using agent's own account of why it does not reach out
    unprompted.** Three things, all prose, none in the schema. (a) **The trigger was a category
    requiring a self-assessment** — "search whenever you are about to spend real effort" — and the
@@ -433,7 +424,13 @@ lives.
    *length*, regardless of provenance, and the first day's corpus was simply uniformly short — a
    seeding session summarising known facts produces shorter entries than live work does. The
    distribution over all 93 authored writes so far: **162–879 tokens, median 273**, against a
-   `chunk_max_tokens` of 450. The lesson about the claim rather than the parameter: one day of one
+   `chunk_max_tokens` of 450.
+   **M16 adds a third driver, and it is neither length-at-write nor merging: a record can *become*
+   chunked by being amended.** One dogfood record went **377 tokens / 1 chunk** at `remember` to
+   **1025 tokens / 3 chunks** at `amend`, when a reframing made the original half-wrong and the agent
+   rewrote it to carry both the new finding and the rejected alternative. So the repair loop D11 is
+   built on is itself a growth mechanism, and a corpus's chunk distribution drifts with how often its
+   memories are corrected rather than only with how they were written. The lesson about the claim rather than the parameter: one day of one
    corpus attributed a phenomenon to the wrong cause, and only a differently-shaped session could tell. 450 looks comfortably above the natural length
    of one written lesson and comfortably below a merged record. Original text below.
 3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
@@ -525,8 +522,14 @@ lives.
    demonstrated remedy. But fastembed serves a *quantized* small against an *unquantized* large, so this
    compares deployed artifacts, **not** capacity. Matched fp32 exports of one family would settle it.
 11. ~~**Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**~~
-   **CLOSED in M14** — by a **character** bound rather than the byte bound this entry proposed, counted in
-   UTF-16 code units, which bounds bytes for both harnesses at once. Detail and the arithmetic: current-state
+   **CLOSED in M14, and its last assumption removed by measurement in M16** — by a **character** bound
+   rather than the byte bound this entry proposed, counted in
+   UTF-16 code units, which bounds bytes for both harnesses at once. **M16 measured the unit itself**,
+   by the astral bisection `harness.md` reserved for it: 6,000 astral code points (12,000 UTF-16 units)
+   **truncate** while 4,600 (9,200 units) survive, which refutes the code-point reading; bytes were
+   already refuted by 27,016 B of `漢` arriving whole. UTF-16 code units survive all five data points.
+   So `exceeds_injection_budget`'s unit is now the **measured** one rather than the conservative one
+   that merely upper-bounded the candidates. Detail and the arithmetic: current-state
    item 3. The original text stands below, per this project's withdraw-in-place rule; the diagnosis was right
    and only the unit was wrong.
    Original text:
@@ -579,6 +582,27 @@ lives.
    fitting to a corpus with no positive examples in it. The next real test needs a journal containing a
    genuine repeat, which means a second working session rather than another prompt round. What the
    prompt still lacks is the *positive* criterion — it now has reasons to split and none to merge.
+   **M16 adds the first split judgment with a concordant second judgment, and a second route to the same
+   damage.** On the dogfood corpus, grouping put two records in one group (cosine **0.876**) and the
+   consolidator **split** them, promoting both in place with gists byte-identical — reasoning
+   *"preferring sharp distinct records over one combined summary"*, the 2026-08-04 change quoted back.
+   That verdict has a **concordant second judgment**: the **writing** agent had already rejected the
+   same pair as a dedup offer, with the same reasoning. Both earlier runs had nothing to score against.
+   **Concordance is not independence and neither is ground truth**, and an earlier revision of this
+   entry claimed both: the writer runs `opus` and the consolidator `sonnet`, the **same family**, so a
+   shared blind spot is plausible rather than excluded; and **both prompts were revised in the same
+   anti-merge direction on 2026-08-04**, with the consolidator quoting its half back verbatim. Two
+   correlated judgments agreeing, not two votes — and no human ever labelled the pair.
+   **And it is the second consecutive zero-merge outcome** (`~/Memory` run 2: 0 of 31; here 0 of 2 —
+   run 1's 11 merges preceded the prompt change), and
+   refusing was *correct* here, so it is consistent with both "correctly refuses bad merges" and
+   "refuses every merge" and **does not break that tie**.
+   **And the index-shaped-gist damage has a second cause that has nothing to do with merging**: the
+   same agent folded a *universal* fact — "a POSIX shell cannot hold a NUL byte", true of every POSIX
+   shell everywhere — into a record about one script, saying so explicitly (*"folding the NUL-byte fact
+   into this same entry rather than creating a separate general fact"*). It will now surface only for
+   that script's queries. So one record doing several jobs arises from **amendment** as well as from
+   consolidation, and only the consolidation route was ever named here.
    **Operator decision 2026-08-04: the prompt stays as it is, and is not to be reverted on the strength
    of this result.** Reverting would trade a measured over-correction for a measured over-fusion, on a
    corpus that cannot adjudicate between them; the next consolidation runs against a journal grown by
@@ -603,4 +627,96 @@ lives.
    threats are the work: 187 synthetic memories is 1–2 orders below real scale, relevance labels were
    authored by the same agent that wrote the corpus, and query-set independence is attested rather than
    mechanically provable. Real memories from a real repository with independent annotators is the fix.
+13. **The write policy contains two scope rules that disagree, and an agent obeying it cannot obey
+   both.** Opened by M16. The policy says *"could you learn it by reading the code? If yes, leave it
+   out … This store is for what cost someone time to discover"* **and** *"Not worth recording: …
+   facts about a language or tool in general rather than about this project."* `[[ -f ]]` follows
+   symlinks is not learnable from this repo's code and cost a real bug (rule 1 admits it) and is a
+   fact about a tool in general (rule 2 excludes it). The dogfood agent resolved toward the
+   prohibition and said so.
+   **An earlier version of this entry blamed the agent for drifting from the policy; that is
+   withdrawn** — grepping the shipped text before propagating the claim is the only reason it did not
+   reach the design. **The agent's own boundary is coherent and may be the right answer**: it excluded
+   the general bash fact and *recorded* "`find` here is a shell function wrapping bfs", equally a fact
+   about a tool but about **this environment**. General-tool-behaviour out, this-environment-behaviour
+   in — which is neither sentence's stated rule. What has to be decided is which rule governs
+   general-but-hard-won knowledge. **The conflict is one quadrant, and it is plausibly the largest one**: general
+   facts that are not learnable from this code and cost time here — `set -e` not firing in a pipeline
+   without `pipefail`, `[[ -f ]]` following symlinks, `local x=$(cmd)` swallowing the exit code. Much
+   of what bites a coding agent plausibly lives there — an argument from experience, not a measurement. Three costs follow: two agents obeying one policy make
+   different calls on the same fact, which is a correctness problem for a shared store; whichever rule
+   governs governs the highest-volume category; and consolidation inherits the ambiguity, since it
+   cannot judge "is this one finding?" consistently against an inconsistent scope.
+   **The tempting fix — recast the test as "will this bite someone again here?" — should be rejected,
+   by this corpus's own evidence.** The 2026-08-14 change replaced "search whenever you are about to
+   spend real effort" with four *detectable occasions* precisely because a self-assessment fails
+   mid-task; "will this recur?" is the same shape of prediction and fails the same way. Prefer a test
+   evaluable by inspection.
+   **RESOLVED and shipped 2026-08-16: a general fact enters as the decision it forced here, not as an
+   encyclopedia entry.** The "not worth recording" clause now reads *"a general fact about a language
+   or tool on its own — record the decision it forced here instead"*, with a worked example. That keeps
+   rule 2's encyclopedia out, honours rule 1's "cost someone time" by recording the consequence, and
+   leaves the record genuinely about this project — and it is what the dogfood agent produced anyway
+   when it wrote its convention record. It is also **evaluable by inspection**: "what did this fact
+   make me do here?" is a question about the past, and if the answer is nothing it stays out.
+   **The example is deliberately not shell-shaped**, on operator direction: a language-specific example
+   in a general-purpose policy biases the agent, and ours would have overfitted the policy to the one
+   corpus we happened to dogfood on. It uses a test runner, which every ecosystem has.
+   **Rejected on the way: recasting the test as "will this bite someone again here?"** — it predicts
+   value best but is a *prediction*, and the 2026-08-14 change replaced a self-assessment with four
+   detectable occasions precisely because self-assessment fails mid-task. Same shape, same failure.
+   Widening has a real cost — a store of manual-copyable trivia is
+   what rule 2 exists to prevent, and that is why the clause narrows the *form* rather than the scope.
+   The constant and `design/write-policy.md` moved in lockstep;
+   `tests/test_hook_write_policy.py` parses the document and compares. **Checked, not assumed:** the
+   consolidator prompt carries gist-*authoring* guidance but no scope language, since it decides
+   grouping and merging rather than what to record, so it needed no mirror.
+   **Unmeasured, and named as such:** whether this changes what agents actually write. The M16 write
+   corpus is n=4 records.
+14. **Zikaron collects preferences into a store that is designed not to bind.** Surfaced by the dogfood
+   agent unprompted: *"memory is explicitly framed as reference material, not directive … if the user
+   wants a standing behavioral preference actually enforced, `CLAUDE.md` is the right mechanism, not
+   memory."* `retrieval.md`'s untrusted-reference preamble is correct and is what stops a poisoned store
+   steering the agent — but a standing preference is exactly the class that wants to be binding, and the
+   write policy explicitly invites them (*"conventions and preferences that are settled but written down
+   nowhere"*). D1's scope line says nothing about this. Three ways out: declare preferences out of scope
+   and have the policy redirect them to the instruction file; keep them and state in the policy that they
+   are advisory, so an agent is not misled about their force; or a record class the block presents
+   differently, which cuts against the untrusted-reference stance and needs the poisoning argument
+   re-examined first. The agent reached the middle option on its own, which is evidence the seam is
+   findable rather than confusing.
+15. **Records cross-reference each other by gist prose, and a gist is not a stable address.** Observed
+   twice in M16, once per session — twice in two sessions by one agent on one model is a pattern worth
+   designing for, not yet a law: *"the record whose gist
+   begins 'dirdiff.sh is POSIX sh for BSD portability'"*. The schema has no relation field but
+   `superseded_by` (D27), so the agent built a soft link out of prose — and **that gist had already been
+   rewritten once**, by an `amend` four minutes earlier. The failure is the
+   worst-shaped one D11 can catch least: nothing fails loudly, the reference just stops resolving.
+   **The agent had the uuid both times** — in the dedup payload and in its own `fetch` — and
+   *preferred* gist prose as the address anyway. So this is a choice rather than a workaround for a
+   missing identifier, and that is what motivates fixing the *form* of the reference rather than
+   exposing uuids better.
+   **The first proposed fix — "cite by uuid, never by gist text" — was wrong, and the operator
+   refuted it the same day.** Three counts. A uuid is **opaque to a human**, and this store is meant to
+   be auditable and user-editable. A uuid **cannot be re-found semantically** when it does fail — store
+   rebuilt, copied between projects, or a digit hallucinated — while prose degrades into a search. And
+   **a hallucinated uuid is undetectable** where a hallucinated description is obviously wrong to a
+   reader, which matters because the agent authors the citation from what it just read. The specific
+   worry that prompted the proposal does not even hold: `fetch` calls `load()` with **no active
+   filter** and returns `active` as a field, so D16's never-`DELETE` rule makes a uuid permanent — a
+   retired record still resolves. The evidence was also weaker than stated: a citation quoting a
+   rewritten gist stays *usable*, because a reader resolves it by searching rather than by exact match.
+   **So the defect is narrower and the fix is one word.** It is not prose-instead-of-uuid; it is
+   **quoting a mutable field verbatim as though it were an identifier**. A citation to the *subject*
+   ("the dirdiff.sh POSIX/BSD portability record") has none of the problem; one that quotes today's
+   gist string does. A uuid is at best a belt-and-braces addition alongside the description, never the
+   primary.
+   **RESOLVED and shipped 2026-08-16**, one line in the policy beside the gist guidance: *"Point at
+   another record by its subject, not by quoting its gist. A gist is rewritten whenever its record is
+   corrected, so a quoted gist becomes a pointer to text that no longer exists."* A second reason this
+   beats a uuid, noticed while checking whether the consolidator prompt needed a mirror: **consolidation
+   is the actor most likely to rewrite a gist**, and a subject-shaped reference survives that *by
+   construction*, with nothing needing to be told to the consolidator at all.
+   Whether a real relation field is wanted is a separate and larger question that D27
+   deliberately closed once.
 

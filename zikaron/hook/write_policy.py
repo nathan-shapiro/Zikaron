@@ -91,8 +91,10 @@ values: "needs GITHUB_TOKEN with repo scope, mint one at <settings page>" is rig
 session, and retiring a memory does not erase it.
 
 Not worth recording: where code lives or what a function does, or anything else derivable from the
-source; transient state ("currently on branch fix-123"); facts about a language or tool in general
-rather than about this project.
+source; transient state ("currently on branch fix-123"); a general fact about a language or tool on
+its own — record the decision it forced here instead: not "the test runner parallelizes by
+default", but "tests here run serially, because the runner parallelizes by default and the fixtures
+share one database".
 
 **Write observations, not orders.** Record what was learned and what happened — "deploying without
 --force left the old worker running" — rather than standing instructions to future agents. Other
@@ -118,6 +120,10 @@ read further. Lead with the observable symptom or situation rather than the conc
 **Keep a gist to one sentence of about 20 to 25 words.** The limit is 64 tokens — roughly 50 words
 of ordinary prose — and a write over it is rejected outright, costing you the call. If a gist
 strains toward that limit it is usually carrying content that belongs in `content`.
+
+**Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
+its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
+record about the deploy rollback" survives that, and can be searched for.
 
 **Repair what misled you.** If a memory surfaces, you act on it, and it turns out to be wrong or
 stale, correcting it is your job: establish the current truth and amend the memory. Fetch it first

@@ -561,9 +561,13 @@ def _merged_permissions(
     **Server-level wildcards rather than nine tool names**, matching the consolidator's frontmatter
     grant for the same reason: there is no second list to drift from `mcp/tool_names.py`.
 
-    That these entries actually remove the per-call prompt is **documented, unmeasured** — the same
-    standing `enabledMcpjsonServers` already ships on, and for the same reason: a headless run
-    approves everything, so the property cannot be observed without an interactive session. M16.
+    That these entries actually remove the per-call prompt is **measured**, interactively, in M16
+    (`research/claude-code-dogfood-checkpoint.md` §1; `design/harness.md` §"Three approval gates"):
+    no per-call prompt across six writes and eight reads. **The install still states the approval
+    step in its output anyway**, and the reason survives the measurement rather than being retired
+    by it — no install-time or headless check can verify the effect, because a headless run
+    approves everything, so nothing in the shipped software can notice the day a key stops
+    working. `enabledMcpjsonServers` ships on the same standing, measured in the same session.
 
     Raises:
         InstallError: `permissions` or `permissions.allow` is present and is the wrong shape.

@@ -60,18 +60,21 @@ class OutputChannel(enum.Enum):
 class BudgetUnit(enum.Enum):
     """What an injection budget counts. The distinction is load-bearing and was pinned by
     experiment rather than inferred: an ASCII bisection cannot tell bytes from characters, and
-    9,016 characters of a 3-byte-per-character script — 27,016 bytes — arrived whole under a
-    10,000-*character* cap.
+    ~9,000 characters of a 3-byte-per-character script plus its ASCII markers — 27,016 bytes —
+    arrived whole under a 10,000-*character* cap.
 
-    **`CHARACTERS` is measured conservatively, because the experiment that pinned it could not
-    settle which kind of character.** The text it used lies in the Basic Multilingual Plane, where
-    one code point is also exactly one UTF-16 code unit — so it separates characters from bytes and
-    says nothing about code points versus UTF-16 units. A harness implemented on a runtime whose
-    native string length is UTF-16 would count every astral character (emoji among them, which real
-    gists do contain) as two where Python's `len` counts one. `exceeds_injection_budget` therefore
-    measures UTF-16 code units, which is an upper bound on both readings, so the bound holds
-    whichever is true. The experiment that would settle it is a bisection run with an astral
-    character, which separates all three candidate units at once.
+    **Which kind of character is now measured: UTF-16 code units**
+    (`research/claude-code-dogfood-checkpoint.md` §3). The earlier experiment could not settle it,
+    because the text it used lies in the Basic Multilingual Plane, where one code point is also
+    exactly one UTF-16 code unit. The astral rerun separates all three candidates: 6,000 astral code
+    points — 12,000 UTF-16 units — **truncate** under the 10,000 cap, while 4,600 (9,200 units)
+    arrive whole. So a `len()`-based count is **wrong**, not merely less conservative: it would pass
+    a block the harness then truncates.
+
+    **The member is still named `CHARACTERS`, and that name is now known to be the ambiguous word.**
+    Renaming it is the honest fix and was deliberately not done inside a checkpoint milestone; note
+    that `tests/test_harness_table.py` parses the design table's budget cell for one number and one
+    unit word, so a unit whose name contains a digit needs that parser taught first.
     """
 
     BYTES = "bytes"
@@ -107,9 +110,10 @@ class HarnessSpec(NamedTuple):
 
         Characters are counted as **UTF-16 code units**, not as `len(text)`. The two agree for
         every character in the Basic Multilingual Plane and differ by a factor of two for astral
-        ones, and which of them a character-denominated harness actually counts is unmeasured (see
-        `BudgetUnit`). Counting the larger of the two is what keeps this a bound rather than a
-        guess; the cost is rejecting a little early in a corner no ordinary gist reaches.
+        ones — and UTF-16 units are what a character-denominated harness was **measured** to count
+        (`research/claude-code-dogfood-checkpoint.md` §3; see `BudgetUnit`). This is therefore the
+        correct count rather than a conservative one: `len(text)` would pass 6,000 astral characters
+        against a 10,000 cap that truncates them.
 
         `surrogatepass` on both branches keeps this total. A lone surrogate is legal in a Python
         string decoded from JSON and would otherwise raise out of a bound check whose callers treat

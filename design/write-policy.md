@@ -117,8 +117,10 @@ values: "needs GITHUB_TOKEN with repo scope, mint one at <settings page>" is rig
 session, and retiring a memory does not erase it.
 
 Not worth recording: where code lives or what a function does, or anything else derivable from the
-source; transient state ("currently on branch fix-123"); facts about a language or tool in general
-rather than about this project.
+source; transient state ("currently on branch fix-123"); a general fact about a language or tool on
+its own — record the decision it forced here instead: not "the test runner parallelizes by
+default", but "tests here run serially, because the runner parallelizes by default and the fixtures
+share one database".
 
 **Write observations, not orders.** Record what was learned and what happened — "deploying without
 --force left the old worker running" — rather than standing instructions to future agents. Other
@@ -144,6 +146,10 @@ read further. Lead with the observable symptom or situation rather than the conc
 **Keep a gist to one sentence of about 20 to 25 words.** The limit is 64 tokens — roughly 50 words
 of ordinary prose — and a write over it is rejected outright, costing you the call. If a gist
 strains toward that limit it is usually carrying content that belongs in `content`.
+
+**Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
+its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
+record about the deploy rollback" survives that, and can be searched for.
 
 **Repair what misled you.** If a memory surfaces, you act on it, and it turns out to be wrong or
 stale, correcting it is your job: establish the current truth and amend the memory. Fetch it first
@@ -310,6 +316,73 @@ objection to putting it here is real and was overruled deliberately: a memory sy
 form of the agent's proposals, which is broader than memory. It is one sentence so that winding it
 down is one deletion, and the signal that it is overfiring is searches rising while the share
 followed by a `fetch` falls.
+
+### Why general facts enter as the decision they forced, and not at all on their own
+
+**This clause replaced a contradiction, found by dogfooding on 2026-08-16**
+(`research/claude-code-dogfood-checkpoint.md` §9.1). The text carried two scope tests that carve
+different sets: *"could you learn it by reading the code? … This store is for what cost someone time to
+discover"* keys on **code-learnability**, and the old *"facts about a language or tool in general rather
+than about this project"* keyed on **project-specificity**. They disagree on exactly one quadrant —
+general facts that are not learnable from this code and cost time here — and that quadrant is
+**plausibly the largest** one, since much of what bites a coding agent is general tool behaviour.
+*Plausibly*: this is an argument from experience, not a measurement, and one session cannot supply one.
+
+The cost of leaving it was not theoretical. Two agents obeying one policy make different calls on the
+same fact, which is a correctness problem for a store several agents write to; whichever rule wins
+governs the highest-volume category; and consolidation inherits the ambiguity, since it cannot judge
+"is this one finding?" consistently against an inconsistent scope. A memory-naive agent hit the
+quadrant on its first session and resolved it toward the prohibition, correctly and unhelpfully.
+
+**One residual conflict survives, and it is an accepted loss rather than an oversight.** A general fact
+that **cost real time but has forced nothing here yet** — learned incidentally, or mid-investigation
+before any code exists — is admitted by *"Err toward writing … if you just spent real time discovering
+something, record it"* and excluded by this clause. **The exclusion wins**, for the plain reason that
+there is no decision to record yet; the fact enters the store the first time it forces something, and
+until then the next agent may re-pay it. That deferral is the cost. It is preferred to the alternative
+failure the wider reading invites, which is an agent **manufacturing a decision** to justify a record
+it has already decided to write — a costume that is worse than the omission, because it fabricates a
+project fact rather than merely lacking one.
+
+**The resolution narrows the *form* rather than the scope**: the fact is admitted, when an applied form
+exists, as the decision it forced here. That keeps the encyclopedia out — nobody wants a store that reimplements a manual page —
+while the thing that actually cost time is recorded in the shape a later agent can act on. The applied
+form is also the better record: it says where the workaround lives and why not to remove it, and it is
+more cue-shaped, which serves the gist's triage job.
+
+**Rejected: keying the test on recurrence** — *"will this bite someone again here?"* That predicts value
+best and is a **prediction**, and §"Why the recall rule names occasions rather than a category" above is
+this document rejecting exactly that shape once already: the agent's own report was that a self-assessment
+arrives too late to act on. "What did this fact make me do here?" is a question about the past, settled by
+inspection.
+
+**The example is deliberately not language-specific.** The dogfooding corpus was shell scripting and the
+first draft used a shell example; that biases the reader and overfits this policy to the one corpus we
+happened to measure. A test runner parallelizing by default is a fact every ecosystem has a version of.
+
+**Unmeasured, and stated here because this is where a future policy-tuner reads.** Whether any of this
+changes what agents actually write is unknown. The write corpus behind the change is **four records**,
+from one agent on one model over two sessions. It removes a contradiction that was observed; it is not
+evidence that the resulting store is better.
+
+### Why a record points at another by subject rather than by gist — or by uuid
+
+Observed twice in one day, once per session — twice in two sessions by one agent on one model is a
+pattern worth designing for, not yet a law: an agent citing another record as *"the
+record whose gist begins …"*, quoting a gist that an `amend` had already rewritten four minutes earlier.
+
+**The first proposed fix was "cite the uuid", and it is wrong.** A uuid is opaque to a human, and this
+store is meant to be auditable and user-editable; it cannot be re-found semantically when it does fail;
+and a hallucinated uuid is undetectable where a hallucinated description is obviously wrong to a reader
+— which matters, because the agent authors the citation from what it just read. The worry that prompted
+it does not even hold: `fetch` resolves a uuid with no `active` filter, so D16's never-`DELETE` rule makes
+a retired record still resolvable.
+
+**The defect is narrower than it first looked**: not prose instead of a uuid, but quoting a *mutable
+field* verbatim as though it were an identifier. A reference to the subject is resolved by searching, so
+it degrades gracefully where an exact key does not. And it is robust to the one actor most likely to
+invalidate it — **consolidation rewrites gists**, and a subject-shaped reference survives that by
+construction, with nothing needing to be added to the consolidator's own prompt.
 
 ## 3. How we find out which way it errs
 

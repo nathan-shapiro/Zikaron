@@ -315,13 +315,14 @@ class TestInjectionBudgetMeasurement:
         assert not CLAUDE_CODE.exceeds_injection_budget(multi_byte)
 
     def test_astral_characters_count_two_against_a_character_budget(self) -> None:
-        """The conservative reading of an unmeasured fact, pinned so it cannot be quietly relaxed.
+        """The **measured** reading, pinned so it cannot be quietly relaxed to `len()`.
 
-        A character-denominated budget was pinned with text from the Basic Multilingual Plane,
-        where a code point and a UTF-16 code unit are the same thing — so whether such a harness
-        counts code points or UTF-16 units is unknown. Astral characters are where the two diverge,
-        and counting the larger keeps the budget a bound under either reading. Half the budget in
-        astral characters is exactly at it; one more is over.
+        The budget was first pinned with text from the Basic Multilingual Plane, where a code point
+        and a UTF-16 code unit are the same thing, so it could not say which was counted. M16's
+        astral rerun settled it (`research/claude-code-dogfood-checkpoint.md` §3): 6,000 astral code
+        points — 12,000 units — truncate under the 10,000 cap while 4,600 survive. So counting
+        units is **correct**, and a `len()`-based count would be *wrong* rather than merely less
+        safe. Half the budget in astral characters is exactly at it; one more is over.
         """
         astral = "\U00010348"
         assert len(astral) == 1, "one code point, but two UTF-16 code units"
