@@ -15,9 +15,16 @@ from fastmcp import Client
 
 from tests.design_tables import literal, table_with_columns
 from zikaron.core.retrieval.block import PREAMBLE
+from zikaron.harness.spec import KIRO
 from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
-from zikaron.install.assets import CONSOLIDATOR_PROMPT, SKILL_MARKDOWN, SKILL_NAME
+from zikaron.install.assets import (
+    CONSOLIDATOR_PROMPT,
+    KIRO_SPAWN_INSTRUCTION,
+    SKILL_NAME,
+    identity_vocabulary,
+    skill_markdown,
+)
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
@@ -29,7 +36,6 @@ from zikaron.install.entries import (
     hooks_object,
     mcp_servers_value,
 )
-from zikaron.install.main import DEFAULT_MODEL
 from zikaron.mcp.server import build_server
 
 _DISTRIBUTION_HEADING = "### The consolidator's model is a shipped config field, not a `meta` key"
@@ -37,6 +43,12 @@ _MODEL_TABLE_COLUMNS = ("Setting", "Location", "Type", "v0 default", "Rule")
 _MS_PER_SECOND = 1000
 
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
+
+#: Kiro's rendering of the skill: the identity tool vocabulary, so every name is spelled exactly as
+#: the shipped prose writes it. Every assertion below that was written against the old module-level
+#: constant is an assertion about *this* text, and it must stay byte-identical to what M12 shipped —
+#: `TestKiroArtefactsAreUnchanged` in `tests/test_install_targets.py` is what holds that.
+_KIRO_SKILL = skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)
 
 
 def _flat(text: str) -> str:
@@ -62,26 +74,26 @@ class TestTheModelDefaultComesFromTheDesign:
         """Read out of `architecture.md` at test time rather than compared against a second copy
         typed here, so revising the design's own table is what fails this — not only editing code.
         """
-        assert _design_model_default() == DEFAULT_MODEL
+        assert _design_model_default() == KIRO.consolidator_model
 
     def test_the_written_config_states_the_model_explicitly(self) -> None:
         """The no-silent-inheritance rule: an omitted `model` means the consolidator runs whatever
         the user's own session runs, and the one variable being held fixed stops being ours.
         """
-        config = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
-        assert config["model"] == DEFAULT_MODEL
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
+        assert config["model"] == KIRO.consolidator_model
 
 
 class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
     def test_the_allowlist_covers_the_whole_server_so_every_tool_is_pre_approved(self) -> None:
         """A subagent has nobody to answer a permission prompt, so an available-but-not-allowed tool
         is one that fails at the moment it is needed."""
-        config = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         assert config["tools"] == [f"@{MCP_SERVER_NAME}"]
         assert config["allowedTools"] == [f"@{MCP_SERVER_NAME}"]
 
     def test_it_grants_no_filesystem_or_shell_tool(self) -> None:
-        config = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         tools = config["tools"]
         allowed = config["allowedTools"]
         assert isinstance(tools, list)
@@ -92,10 +104,10 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
     def test_it_declares_no_hooks(self) -> None:
         """Its session must not fire the push hook — it has no `search` to spend a result on — and
         must not print the write policy, which is already in its own system prompt."""
-        assert "hooks" not in consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        assert "hooks" not in consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
 
     def test_it_runs_the_mcp_server_in_consolidator_mode(self) -> None:
-        config = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         servers = config["mcpServers"]
         assert isinstance(servers, dict)
         assert servers[MCP_SERVER_NAME] == {
@@ -262,28 +274,28 @@ class TestTheRulesEachTextCarriesAlone:
 class TestTheSkillFile:
     def test_the_frontmatter_name_matches_the_directory_it_installs_into(self) -> None:
         """kiro derives one from the other, so a mismatch is a skill that never loads."""
-        assert f"\nname: {SKILL_NAME}\n" in SKILL_MARKDOWN
+        assert f"\nname: {SKILL_NAME}\n" in _KIRO_SKILL
 
     def test_the_description_is_one_physical_line(self) -> None:
         """A single-line plain scalar needs no assumption about which YAML features the harness's
         frontmatter parser supports — the reason it is assembled from fragments in code.
         """
-        lines = SKILL_MARKDOWN.split("\n")
+        lines = _KIRO_SKILL.split("\n")
         described = [line for line in lines if line.startswith("description:")]
         assert len(described) == 1
         assert lines[lines.index(described[0]) + 1] == "---"
 
     def test_the_frontmatter_is_closed_before_the_body(self) -> None:
-        assert SKILL_MARKDOWN.startswith("---\n")
-        assert SKILL_MARKDOWN.split("---\n")[2].lstrip().startswith("#")
+        assert _KIRO_SKILL.startswith("---\n")
+        assert _KIRO_SKILL.split("---\n")[2].lstrip().startswith("#")
 
     def test_it_names_the_agent_the_skill_spawns(self) -> None:
-        assert CONSOLIDATOR_AGENT_NAME in SKILL_MARKDOWN
+        assert CONSOLIDATOR_AGENT_NAME in _KIRO_SKILL
 
     def test_it_tells_the_reader_that_reinvoking_recovers_a_stuck_run(self) -> None:
         """The takeover is the one user-facing recovery path in the whole system, and this file is
         the only place a user encounters it."""
-        assert "takes the run over" in SKILL_MARKDOWN
+        assert "takes the run over" in _KIRO_SKILL
 
 
 class TestTheShippedEntriesStateBothLimits:
@@ -371,7 +383,7 @@ class TestTheTrackedArtefactsInThisRepository:
         if not tracked.is_file():
             pytest.skip("this checkout has no tracked consolidator config")
         document = json.loads(tracked.read_text())
-        generated = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        generated = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         assert document["mcpServers"][MCP_SERVER_NAME]["args"] == ["--mode", "consolidator"]
         for key in ("name", "description", "model", "prompt", "tools", "allowedTools"):
             assert document[key] == generated[key], f"tracked config has drifted on {key}"
@@ -380,7 +392,7 @@ class TestTheTrackedArtefactsInThisRepository:
         skill = Path(__file__).resolve().parent.parent / ".kiro/skills/zikaron-consolidate/SKILL.md"
         if not skill.is_file():
             pytest.skip("this checkout has no tracked skill")
-        assert skill.read_text(encoding="utf-8") == SKILL_MARKDOWN
+        assert skill.read_text(encoding="utf-8") == _KIRO_SKILL
 
     def test_the_tracked_dogfood_config_selects_the_memory_tools(self) -> None:
         """The measured failure this repository would hit first: an agent whose `tools` omits the
@@ -399,5 +411,5 @@ class TestTheWholeConfigIsSerializable:
     def test_the_consolidator_config_round_trips_through_json(self) -> None:
         """It is written with `json.dumps`, so a value that cannot serialize would fail at install
         time — which is where this catches it instead."""
-        config = consolidator_agent_config(_COMMANDS, model=DEFAULT_MODEL)
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         assert json.loads(json.dumps(config)) == config

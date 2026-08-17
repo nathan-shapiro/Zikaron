@@ -803,6 +803,54 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
 
 
 ## Dogfooding notes (evidence from our own sessions)
+- **A shipped check was a no-op for three milestones, and the thing that exposed it was refusing to
+  let a passing assertion stand unexamined.** M15 round 4, 2026-08-16. A review asked the installer
+  to validate the *real* shipped consolidator config rather than a four-key toy. The rewritten test
+  passed — and rather than accept that, I asked the obvious follow-up: *can this validator ever say
+  no?* It cannot, as we were calling it. `kiro-cli agent validate` reports a problem by **writing to
+  stderr while exiting 0**; `validate_agent_config` returned `None` whenever the exit code was zero,
+  which is always. Every install had reported a clean validation regardless of what it wrote.
+  **Why nothing caught it, which is the transferable part.** Every unit fixture built its fake
+  around a **non-zero exit** — a value the real binary never produces — so the fixtures encoded a
+  belief the world contradicts, and agreed with each other perfectly. The single test against the
+  real binary asserted `is None` and therefore passed *because* the function was broken. Both halves
+  of the test suite were consistent, confident and wrong in the same direction, which is the exact
+  shape an agreement test cannot see (cf. the `_hook_env` entry below, where two clients agreed on
+  the same wrong session label).
+  **The habit worth keeping:** when a test asserts an absence — `is None`, empty, no error — ask
+  what makes the *presence* case reachable, and assert that too. A validator with no opinions
+  satisfies "accepts what we ship" perfectly. `TestTheRealValidatorComplainsAtAll` now pins it.
+- **An agent measured one process and asserted about another, and the thing that caught it was a
+  sanity assertion inside its own guard.** M15, 2026-08-16. Reading `test_install_e2e.py`'s
+  `_hook_env` — `{**os.environ, "KIRO_SESSION_ID": session_id}` — in a session running under Claude
+  Code, I concluded it leaked twelve `CLAUDE*` variables into the hook subprocess, so the child
+  would detect the wrong harness and resolve the wrong session label. I confirmed it by running
+  `current_harness()` in a bare `python -c`, which duly returned `CLAUDE_CODE`, reported the finding
+  to the operator as fact, and started building a fix the operator then improved on. **It was
+  false.** `tests/conftest.py` has had a suite-wide autouse fixture since M14 that deletes every
+  spec's marker and session variable before each test, with a docstring giving the same reasoning I
+  had just re-derived. Inside pytest the harness detects as `KIRO`, correctly. The bare `python -c`
+  measured a different process than the one under discussion.
+  **What caught it is the transferable part.** The guard I was writing ended with a precondition
+  assertion — `assert marker in os.environ, "and it really is set here — otherwise this test proves
+  nothing"` — and *that* line failed, not the property under test. A guard whose precondition is
+  unasserted passes vacuously when the world it assumes is absent; asserting the precondition is
+  what converts "this test is meaningless here" from silence into a failure. It is the same shape as
+  M14's verify-by-mutation rule, applied to the setup rather than to the subject, and it is cheap:
+  one line per guard.
+  **Second-order, and the reason this is filed rather than deleted:** the fix was reverted in full,
+  because adding it would have put a second expression of one intent in a worse place than the
+  existing one — the drift this milestone spent its whole review budget removing. A false finding
+  can still cost a real regression if the fix ships out of momentum. What stayed is one comment on
+  `_hook_env` naming the fixture that makes it safe, so the next reader does not walk the same trail.
+- **A commit hash is the most confident-looking pointer a corpus can hold, and an ordinary rebase
+  falsifies it silently.** FINDINGS recorded M13 as commit `7628946`. That object does not exist in the
+  repository — the branch was rebased afterwards, which `backup-pre-rebase` and `backup-pre-rebase-2`
+  record. Nothing failed; the pointer simply stopped resolving, and a session following it would have
+  concluded the milestone was missing rather than that the reference was stale. Milestones are now cited
+  by commit **subject**, which survives a rebase and is findable with `git log --grep`. The general shape
+  is the one this corpus keeps meeting: **the more precise a recorded fact looks, the less likely anyone
+  is to re-check it**, so precision without a durability argument is a liability rather than rigour.
 - **An authored memory can name a capability the harness does not have, and nothing detects it.** This
   agent's own definition instructs it to work from a task list via `TaskCreate`/`TaskUpdate`, hedging that
   "the names differ between versions, so check what is actually exposed rather than assuming". Checked, four
@@ -1474,6 +1522,39 @@ largest known quality lever, it needs no reindex, and it is deliberately post-bu
 
 
 ## References
+- **M15 review trail** — **six** rounds, APPROVED. Rounds 1–3 covered the milestone; rounds 4–6 were
+  targeted at what two operator questions changed afterwards (pure-shell installs, a symmetric
+  absent-harness refusal, and splitting the binary-dependent tests into their own tiers). The trail
+  is worth reading for one recurring shape rather than for the findings: **four times, something was
+  wrong under a green gate, and every one was found by a human-shaped read.** A review fix that was
+  a docstring over an unchanged method body; a binding sentence in `coding-standards.md` that five
+  of the six tests it governed falsified; a tier whose flagship test asserted its own module's stub;
+  and — the largest — `validate_agent_config`, inert since M12 because it read an exit code the
+  binary never sets. `ruff`, `mypy --strict` and ~1700 tests saw none of them. Round 1 caught two blockers of one shape (new code
+  not holding itself to a rule the *old* code documents two functions away) and the sharpest single
+  finding of the milestone: that `enabledMcpjsonServers` governs whether a server **loads** while
+  `permissions.allow` governs whether each call is **approved**, so the install as written would have
+  put every memory write behind a prompt. Round 2 caught a review *fix* that was a docstring over an
+  unchanged method body, with the gate green over it. Round 3's nitpicks produced one more measurement (the bracketed alias); round 6's produced the
+  `pytest_runtest_makereport` backstop — `reviews/m15-installer-adapter-review.md`.
+- **Claude Code installer probe, measured 2026-08-16 (M15)** — the four things the *installer* writes
+  config against, all against 2.1.233. The settings `hooks` shape fires and `UserPromptSubmit` takes no
+  matcher; the per-hook **`timeout` is seconds** (proved by a `timeout: 30` entry surviving a 5 s sleep,
+  which a millisecond reading cannot explain) and its `UserPromptSubmit` default is **30 s**, bracketed
+  by a ladder at [30, 32) — *not* the 600 s that applies to other events; a timed-out hook is killed and
+  its output discarded **silently**, nothing on stderr or in the result object; hooks on one event run in
+  parallel; injected output is framed `UserPromptSubmit hook success: …`, a **neutral** frame where kiro's
+  instructed the model to follow requests in the injected text; the model-visible MCP tool name is
+  **byte-identical** to the `mcp__<server>__<tool>` config form; a whole-server wildcard in subagent
+  frontmatter grants that server's tools and **excludes** the other server's, which is D7's enforcement
+  half surviving mechanically. `enabledMcpjsonServers` is accepted but headless runs cannot test the
+  approval gate it exists to bypass — that stays **documented, unmeasured** for M16 —
+  `research/claude-code-installer-probe.md`.
+- **Claude Code install artefact contract** — the documentation reading of the same five artefacts
+  (hooks schema, `timeout`, `.mcp.json` and its approval flow, MCP tool naming, agent and skill
+  frontmatter), with eight gaps flagged rather than filled by inference. It **agreed** with the probe on
+  every measured point, which is worth recording precisely because this project's two previous probes
+  both refuted their documentation readings — `research/claude-code-install-artefact-contract.md`.
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
 - Prior art as built — schema, RRF+recency ranking, `/sleep`, `merge_reframes` — `~/Memory/design/long-term-memory.md`, `~/Memory/design/ltm-revision-revamp.md`; digested in `design/prior-art.md`.

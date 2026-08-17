@@ -60,13 +60,67 @@ necessary ignore carries a comment saying **why** it is unavoidable. No `Any` cr
 
 ## 4. Tests
 
-**`pytest`, with three tiers.**
+**`pytest`, with five tiers.**
 
-| Tier | Marker | Character |
-|---|---|---|
-| unit | default | hermetic, fast, `tmp_path`, deterministic fake embedder. The bulk. |
-| integration | `@pytest.mark.integration` | real `fastembed`, a real UDS socket, a real subprocess — anything that leaves the process or loads a model. Slower, still automated. See the note below on where a real store sits. |
-| paid/manual | `@pytest.mark.manual` | anything needing a live model API — consolidation quality A/Bs. Never in the default run. |
+| Tier | Marker | Character | In the default run |
+|---|---|---|---|
+| unit | default | hermetic, fast, `tmp_path`, deterministic fake embedder. The bulk. | yes |
+| integration | `@pytest.mark.integration` | real `fastembed`, a real UDS socket, a real subprocess — anything that leaves the process or loads a model. Slower, still automated. See the note below on where a real store sits. | yes |
+| harness, kiro | `@pytest.mark.integration_kiro` | needs a real, **working** `kiro-cli` on `PATH` | **no** |
+| harness, Claude Code | `@pytest.mark.integration_claude` | needs a real Claude Code binary on `PATH` | **no** |
+| paid/manual | `@pytest.mark.manual` | anything needing a live model API — consolidation quality A/Bs. | **no** |
+
+**Why a third-party binary is a different tier from `integration`, added in M15 and earned rather
+than anticipated.** Everything `integration` calls "real" is **Zikaron's own** — our subprocess, our
+socket, our model download — and is reproducible on any machine that can run the suite. A harness
+binary is neither: it must be installed *and* in a working state, which is somebody else's
+credential. An expired `kiro-cli` token turned `./check.sh` red for a reason with no relationship to
+the code, and the same tests would go **green** on a machine whose harness behaved differently. A
+gate that can mislead in both directions is not a gate, so these leave the default run and are asked
+for by name:
+
+```bash
+.venv/bin/pytest -m integration_kiro
+.venv/bin/pytest -m integration_claude
+```
+
+**The rule that keeps this honest: nothing may live *only* in those tiers.** A behaviour they cover
+must also be covered hermetically, by stubbing the binary — `conftest.stub_harness_binaries` exists
+for exactly that, and it is opt-in rather than autouse so that tests *about* the binary checks can
+still see the real functions. What legitimately remains binary-only is claims about the
+**harness's own** behaviour, where a stub would only assert our belief back to us, each saying so in
+its docstring. Deliberately not listed or counted here — that clause went stale twice in one
+afternoon, which is the tell: **the tiers are the enumeration**
+(`pytest -m integration_kiro --collect-only -q`), and what makes a test belong in one is the test
+above, not membership in a paragraph.
+
+**A tier that cannot fail is worse than no tier**, and both of these nearly shipped that way. The
+Claude Code name test originally asserted a value the module's own autouse fixture had stubbed to
+`True`, and skipped when the binary was absent — so a wrong name made the tier exit 0. The kiro tier
+then kept the same shape one review round longer, guarded by `pytest.skip`, while this paragraph
+already claimed otherwise.
+
+So: **every test in these tiers fails rather than skips when its binary is absent**, because the
+tier is only ever reached by explicit request — running it on a machine that cannot serve it is a
+mistake about the machine, and a skip reports success for it. It also reports success for the other
+cause, which is the one no other test can see: `HarnessSpec.harness_binary` naming a binary that
+does not exist. The spec↔design drift guard cannot catch that (it pins the code against
+`harness.md`, not against the machine, and an upstream rename lands on both at once), so these tiers
+are the only place a wrong name is observable at all.
+
+**That rule is enforced, not requested** — `tests/conftest.py`'s `pytest_runtest_makereport` wrapper
+converts a skip inside either tier into a failure, keeping the original reason in the message. It is
+mechanical because *stating* it did not work: this paragraph asserted the rule while five of the six
+tests it governed used `pytest.skip`, and correcting the prose would have left it able to go stale
+again the next time someone added a test. A normative sentence the suite can falsify is the
+always-loaded-file defect one layer up.
+
+**Verified by mutation, both directions:** with both seam names deliberately misspelled, all six
+tests fail; restored, all six pass; and a deliberately-skipping test added to a tier fails through
+the wrapper. A rule of this kind is worth exactly the check that was run against it.
+
+**Markers use underscores** — `integration_kiro`, not `integration-kiro` — because a marker is an
+attribute lookup on `pytest.mark`, so a hyphen is not expressible.
 
 **Where a real store sits, because the line above is otherwise ambiguous and everything touches
 it.** A test that creates a real store on `tmp_path` — real SQLite, real FTS5, the real `sqlite-vec`

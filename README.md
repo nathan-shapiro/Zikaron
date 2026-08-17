@@ -63,8 +63,18 @@ and never fails your turn.
 - **Linux.** The transport is a Unix domain socket and the paths assume a POSIX filesystem; nothing
   here has ever been run on macOS or Windows.
 - **Python 3.12.**
-- **`kiro-cli` on your `PATH`.** Zikaron installs hook and MCP entries that kiro itself reads, so the
-  installer refuses to run without it.
+- **A supported harness installed: `kiro-cli` or Claude Code.** Zikaron installs hook and MCP
+  entries whose only reader is that harness's own binary, so the installer checks it is on your
+  `PATH` and **refuses if it is not** — writing those files where nothing reads them would exit 0
+  and leave you with no memory tools and no error to search for. Pass `--print-only` to see exactly
+  what would be written without writing it, which is how to provision a machine before its harness.
+
+  **The installer itself is an ordinary program and does not need a harness *running*.** Run it from
+  any shell — a terminal, an ssh session, a container build. It works out which harness a project is
+  for from the project itself (a `.claude/` or a `.kiro/` directory) and asks you only when the
+  project does not say. Under kiro it additionally validates the consolidator's model id against the
+  binary, because kiro substitutes an unknown model silently; Claude Code refuses one itself, at
+  spawn, so no such check is needed there.
 
 ## Install
 
@@ -75,22 +85,47 @@ python3.12 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
-Then install into the project you want memory for:
+Then install into the project you want memory for. Under **Claude Code**:
 
 ```bash
 cd /path/to/your/project
+/path/to/zikaron/.venv/bin/python -m zikaron.install --project .
+```
+
+Under **kiro**, name the config for the agent you actually work in:
+
+```bash
 /path/to/zikaron/.venv/bin/python -m zikaron.install \
     --project . --agent .kiro/agents/<your-agent>.json
 ```
 
-`--agent` is the config for the agent you actually work in. Omit it and the installer prints the JSON
-for you to paste instead; nothing is merged into a file you did not name.
+The installer picks the harness from the project — a `.claude/` or a `.kiro/` directory — and
+**refuses rather than guessing** if the project has both or neither. Pass `--harness claude-code` or
+`--harness kiro` to say. That refusal is deliberate and it is the one place this installer is
+deliberately unhelpful: installing for the wrong harness writes files nothing reads, exits 0, and
+leaves you with no memory tools and no error to search for.
 
-Finally, if the project is a git repository, tell git to ignore the store:
+`--agent` is kiro-only, and passing it under Claude Code is refused rather than ignored — there its
+entries go into fixed project files instead. To see exactly what would be written without writing
+anything, pass `--print-only` on either harness.
+
+Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
+the MCP config too:
 
 ```bash
 echo '.zikaron/' >> .gitignore
+echo '.mcp.json' >> .gitignore     # Claude Code only; see below
 ```
+
+**`.mcp.json` is the awkward one, and it is worth being explicit rather than quiet about it.** Claude
+Code intends that file to be committed and shared — that is what "project-scoped" means — but the
+entries Zikaron writes into it name absolute paths inside *your* virtualenv, so a clone-mate gets a
+server that cannot start, plus an approval prompt for it. This is the same objection that keeps the
+hook entries out of the checked-in `settings.json`; the difference is that `settings.local.json`
+exists as an untracked sibling and `.mcp.json` has no equivalent. There is no per-project,
+declaratively-writable, machine-local MCP scope to move it to, so the residual is accepted and named:
+ignore the file, or accept that each clone re-runs the installer. Re-running is safe — a differing
+Zikaron entry is refused loudly rather than merged over.
 
 The installer does not do this for you — `.gitignore` is yours, and appending to it is not a decision an
 installer should make silently. But it matters, and it is easy to forget: without it the memory
@@ -98,7 +133,7 @@ database, its write-ahead log, the service logs and a downloaded embedding model
 untracked, and a routine `git add -A` commits the lot. None of it is useful to anyone else and none of
 it is reproducible from your repository.
 
-What it writes, relative to the project:
+What it writes under **kiro**, relative to the project:
 
 | Path | What |
 |---|---|
@@ -106,10 +141,27 @@ What it writes, relative to the project:
 | `.kiro/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
 | the agent config you named | `hooks` for start and per-message, an `mcpServers` entry, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` |
 
-It backs your config up to `<config>.bak` before touching it, keeps an existing consolidator config or
-skill rather than overwriting your edits (pass `--force` if you mean it), and validates the
-consolidator's model id against your harness — an unknown model would otherwise be silently replaced
-by the harness's default.
+and under **Claude Code**:
+
+| Path | What |
+|---|---|
+| `.claude/agents/zikaron-consolidator.md` | the consolidation subagent, as frontmatter plus its prompt |
+| `.claude/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
+| `.claude/settings.local.json` | three hooks — session start, per-message, and per-subagent — plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
+| `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs |
+
+**`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
+entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
+The third hook is the one with no kiro counterpart — it hands the write policy to each subagent you
+spawn, which kiro achieves by firing its ordinary hooks for subagent sessions instead.
+
+It backs up any file it merges into (`<file>.bak`, and the first backup wins), and **refreshes a
+shipped file whose contents are not what this version ships** — after backing it up, and saying so.
+That is what makes upgrading work: the earlier rule kept whatever was already there, so a new
+consolidator prompt reached new installs and no existing one. The cost is that a hand-edit to a
+shipped file is reverted on the next install rather than kept. Under kiro it also validates the
+consolidator's model id, because an unknown model would otherwise be silently replaced by the
+harness's default.
 
 `@zikaron` has to be in `tools` or the memory tools are simply absent: the `mcpServers` entry
 *configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
@@ -139,6 +191,27 @@ resource does not disable inheritance, so it can only help.
 skill needs in order to spawn the consolidator. Its reach is much wider than memory, so that grant
 stays yours. The installer says so if it is missing.
 
+### Two things to know under Claude Code
+
+**Approval happens twice, and the install answers both.** `enabledMcpjsonServers` decides whether a
+project-scoped `.mcp.json` server **loads** at all; `permissions.allow` decides whether each tool
+**call** goes through without a prompt. Both are written into `settings.local.json`. If the memory
+tools are missing after a fresh install, check `/mcp` for a server pending approval before looking
+anywhere else — an unapproved server is simply absent, with nothing saying why. If they are present
+but every write interrupts you, it is the second key that did not take.
+
+`--no-trust-tools` withholds both for *your* tools. It does not withhold them for the consolidator's:
+a subagent has nobody to answer a permission prompt, so an unapproved tool there does not ask, it
+fails at the moment consolidation needs it.
+
+**Your own agent can see the four consolidation verbs**, and that is not a misconfiguration. A server
+has to be registered for the whole session before any subagent can reach it, so registering the
+consolidator's server exposes it to you too. Under kiro the two tool sets are separated mechanically;
+here it is the prompt that keeps them apart. Nothing in the store is at risk from it — the never-lose
+guard, the receipts and the lease are untouched — but an unauthorized consolidation would spend
+tokens and could write a poorly-judged long-term record. `permissions.deny` is **not** the fix: it is
+global and unregisters the tool, after which the consolidator itself refuses to start.
+
 **Installing into a clone of the Zikaron repository itself** finds a consolidator config already
 tracked, carrying whichever virtualenv path the last committer had. The installer notices that the file
 names a different install, backs it up, and rewrites it for yours.
@@ -148,10 +221,12 @@ names a different install, backs it up, and rewrites it for yours.
 | Flag | Effect |
 |---|---|
 | `--project <dir>` | the project to install into. Also where the store lives (default: the current directory) |
-| `--agent <path>` | merge the hook and MCP entries into that config, after backing it up |
-| `--model <id>` | the consolidator's model (default: `claude-sonnet-5`), validated against your harness |
-| `--format {object,array}` | which hook format to write when the target config has none yet |
-| `--no-trust-tools` | leave `@zikaron` out of `allowedTools`, so every memory write asks permission |
+| `--harness {auto,kiro,claude-code}` | which harness to install for. `auto` reads the project and refuses if it cannot tell |
+| `--agent <path>` | **kiro only.** Merge the hook and MCP entries into that config, after backing it up |
+| `--print-only` | print what would be written and write nothing at all |
+| `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
+| `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
+| `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every memory write asks permission |
 | `--force` | replace files that would otherwise be kept |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
@@ -287,7 +362,7 @@ never blocks your message, and it never reads the store directly.
 | Symptom | Where to look |
 |---|---|
 | no memories are being injected | `.zikaron/hook.log`, then `pgrep -af zikaron.service.main` |
-| the agent has no `zikaron_*` tools | `/tools` in kiro; check `@zikaron` is in the agent's `tools` |
+| the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval |
 | every memory write asks permission | add `@zikaron` to the agent's `allowedTools` |
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |

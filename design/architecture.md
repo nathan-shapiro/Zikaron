@@ -1826,11 +1826,42 @@ things and refuses rather than guesses when it cannot.
 
 | Written | Where | On collision |
 |---|---|---|
-| consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported — except when it names a *different* install's interpreter, which is backed up and rewritten |
-| consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | kept and reported |
+| consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported when its bytes already are what this install ships; otherwise backed up, rewritten, and reported |
+| consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | the same rule — see the note below |
 | `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry differs from what this install would write, unless `--force` |
 | nothing (the entries printed to stdout) | when `--agent` is omitted | n/a |
 
+- **Staleness is a content comparison, and it replaced a narrower predicate in M15.** The rule above
+  used to be "kept, unless this config names a *different* install's interpreter". That caught a
+  cloned repository and missed the case an installer actually meets: **same install, older version**.
+  Upgrading Zikaron and re-running left the previous version's consolidator prompt in place and
+  reported it as "already there", and the skill — which embeds no path, so the predicate could never
+  fire on it — could not be refreshed by any re-run at all. Comparing the bytes subsumes the old
+  question and covers every shipped file by construction.
+
+  **It is a trade rather than a strict improvement, and the losing side should be stated.** Content is
+  the only evidence available, so "an older Zikaron wrote this" and "a human edited this" are the same
+  observation; an operator's hand-edit to a shipped file is therefore backed up and reverted rather
+  than kept. Decided that way because a stale prompt is silent, routine and misleading while a
+  clobbered edit is loud, backed up before it is touched, and reported — and because the supported way
+  to vary shipped prose is an override file, which is the argument the write policy already makes for
+  itself below. Residual: `<name>.bak` is first-wins, so a *second* hand edit is not preserved.
+
+  **Two ways to remove the trade rather than accept it, named and deliberately not built** (M15
+  review, round 1). Both are recorded so a future session does not have to re-derive them.
+  - **A shipped-content manifest.** The claim "an older Zikaron wrote this and a human edited this are
+    the same observation" is only true *without a record*. An installer that wrote a manifest of its
+    own artefacts' hashes alongside them could, **from the next version onward**, tell the two apart:
+    content matching any shipped hash is refreshed silently, content matching none is a hand edit and
+    could be refused without `--force` instead of clobbered. Not built because it buys nothing for the
+    installs that exist today — the first version to ship it still meets every older install with no
+    manifest — and it adds a fifth artefact whose own staleness would then need answering.
+  - **Unique-suffixed backups on the shipped-file path only.** First-wins is the *right* rule for a
+    merge target, where the thing worth keeping is the pristine pre-Zikaron state, and the *wrong* one
+    for a shipped file, where Zikaron's own prior version is recoverable from the package and the only
+    irreplaceable thing is the user's most recent divergent content. Not built because the cost lands
+    on everyone — accumulating `.bak.N` files in `.claude/agents/` — to protect a practice this
+    document has just declared unsupported.
 - **`command` is an absolute path to the venv's own console script** — `<venv>/bin/zikaron-hook`,
   `<venv>/bin/zikaron-mcp` — resolved by the installer from its own interpreter rather than written by hand.
   Two reasons, and the second is the load-bearing one: kiro runs a hook's `command` through a shell that has
@@ -1865,6 +1896,16 @@ things and refuses rather than guesses when it cannot.
   UTF-8 needs at most 3 bytes per unit, so at most 18,261 bytes against the shipped 65,536. Asserted by
   `tests/test_install_limits.py`, and named in the user-facing troubleshooting notes so the bound is not
   something only a test knows.
+- **`kiro-cli agent validate` signals a complaint by *writing to stderr*, not by exiting non-zero**,
+  measured 2026-08-16 against 2.16.0: a valid config gives exit 0 and two empty streams, and
+  unparseable JSON, a wrong field type and an absent file each give **exit 0** with the diagnostic on
+  stderr. `validate_agent_config` read the exit code and so returned "clean" unconditionally — every
+  install reported a successful validation regardless of what it had written, for three milestones.
+  Nothing caught it because the unit fixtures all used a non-zero exit, a value this command never
+  produces, and the one test against the real binary asserted `is None`, which passed for the wrong
+  reason. Fixed to treat *output* as the complaint; the non-zero branch is kept for an exit code the
+  command does not currently produce.
+
 - **The consolidator config's tool surface is `@zikaron` and nothing else, with every tool pre-approved.**
   Not a convenience: a subagent has no user to answer a permission prompt, so a tool that is available but
   not allowed is a tool that hangs or fails at the moment the consolidator needs it. It carries no `read`,
@@ -1877,9 +1918,22 @@ things and refuses rather than guesses when it cannot.
 - **The primary agent needs `subagent` among its `tools`** for the skill to be able to spawn the consolidator
   at all. The installer states this in its output rather than editing the user's `tools` array, because
   granting a tool is a permission decision that belongs to whoever owns the config.
-- **The model check refuses on absence, not only on mismatch.** No `kiro-cli` on `PATH` means the id cannot
-  be validated, and the entries being installed name that binary's own hook and MCP mechanisms — so an
-  unvalidatable install is refused rather than written hopefully.
+- **An install is refused when its own harness is not on `PATH`**, and as of M15 that is **one rule for
+  both harnesses** rather than kiro's alone. The entries being installed name that binary's own hook and
+  MCP mechanisms, so writing them where it is absent produces exit 0, no memory tools, and nothing
+  anywhere saying why — the same working-looking-inert outcome the harness-resolution refusal exists to
+  prevent, which made permitting it for one harness and refusing it for the other an inconsistency rather
+  than a design.
+
+  Before M15 the refusal was an **accident of implementation**: kiro reached it only as a side effect of
+  the model check, so the message talked about model validation rather than about the harness being
+  missing, and Claude Code — which needs no model check at all — did not refuse. It is now an explicit
+  shared check parameterized by `HarnessSpec.harness_binary`.
+
+  **Presence, not health**, and the distinction earns its keep: a binary that is installed but
+  unauthenticated still means the harness is here and will read these files. And **`--print-only`
+  downgrades the refusal to a note**, which is the escape hatch for provisioning a machine before its
+  harness — it shows exactly what to write, refuses nothing, and writes nothing.
 - **The write policy is a constant with an optional override.** `zikaron/hook/write_policy.py` holds the
   shipped text (D30), and the `agentSpawn` hook prints `<store>/.zikaron/write-policy.md` instead when that
   file exists and reads cleanly. Best-effort in the strict sense: any failure to read it falls back to the

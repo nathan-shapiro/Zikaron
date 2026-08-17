@@ -29,5 +29,13 @@ venv=.venv/bin
 # relative to the whole suite's own measured ~60 s, including real `fastembed`/`sqlite-vec`
 # loading and real subprocess spawns in the `integration` tier — comfortable margin for a slower
 # machine without masking a genuine hang for minutes on this one.
+#
+# **The gate is hermetic, and that is a property worth stating here rather than only in
+# pyproject.** `integration_kiro` and `integration_claude` are excluded by `addopts`, because they
+# need a third-party binary installed *and working* — somebody else's credential state. An expired
+# `kiro-cli` token once turned this script red for a reason with no relationship to the code, and
+# the same tests would go green on a machine whose harness behaved differently. Run them by name
+# when you mean to: `.venv/bin/pytest -m integration_kiro`. Nothing is covered *only* there; see
+# `design/coding-standards.md` §"five tiers".
 timeout 300 "$venv/pytest" --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
     --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness

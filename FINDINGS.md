@@ -54,12 +54,73 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-### Phase: porting to Claude Code. **M14 is complete; M15 is the next milestone.**
+### Phase: porting to Claude Code. **M15 is complete; M16 is the last milestone.**
+**M15 landed 2026-08-16, APPROVED after six review rounds** (`reviews/m15-installer-adapter-review.md`;
+rounds 4–6 followed two operator questions — see below).
+The installer writes either harness's artefacts through `zikaron/install/targets.py` — the one place a
+harness difference may take a different *shape* rather than a different value. `mypy --strict` clean,
+**1663 passed / 0 failed**, coverage **97%** against the 90% ratchet.
+**One thing is outstanding and it is not ours: `check.sh` cannot exit 0 on this machine.** Six tests
+across `test_install_harness.py`, `test_install_e2e.py` and `test_install_takeover.py` drive a real
+`kiro-cli`, which answers *"You are not logged in, please log in with kiro-cli login"*. All three files
+are **untouched by M15** (`git diff HEAD` empty for each), so this is environmental and needs a
+re-authentication only a browser can do. Do not read those six failures as an M15 regression, and do
+not "fix" them in code.
+
+**Two operator questions changed the milestone after it was first approved**, and both are now
+settled behaviour: an install can be run **from a plain shell with no harness running** (resolution
+reads the *project* first, the environment marker only as a fallback), and it is **refused when the
+harness's own binary is absent** — one shared rule parameterized by `HarnessSpec.harness_binary`,
+symmetric across harnesses, downgraded to a note under `--print-only` so a machine can still be
+provisioned before its harness. The binary-dependent tests moved into `integration_kiro` /
+`integration_claude`, **excluded from `check.sh`**, under the rule that nothing may live only there.
+**The gate is now hermetic and that is verified, not assumed:** the whole default suite passes with
+neither binary on `PATH`.
+
+**What M15's six rounds are evidence of, since M14's four were recorded the same way.** The gate was
+green over a defect **four** separate times, and each was found by a human-shaped read rather than by a
+tool. Two merge defects were caught by re-reading new code against rules the *old* code already stated
+— a settings merge that would have deleted a user's own `SessionStart` hook, and wrong-shaped values
+treated as absent and written over (`writer.py`'s own `TestShapesThatWouldBeSilentlyDropped` rule).
+The third and worst: **a review fix that was a docstring over an unchanged method body** — the
+`--model` YAML-injection guard's regex was compiled and never referenced, the docstring asserted a
+refusal, the body still said `del model`. Neither `ruff` nor `mypy --strict` flags an unused
+module-level `Final`, and no test exercised it, so the artefact affirmatively documented a guard that
+did not exist. The fourth was found *by* the test written for the third: `--model ""` silently became
+the harness default, because the value was selected with `or` rather than `is None`.
+A fifth, found in the later rounds and the most consequential of all: **`validate_agent_config` had
+been inert since M12.** `kiro-cli agent validate` signals a complaint by writing to **stderr while
+exiting 0**, and the function returned "clean" on a zero exit — so every install reported a
+successful validation regardless of what it wrote. Nothing caught it because every unit fixture
+built its fake around a *non-zero exit*, a value the real binary never produces, and the single test
+against the real binary asserted `is None` and so passed *because* the function was broken. It
+surfaced only from asking one follow-up question about a passing test: **can this validator ever say
+no?**
+
+**The practice that closes all of this, and it is M14's own, now actually in the suite rather than in
+the narrative:** `TestTheFixesFromReviewRoundOneAreWatchedFailing` exists so that every review fix is
+watched failing on revert, and the harness tiers cannot report success for a machine that could not
+run them — `conftest.pytest_runtest_makereport` turns a skip in either tier into a failure, because
+*stating* that rule in `coding-standards.md` had already failed twice. Everything above was
+mutation-verified in both directions, the backstop included.
+
+**Three harness facts M15 measured, all in `research/claude-code-installer-probe.md`.** The hook
+`timeout` is **seconds** and the `UserPromptSubmit` default is **30 s**, not the 600 s that applies
+elsewhere — so kiro's `timeout_ms: 10000` copied across would install a 10,000-*second* budget, and
+`hook/limits.py` now holds one canonical seconds constant with each format converting at its own edge.
+A timed-out hook is **silent**: output discarded, nothing on stderr, nothing in the result object.
+And a **bracketed long-context alias** (`model: sonnet[1m]`) spawns normally — which refuted the
+installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id either harness serves.
 Every milestone M0–M12 is built and reviewed; **M13** (the Claude Code design delta) landed
 2026-08-16, APPROVED after three review rounds
 (`reviews/claude-code-harness-design-review.md`); and **M14** (the harness seam, both clients, and
 the gist character bound) landed 2026-08-16, APPROVED after **four** rounds
 (`reviews/m14-harness-seam-review.md`). **M15–M16 are outstanding** — see item 0 below.
+**Milestones are cited here by commit *subject*, not by hash, and that is deliberate.** This file
+recorded M13 as commit `7628946`; that hash does not exist in the repository — the history was
+rebased, as `backup-pre-rebase` and `backup-pre-rebase-2` attest. A hash is the most confident-looking
+pointer available and the one most easily falsified by an ordinary operation nobody thinks to
+re-record. Subjects survive rebases; `git log --oneline --grep` finds them.
 **What M14's four rounds are evidence of, since the count is unusual:** the gate was green while
 something material was wrong three separate times — a test asserting two things agree that could
 pass vacuously, a universal claim proven only by its best-case fixture, and this always-loaded file
@@ -91,7 +152,22 @@ Two snapshots exist for comparison, **in `/tmp`, so they will not survive a rebo
 0. **Make Zikaron work under Claude Code**, keeping kiro working — **one codebase, two harnesses**
    (operator decision 2026-08-16; harness differences are data, not forked code paths). Scoped as four
    briefs in `design/build-plan.md`: ~~**M13** the design delta~~ **done**, ~~**M14** the harness seam and
-   both clients~~ **done**, **M15** the installer adapter ← **next**, **M16** the dogfooding checkpoint.
+   both clients~~ **done**, ~~**M15** the installer adapter~~ **done**, **M16** the dogfooding
+   checkpoint ← **next, and the last**.
+   **M16 inherits four things**, all measured or observed during M15 rather than guessed:
+   (a) the `.mcp.json` **approval** properties — that `enabledMcpjsonServers` removes the load-time
+   prompt and `permissions.allow` removes the per-call one — are **documented, unmeasured**, because a
+   headless run approves everything and neither is observable without an interactive session;
+   (b) **MCP server readiness at session start**, observed n=1: a real session reported both zikaron
+   servers *"still connecting"* and could not name their tools, while the `SessionStart` hook had
+   already reached the service and created a store — if that generalises, early turns have **push
+   working and pull unavailable**, an asymmetry the agent cannot see;
+   (c) the **astral-character injection-budget** bisection, still open from M14 item (c);
+   (d) the recall instrument's fresh baseline, which resets at this boundary.
+   **M15's four settled decisions and the fifth thing the build found are in
+   `design/build-plan.md` §M15**, with the two review rounds' findings annotated in place. Moved
+   there rather than kept here now that they are implemented: this file is the hub, and a decision
+   that has shipped is brief material.
    **M15 inherits three things from M14**, all named in this file: the two unmeasured harness facts in
    (b) and (c) below, and the fact that `zikaron/harness/` now exists as the one place a harness
    difference is allowed to live — the installer's adapter is the *only* remaining place a difference may
@@ -165,12 +241,26 @@ Two snapshots exist for comparison, **in `/tmp`, so they will not survive a rebo
 amend-after-surface currently reads `rate=1.00` meaning *3 of 3 resolved pairs* with 51 still pending.
 
 ### Harness: migrating from kiro-cli to Claude Code
-**The development crew has moved; the product has not.** `.claude/` now carries memory-researcher,
+**The crew has moved, and as of M14 so has half the product.** `.claude/` carries memory-researcher,
 memory-reviewer, memory-assistant, py-runner and the `self-review` skill, plus a `CLAUDE.md` holding the
 static half of this document. `.kiro/` stays in the repository unedited — it is the reference for what
-the installer still ships, and the fallback. **Zikaron itself remains kiro-only**: the hook client reads
-kiro's `agentSpawn`/`userPromptSubmit` payloads and the installer writes kiro config, so the memory tools
-and the push hook are **not live under Claude Code**.
+the installer still ships, and the fallback.
+
+**What is true after M14, stated precisely, because the previous version of this paragraph is now
+half-false and a fresh session would act on it.** The *clients* are harness-aware: `zikaron-hook` reads
+either harness's trigger names through `zikaron/harness/`, resolves the session label from whichever
+variable that harness exports, writes each event on the channel that harness actually delivers, and
+`zikaron-mcp` resolves the same label the same way. So the code no longer assumes kiro anywhere.
+**The installer does not**: it still writes kiro config and only kiro config, which is M15's whole
+subject. The operative consequence for a session working here **right now** is unchanged in practice —
+nothing has installed a Claude Code hook or `.mcp.json`, so the memory tools and the push hook are still
+**not live in this harness** — but the reason is now "the installer has not been ported" rather than
+"the client cannot speak this harness". Do not read the old sentence and conclude the hook needs porting;
+it does not.
+
+Original text, superseded 2026-08-16 by M14: *"**Zikaron itself remains kiro-only**: the hook client
+reads kiro's `agentSpawn`/`userPromptSubmit` payloads and the installer writes kiro config, so the memory
+tools and the push hook are **not live under Claude Code**."*
 
 **Probed 2026-08-16 against Claude Code 2.1.233, and the probe refuted three of the claims below.**
 Full measurement: `research/claude-code-harness-probe.md`; scripts and raw logs

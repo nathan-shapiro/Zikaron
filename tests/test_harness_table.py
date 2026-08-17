@@ -133,6 +133,31 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert _identifier(_cell(rows, "Subagent triggers", spec)) == spec.subagent_start_trigger
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_harness_binary(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """What the installer looks for on `PATH` before writing anything.
+
+        A *value*, so it lives on the spec with a row here — the installer's refusal is one shared
+        rule parameterized by it, not two implementations. Getting it wrong is not a crash: it is an
+        install that refuses on a machine where the harness is present, or writes on one where it
+        is not.
+        """
+        assert _identifier(_cell(rows, "Harness binary", spec)) == spec.harness_binary
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_consolidator_model(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """The installer's default, read from the row that states it.
+
+        A *value* that differs per harness, so it lives on the spec with a row here rather than in
+        `zikaron/install/targets.py` — which is where the shapes go. The two spellings are not
+        interchangeable and the reason is asymmetric: kiro's must be a concrete id because the
+        install-time `--list-models` check compares against ids, and Claude Code's may be an alias
+        because that harness refuses an unknown id at spawn instead of substituting one.
+        """
+        assert _identifier(_cell(rows, "Shipped consolidator `model`", spec)) == (
+            spec.consolidator_model
+        )
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_injection_budget_value_and_unit(
         self, rows: dict[str, dict[str, str]], spec: HarnessSpec
     ) -> None:

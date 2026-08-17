@@ -21,12 +21,34 @@ already was.
 **The skill's `description` is assembled from fragments so it stays one physical line.** It is what
 kiro loads at startup to decide whether the skill is relevant, and a single-line plain YAML scalar
 needs no assumption about which YAML features the harness's own frontmatter parser supports.
+
+**Both texts are written once, in kiro's bare tool vocabulary, and *rendered* per harness.** Claude
+Code addresses an MCP tool as `mcp__<server>__<tool>` and the model sees that string verbatim
+(`research/claude-code-installer-probe.md` §6), so a bare `zikaron_next_group` there names a tool
+that does not exist — and a model told to call a tool it cannot find improvises rather than failing.
+Two copies of ~200 lines of prose is the alternative and it is worse: the three shared prohibitions
+would drift silently between them. So there is one constant and a mechanical rewrite, guarded by
+`_guard_known_tools` so that a name the rewrite does not recognise raises at build time rather than
+passing through untouched.
 """
 
+import re
+from collections.abc import Mapping
 from typing import Final
+
+from zikaron.mcp.tool_names import ALL_TOOLS
 
 #: The skill's directory name and its `name:` frontmatter value — kiro requires the two to agree.
 SKILL_NAME: Final = "zikaron-consolidate"
+
+#: Where the harness-specific invocation goes. A sentinel and `str.replace` rather than `str.format`
+#: because the skill body contains literal `{"done": true}` braces, which `format` would read as
+#: fields and fail on — a formatting choice that is load-bearing rather than stylistic.
+_SPAWN_PLACEHOLDER: Final = "@@SPAWN_INSTRUCTION@@"
+
+#: Any `zikaron_`-prefixed identifier in shipped prose. `zikaron-consolidator` does not match: the
+#: underscore is required, so the agent name and the server key are never rewritten as tools.
+_TOOL_TOKEN: Final = re.compile(r"\bzikaron_[a-z_]+\b")
 
 CONSOLIDATOR_PROMPT: Final = """You are **zikaron-consolidator**. You consolidate a project's
 memory store: you turn a journal of raw observations into durable long-term records, one group at a
@@ -175,13 +197,7 @@ reasoning leaks into judgments that will outlive it.
 
 ## How to run it
 
-Spawn the **zikaron-consolidator** subagent with the `subagent` tool:
-
-```
-role: zikaron-consolidator
-prompt: Consolidate this project's memory journal. Work through every group until
-        zikaron_next_group answers {"done": true}, then report what you did.
-```
+@@SPAWN_INSTRUCTION@@
 
 That is the whole invocation. The consolidator's own tooling claims the store's consolidation lock
 when it asks for its first group, works through the groups code has planned for it, and exits. You do
@@ -217,9 +233,90 @@ to the user and ask, rather than deciding for them.
   question is whether that holder is working or stranded, and the user is the one who knows.
 """
 
-SKILL_MARKDOWN: Final = f"""---
+#: Kiro's invocation. The tool and its `role` field are both measured and stable here, so the skill
+#: names them: a named tool is the least ambiguous instruction a skill can give.
+KIRO_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent with the `subagent` tool:
+
+```
+role: zikaron-consolidator
+prompt: Consolidate this project's memory journal. Work through every group until
+        zikaron_next_group answers {"done": true}, then report what you did.
+```"""
+
+#: Claude Code's invocation, and it deliberately **does not name the spawning tool**.
+#:
+#: Not an oversight and not laziness: the tool's name varies by build — the session this was written
+#: in exposes it as `Agent`, stock Claude Code documents `Task`, and neither the harness docs nor any
+#: probe pinned which a given install offers. Naming the wrong one sends the model hunting for a tool
+#: that is not there, which is the same failure this whole rendering exists to prevent, one level up.
+#: What *is* measured is that the weaker instruction suffices: in
+#: `research/claude-code-installer-probe.md` §7 a bare "Spawn the <name> subagent" reliably spawned
+#: the named agent. So this names the agent and the parameter that selects it, and lets the model
+#: choose its own spawn tool.
+CLAUDE_CODE_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent — whichever
+tool this harness gives you for delegating to a subagent, with `subagent_type: zikaron-consolidator`
+— and give it this prompt:
+
+```
+Consolidate this project's memory journal. Work through every group until
+zikaron_next_group answers {"done": true}, then report what you did.
+```"""
+
+
+def _guard_known_tools(text: str, vocabulary: Mapping[str, str]) -> None:
+    """Raise if `text` names a `zikaron_`-prefixed tool the vocabulary cannot rewrite.
+
+    The whole point of rendering rather than duplicating is that a name cannot go stale in one copy
+    and not the other. A rewrite that silently passes an unknown token through would give exactly
+    that back: prose naming `zikaron_nxet_group`, or a verb that was renamed in `mcp/` and not here,
+    shipped intact and failing only in front of a model that will improvise around it.
+
+    Raises:
+        ValueError: at import/build time, naming every offending token.
+    """
+    unknown = {token for token in _TOOL_TOKEN.findall(text) if token not in vocabulary}
+    if unknown:
+        message = (
+            f"shipped prose names tools no vocabulary entry covers: {', '.join(sorted(unknown))}. "
+            "Either the name is a typo, or a tool was renamed in `zikaron.mcp.tool_names` and this "
+            "text was not."
+        )
+        raise ValueError(message)
+
+
+def render(text: str, vocabulary: Mapping[str, str]) -> str:
+    """`text` with every bare tool name replaced by this harness's own spelling.
+
+    `vocabulary` maps bare name to shipped name; kiro's is the identity map, which is what keeps
+    kiro's artefacts byte-identical to what M12 shipped rather than merely equivalent to it.
+    """
+    _guard_known_tools(text, vocabulary)
+    return _TOOL_TOKEN.sub(lambda match: vocabulary[match.group()], text)
+
+
+def consolidator_prompt(vocabulary: Mapping[str, str]) -> str:
+    """The consolidator's system prompt, in this harness's tool vocabulary."""
+    return render(CONSOLIDATOR_PROMPT, vocabulary)
+
+
+def skill_markdown(vocabulary: Mapping[str, str], spawn_instruction: str) -> str:
+    """The whole `SKILL.md`, rendered for one harness.
+
+    The spawn instruction is substituted *before* the tool rewrite, so a tool name inside it is
+    rendered by the same pass as the body's rather than needing its own.
+    """
+    body = _SKILL_BODY.replace(_SPAWN_PLACEHOLDER, spawn_instruction)
+    if _SPAWN_PLACEHOLDER in body:
+        message = f"{_SPAWN_PLACEHOLDER} survived substitution"
+        raise ValueError(message)
+    return f"""---
 name: {SKILL_NAME}
 description: {_SKILL_DESCRIPTION}
 ---
 
-{_SKILL_BODY}"""
+{render(body, vocabulary)}"""
+
+
+def identity_vocabulary() -> dict[str, str]:
+    """The rewrite that changes nothing — every tool spelled as the prose already spells it."""
+    return {name: name for name in ALL_TOOLS}

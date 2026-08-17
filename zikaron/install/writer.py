@@ -3,15 +3,16 @@ owns.
 
 `architecture.md` §"The install contract" is normative. Three rules run through everything here:
 
-- **Everything is checked before anything is written.** `plan_merge` parses and guards the user's
-  config and produces the document it *would* write, touching nothing; `commit_merge` writes it. An
-  earlier arrangement wrote the two shipped files first and discovered a malformed config
-  afterwards,
-  which left a project half-installed — the exact outcome the contract's own ordering exists to
-  prevent.
-- **Refuse rather than overwrite; keep rather than clobber.** A shipped file that already exists is
-  kept and reported, so a re-run after an upgrade is safe. A Zikaron entry that differs from what
-  this install would write is a *refusal*, because that means another install owns it.
+- **Everything is checked before anything is written.** A `plan_*` function parses and guards the
+  file it would touch and produces the document it *would* write, touching nothing; `commit_merge`
+  writes it. An earlier arrangement wrote the shipped files first and discovered a malformed config
+  afterwards, which left a project half-installed — the exact outcome the contract's own ordering
+  exists to prevent.
+- **Refuse rather than overwrite; keep rather than clobber.** A shipped file whose bytes are already
+  what this install ships is kept and reported; one that differs is backed up and refreshed, which
+  is what makes a re-run after an *upgrade* correct rather than merely safe. A Zikaron entry in a
+  file the user owns that differs from what this install would write is a *refusal*, because that
+  means another install owns it.
 - **A merge is backed up first, and the first backup wins.** `<config>.bak` is written only when
   nothing is there — not even a dangling symlink — because overwriting it on every run would replace
   the pristine original with the copy the first install had already modified.
@@ -23,7 +24,7 @@ import os
 import shlex
 import shutil
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
@@ -37,7 +38,6 @@ from zikaron.install.entries import (
     TOOL_SELECTOR,
     Commands,
     HookFormat,
-    consolidator_agent_config,
     hooks_array,
     hooks_object,
     mcp_servers_value,
@@ -59,7 +59,13 @@ ARRAY_FORMAT_OUTPUT_CAP_NOTE: Final = (
 
 @dataclass(frozen=True, slots=True)
 class Targets:
-    """Where the shipped artefacts go for one project directory."""
+    """Where **kiro's** shipped artefacts go for one project directory.
+
+    Kiro-specific, and named so rather than generalised: Claude Code's four artefacts live at
+    different paths under a different dotdir and are computed by `ClaudeCodeTarget`. A single
+    `Targets` covering both would be a union type whose fields are half-null on either harness,
+    which is the shape `coding-standards.md` §2 asks us not to build.
+    """
 
     project: Path
 
@@ -76,17 +82,34 @@ class Targets:
         return self.project / ".kiro" / "skills" / SKILL_NAME / "SKILL.md"
 
 
+class ShippedFile(NamedTuple):
+    """One artefact this install owns outright: its path and the exact bytes that belong there.
+
+    The unit both harnesses' writers agree on. Kiro ships two, Claude Code ships two — and the
+    *merged* files are not among them on either harness, because a merge target belongs to the user
+    and a shipped file does not.
+    """
+
+    path: Path
+    content: str
+
+
 @dataclass(frozen=True, slots=True)
 class Plan:
     """One install, as parsed from the command line: where, with what, and how forcefully.
 
-    A value rather than five parameters threaded through every function here. The grouping is not an
-    invention to satisfy an argument-count rule: these five are exactly what one invocation decided,
-    they travel together to every writer below, and bundling them means a new option is added in one
+    A value rather than six parameters threaded through every function here. The grouping is not an
+    invention to satisfy an argument-count rule: these are exactly what one invocation decided, they
+    travel together to every writer below, and bundling them means a new option is added in one
     place instead of in four signatures.
+
+    `hook_format` is kiro's and is ignored by the Claude Code target, which has one hook shape. It
+    stays on the shared value rather than being pushed into a kiro-only bag because the alternative
+    — a per-harness options type — would make `main.py` build its arguments differently depending on
+    a flag it has not resolved yet.
     """
 
-    targets: Targets
+    project: Path
     commands: Commands
     model: str
     hook_format: HookFormat
@@ -112,17 +135,16 @@ class MergePlan:
 
     `document` is the finished JSON to write. Holding it as a value is what lets the caller order
     the
-    whole install "check everything, then write everything" — the checks live in `plan_merge`, which
-    reads and refuses, and every write is in `commit_merge`.
+    whole install "check everything, then write everything" — the checks live in the `plan_*`
+    functions, which read and refuse, and every write is in `commit_merge`.
     """
 
     path: Path
     document: dict[str, object]
-    hook_format: HookFormat
     notes: tuple[str, ...]
 
 
-def guard_shipped_targets(plan: Plan) -> None:
+def guard_shipped_targets(files: tuple[ShippedFile, ...], project: Path) -> None:
     """Refuse any shipped path whose existing shape would make writing it fail or lie. Writes
     nothing.
 
@@ -138,23 +160,19 @@ def guard_shipped_targets(plan: Plan) -> None:
         InstallError: a final target exists and is not a regular file, or an ancestor that must be a
             directory is not one.
     """
-    for target in shipped_targets(plan.targets):
+    for shipped in files:
+        target = shipped.path
         if _occupied(target) and not target.is_file():
             raise InstallError(
                 f"{target} is not a regular file, so it cannot be installed. Move it aside and "
                 "re-run."
             )
-        for ancestor in _ancestors_within(target, plan.targets.project):
+        for ancestor in _ancestors_within(target, project):
             if _occupied(ancestor) and not ancestor.is_dir():
                 raise InstallError(
                     f"{ancestor} is not a directory, so {target.name} cannot be installed under "
                     "it. Move it aside and re-run."
                 )
-
-
-def shipped_targets(targets: Targets) -> tuple[Path, ...]:
-    """The two paths this install owns. Named once, because two callers must agree on the set."""
-    return (targets.consolidator_config, targets.skill_file)
 
 
 def _occupied(path: Path) -> bool:
@@ -183,63 +201,52 @@ def _ancestors_within(target: Path, project: Path) -> list[Path]:
     return list(reversed(ancestors))
 
 
-def write_shipped_files(plan: Plan, skill_markdown: str, report: Report) -> None:
-    """Write the consolidator agent config and the skill, recording each outcome in `report`."""
-    config = consolidator_agent_config(plan.commands, model=plan.model)
-    _write_shipped(
-        plan.targets.consolidator_config,
-        json.dumps(config, indent=_JSON_INDENT) + "\n",
-        plan=plan,
-        report=report,
-        stale=lambda existing: _names_another_install(existing, plan.commands),
-    )
-    _write_shipped(
-        plan.targets.skill_file, skill_markdown, plan=plan, report=report, stale=lambda _text: False
-    )
+def write_shipped_files(files: tuple[ShippedFile, ...], plan: Plan, report: Report) -> None:
+    """Write every shipped artefact, recording each outcome in `report`."""
+    for shipped in files:
+        _write_shipped(shipped, plan=plan, report=report)
 
 
-def _names_another_install(existing: str, commands: Commands) -> bool:
-    """Whether an existing consolidator config points at an interpreter that is not this one.
+def _write_shipped(shipped: ShippedFile, *, plan: Plan, report: Report) -> None:
+    """Create the file, refresh it if what is there is not what we ship, or keep and report it.
 
-    The case this exists for is a **cloned repository**: these artefacts are tracked in Zikaron's
-    own
-    tree, so a clone arrives carrying absolute `command` paths from whichever machine wrote them.
-    Kept
-    as-is, that is a consolidator that can never start, and reported as "already there" it is a
-    confidently stale artefact — the precise failure this project exists to prevent. So a config
-    naming an install other than this one is replaced, after a backup, and the replacement is
-    reported.
-    """
-    try:
-        document = json.loads(existing)
-    except json.JSONDecodeError:
-        return True
-    if not isinstance(document, dict):
-        return True
-    servers = document.get("mcpServers")
-    entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
-    if not isinstance(entry, dict):
-        return True
-    return entry.get("command") != str(commands.mcp)
+    **Staleness is a content comparison**, and that is a fix rather than a simplification. The
+    predicate used to ask one narrow question — does this config name a *different install's*
+    interpreter — which caught a cloned repository and missed the case it was most likely to meet:
+    *same install, older version*. Upgrading Zikaron and re-running the installer left the previous
+    version's consolidator prompt in place, reported cheerfully as "already there", unless someone
+    thought to pass `--force`. A prompt that no longer matches the tools it describes is exactly the
+    confidently-stale artefact this project exists to prevent, and it was being produced by the
+    installer's own success path.
 
-
-def _write_shipped(
-    path: Path,
-    content: str,
-    *,
-    plan: Plan,
-    report: Report,
-    stale: Callable[[str], bool],
-) -> None:
-    """Create `path`, replace it if what is there names another install, or keep and report it.
+    Comparing the bytes subsumes the old question — a different interpreter yields different content
+    — and extends it to every shipped file rather than only the JSON one, which is why kiro's skill
+    could previously never be refreshed at all (its staleness predicate was the constant `False`).
+    It also catches a hand-edited artefact, which is the one behaviour change: such a file is now
+    backed up and rewritten rather than silently kept. That is the right trade for a file the
+    installer owns, and it is safe because nothing is replaced without `<name>.bak` existing first.
 
     A symlink at the target is treated as an existing file rather than followed, so neither the
-    stale
-    path nor `--force` can be talked into writing through a link into somewhere else entirely.
+    stale path nor `--force` can be talked into writing through a link into somewhere else entirely.
     """
+    path, content = shipped
     exists = path.exists() or path.is_symlink()
+    if exists and plan.force and not path.is_symlink() and _read_or_empty(path) != content:
+        # **`--force` backs up too**, which it did not until a review caught it. The
+        # content-comparison trade rests on "nothing is replaced without `<name>.bak` existing
+        # first", and this path made that false exactly where it matters most: `--force` is the
+        # flag the merge-conflict refusals *instruct* people to pass, so it arrives alongside an
+        # unrelated conflict rather than only when someone means "discard my edits". Best-effort:
+        # a backup that cannot be written must not block an override the user asked for
+        # explicitly, so it degrades to a note rather than a refusal.
+        try:
+            _back_up_once(path, report=report)
+        except InstallError as exc:
+            report.notes.append(
+                f"{path.name} could not be backed up before --force replaced it ({exc})."
+            )
     if exists and not plan.force:
-        if path.is_symlink() or not stale(_read_or_empty(path)):
+        if path.is_symlink() or _read_or_empty(path) == content:
             report.skipped.append(path)
             return
         try:
@@ -250,15 +257,15 @@ def _write_shipped(
             # unbacked is not, so this reports and leaves it.
             report.skipped.append(path)
             report.notes.append(
-                f"{path.name} names a different Zikaron install but could not be backed up "
+                f"{path.name} differs from what this install ships but could not be backed up "
                 f"({exc}), so it was left alone. Move it aside and re-run to get a correct one."
             )
             return
         _replace(path, content)
         report.replaced.append(path)
         report.notes.append(
-            f"{path.name} named a different Zikaron install and was rewritten for this one; the "
-            f"original is at {path.name}.bak."
+            f"{path.name} differed from what this install ships and was rewritten — an older "
+            f"Zikaron, another install, or a local edit. The original is at {path.name}.bak."
         )
         return
     if path.is_symlink():
@@ -372,7 +379,7 @@ def _exclusive_temporary(destination: Path) -> Iterator[_Scratch]:
         scratch.path.unlink(missing_ok=True)
 
 
-def plan_merge(path: Path, plan: Plan) -> MergePlan:
+def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
     """Check a user's agent config and build the document a merge would write. Writes nothing.
 
     The file's own format decides how hooks are written — object stays object, array stays array —
@@ -395,7 +402,7 @@ def plan_merge(path: Path, plan: Plan) -> MergePlan:
     hook_format = _detect_format(document, path=path, requested=plan.hook_format)
     _guard_mergeable_shapes(document, path=path)
     _guard_existing_entries(document, plan.commands, path=path, force=plan.force)
-    _guard_backup_path(path)
+    guard_backup_path(path)
 
     merged = dict(document)
     merged["hooks"] = _merged_hooks(document, plan.commands, hook_format)
@@ -406,7 +413,7 @@ def plan_merge(path: Path, plan: Plan) -> MergePlan:
     settings, crew_notes = _merged_tools_settings(document)
     if settings is not None:
         merged["toolsSettings"] = settings
-    resources, resource_notes = _merged_resources(document, plan.targets)
+    resources, resource_notes = _merged_resources(document, targets)
     if resources is not None:
         merged["resources"] = resources
 
@@ -430,12 +437,21 @@ def plan_merge(path: Path, plan: Plan) -> MergePlan:
             "the consolidator through it, so add it to `tools` to be able to consolidate. Granting "
             "a built-in tool is your decision, so this install does not do it for you."
         )
-    return MergePlan(path=path, document=merged, hook_format=hook_format, notes=tuple(notes))
+    return MergePlan(path=path, document=merged, notes=tuple(notes))
 
 
 def commit_merge(merge: MergePlan, report: Report) -> None:
-    """Back the config up if nothing is backed up yet, then write the planned document."""
-    _back_up_once(merge.path, report=report)
+    """Back the config up if nothing is backed up yet, then write the planned document.
+
+    **A file that does not exist yet is not backed up**, and that is not merely an optimisation: a
+    backup is a copy of the user's own prior state, and there is none. Kiro never reaches this
+    branch — `--agent` must name an existing file and `main.py` refuses otherwise — but Claude
+    Code's two merge targets are fixed project paths that a fresh project simply does not have, and
+    attempting a copy there would refuse the whole install over the absence of a file we are about
+    to create.
+    """
+    if merge.path.exists() or merge.path.is_symlink():
+        _back_up_once(merge.path, report=report)
     _replace(merge.path, json.dumps(merge.document, indent=_JSON_INDENT) + "\n")
     report.merged.append(merge.path)
     report.notes.extend(merge.notes)
@@ -676,7 +692,7 @@ def _entry_command(entry: object) -> str | None:
     return words[0] if len(words) == 1 else direct
 
 
-def _guard_backup_path(path: Path) -> None:
+def guard_backup_path(path: Path) -> None:
     """Refuse now if this file could not be backed up later. Creates nothing.
 
     Split out of `_back_up_once` and called from `plan_merge` because the backup is the **last**
@@ -717,7 +733,7 @@ def _back_up_once(path: Path, *, report: Report) -> None:
     if backup.is_file() and not backup.is_symlink():
         report.notes.append(f"{backup.name} already existed and was left as it was.")
         return
-    _guard_backup_path(path)
+    guard_backup_path(path)
     try:
         _copy_atomically(path, backup)
     except FileExistsError:

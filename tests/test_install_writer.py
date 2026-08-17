@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from zikaron.hook.limits import TIMEOUT_MS
-from zikaron.install.assets import SKILL_MARKDOWN
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
@@ -23,12 +22,13 @@ from zikaron.install.entries import (
     HookFormat,
 )
 from zikaron.install.harness import InstallError
+from zikaron.install.targets import KiroTarget
 from zikaron.install.writer import (
     Plan,
     Report,
     Targets,
     commit_merge,
-    plan_merge,
+    plan_kiro_merge,
     write_shipped_files,
 )
 
@@ -40,7 +40,16 @@ def merge_agent_config(path: Path, plan: Plan, report: Report) -> None:
     test that only cares about the merged result should not have to restate that ordering, and
     `tests/test_install_main.py` is where the ordering itself is asserted.
     """
-    commit_merge(plan_merge(path, plan), report)
+    commit_merge(plan_kiro_merge(path, plan, Targets(project=plan.project)), report)
+
+
+def write_kiro_files(plan: Plan, report: Report) -> None:
+    """Kiro's two shipped files, through the same target the installer uses.
+
+    The content is asked of the target rather than restated, so these tests keep asserting about
+    what an install actually writes rather than about a fixture that happens to resemble it.
+    """
+    write_shipped_files(KiroTarget().shipped_files(plan), plan, report)
 
 
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
@@ -57,7 +66,7 @@ def _plan(
     trust_tools: bool = True,
 ) -> Plan:
     return Plan(
-        targets=Targets(project=project),
+        project=project,
         commands=_COMMANDS,
         model="a-model",
         hook_format=fmt,
@@ -74,36 +83,64 @@ def _write_agent(path: Path, document: dict[str, object]) -> None:
 class TestWritingTheShippedFiles:
     def test_it_creates_both_files_and_their_directories(self, tmp_path: Path) -> None:
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
+        write_kiro_files(_plan(tmp_path), report)
         targets = Targets(project=tmp_path)
         assert targets.consolidator_config.is_file()
         assert targets.skill_file.is_file()
         assert set(report.created) == {targets.consolidator_config, targets.skill_file}
 
     def test_the_written_config_is_json_carrying_the_planned_model(self, tmp_path: Path) -> None:
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, Report())
+        write_kiro_files(_plan(tmp_path), Report())
         written = json.loads(Targets(project=tmp_path).consolidator_config.read_text())
         assert written["model"] == "a-model"
 
-    def test_an_existing_file_is_kept_not_overwritten(self, tmp_path: Path) -> None:
-        """The case that matters: an operator has edited the shipped prompt, and a re-run must not
-        silently discard the edit. The fixture names *this* install's own command, because a config
-        naming another one is the separate, deliberately different case below."""
+    def test_a_file_already_holding_what_we_ship_is_kept_untouched(self, tmp_path: Path) -> None:
+        """The ordinary re-run, and the only case that is now "kept": the bytes on disk already are
+        the bytes this install ships."""
         targets = Targets(project=tmp_path)
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, Report())
+        write_kiro_files(_plan(tmp_path), Report())
+        report = Report()
+        write_kiro_files(_plan(tmp_path), report)
+        assert report.skipped == [targets.consolidator_config, targets.skill_file]
+        assert report.replaced == []
+
+    def test_a_hand_edited_file_is_backed_up_and_refreshed(self, tmp_path: Path) -> None:
+        """**A deliberate reversal, M15.** This test previously asserted the opposite — that an
+        operator's edit to a shipped file survives a re-run — and that rule is what made the
+        installer keep an *older version's* consolidator prompt on every upgrade and report it
+        cheerfully as "already there". Content is the only evidence the installer has, and "an older
+        Zikaron wrote this" and "a human edited this" are the same observation to it.
+
+        So the trade was made the other way, and it is a trade rather than a strict improvement:
+        a stale prompt is silent, routine (every upgrade) and actively misleading, while a clobbered
+        edit is loud, backed up before it is touched, and reported. The supported way to vary
+        shipped prose remains an override file — `architecture.md` §"The install contract" makes
+        that argument for the write policy — not editing an installed artefact.
+
+        The residual cost, stated because nothing else states it: `.bak` is first-wins, so a
+        *second* hand edit is not preserved.
+        """
+        targets = Targets(project=tmp_path)
+        write_kiro_files(_plan(tmp_path), Report())
         edited = json.loads(targets.consolidator_config.read_text())
         edited["prompt"] = "mine, edited"
         targets.consolidator_config.write_text(json.dumps(edited))
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
-        assert json.loads(targets.consolidator_config.read_text())["prompt"] == "mine, edited"
-        assert report.skipped == [targets.consolidator_config, targets.skill_file]
+        write_kiro_files(_plan(tmp_path), report)
+        assert json.loads(targets.consolidator_config.read_text())["prompt"] != "mine, edited"
+        assert report.replaced == [targets.consolidator_config]
+        assert (
+            json.loads((tmp_path / ".kiro/agents/zikaron-consolidator.json.bak").read_text())[
+                "prompt"
+            ]
+            == "mine, edited"
+        )
 
     def test_force_replaces_an_existing_file(self, tmp_path: Path) -> None:
         targets = Targets(project=tmp_path)
         targets.consolidator_config.parent.mkdir(parents=True)
         targets.consolidator_config.write_text('{"name": "mine, edited"}')
-        write_shipped_files(_plan(tmp_path, force=True), SKILL_MARKDOWN, Report())
+        write_kiro_files(_plan(tmp_path, force=True), Report())
         assert json.loads(targets.consolidator_config.read_text())["model"] == "a-model"
 
     def test_a_symlink_at_the_target_is_treated_as_existing_rather_than_followed(
@@ -116,7 +153,7 @@ class TestWritingTheShippedFiles:
         elsewhere.write_text("untouched")
         targets.consolidator_config.symlink_to(elsewhere)
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
+        write_kiro_files(_plan(tmp_path), report)
         assert elsewhere.read_text() == "untouched"
         assert report.skipped == [targets.consolidator_config]
 
@@ -127,7 +164,7 @@ class TestWritingTheShippedFiles:
         elsewhere = tmp_path / "somebody-elses-file"
         elsewhere.write_text("untouched")
         targets.consolidator_config.symlink_to(elsewhere)
-        write_shipped_files(_plan(tmp_path, force=True), SKILL_MARKDOWN, Report())
+        write_kiro_files(_plan(tmp_path, force=True), Report())
         assert elsewhere.read_text() == "untouched"
         assert not targets.consolidator_config.is_symlink()
         assert json.loads(targets.consolidator_config.read_text())["model"] == "a-model"
@@ -636,7 +673,7 @@ class TestTheAtomicWrite:
         outside = tmp_path / "outside.json"
         planted = targets.consolidator_config.with_name(targets.consolidator_config.name + ".tmp")
         planted.symlink_to(outside)
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, Report())
+        write_kiro_files(_plan(tmp_path), Report())
         assert not outside.exists(), "the write followed a planted temporary symlink"
         assert planted.is_symlink(), "the planted link was clobbered rather than ignored"
         assert json.loads(targets.consolidator_config.read_text())["model"] == "a-model"
@@ -660,7 +697,7 @@ class TestTheAtomicWrite:
 
         monkeypatch.setattr(os, "write", _short)
         with pytest.raises(OSError, match="no space"):
-            write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, Report())
+            write_kiro_files(_plan(tmp_path), Report())
         assert not targets.consolidator_config.exists(), "a truncated file was published"
         leftovers = [path.name for path in targets.agents_dir.iterdir()]
         assert leftovers == [], f"scratch files survived: {leftovers}"
@@ -741,10 +778,14 @@ class TestTheBackup:
 
 
 class TestAStaleShippedConfigIsCorrectedRatherThanKept:
-    """A cloned repository arrives with these artefacts tracked, carrying another machine's paths.
+    """Two ways a shipped file goes stale, and M15 made one predicate cover both.
 
-    Kept as-is that is a consolidator that can never start; reported as "already there" it is a
-    confidently stale artefact. So it is backed up and rewritten, and the rewrite is reported.
+    A **cloned repository** arrives with these artefacts tracked, carrying another machine's paths:
+    kept as-is that is a consolidator that can never start, and reported as "already there" it is a
+    confidently stale artefact. An **upgrade** leaves the paths correct and the prose a version
+    behind, which the original interpreter-comparison could not see at all. Both are now the same
+    observation — the bytes on disk are not the bytes this install ships — so both are backed up,
+    rewritten, and reported.
     """
 
     def test_a_config_naming_another_install_is_rewritten(self, tmp_path: Path) -> None:
@@ -761,27 +802,31 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
             )
         )
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
+        write_kiro_files(_plan(tmp_path), report)
         rewritten = json.loads(targets.consolidator_config.read_text())
         assert rewritten["model"] == "a-model"
         assert report.replaced == [targets.consolidator_config]
         assert (tmp_path / ".kiro/agents/zikaron-consolidator.json.bak").is_file()
-        assert any("named a different Zikaron install" in note for note in report.notes)
+        assert any("differed from what this install ships" in note for note in report.notes)
 
-    def test_a_config_naming_this_install_is_kept(self, tmp_path: Path) -> None:
-        """An ordinary re-run: an operator may have edited the prompt, and that must survive."""
+    def test_an_older_versions_config_is_refreshed_rather_than_kept(self, tmp_path: Path) -> None:
+        """The case the interpreter check could not see, and the reason M15 replaced it.
+
+        This config names *this* install's own interpreter — so the old predicate answered "not
+        stale" and kept it — while carrying a prompt no current Zikaron would write. That is an
+        upgrade, and it is the common one: the paths are right and the prose is a version behind.
+        """
         targets = Targets(project=tmp_path)
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, Report())
-        edited = json.loads(targets.consolidator_config.read_text())
-        edited["prompt"] = "my own consolidator prompt"
-        targets.consolidator_config.write_text(json.dumps(edited))
+        write_kiro_files(_plan(tmp_path), Report())
+        outdated = json.loads(targets.consolidator_config.read_text())
+        outdated["prompt"] = "the prompt an older Zikaron shipped"
+        targets.consolidator_config.write_text(json.dumps(outdated))
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
-        assert json.loads(targets.consolidator_config.read_text())["prompt"] == (
-            "my own consolidator prompt"
+        write_kiro_files(_plan(tmp_path), report)
+        assert "the prompt an older Zikaron shipped" not in (
+            targets.consolidator_config.read_text()
         )
-        assert report.skipped == [targets.consolidator_config, targets.skill_file]
-        assert report.replaced == []
+        assert report.replaced == [targets.consolidator_config]
 
     @pytest.mark.parametrize(
         "existing",
@@ -802,7 +847,7 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
         targets.consolidator_config.parent.mkdir(parents=True)
         targets.consolidator_config.write_text(existing)
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
+        write_kiro_files(_plan(tmp_path), report)
         assert json.loads(targets.consolidator_config.read_text())["model"] == "a-model"
         assert report.replaced == [targets.consolidator_config]
 
@@ -818,7 +863,7 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
         targets.consolidator_config.chmod(0o000)
         try:
             report = Report()
-            write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
+            write_kiro_files(_plan(tmp_path), report)
             assert targets.consolidator_config in report.skipped
             assert report.replaced == []
             assert any("could not be backed up" in note for note in report.notes)
@@ -835,16 +880,24 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
         with pytest.raises(InstallError, match="not a regular file"):
             merge_agent_config(config, _plan(tmp_path), Report())
 
-    def test_the_skill_file_is_never_rewritten_on_staleness(self, tmp_path: Path) -> None:
-        """The skill embeds no path, so it can never be stale in this sense — and an operator's edit
-        to it must survive a re-run for that reason."""
+    def test_the_skill_file_is_refreshed_too(self, tmp_path: Path) -> None:
+        """**Reversed in M15**, and this one was a plain defect rather than a trade.
+
+        The skill embeds no interpreter path, so the old predicate — "does this name a different
+        install" — could never be true of it, and it was written as the constant `False`. The effect
+        was that the shipped skill could **never** be refreshed by any re-run: every edit to
+        `SKILL.md` between versions reached new installs and no existing one. Content comparison
+        covers every shipped file by construction rather than one at a time, which is why the fix is
+        a smaller predicate rather than a second special case.
+        """
         targets = Targets(project=tmp_path)
         targets.skill_file.parent.mkdir(parents=True)
         targets.skill_file.write_text("my own skill")
         report = Report()
-        write_shipped_files(_plan(tmp_path), SKILL_MARKDOWN, report)
-        assert targets.skill_file.read_text() == "my own skill"
-        assert targets.skill_file in report.skipped
+        write_kiro_files(_plan(tmp_path), report)
+        assert targets.skill_file.read_text() != "my own skill"
+        assert targets.skill_file in report.replaced
+        assert targets.skill_file.with_name("SKILL.md.bak").read_text() == "my own skill"
 
 
 class TestShapesThatWouldBeSilentlyDropped:

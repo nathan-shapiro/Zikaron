@@ -19,8 +19,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, NamedTuple
 
-from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
-from zikaron.install.assets import CONSOLIDATOR_PROMPT
+from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
+from zikaron.install.assets import consolidator_prompt, identity_vocabulary
+from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
 #: The `mcpServers` key, and therefore the `@zikaron` selector. One declaration, because the name
 #: appears in three places that must agree — the server map, `tools`, and `allowedTools` — and a
@@ -42,13 +44,37 @@ CONSOLIDATOR_AGENT_NAME: Final = "zikaron-consolidator"
 _HOOK_SCRIPT: Final = "zikaron-hook"
 _MCP_SCRIPT: Final = "zikaron-mcp"
 
-_AGENT_SPAWN: Final = "agentSpawn"
-_USER_PROMPT_SUBMIT: Final = "userPromptSubmit"
+#: Kiro's two trigger names, **read from the seam rather than spelled again**. A review caught this
+#: file restating them: the harness-table drift guard covers spec↔design and nothing covered
+#: spec↔installer, so a trigger renamed in the spec would move the *hook* (whose tests read the
+#: spec) while the *installer* kept writing the old name — an installed config naming a trigger the
+#: hook does not recognise, which fails as no output and exit 0.
+_AGENT_SPAWN: Final = KIRO.spawn_trigger
+_USER_PROMPT_SUBMIT: Final = KIRO.prompt_trigger
 
-#: The array format's timeout is in **seconds** while the object format's is in milliseconds — the
-#: one place these two formats disagree about a value rather than about a shape, and therefore the
-#: one place a hand-written second entry would quietly install a 10000-second timeout.
-_MS_PER_SECOND: Final = 1000
+#: Shared by both harnesses' consolidator definitions, which is why it is a constant rather than a
+#: literal inside either builder: it is the text a harness reads to decide the agent is relevant,
+#: and two copies would let one harness's install drift into describing a different agent.
+_CONSOLIDATOR_DESCRIPTION: Final = (
+    "Consolidates Zikaron's memory journal into long-term records. Spawned by the "
+    "zikaron-consolidate skill; carries the four consolidation tools and nothing else."
+)
+
+#: Claude Code's three triggers, derived from the seam for the reason above. `SubagentStart` has no
+#: kiro counterpart and is not optional: M14 built the write-policy-per-subagent path behind it, and
+#: kiro reaches the same place by firing its ordinary hooks *for* a subagent session instead.
+#: Registering only the first two would leave that path dead with nothing failing — no error, no log
+#: line, just subagents that never see the policy. The `is not None` filter is a type narrowing and
+#: not a real branch: this tuple is Claude Code's, and Claude Code has all three.
+_CLAUDE_TRIGGERS: Final = tuple(
+    trigger
+    for trigger in (
+        CLAUDE_CODE.spawn_trigger,
+        CLAUDE_CODE.prompt_trigger,
+        CLAUDE_CODE.subagent_start_trigger,
+    )
+    if trigger is not None
+)
 
 
 class HookFormat(StrEnum):
@@ -185,7 +211,10 @@ def _array_entry(hook_command: Path, trigger: str) -> dict[str, object]:
         "name": f"zikaron-{trigger}",
         "trigger": trigger,
         "action": {"type": "command", "command": hook_command_string(hook_command)},
-        "timeout": TIMEOUT_MS // _MS_PER_SECOND,
+        # Seconds here, milliseconds in the object entry above — the one place kiro's two formats
+        # disagree about a value rather than a shape. Both read the same canonical seconds constant
+        # rather than converting from each other, so neither can drift into the other's unit.
+        "timeout": HOOK_TIMEOUT_SECONDS,
     }
 
 
@@ -198,6 +227,98 @@ def mcp_servers_value(commands: Commands, *, mode: str) -> dict[str, object]:
             "args": ["--mode", mode],
         }
     }
+
+
+def claude_tool_vocabulary() -> dict[str, str]:
+    """Bare tool name → the `mcp__<server>__<tool>` form Claude Code serves and shows the model.
+
+    Built from the two tool sets and the two server names rather than listed, so a tool added to
+    `zikaron.mcp.tool_names` is covered here automatically and a *renamed* one fails
+    `assets._guard_known_tools` loudly instead of shipping a name nothing serves.
+    """
+    return {
+        **{name: f"mcp__{MCP_SERVER_NAME}__{name}" for name in PRIMARY_TOOLS},
+        **{name: f"mcp__{CONSOLIDATOR_AGENT_NAME}__{name}" for name in CONSOLIDATOR_TOOLS},
+    }
+
+
+def claude_hooks_value(commands: Commands) -> dict[str, list[dict[str, object]]]:
+    """The `hooks` value for `.claude/settings.local.json`: three triggers, one command each.
+
+    The doubled nesting is the harness's own and was confirmed by running it: an event maps to a
+    list of *groups*, each carrying an optional `matcher` and its own inner `hooks` list
+    (`research/claude-code-installer-probe.md` §1). No `matcher` is written — `UserPromptSubmit`
+    accepts none at all, and the other two must fire for every session and every subagent, which is
+    what omitting it means.
+
+    `timeout` is **seconds** here, measured rather than assumed, and `command` is *not*
+    shell-quoted: unlike kiro's hook field this is not documented as passing through a shell, and
+    quoting a path the harness execs directly would make it look for a file whose name contains the
+    quotes — the same reasoning `mcp_servers_value` already applies to its own `command`.
+    """
+    entry: dict[str, object] = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": str(commands.hook),
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+        ]
+    }
+    return {trigger: [entry] for trigger in _CLAUDE_TRIGGERS}
+
+
+def claude_mcp_servers_value(commands: Commands) -> dict[str, object]:
+    """Both servers, for `.mcp.json`.
+
+    Two entries rather than kiro's one, and not a stylistic difference: a server must be registered
+    **session-wide** to be reachable by any subagent at all, so the consolidator's server cannot
+    live inside the consolidator's own definition the way it does under kiro. That is the same fact
+    that makes D32's other half unenforceable here, reported by the installer rather than hidden.
+    """
+    return {
+        **mcp_servers_value(commands, mode="primary"),
+        CONSOLIDATOR_AGENT_NAME: {
+            "command": str(commands.mcp),
+            "args": ["--mode", "consolidator"],
+        },
+    }
+
+
+def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
+    """The whole `.claude/agents/zikaron-consolidator.md` — YAML frontmatter, prompt as body.
+
+    Three things differ from kiro's JSON and each is measured rather than translated:
+
+    - **`tools` is a whole-server wildcard**, not the four verbs by name. An unrecognised tool name
+      in frontmatter refuses the spawn outright with "would be spawned with zero tools"
+      (`claude-code-harness-probe.md` §6), so an explicit list is a second declaration of a fact
+      `mcp/consolidator.py` owns whose drift mode is a consolidator that will not start. The
+      wildcard was measured to grant that server's tools and to **exclude** the primary server's
+      `search`/`fetch` (`installer-probe` §7), which is the whole of what D7 needs.
+    - **No `mcpServers` block.** A frontmatter `mcpServers:` key is silently ignored (probe §6);
+      registration is session-wide in `.mcp.json` or it does not happen.
+    - **The model may be an alias**, because this harness refuses an unknown id loudly at spawn
+      rather than substituting its default. `harness.md` §"The consolidator's model".
+
+    `commands` is unused and stays in the signature deliberately: it keeps this builder's shape
+    identical to `consolidator_agent_config`'s, so the two targets call one interface, and the fact
+    that Claude Code needs no per-agent server registration is visible as an *unused argument* here
+    rather than as an asymmetry the caller has to know about.
+    """
+    del commands
+    frontmatter = "\n".join(
+        (
+            "---",
+            f"name: {CONSOLIDATOR_AGENT_NAME}",
+            f"description: {_CONSOLIDATOR_DESCRIPTION}",
+            f"model: {model}",
+            "tools:",
+            f"  - mcp__{CONSOLIDATOR_AGENT_NAME}",
+            "---",
+        )
+    )
+    return f"{frontmatter}\n\n{consolidator_prompt(claude_tool_vocabulary())}\n"
 
 
 def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
@@ -220,12 +341,9 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
     """
     return {
         "name": CONSOLIDATOR_AGENT_NAME,
-        "description": (
-            "Consolidates Zikaron's memory journal into long-term records. Spawned by the "
-            "zikaron-consolidate skill; carries the four consolidation tools and nothing else."
-        ),
+        "description": _CONSOLIDATOR_DESCRIPTION,
         "model": model,
-        "prompt": CONSOLIDATOR_PROMPT,
+        "prompt": consolidator_prompt(identity_vocabulary()),
         "tools": [TOOL_SELECTOR],
         "allowedTools": [TOOL_SELECTOR],
         "mcpServers": mcp_servers_value(commands, mode="consolidator"),

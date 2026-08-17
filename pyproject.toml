@@ -43,6 +43,17 @@ dev = [
     # Property-based tests, for the places the design states a property rather than a case:
     # chunking never loses content, and no chunk exceeds the budget it was cut to.
     "hypothesis==6.140.2",
+    # Tests only, and never imported by shipped code. Two of Claude Code's four installed
+    # artefacts are YAML-frontmatter Markdown, and the installer emits that frontmatter by string
+    # formatting — so the only way to assert it is *valid* is to parse it with something that did
+    # not write it. Present transitively before this line existed; declared because a test that
+    # silently stops running when a transitive dependency moves is worse than no test. The failure
+    # it guards is specific and easy to reintroduce: a description that grows a `: ` becomes a
+    # different YAML document, and the harness would read a mangled agent rather than refuse one.
+    "pyyaml==6.0.3",
+    # `mypy --strict` covers the tests as well as the package (see `check.sh`), so the parser above
+    # needs stubs or the gate fails on the import rather than on anything about the code.
+    "types-PyYAML==6.0.12.20250915",
 ]
 
 [tool.setuptools.packages.find]
@@ -133,10 +144,31 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 # `manual` needs a live model API and so is never in the default run; ask for it by
 # marker when you mean to spend money.
-addopts = "-q --strict-markers --strict-config -m 'not manual'"
+addopts = [
+    "-q",
+    "--strict-markers",
+    "--strict-config",
+    "-m",
+    "not manual and not integration_kiro and not integration_claude",
+]
 markers = [
     "integration: real fastembed, real sqlite-vec, real socket, real subprocess",
     "manual: needs a live model API; excluded from the default run",
+    # **Excluded from the default run, so the gate is hermetic.** These need a third-party binary
+    # installed *and working* on the machine — not merely importable — which makes them a different
+    # kind of dependency from `integration`, whose "real" things are all Zikaron's own processes.
+    #
+    # The distinction was earned rather than anticipated: an expired `kiro-cli` credential turned
+    # `./check.sh` red for a reason that had nothing to do with the code, and the same tests would
+    # go *green* on a machine whose harness behaved differently. A gate that can mislead in both
+    # directions is not a gate. Run them deliberately:
+    #     .venv/bin/pytest -m integration_kiro
+    #     .venv/bin/pytest -m integration_claude
+    #
+    # Underscores because a marker is an attribute on `pytest.mark`, so `integration-kiro` is not
+    # expressible.
+    "integration_kiro: needs a real, working `kiro-cli` on PATH; excluded from the default run",
+    "integration_claude: needs a real Claude Code binary on PATH; excluded from the default run",
 ]
 # `zikaron-core`'s own SQL runs exclusively through `aiosqlite` (coding-standards.md §6), so
 # every test that exercises the store is itself a coroutine. `auto` runs every `async def test_*`

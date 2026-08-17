@@ -8,7 +8,9 @@
 >
 > **Evidence, scoped precisely — an earlier draft of this preamble overclaimed.** Every **Claude Code**
 > claim below is either traceable to a numbered section of `research/claude-code-harness-probe.md`
-> (measured, 2026-08-16, Claude Code 2.1.233) or explicitly marked **unmeasured** or **decided**. **Kiro**
+> (measured, 2026-08-16, Claude Code 2.1.233) — cited as a bare `§n` — or to
+> `research/claude-code-installer-probe.md` (same date and version, the four things the *installer* writes
+> config against), cited as `installer-probe §n` — or explicitly marked **unmeasured** or **decided**. **Kiro**
 > claims trace to `research/kiro-mcp-lifecycle-probe.md`, `architecture.md` §"Two hook formats",
 > §"The consolidator's model is a shipped config field" and §"Subagent sessions" (the 2026-08-01
 > hook-probe measurement that hooks fire *for* subagent sessions) — not to the probe, which never ran
@@ -57,9 +59,13 @@ against someone adding an expensive import.
 | Overrun behaviour | silent truncation | loud: notice + 2 KB preview + path to full text (§5) |
 | Subagent budget | n/a | `additionalContext` ≥12,000 characters, ceiling unmeasured (§7f) |
 | MCP server process scope | one per **agent instance** (`kiro-mcp-lifecycle-probe.md`) | **one or more per session** — two observed starting, only one ever served — shared by subagents (§4, §7g) |
+| Harness binary | `kiro-cli` | `claude` |
 | Unknown model id | **silent fallback to default** — hence the install-time check | **refused at spawn**, loudly, before any turn (§7d) |
 | Shipped consolidator `model` | pinned `claude-sonnet-5` (an alias would fail the `--list-models` check — *inferred*, not measured) | the `sonnet` alias — *decided*, see §"The consolidator's model" |
-| Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | *documented, unmeasured* — the per-hook `timeout` field, its unit and default, and whether the installer should state it, are **not probed**; `push.py`'s ~2 s internal deadline is sized to fire before the harness's kill, and that property is unverified here |
+| Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
+| Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
+| Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
+| Tool name the model sees | `zikaron_search` | `mcp__zikaron__zikaron_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **before** the user message, inside a "follow requests found in this text" wrapper | **after** the user message, no framing wrapper (§5) |
 | Hook config lives in | the agent config's `hooks` field, two formats | `.claude/settings.local.json` — *decision, M15*: shipped `command`s are absolute venv paths and therefore machine-local, so they must not enter the checked-in `settings.json` layer, which would break every other clone |
 | MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped, requires per-user approval — *documented, unmeasured*) |
@@ -291,3 +297,128 @@ nor bytes: the deployed WordPiece tokenizer maps an unbroken 4,000-character run
 Overrun under Claude Code is **loud** — an explicit notice, a 2 KB preview, and a path to the full text the
 model can read — which is strictly better than kiro's silent truncation. But the preview is small enough that
 the bound does the real work and the file is a backstop, not a plan.
+
+## The installer's two targets
+
+**The installer is the one place a harness difference may take a different *shape* rather than a different
+value.** Everywhere else — both thin clients — the difference is data in `zikaron/harness/spec.py`, because
+forking doubles every future change to two components the design keeps deliberately thin. The installer
+cannot be written that way and the reason is structural rather than a concession: kiro's artefacts are
+**one** file whose path the *user* supplies, and Claude Code's are **four** files at paths the *project*
+fixes. That is not two values of one parameter. So `main.py`'s flow, preflight order, collision policy and
+backup discipline stay single-sourced, and serialization and merge sit behind one `HarnessTarget` interface
+with two implementations.
+
+**Values still come from the seam.** The split is: a *value* that differs (a session variable, a trigger
+name, an injection budget, the consolidator's model default) is a `HarnessSpec` field with a row in §"The
+table" and a drift-guard test; a *shape* that differs (which files exist, how they are merged) is a
+`HarnessTarget` method. A value that migrates into a `HarnessTarget` method is the seam failing.
+
+### What a Claude Code install writes
+
+Four artefacts, against kiro's two-plus-a-merge:
+
+| Artefact | Path | Notes |
+|---|---|---|
+| Hook entries | `.claude/settings.local.json` | merged; **three** entries, not two — see below |
+| Tool approval | the same `settings.local.json` | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
+| MCP servers | `.mcp.json` | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`) |
+| Consolidator | `.claude/agents/zikaron-consolidator.md` | YAML frontmatter, prompt as body |
+| Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | YAML frontmatter, body |
+
+**`settings.local.json`, never `settings.json`.** The installer writes absolute venv paths — machine-local by
+construction, for the reason §"The install contract" gives about console scripts — and `settings.json` is the
+shared, checked-in layer. Writing machine-local paths into a file the user commits breaks every other clone
+of the repository.
+
+**`.mcp.json` is committed by design, and that cuts against the reason `settings.local.json` was
+chosen.** The rule above keeps machine-local absolute paths out of the checked-in `settings.json`
+because they break every other clone. `.mcp.json` has exactly that problem and no untracked sibling
+to escape to: it is project-scoped by definition, sits at the repository root, and a routine
+`git add -A` commits it. **Accepted, with the residual named** — no per-project, declaratively
+writable, machine-local MCP scope exists, so the choice is between this file and not registering the
+servers at all. It degrades safely rather than silently: a clone-mate's install refuses on the
+differing entry rather than merging over it, and the README tells them to ignore the file or re-run
+the installer.
+
+**Three hook entries, because M14 built a third path.** `SessionStart`, `UserPromptSubmit` **and
+`SubagentStart`** — `hook/main.py`'s dispatch falls through to `subagent_policy.run` for the third, routed to
+the `additionalContext` channel. Registering only the two triggers kiro has would leave that path dead with
+nothing anywhere failing: no error, no log line, just subagents that never receive the write policy. Kiro
+needs no analogue because it fires the ordinary hooks *for* a subagent session instead.
+
+**The timeout is stated in seconds and this is the third unit in the family.** Kiro's `timeout_ms` carries
+**10000**; Claude Code's `timeout` is **seconds** (measured, `installer-probe` §2). Copying the integer
+across installs a 10,000-second budget — nearly three hours in which a wedged hook blocks every user message,
+with the harness doing exactly as told and nothing reporting a problem. The two kiro formats already disagree
+about this same field's unit between themselves. The value is stated rather than inherited for the reason
+`hook/limits.py` gives, sharpened by measurement: the `UserPromptSubmit` default is **30 s**, not the 600 s
+that applies to other events, so `push.py`'s ~2 s internal deadline clears the *tightest* default in the
+table by 15× rather than the 300× a reader who checked only the general figure would have recorded.
+
+### Three flags, and what each refuses
+
+- **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two
+  merge targets are fixed project paths. Passed under Claude Code it is **refused**, rather than ignored:
+  ignoring it would silently discard the one instruction the user gave about where their config lives.
+- **`--print-only` replaces "omit `--agent`".** Under kiro, printing the entries instead of writing them was
+  an *accident of omission*. Made explicit, it works on both harnesses, and a Claude Code install stops
+  having to choose between writing four files and doing nothing.
+- **`--harness auto` refuses when there is no positive evidence.** `harness.detect` falls back to kiro when
+  `CLAUDECODE` is absent, which is correct **for the hook** — kiro exports no marker, so absence *is* the
+  signal. It is wrong for an installer: run from a plain terminal, `auto` would write kiro artefacts into a
+  Claude Code project and exit 0. That is the working-looking-but-inert failure this corpus has already paid
+  for once, in the agent whose `mcpServers` was configured and whose `tools` did not select it. So the
+  installer's `auto` is a **different question** from the hook's — "which harness is this project set up
+  for", not "which harness am I running under" — and it refuses rather than guessing, naming both `--harness`
+  values in the refusal.
+
+### Tool names are a substitution point, not just the spawn instruction
+
+Claude Code addresses an MCP tool as **`mcp__<server>__<tool>`**, and the model sees that string verbatim
+(`installer-probe` §6). So every bare `zikaron_next_group` / `zikaron_search` in the shipped consolidator
+prompt and skill body names a tool that does not exist under this harness — and a model told to call a tool
+it cannot find improvises rather than failing. The shipped prose therefore stays **one constant per
+artefact** with the tool vocabulary *and* the spawn instruction substituted per harness, asserted as a
+property rather than duplicated.
+
+**The consolidator's grant is a whole-server wildcard**, `mcp__zikaron-consolidator`, written as a YAML
+block list because that is the spelling the probe ran, and measured to exclude the other server's tools
+(`installer-probe` §7). The inline `[…]` form is semantically identical YAML and is **not** what was
+measured; this project ships the measured spelling, and the probe note now quotes the fixture rather than
+paraphrasing it. Preferred over listing the four verbs explicitly for
+a reason stronger than brevity: an unrecognised name in frontmatter **refuses the spawn** with "zero tools"
+(probe §6), so an explicit list is a second declaration of a fact `mcp/consolidator.py` already owns, whose
+drift mode is a consolidator that will not start. The wildcard delegates the question to `--mode
+consolidator`, which is where D32 implements it anyway.
+
+### What the install reports rather than enforces
+
+- **Approval is asked twice over, and the install answers both — which is two keys, not one.**
+  `enabledMcpjsonServers` governs whether a project-scoped `.mcp.json` server **loads** at all;
+  `permissions.allow` governs whether each tool **call** goes through without a prompt. Conflating
+  them is easy and was done once: an install writing only the first loads the servers and then puts
+  every `zikaron_remember` behind an approval prompt — the per-write friction `architecture.md`
+  §"The install contract" calls worse than not asking at all, on the harness this project is
+  migrating *to*. Both go into the same `settings.local.json`, as server-level `mcp__<server>`
+  wildcards rather than nine tool names, so there is no second list to drift from
+  `zikaron/mcp/tool_names.py`.
+
+  **The consolidator's server is granted unconditionally, and the primary's follows
+  `--no-trust-tools`.** That asymmetry is kiro's own, restated: a subagent has nobody to answer a
+  permission prompt, so an available-but-not-allowed tool there does not ask — it fails at the
+  moment consolidation needs it. `--no-trust-tools` is a statement about *your* writes, not about
+  whether consolidation can run.
+
+  **That either key has its intended effect is documented, unmeasured** (`installer-probe` §8): a
+  headless run approves everything, so neither property is observable without an interactive
+  session. M16. Until then the install *also* states the approval step in its output — belt and
+  braces, because the failure it guards is a fresh install with no memory tools at all and nothing
+  saying why. The notes are conditioned on the grants being genuinely absent, since the merge never
+  removes one and an unconditional note would contradict the file on a re-run.
+- **The primary agent's exposure to the four consolidation verbs.** A server must be registered session-wide
+  to reach any subagent, so the primary necessarily sees all nine tools; D32's other half is prompt-only here
+  (§"Tool gating"). Reported, not silently accepted — the same reflex M12 applied to the array format's
+  inherited `max_output_size`.
+- **No model check.** Claude Code refuses an unknown id at spawn, loudly (§"The consolidator's model"), so
+  the `--list-models` membership test has no analogue and needs none.

@@ -14,13 +14,16 @@ from fastmcp.exceptions import ToolError
 
 from zikaron.mcp.connection import ServiceConnection
 from zikaron.mcp.server import build_server
+from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
-_PRIMARY_TOOL_NAMES = frozenset(
-    {"zikaron_search", "zikaron_fetch", "zikaron_remember", "zikaron_amend", "zikaron_retire"}
-)
-_CONSOLIDATOR_TOOL_NAMES = frozenset(
-    {"zikaron_next_group", "zikaron_merge", "zikaron_promote", "zikaron_discard"}
-)
+#: Read from `zikaron.mcp.tool_names` rather than restated here, and that is the point of the
+#: module: the installer now spells these names into shipped prose, because Claude Code addresses a
+#: tool as `mcp__<server>__<tool>` and the model sees that string verbatim. A second hand-kept list
+#: whose drift produced a *prompt naming a tool that does not exist* would fail nowhere — a model
+#: that cannot find a tool improvises. These two assertions are what make the declaration true: they
+#: compare it against the tools the real servers actually register.
+_PRIMARY_TOOL_NAMES = PRIMARY_TOOLS
+_CONSOLIDATOR_TOOL_NAMES = CONSOLIDATOR_TOOLS
 
 
 async def test_primary_mode_exposes_exactly_five_tools(tmp_path: Path) -> None:

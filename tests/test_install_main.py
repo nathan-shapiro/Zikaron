@@ -14,12 +14,25 @@ from pathlib import Path
 
 import pytest
 
+from zikaron.harness.spec import KIRO
 from zikaron.install import harness
 from zikaron.install.entries import MCP_SERVER_NAME, TOOL_SELECTOR, Commands, HookFormat
-from zikaron.install.main import DEFAULT_MODEL, main
+from zikaron.install.main import main
 from zikaron.install.writer import Targets
 
-_MODELS = frozenset({DEFAULT_MODEL, "claude-haiku-4.5"})
+_MODELS = frozenset({KIRO.consolidator_model, "claude-haiku-4.5"})
+
+
+def _kiro_install(argv: list[str]) -> int:
+    """`main` with the harness stated, which every test in this file assumes.
+
+    Stated rather than left to `--harness auto`, and the reason is the behaviour under test
+    elsewhere: `auto` **refuses** on a directory carrying neither `.kiro/` nor `.claude/`, which is
+    exactly what a `tmp_path` project is. Passing it here would make every test in this file assert
+    the resolution rule instead of the thing it is about; `tests/test_install_targets.py` asserts
+    the resolution rule once, deliberately.
+    """
+    return main(["--harness", KIRO.harness.value, *argv])
 
 
 def _snapshot(project: Path) -> dict[str, bytes]:
@@ -59,13 +72,17 @@ def _harness_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     """No real `kiro-cli` in the unit tier: these tests are about the command's own decisions."""
     monkeypatch.setattr(harness, "available_model_ids", lambda: _MODELS)
     monkeypatch.setattr(harness, "validate_agent_config", lambda _path: None)
+    # Presence is answered too, and pinned rather than left to the machine: an unpinned check makes
+    # this file pass on a workstation with kiro installed and refuse everything in a container,
+    # which is a suite testing its environment rather than its code.
+    monkeypatch.setattr(harness, "binary_is_available", lambda _name: True)
 
 
 class TestASuccessfulInstall:
     def test_it_exits_zero_and_writes_both_artefacts(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project)]) == 0
+        assert _kiro_install(["--project", str(project)]) == 0
         targets = Targets(project=project)
         assert targets.consolidator_config.is_file()
         assert targets.skill_file.is_file()
@@ -75,7 +92,7 @@ class TestASuccessfulInstall:
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project)])
+        _kiro_install(["--project", str(project)])
         printed = capsys.readouterr().out
         assert '"mcpServers"' in printed
         assert '"userPromptSubmit"' in printed
@@ -87,7 +104,7 @@ class TestASuccessfulInstall:
         """Printed for a human to paste into a JSON file, so it has to parse as JSON on its own."""
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project), "--format", "array"])
+        _kiro_install(["--project", str(project), "--format", "array"])
         printed = capsys.readouterr().out
         fragment = json.loads(printed[printed.index("{") : printed.rindex("}") + 1])
         assert isinstance(fragment["hooks"], list)
@@ -100,7 +117,7 @@ class TestASuccessfulInstall:
         project.mkdir()
         agent = project / "mine.json"
         agent.write_text(json.dumps({"name": "mine", "tools": ["subagent"]}))
-        assert main(["--project", str(project), "--agent", str(agent)]) == 0
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
         merged = json.loads(agent.read_text())
         assert MCP_SERVER_NAME in merged["mcpServers"]
         assert TOOL_SELECTOR in merged["tools"]
@@ -116,9 +133,9 @@ class TestASuccessfulInstall:
         `--force` is suggested to them."""
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project)])
+        _kiro_install(["--project", str(project)])
         capsys.readouterr()
-        assert main(["--project", str(project)]) == 0
+        assert _kiro_install(["--project", str(project)]) == 0
         printed = capsys.readouterr().out
         assert "kept" in printed
         assert "--force" in printed
@@ -142,10 +159,10 @@ class TestASuccessfulInstall:
                 }
             )
         )
-        assert main(["--project", str(project)]) == 0
+        assert _kiro_install(["--project", str(project)]) == 0
         printed = capsys.readouterr().out
         assert "replaced" in printed
-        assert "named a different Zikaron install" in printed
+        assert "differed from what this install ships" in printed
 
     def test_it_adds_the_consolidator_to_a_populated_crew_and_says_so(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -163,7 +180,7 @@ class TestASuccessfulInstall:
                 }
             )
         )
-        assert main(["--project", str(project), "--agent", str(agent)]) == 0
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
         crew = json.loads(agent.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == ["helper-a", "zikaron-consolidator"]
         assert "trustedAgents" not in crew, "spawn trust is a separate grant, left to the user"
@@ -178,14 +195,17 @@ class TestASuccessfulInstall:
         project.mkdir()
         agent = project / "mine.json"
         agent.write_text(json.dumps({"name": "mine", "allowedTools": ["read"]}))
-        assert main(["--project", str(project), "--agent", str(agent), "--no-trust-tools"]) == 0
+        assert (
+            _kiro_install(["--project", str(project), "--agent", str(agent), "--no-trust-tools"])
+            == 0
+        )
         assert json.loads(agent.read_text())["allowedTools"] == ["read"]
         assert "ask your permission" in capsys.readouterr().out
 
     def test_the_model_can_be_overridden_for_a_comparison_run(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project), "--model", "claude-haiku-4.5"]) == 0
+        assert _kiro_install(["--project", str(project), "--model", "claude-haiku-4.5"]) == 0
         written = json.loads(Targets(project=project).consolidator_config.read_text())
         assert written["model"] == "claude-haiku-4.5"
 
@@ -194,7 +214,7 @@ class TestASuccessfulInstall:
         project.mkdir()
         agent = project / "mine.json"
         agent.write_text(json.dumps({"name": "mine"}))
-        main(["--project", str(project), "--agent", str(agent)])
+        _kiro_install(["--project", str(project), "--agent", str(agent)])
         assert isinstance(json.loads(agent.read_text())["hooks"], dict)
         assert HookFormat.OBJECT is HookFormat("object")
 
@@ -226,7 +246,7 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project), "--model", "not-a-real-model"]) == 1
+        assert _kiro_install(["--project", str(project), "--model", "not-a-real-model"]) == 1
         assert not (project / ".kiro").exists()
         assert "not a model this harness offers" in capsys.readouterr().err
 
@@ -235,8 +255,8 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project), "--model", "nope"])
-        assert DEFAULT_MODEL in capsys.readouterr().err
+        _kiro_install(["--project", str(project), "--model", "nope"])
+        assert KIRO.consolidator_model in capsys.readouterr().err
 
     def test_a_missing_console_script_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -250,7 +270,7 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         monkeypatch.setattr(Commands, "from_this_interpreter", classmethod(lambda _cls: absent))
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert not (project / ".kiro").exists()
         assert "not installed for this interpreter" in capsys.readouterr().err
 
@@ -269,14 +289,14 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         monkeypatch.setattr(Commands, "from_this_interpreter", classmethod(lambda _cls: commands))
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert not (project / ".kiro").exists()
         assert "not installed for this interpreter" in capsys.readouterr().err
 
     def test_a_project_that_is_not_a_directory_is_refused(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        assert main(["--project", str(tmp_path / "does-not-exist")]) == 1
+        assert _kiro_install(["--project", str(tmp_path / "does-not-exist")]) == 1
         assert "is not a directory" in capsys.readouterr().err
 
     def test_an_agent_path_that_does_not_exist_is_refused_before_writing(
@@ -286,7 +306,9 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         the shipped files installed and the entries silently unmerged."""
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project), "--agent", str(project / "typo.json")]) == 1
+        assert (
+            _kiro_install(["--project", str(project), "--agent", str(project / "typo.json")]) == 1
+        )
         assert not (project / ".kiro").exists()
         assert "does not exist" in capsys.readouterr().err
 
@@ -299,7 +321,7 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         monkeypatch.setattr(harness, "available_model_ids", _raise)
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert not (project / ".kiro").exists()
         assert "not on PATH" in capsys.readouterr().err
 
@@ -321,7 +343,7 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
         agent = project / "mine.json"
         agent.write_text("{not json")
         before = _snapshot(project)
-        assert main(["--project", str(project), "--agent", str(agent)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 1
         assert _snapshot(project) == before
         assert not (project / ".kiro").exists()
         assert "not valid JSON" in capsys.readouterr().err
@@ -341,7 +363,7 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
             )
         )
         before = _snapshot(project)
-        assert main(["--project", str(project), "--agent", str(agent)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 1
         assert _snapshot(project) == before
         assert "pointing somewhere else" in capsys.readouterr().err
 
@@ -358,7 +380,7 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
         agent.write_text(json.dumps({"name": "mine"}))
         (project / "mine.json.bak").mkdir()
         before = _snapshot(project)
-        assert main(["--project", str(project), "--agent", str(agent)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 1
         assert _snapshot(project) == before
         assert not (project / ".kiro").exists()
         assert "cannot be backed up" in capsys.readouterr().err
@@ -434,7 +456,7 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
         agent = project / "mine.json"
         agent.write_text(json.dumps(document))
         before = _snapshot(project)
-        assert main(["--project", str(project), "--agent", str(agent)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 1
         assert _snapshot(project) == before
         assert not (project / ".kiro").exists()
         assert expected in capsys.readouterr().err
@@ -458,7 +480,7 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         link = project / "mine.json"
         link.symlink_to(real)
         before = real.read_text()
-        assert main(["--project", str(project), "--agent", str(link)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(link)]) == 1
         assert link.is_symlink()
         assert real.read_text() == before
         assert not (project / ".kiro").exists()
@@ -474,7 +496,7 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         project.mkdir()
         skill = project / ".kiro" / "skills" / "zikaron-consolidate" / "SKILL.md"
         skill.mkdir(parents=True)
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert "is not a regular file" in capsys.readouterr().err
         assert not (project / ".kiro" / "agents").exists()
 
@@ -489,7 +511,7 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         skill = project / ".kiro" / "skills" / "zikaron-consolidate" / "SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.symlink_to(project / "nothing-here.md")
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert "is not a regular file" in capsys.readouterr().err
         assert not (project / ".kiro" / "agents").exists()
 
@@ -502,7 +524,7 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         skills.parent.mkdir(parents=True)
         skills.symlink_to(project / "nowhere")
         before = _snapshot(project)
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert _snapshot(project) == before
         assert "is not a directory" in capsys.readouterr().err
 
@@ -515,11 +537,11 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         """
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project)])
+        _kiro_install(["--project", str(project)])
         consolidator = Targets(project=project).consolidator_config
         before = _snapshot(project)
         capsys.readouterr()
-        assert main(["--project", str(project), "--agent", str(consolidator)]) == 1
+        assert _kiro_install(["--project", str(project), "--agent", str(consolidator)]) == 1
         assert _snapshot(project) == before
         assert "which this install writes itself" in capsys.readouterr().err
 
@@ -534,7 +556,7 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
         skills = project / ".kiro" / "skills"
         skills.parent.mkdir(parents=True)
         skills.write_text("a file where a directory belongs")
-        assert main(["--project", str(project)]) == 1
+        assert _kiro_install(["--project", str(project)]) == 1
         assert "is not a directory" in capsys.readouterr().err
         assert not (project / ".kiro" / "agents").exists()
 
@@ -571,7 +593,7 @@ class TestTheWrittenCommandRunsThroughAShell:
         project.mkdir()
         agent = project / "mine.json"
         agent.write_text(json.dumps({"name": "mine"}))
-        assert main(["--project", str(project), "--agent", str(agent)]) == 0
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
 
         written = json.loads(agent.read_text())["hooks"]["userPromptSubmit"][0]["command"]
         completed = subprocess.run(  # noqa: S602 — a shell is exactly what is under test.
@@ -594,7 +616,7 @@ class TestTheValidationReport:
         monkeypatch.setattr(harness, "validate_agent_config", lambda _path: "unknown field `toolz`")
         project = tmp_path / "project"
         project.mkdir()
-        assert main(["--project", str(project)]) == 0
+        assert _kiro_install(["--project", str(project)]) == 0
         assert "unknown field `toolz`" in capsys.readouterr().out
 
     def test_only_json_files_are_validated(
@@ -610,5 +632,5 @@ class TestTheValidationReport:
         monkeypatch.setattr(harness, "validate_agent_config", _record)
         project = tmp_path / "project"
         project.mkdir()
-        main(["--project", str(project)])
+        _kiro_install(["--project", str(project)])
         assert asked == [Targets(project=project).consolidator_config]

@@ -94,6 +94,8 @@ class HarnessSpec(NamedTuple):
     fires_hooks_for_subagent_sessions: bool
     injection_budget: int
     budget_unit: BudgetUnit
+    consolidator_model: str
+    harness_binary: str
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -136,6 +138,11 @@ KIRO: Final = HarnessSpec(
     fires_hooks_for_subagent_sessions=True,
     injection_budget=65_536,
     budget_unit=BudgetUnit.BYTES,
+    # Pinned to a concrete id, and it has to be: this harness substitutes its own default for an
+    # id it does not recognise, *silently*, so the installer validates membership against
+    # `chat --list-models` — a check an alias would fail, since that command lists ids.
+    consolidator_model="claude-sonnet-5",
+    harness_binary="kiro-cli",
 )
 
 #: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
@@ -154,6 +161,13 @@ CLAUDE_CODE: Final = HarnessSpec(
     fires_hooks_for_subagent_sessions=False,
     injection_budget=10_000,
     budget_unit=BudgetUnit.CHARACTERS,
+    # An alias, and safely so: this harness refuses an unknown id loudly at spawn, so both rules
+    # `architecture.md` §"The consolidator's model" states are satisfied — the field is present
+    # explicitly, and the harness serves exactly what was asked for. A *pinned* default would rot
+    # instead: an install a year from now would ship last year's id, and once that id retires the
+    # consolidator fails at spawn. Experiments pin; the shipped default does not have to.
+    consolidator_model="sonnet",
+    harness_binary="claude",
 )
 
 SPECS: Final[dict[Harness, HarnessSpec]] = {

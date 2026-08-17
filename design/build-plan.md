@@ -609,6 +609,99 @@ body, YAML frontmatter + body); re-running an install after a content change is 
 targets; and the Claude Code install reports both the `.mcp.json` approval step and the primary agent's
 exposure to the four consolidation verbs.
 
+**Settled by the operator before any code, because each changes the shape of the work** *(added during
+the build)*: (i) `--agent` is **kiro-only** and refused elsewhere, with the print-a-fragment path promoted
+to an explicit `--print-only` on both harnesses rather than remaining an accident of omitting `--agent`;
+(ii) `--harness auto` **refuses when there is no positive evidence** rather than inheriting
+`harness.detect`'s kiro fallback — that fallback is right for the *hook*, where kiro exports no marker, and
+wrong for an installer, where it would write kiro artefacts into a Claude Code project and exit 0;
+(iii) the consolidator's model default becomes a **`HarnessSpec` field** with a drift-guard row, since it
+is a *value* and only shapes belong in the adapter; (iv) **the shipped prose has more than one substitution
+point** — this brief's "the skill's spawn instruction is the only text that genuinely differs" is wrong.
+
+**Four things the build found that this brief did not anticipate.**
+- **A Claude Code install writes *three* hook entries, not two.** M14 built the `SubagentStart` →
+  write-policy path; registering only kiro's two triggers leaves it dead with nothing failing.
+- **`timeout` is seconds and the `UserPromptSubmit` default is 30 s, not 600.** Measured
+  (`research/claude-code-installer-probe.md` §2–3). Kiro ships `timeout_ms: 10000`; copying that integer
+  into a seconds field installs a **10,000-second** budget. `hook/limits.py` now holds one canonical
+  `HOOK_TIMEOUT_SECONDS` and each format converts at its own edge, so no constant anywhere carries the
+  number that makes the mistake possible.
+- **The consolidator's grant is a whole-server wildcard**, `mcp__zikaron-consolidator`, measured to
+  exclude the primary server's tools (§7). Safer than four explicit names, because an unrecognised name
+  in frontmatter refuses the spawn outright.
+- **Two merge defects, both found by re-reading the new code against rules this corpus already had,
+  and neither by a failing test.** The first version of the settings merge assigned each trigger key
+  wholesale, which would have **deleted a user's own `SessionStart` hook** — and refused the install
+  first, on the grounds that it "differed". It now replaces only Zikaron's own group, matched by
+  command *basename* so another install's hook is still recognised. The second was treating a
+  wrong-shaped `hooks` or `enabledMcpjsonServers` value as absent and writing over it, which is
+  precisely the "defensive filtering on a write path is data loss with a reassuring shape" rule
+  `writer.py` already states for kiro. Both are worth recording because the tests were green
+  throughout: the new-code tests asserted what the new code did.
+- **Content comparison is a *trade*, not a strict improvement, and the brief did not say so.** It fixes
+  the upgrade case it was folded in for, and it reverses M12's deliberate rule that an operator's edit to
+  a shipped file survives a re-run: content is the only evidence available, and "an older Zikaron wrote
+  this" and "a human edited this" are indistinguishable by it. Decided toward refreshing — a stale prompt
+  is silent, routine and misleading, while a clobbered edit is loud, backed up first, and reported —
+  with the residual recorded: `.bak` is first-wins, so a *second* hand edit is not preserved.
+
+**What review round 1 changed** *(`reviews/m15-installer-adapter-review.md`; two blockers, ten
+improvements, three nitpicks)*. Recorded because three of them are the *same* defect class arriving in
+three places, which is the useful thing to carry forward rather than the individual fixes.
+- **Two blockers, both "the new code did not hold itself to a rule the old code documents two functions
+  away."** The Claude planners skipped the backup-path preflight `plan_kiro_merge` runs — so a blocked
+  `.bak` refused the install *after* four writes, breaking `_install`'s own "nothing has been written
+  when one is raised". And they silently dropped malformed user data, which had been independently
+  fixed hours earlier by re-reading against `writer.py`'s own `TestShapesThatWouldBeSilentlyDropped`;
+  two readers finding one defect from opposite directions is worth noting about the rule, not the bug.
+- **`--force` replaced a shipped file with no backup at all.** The content-comparison trade above
+  rests on "nothing is replaced without `<name>.bak` existing first", and that sentence was false on
+  the one path where it matters most — `--force` is the flag the merge-conflict refusals *instruct*
+  users to pass, so it arrives alongside an unrelated conflict rather than only when someone means
+  "discard my edits".
+- **`enabledMcpjsonServers` is not `permissions.allow`.** The install conflated "does the server
+  load" with "is each call approved", so the default Claude Code install left every
+  `zikaron_remember` behind a prompt — the per-write friction the design calls worse than not asking.
+  Now both are written, with the consolidator's server allowed **unconditionally**: a subagent has
+  nobody to answer a prompt, which is the same argument kiro's `allowedTools` already makes.
+- **Harness *values* were re-spelled outside the seam** — both kiro trigger names, all three Claude
+  trigger names, and the marker variable — with no guard tying them back. Exactly intent 1's own
+  defect class, in the milestone whose subject is the seam. All now derived from `HarnessSpec`.
+- **`--model` was interpolated into YAML frontmatter unvalidated**, so `--model "a: b"` silently
+  changed what the agent file *means*. Now shape-checked.
+- **The "byte-for-byte" kiro guard compared parsed dicts**, so a change to the indent or the trailing
+  newline would have shipped different bytes to every install and passed. The fixture now carries the
+  exact serialized string.
+- **Rejected, with the reason:** that the shipped frontmatter `tools:` block-list form was unmeasured.
+  It is what the probe ran (`spikes/claude-code-installer/zk-gated.md`); the *note* paraphrased it
+  inline and misled the reviewer. The note now quotes the fixture — the lesson is about paraphrasing
+  evidence, and it is the second time in this milestone that a research note's prose diverged from
+  what was executed.
+
+**What review round 2 changed, and the one finding worth carrying past this milestone.** Thirteen of
+round 1's fifteen items verified as resolved; two rejections upheld (`--print-only` keeping the
+missing-commands refusal hard, and the block-form frontmatter, confirmed from the fixture). What
+round 2 caught:
+- **A blocker that is this corpus's own lesson, committed while fixing a review finding.** Round 1's
+  `--model` fix landed as a *docstring* over an unchanged method body: the regex constant was
+  compiled and never referenced, the docstring asserted a refusal, and the body was still
+  `del model`. **The gate stayed green** — neither `ruff` nor `mypy --strict` flags an unused
+  module-level `Final`, and no test exercised it — so the artefact affirmatively documented a guard
+  that did not exist, which is worse than the state before the fix. M14's retrospective named
+  exactly this shape ("the gate was green while something material was wrong three separate times");
+  the practice that catches it is the one M14 also named: **watch the guard fail**. Every
+  round-1 fix now has a test that would fail if the fix were reverted
+  (`TestTheFixesFromReviewRoundOneAreWatchedFailing`), which is where the remaining round-2 items
+  went.
+- **Notes that asserted the opposite of the file.** A `--no-trust-tools` re-run over a previously
+  trusting install printed "was **not** written" about grants still sitting in the file, since the
+  merge never removes one. Both notes are now conditioned on genuine absence, the way
+  `plan_kiro_merge` already conditioned its equivalent.
+- **`--model ""` silently became the harness default**, because the value was selected with `or`
+  rather than `is None`. Found by the test written for the *shape* check rather than by the check
+  itself, which never saw the value.
+
 **Scope fence:** **do not reach for `permissions.deny` to restore the primary agent's tool gating.** It is
 the obvious move and it is measured to fail destructively: deny is global and *unregisters* the tool, so the
 consolidator subagent whose frontmatter names it is then refused at spawn with "zero tools" (probe §6). The
@@ -641,6 +734,25 @@ the harness named beside the number; the injected block is confirmed to arrive i
 checkpoint consolidation runs under the model the config names rather than a substituted one — spawn refuses
 an unknown id loudly, so this is observed rather than trusted; and a subagent is
 observed to have actually **received** the write policy, rather than only our side being observed to emit it.
+
+**Two observations from M15 that are this milestone's to act on or decline, recorded so they are not
+re-derived.**
+- **The e2e suite's external dependency is mostly incidental, and could be parameterized away.** Six
+  tests need a live `kiro-cli`, but only **one** — `test_the_real_validator_does_not_check_model_ids`
+  — genuinely requires the binary as the *point* of the test: it asserts the measurement the whole
+  install-time model check rests on, and would fail loudly if a future kiro started rejecting unknown
+  ids. The other five want a working *install*, and depend on kiro only because `_install()` calls
+  `main()`, which runs the model check on the way past. **Claude Code performs no model check at
+  all**, so the same install → hook → MCP → consolidation path could be exercised hermetically on
+  that arm. Parameterizing the e2e tests across harnesses would give the gate a fully offline arm
+  while keeping the one assertion that is genuinely about kiro's binary. Real scope; M16's call.
+- **`pytest.skip` guards the wrong predicate there.** Those three tests skip when `kiro-cli` is
+  *absent* — and they **failed** rather than skipped when its auth had expired, because the binary
+  was present and answered with an authentication error. "Installed" and "usable" are different
+  properties and only the first is checked. Whether to widen the skip is a judgement with a real
+  hazard on the other side: a skip that swallows a genuinely broken harness is the silent pass this
+  corpus keeps finding, so *failing* on an unusable binary may well be the right behaviour and the
+  fix may be nothing more than the message saying which of the two it hit.
 
 **Scope fence:** no cross-harness comparison of any instrument, in either direction. **And the checkpoint
 consolidation does not run against `~/Memory`.** That store's next consolidation is reserved for designing and

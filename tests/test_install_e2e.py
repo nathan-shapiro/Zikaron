@@ -32,7 +32,18 @@ from zikaron.install.entries import MCP_SERVER_NAME
 from zikaron.install.writer import Targets
 from zikaron.service import paths
 
-pytestmark = pytest.mark.integration
+#: `integration` because everything here is real — a hook subprocess, a service, a socket, an MCP
+#: client — and `usefixtures` because none of that is a *harness* binary. The only thing that
+#: reached for one was `install.main`'s model check, on the way past, so it is answered for and this
+#: file runs anywhere. What a real `kiro-cli` genuinely establishes lives in
+#: `test_install_harness.py`, behind `integration_kiro`.
+#:
+#: **One assignment, deliberately.** A second `pytestmark = ...` does not add a marker, it replaces
+#: the first — silently. Writing this as a list is what keeps both in force.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("stub_harness_binaries"),
+]
 
 _SESSION_ID: Final = "e2e-top-level-session"
 
@@ -72,7 +83,7 @@ def _install(project: Path) -> dict[str, Any]:
         json.dumps({"name": "mine", "description": "a user's own agent", "tools": ["subagent"]})
     )
     status = install_main.main(["--project", str(project), "--agent", str(agent)])
-    assert status == 0, "the install refused on a machine where the real harness is present"
+    assert status == 0, "the install refused even though the harness checks are answered for"
     document = json.loads(agent.read_text())
     assert isinstance(document, dict)
     return document
@@ -102,6 +113,13 @@ def _hook_env(session_id: str) -> dict[str, str]:
     included. An earlier version of this helper read a constant, and a second test file passing its
     own session id got silently suppressed: the service never started and the failure surfaced as a
     timeout waiting for it.
+
+    **`os.environ` is safe here only because `conftest._no_inherited_harness_environment` has
+    already emptied it of harness markers**, and that is worth stating where the line is rather than
+    only where the fixture is. Read alone, this looks like it leaks the *running* harness's
+    variables into a child that then detects the wrong one — a session inside Claude Code carries a
+    dozen `CLAUDE*` names, two of which detection turns on. It does not, and the fixture is what
+    makes the docstring above true.
     """
     return {**os.environ, "KIRO_SESSION_ID": session_id}
 

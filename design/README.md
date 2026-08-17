@@ -15,7 +15,7 @@ D1–D32 decision table with rationale. Everything else is a detailed spec it re
 | `indexing.md` | chunking contract: token-exact preflight, boundaries, gist-prepending, `max` rollup, storage, atomicity |
 | `consolidation.md` | grouping mechanism and its cohesion rule, rejected alternatives, candidate construction, the provisional parameter seeds and what they are not, consolidator identity and model, never-lose guard |
 | `write-policy.md` | the `agentSpawn` prompt text, its rationale, the secrets and poisoning boundary, the operator erasure procedure and its limits, the six instrumented signals, known gaps |
-| `harness.md` | the two supported harnesses as one table (D34): detection, session identity, triggers and output channels, injection budgets, subagent rules, D32's split, consolidation ownership, the consolidator's model |
+| `harness.md` | the two supported harnesses as one table (D34): detection, session identity, triggers and output channels, injection budgets, subagent rules, D32's split, consolidation ownership, the consolidator's model, and the installer's two targets — the value/shape split and what each flag refuses |
 | `prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across, what was not ported |
 
 Evidence lives elsewhere: measured results in `research/`, review rounds in `reviews/`, re-runnable

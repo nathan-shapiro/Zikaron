@@ -40,7 +40,12 @@ from tests.test_install_e2e import (
 from zikaron.core.errors import ErrorCode
 from zikaron.service import paths
 
-pytestmark = pytest.mark.integration
+#: Same reasoning as `test_install_e2e.py`: everything real here is Zikaron's own, and the harness
+#: binary is answered for. One assignment — a second `pytestmark` would replace this, not add to it.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("stub_harness_binaries"),
+]
 
 _SESSION_ID: Final = "takeover-top-level-session"
 _STRANDED_PID: Final = 999_999
