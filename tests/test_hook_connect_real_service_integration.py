@@ -23,9 +23,44 @@ import pytest
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.indexing.encoder import FastEmbedEncoder
 from zikaron.core.store.store import Store
+from zikaron.hook import connect as connect_module
 from zikaron.hook.connect import connect_once, default_server_command
 
 pytestmark = pytest.mark.integration
+
+
+#: Generous on purpose, and **not** the shipped value. See `_mechanism_not_the_shipped_deadline`.
+_MECHANISM_DEADLINE_SECONDS: Final = 30.0
+
+
+@pytest.fixture(autouse=True)
+def _mechanism_not_the_shipped_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests assert that cold start-if-absent **works**, not that it beats the user-facing
+    deadline — because the design says it may lose that race, on purpose.
+
+    `connect.HEALTH_POLL_DEADLINE_SECONDS` is 1.2 s and its own comment explains why it is short:
+    *"a cold spawn racing this deadline and losing is exactly the case that must degrade (log to
+    `hook.log`, relay on stdout) rather than make the user wait."* Losing is a **specified
+    outcome**, and `test_hook_connect_integration.py` covers it against a fake service that binds
+    5 s after spawn.
+
+    So asserting a real cold start finishes inside 1.2 s asserts a guarantee this project declines
+    to make, and whether it holds depends on the machine rather than the code. Measured on a loaded
+    developer box (load ~6, three concurrent agent sessions): a real service takes **1184-1235 ms
+    merely to bind its socket** — before `health()` can answer at all — because `main.py` assembles
+    the store and loads the encoder *first*, deliberately, so it never advertises a store it could
+    not open. Both tests here failed deterministically, and had passed all day at lower load.
+
+    The number they were calibrated against never described this peer: `spike-results.md` §"Cold
+    start" measured **~101 ms**, "dominated by Python interpreter start", against spike 3's toy
+    server — no store, no `fastembed`. The shipped constant is still right for the *user*; it was
+    simply never a claim about the real service's cold start.
+
+    Overriding it here keeps these tests about the mechanism — connect, spawn, poll, reuse — and
+    leaves the shipped value asserted where it belongs, in the fake-service timing tests.
+    """
+    monkeypatch.setattr(connect_module, "HEALTH_POLL_DEADLINE_SECONDS", _MECHANISM_DEADLINE_SECONDS)
+
 
 MODEL: Final = "BAAI/bge-small-en-v1.5"
 

@@ -291,6 +291,26 @@ store**. Both lie outside the loop the agent controls.
    test, and this project has already been burned once by a floor that was not doing its job
    (`check.sh`'s own comment records it). Do not raise `fail_under` close to the observed value
    without pinning the race first.
+   **A second instance, measured 2026-08-18 — and the diagnosis moved twice before it was right.**
+   Two `test_hook_connect_real_service_integration.py` tests failed deterministically at load ~6.
+   First reading: a load-sensitive test. Second: `hook/connect.py`'s `HEALTH_POLL_DEADLINE_SECONDS =
+   1.2` is a *product* constant the test inherits, so do not raise it. **The correct reading is
+   sharper than both — the test asserted a guarantee the design explicitly declines to make.** That
+   constant's own comment says a cold spawn racing it and losing *"is exactly the case that must
+   degrade (log to hook.log, relay on stdout) rather than make the user wait"*. Losing is a
+   **specified outcome**, covered against a fake service that binds 5 s after spawn. Asserting that
+   a *real* cold start wins the race asserts something the product never promised, and whether it
+   holds depends on the machine: a real service takes **1184-1235 ms merely to bind its socket**,
+   because `main.py` assembles the store and loads the encoder first, deliberately, so it never
+   advertises a store it could not open. **The number that constant was calibrated against never
+   described this peer** — `spike-results.md` §"Cold start" measured ~101 ms "dominated by Python
+   interpreter start" against spike 3's *toy* server, with no store and no fastembed. Fixed by
+   giving those two tests their own 30 s deadline via an autouse fixture that states all of this, so
+   they assert the mechanism while the shipped value stays asserted where it belongs. Mutation-
+   verified: a server that never starts still fails them. **The shipped constant is unchanged, and
+   is still right for the user.** What this does leave open, and it is a product question rather
+   than a test one: a cold start-if-absent loses the race on a loaded machine, so the warm helper is
+   load-bearing rather than an optimisation, and a user message that races it silently loses push.
 
 **Two instrument properties worth knowing before quoting a number.** The dedup signal reports nothing for
 30 days unless `signal_horizon_days` is lowered (only the fully-resolved outcome closes early), and
