@@ -56,6 +56,12 @@ role suffix distinguishes `harness` (hook processes, MCP servers) from `agent` (
 **The field is `prompt`, exactly as under kiro.** FINDINGS' migration note claimed `user_input`;
 that is **refuted** — `hook/main.py`'s `payload.get("prompt")` needs no change at all.
 
+**[Refuted 2026-08-18 — see `claude-code-dogfood-checkpoint.md` §11b. The payload `cwd` is present,
+but it *wanders* with the agent's own `cd`, which is precisely what broke D17's store scoping: the
+hook followed it while `zikaron-mcp` did not. `Path.cwd()` in the MCP client was not "correct" so
+much as *different*. Both clients now resolve through `HarnessSpec.store_scope_dir`. Kept as written,
+per this project's withdraw-in-place rule.]**
+
 `cwd` is present on both, so D17's store scoping is unaffected. `CLAUDE_PROJECT_DIR` is also exported,
 and for the MCP server `os.getcwd()` was the project directory — so `Path.cwd()` in `zikaron-mcp`
 remains correct here as it was under kiro.

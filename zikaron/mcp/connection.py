@@ -55,18 +55,25 @@ _REQUEST_TIMEOUT_SECONDS = 10.0
 
 @dataclass(frozen=True, slots=True)
 class StoreLocation:
-    """Where this process's store lives, resolved once from the process's own working directory —
-    D17's "literally the current working directory," computed here rather than trusted from an
-    argument, since an MCP server process has no caller supplying it one the way `zikaron-service`
-    itself is handed `sock_path`/`store_dir` on its own argv.
+    """Where this process's store lives, resolved once from the scope directory the entry point
+    supplies — `HarnessSpec.store_scope_dir` over this process's own cwd (D17, **amended
+    2026-08-18**).
+
+    The original wording said "resolved once from the process's own working directory — D17's
+    'literally the current working directory,' computed here rather than trusted from an argument,
+    since an MCP server process has no caller supplying it one." All three halves are now false:
+    the value may be the harness's own project directory, the quoted rule is the withdrawn one, and
+    `main.py` does supply it — resolving the scope once and handing it down through `build_server`,
+    which is what puts this client and `zikaron-hook` on the same store when an agent changes
+    directory.
     """
 
     store_dir: Path
     sock_path: Path
 
     @classmethod
-    def resolve(cls, cwd: Path) -> "StoreLocation":
-        store_dir = paths.store_dir(cwd)
+    def resolve(cls, scope_dir: Path) -> "StoreLocation":
+        store_dir = paths.store_dir(scope_dir)
         resolved_store_dir = store_dir.resolve()
         runtime_dir = paths.runtime_dir(
             xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid()
@@ -162,8 +169,8 @@ class ServiceConnection:
     makes the whole round trip atomic instead.
     """
 
-    def __init__(self, cwd: Path) -> None:
-        self._location = StoreLocation.resolve(cwd)
+    def __init__(self, scope_dir: Path) -> None:
+        self._location = StoreLocation.resolve(scope_dir)
         self._sock: socket.socket | None = None
         # Resolved through the harness seam, which is what makes this client and `zikaron-hook`
         # speak as one session: each reads whichever variable the harness it detected actually

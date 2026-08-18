@@ -37,7 +37,7 @@ from zikaron.service import paths
 SESSION_ENV_MISMATCH = "session_env_mismatch"
 
 
-def record_if_misdetected(*, spec: HarnessSpec, cwd: Path) -> None:
+def record_if_misdetected(*, spec: HarnessSpec, scope_dir: Path) -> None:
     """Write one `session_env_mismatch` line, if this harness is one where the divergence the
     caller just observed means a misdetection rather than a subagent.
 
@@ -50,5 +50,5 @@ def record_if_misdetected(*, spec: HarnessSpec, cwd: Path) -> None:
     if spec.fires_hooks_for_subagent_sessions:
         return
     with contextlib.suppress(Exception):
-        store_dir = paths.store_dir(cwd)
+        store_dir = paths.store_dir(scope_dir)
         failure.record_failure(paths.hook_log_path(store_dir), SESSION_ENV_MISMATCH)

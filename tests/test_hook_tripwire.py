@@ -15,8 +15,8 @@ from zikaron.hook import tripwire
 from zikaron.service import paths
 
 
-def _hook_log(cwd: Path) -> Path:
-    return paths.hook_log_path(paths.store_dir(cwd))
+def _hook_log(scope_dir: Path) -> Path:
+    return paths.hook_log_path(paths.store_dir(scope_dir))
 
 
 class TestScoping:
@@ -27,13 +27,13 @@ class TestScoping:
         from the environment's *is* the subagent case, several times per session. A line here would
         be noise in a log whose value is a closed vocabulary of genuine failures.
         """
-        tripwire.record_if_misdetected(spec=KIRO, cwd=tmp_path)
+        tripwire.record_if_misdetected(spec=KIRO, scope_dir=tmp_path)
         assert not _hook_log(tmp_path).exists()
 
     def test_a_harness_where_the_ids_are_invariant_writes_exactly_one_line(
         self, tmp_path: Path
     ) -> None:
-        tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
+        tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
         lines = _hook_log(tmp_path).read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1
         assert lines[0].endswith(tripwire.SESSION_ENV_MISMATCH)
@@ -54,7 +54,7 @@ class TestTheLineItself:
         memory content — a rule that only holds if every writer honours it. This one has no error
         code, so the line is a timestamp and a label.
         """
-        tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
+        tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
         line = _hook_log(tmp_path).read_text(encoding="utf-8").strip()
         timestamp, kind = line.split(" ")
         assert kind == tripwire.SESSION_ENV_MISMATCH
@@ -64,8 +64,8 @@ class TestTheLineItself:
         """Each hook invocation is its own process, so two misdetected turns are two lines. A
         writer that truncated would leave an operator seeing only the most recent one.
         """
-        tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
-        tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
+        tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
+        tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
         assert len(_hook_log(tmp_path).read_text(encoding="utf-8").splitlines()) == 2
 
 
@@ -78,16 +78,16 @@ class TestItNeverRaises:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o500)
         try:
-            tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
+            tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
         finally:
             store.chmod(0o700)
 
     def test_a_store_path_that_is_a_file_is_absorbed(self, tmp_path: Path) -> None:
         (tmp_path / ".zikaron").write_text("not a directory")
-        tripwire.record_if_misdetected(spec=CLAUDE_CODE, cwd=tmp_path)
+        tripwire.record_if_misdetected(spec=CLAUDE_CODE, scope_dir=tmp_path)
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_a_nonexistent_working_directory_is_absorbed(
         self, tmp_path: Path, spec: HarnessSpec
     ) -> None:
-        tripwire.record_if_misdetected(spec=spec, cwd=tmp_path / "nowhere" / "deeper")
+        tripwire.record_if_misdetected(spec=spec, scope_dir=tmp_path / "nowhere" / "deeper")

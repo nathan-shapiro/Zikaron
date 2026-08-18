@@ -36,6 +36,7 @@ import os
 import sys
 from pathlib import Path
 
+from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
 from zikaron.hook import push, spawn_warm, subagent_policy
 
@@ -66,20 +67,24 @@ def _run() -> None:
 
 def _dispatch(event: HookEvent, payload: dict[str, object]) -> str | None:
     """Whatever this event's own module wants emitted, or `None` for nothing at all."""
-    cwd = Path(str(payload.get("cwd", ".")))
+    # **Not the payload's `cwd` directly** — that is the value this harness reports *live*, and
+    # under Claude Code it follows the agent's own `cd`, so keying a store on it put stores under
+    # log directories and Scala source trees while `zikaron-mcp` stayed on the real one. The seam
+    # decides; both clients ask it the same question. See `HarnessSpec.store_scope_dir`.
+    scope_dir = detect.current_spec().store_scope_dir(Path(str(payload.get("cwd", "."))))
     if event is HookEvent.SPAWN:
-        return spawn_warm.run(cwd=cwd, payload_session_id=payload.get("session_id"))
+        return spawn_warm.run(scope_dir=scope_dir, payload_session_id=payload.get("session_id"))
     if event is HookEvent.PROMPT:
         prompt = payload.get("prompt")
         if not isinstance(prompt, str):
             return None
         return push.run(
-            cwd=cwd,
+            scope_dir=scope_dir,
             payload_session_id=payload.get("session_id"),
             prompt=prompt,
             pid=os.getpid(),
         )
-    return subagent_policy.run(cwd=cwd, agent_type=payload.get("agent_type"))
+    return subagent_policy.run(scope_dir=scope_dir, agent_type=payload.get("agent_type"))
 
 
 def _emit(event: HookEvent, output: str, *, trigger: str) -> None:

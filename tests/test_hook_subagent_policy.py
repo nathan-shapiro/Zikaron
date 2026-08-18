@@ -24,10 +24,10 @@ class TestTheConsolidatorIsExcluded:
         """Its policy is its own system prompt. Handing it the primary agent's write instructions
         on top would be a second, conflicting set of directions for the same turn.
         """
-        assert subagent_policy.run(cwd=tmp_path, agent_type=CONSOLIDATOR_AGENT_NAME) is None
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type=CONSOLIDATOR_AGENT_NAME) is None
 
     def test_every_other_agent_type_receives_the_policy(self, tmp_path: Path) -> None:
-        assert subagent_policy.run(cwd=tmp_path, agent_type="some-other-agent") is not None
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type="some-other-agent") is not None
 
     def test_the_guarded_copy_of_the_agent_type_matches_the_installers_own_declaration(
         self,
@@ -50,7 +50,7 @@ class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
     def test_anything_that_is_not_exactly_the_consolidator_gets_the_policy(
         self, tmp_path: Path, agent_type: object
     ) -> None:
-        assert subagent_policy.run(cwd=tmp_path, agent_type=agent_type) == WRITE_POLICY_PROMPT
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type) == WRITE_POLICY_PROMPT
 
     def test_a_near_miss_on_the_consolidators_name_is_not_the_consolidator(
         self, tmp_path: Path
@@ -59,7 +59,7 @@ class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
         without being it must not silently lose its policy.
         """
         near = f"{CONSOLIDATOR_AGENT_NAME}-experimental"
-        assert subagent_policy.run(cwd=tmp_path, agent_type=near) == WRITE_POLICY_PROMPT
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type=near) == WRITE_POLICY_PROMPT
 
 
 class TestTheOverrideIsHonouredHereToo:
@@ -73,7 +73,7 @@ class TestTheOverrideIsHonouredHereToo:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("## Mine\n\nRecord less.\n", encoding="utf-8")
-        assert subagent_policy.run(cwd=tmp_path, agent_type="some-agent") == (
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == (
             "## Mine\n\nRecord less.\n"
         )
 
@@ -82,7 +82,9 @@ class TestTheOverrideIsHonouredHereToo:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("   \n", encoding="utf-8")
-        assert subagent_policy.run(cwd=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        )
         log = paths.hook_log_path(store).read_text(encoding="utf-8")
         assert OVERRIDE_EMPTY in log
 
@@ -93,10 +95,14 @@ class TestItNeverRaises:
     ) -> None:
         """The caller's contract is to emit a policy; no failure beneath may cost it that."""
         missing = tmp_path / "nowhere" / "deeper"
-        assert subagent_policy.run(cwd=missing, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        assert (
+            subagent_policy.run(scope_dir=missing, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        )
 
     def test_a_store_path_that_is_a_file_still_yields_the_shipped_policy(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / ".zikaron").write_text("not a directory")
-        assert subagent_policy.run(cwd=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+        )

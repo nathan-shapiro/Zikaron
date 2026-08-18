@@ -30,18 +30,19 @@ from zikaron.mcp.primary import register_primary_tools
 Mode = Literal["primary", "consolidator"]
 
 
-def build_server(mode: Mode, *, cwd: Path) -> FastMCP:
+def build_server(mode: Mode, *, scope_dir: Path) -> FastMCP:
     """One `FastMCP` instance for `mode`, its tools decorated and nothing else done yet — no
     connection opened, no RPC made.
 
     Args:
         mode: `"primary"` registers the five primary-agent tools; `"consolidator"` registers the
             four consolidator tools plus the `plan_groups` bridge in front of `next_group`.
-        cwd: this process's own working directory, D17's scope key — resolved once here and
-            handed to the one `ServiceConnection` this process holds for its whole lifetime.
+        scope_dir: the **already-resolved** store-scope directory (D17, amended 2026-08-18) —
+            `main.py` resolves it through `HarnessSpec.store_scope_dir` and this hands it to the
+            one `ServiceConnection` this process holds for its whole lifetime.
     """
     mcp = FastMCP(name=f"zikaron-{mode}")
-    connection = ServiceConnection(cwd)
+    connection = ServiceConnection(scope_dir)
     if mode == "primary":
         register_primary_tools(mcp, connection)
     else:

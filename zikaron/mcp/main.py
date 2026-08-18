@@ -14,6 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from zikaron.harness import detect
 from zikaron.mcp.server import Mode, build_server
 
 
@@ -41,7 +42,13 @@ def main(argv: list[str] | None = None) -> None:
     service dependency at all until a model actually calls one of them.
     """
     mode = _parse_args(sys.argv[1:] if argv is None else argv)
-    mcp = build_server(mode, cwd=Path.cwd())
+    # `Path.cwd()` is this process's own directory, fixed at the moment the harness spawned it —
+    # which is why it never followed the agent's `cd` and the hook did. Both now ask the seam the
+    # same question. Under Claude Code that makes them agree by construction, since the seam
+    # returns one harness-supplied answer to both; under kiro they agree because their inputs
+    # agree and the seam returns each unchanged, which is a property of that harness rather
+    # than of this call. `tests/test_harness_store_scope.py` asserts each arm separately.
+    mcp = build_server(mode, scope_dir=detect.current_spec().store_scope_dir(Path.cwd()))
     mcp.run()
 
 

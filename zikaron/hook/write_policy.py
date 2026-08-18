@@ -293,7 +293,7 @@ def _classify(text: str, spec: HarnessSpec) -> Policy:
     return Policy(text, None)
 
 
-def resolved_policy_text(cwd: Path, *, spec: HarnessSpec) -> str:
+def resolved_policy_text(scope_dir: Path, *, spec: HarnessSpec) -> str:
     """The policy text to inject: the override when it reads cleanly, else the shipped constant —
     plus one `hook.log` line naming why, whenever the answer was something other than "no override
     is there".
@@ -309,7 +309,7 @@ def resolved_policy_text(cwd: Path, *, spec: HarnessSpec) -> str:
     """
     text = WRITE_POLICY_PROMPT
     with contextlib.suppress(Exception):
-        directory = store_dir(cwd)
+        directory = store_dir(scope_dir)
         policy = read_policy(directory, spec=spec)
         text = policy.text
         if policy.note is not None:

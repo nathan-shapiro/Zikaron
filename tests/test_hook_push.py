@@ -100,7 +100,7 @@ def fake_service(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[dict[str, object]], _FakeSurfaceService]:
     """A fake service bound at exactly the socket path `push.run` will itself resolve for
-    `cwd=tmp_path`, so `push.run` connects to it as though it were the real thing — patches
+    `scope_dir=tmp_path`, so `push.run` connects to it as though it were the real thing — patches
     `connect.resolve_sock_path` rather than the environment, since the real derivation involves a
     sha256 hash this fixture has no reason to reimplement."""
     sock_path = tmp_path / "test.sock"
@@ -126,7 +126,9 @@ def test_a_matching_kiro_session_id_and_payload_proceeds_to_surface(
     monkeypatch.setenv("KIRO_SESSION_ID", "session-1")
     service = fake_service({"result": {"text": "- a gist\n- another gist"}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="session-1", prompt="what failed", pid=1)
+        output = push.run(
+            scope_dir=tmp_path, payload_session_id="session-1", prompt="what failed", pid=1
+        )
         assert output == "- a gist\n- another gist"
     finally:
         service.close()
@@ -139,7 +141,7 @@ def test_a_subagent_session_is_suppressed_with_no_rpc_at_all(
     # No fake service bound at all: if push.run tried to connect, this would raise
     # HookTransportError rather than silently succeeding, so a passing "output is None" outcome
     # here is only possible if the RPC path was never reached.
-    output = push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1)
+    output = push.run(scope_dir=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1)
     assert output is None
 
 
@@ -177,7 +179,7 @@ def test_the_hook_sends_the_seam_resolved_label_under_each_harnesss_own_variable
     try:
         assert (
             push.run(
-                cwd=tmp_path,
+                scope_dir=tmp_path,
                 payload_session_id="shared-session-label",
                 prompt="p",
                 pid=1,
@@ -203,7 +205,7 @@ def test_the_hook_bootstraps_when_no_session_variable_is_present(
         monkeypatch.setenv(spec.marker_variable, "1")
     service = fake_service({"result": {"text": ""}})
     try:
-        push.run(cwd=tmp_path, payload_session_id="a-payload-id", prompt="p", pid=1)
+        push.run(scope_dir=tmp_path, payload_session_id="a-payload-id", prompt="p", pid=1)
         assert _surface_envelope(service)["session_id"] is None
     finally:
         service.close()
@@ -226,13 +228,13 @@ def test_the_same_divergence_suppresses_under_both_harnesses_and_logs_under_only
     log = paths.hook_log_path(paths.store_dir(tmp_path))
 
     monkeypatch.setenv(KIRO.session_variable, "top-level")
-    assert push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
+    assert push.run(scope_dir=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
     assert not log.exists(), "a routine subagent turn must leave the log untouched"
 
     monkeypatch.delenv(KIRO.session_variable, raising=False)
     monkeypatch.setenv(CLAUDE_CODE.marker_variable or "", "1")
     monkeypatch.setenv(CLAUDE_CODE.session_variable, "top-level")
-    assert push.run(cwd=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
+    assert push.run(scope_dir=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
     assert log.read_text(encoding="utf-8").strip().endswith(tripwire.SESSION_ENV_MISMATCH)
 
 
@@ -244,7 +246,7 @@ def test_a_missing_kiro_session_id_never_suppresses(
     monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
     service = fake_service({"result": {"text": ""}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="anything", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="anything", prompt="p", pid=1)
         assert output == ""
     finally:
         service.close()
@@ -260,7 +262,7 @@ def test_a_store_busy_rejection_is_logged_and_relayed(
         {"error": {"code": -32020, "message": "the store was locked", "data": {"verb": "surface"}}}
     )
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         assert "operator" in output
         assert "hook.log" in output
@@ -281,7 +283,7 @@ def test_a_bad_config_rejection_is_logged_and_relayed(
         {"error": {"code": -32023, "message": "bad config", "data": {"key": "embed_dim"}}}
     )
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "bad_config" in hook_log
@@ -297,7 +299,7 @@ def test_a_reindexing_rejection_is_logged_and_relayed(
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"error": {"code": -32022, "message": "reindexing"}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "reindexing" in hook_log
@@ -313,7 +315,7 @@ def test_a_schema_incompatible_rejection_is_logged_and_relayed(
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"error": {"code": -32024, "message": "schema incompatible"}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "schema_incompatible" in hook_log
@@ -329,7 +331,7 @@ def test_an_unrecognized_error_code_still_logs_something_identifiable(
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"error": {"code": -32005, "message": "bounds"}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "-32005" in hook_log
@@ -351,7 +353,7 @@ def test_no_service_at_all_is_logged_and_relayed_as_transport_failure(
     monkeypatch.setattr(
         connect, "default_server_command", lambda _sock, _store: ["python3", "-c", "pass"]
     )
-    output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+    output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
     assert output is not None
     hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
     assert "transport" in hook_log
@@ -368,7 +370,7 @@ def test_a_failure_output_names_hook_log_so_the_operator_can_verify_it(
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"error": {"code": -32020, "message": "busy"}})
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         assert ".zikaron/hook.log" in output
     finally:
@@ -406,7 +408,7 @@ def test_a_store_identity_mismatch_is_logged_and_relayed_with_its_own_code(
     # `tmp_path`, which is exactly the mismatch this test wants.
     try:
         monkeypatch.setattr(connect, "resolve_sock_path", lambda _store_dir: sock_path)
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "store_identity" in hook_log
@@ -426,7 +428,7 @@ def test_an_unexpected_exception_from_the_socket_is_treated_as_a_transport_failu
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"unexpected": "shape"})  # neither result nor error
     try:
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "transport" in hook_log
@@ -451,7 +453,7 @@ def test_a_genuinely_unanticipated_exception_type_is_still_caught_and_relayed(
         raise RuntimeError("a genuinely unanticipated failure")
 
     monkeypatch.setattr(connect, "connect_once", _raise_runtime_error)
-    output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+    output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
     assert output is not None
     assert "operator" in output
     hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
@@ -484,7 +486,7 @@ def test_a_hostile_runtime_directory_is_logged_and_relayed_rather_than_propagati
     xdg_runtime_dir.mkdir()
     (xdg_runtime_dir / "zikaron").write_text("this is a file, not a directory", encoding="utf-8")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_runtime_dir))
-    output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+    output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
     assert output is not None
     assert "operator" in output
     hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
@@ -519,7 +521,7 @@ def test_the_internal_deadline_expiring_after_a_slow_connect_degrades_without_ev
             return real_monotonic() + push._DEADLINE_SECONDS + 10.0
 
         monkeypatch.setattr(time, "monotonic", _fake_monotonic)
-        output = push.run(cwd=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "deadline_exceeded" in hook_log

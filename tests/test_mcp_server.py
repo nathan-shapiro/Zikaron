@@ -27,14 +27,14 @@ _CONSOLIDATOR_TOOL_NAMES = CONSOLIDATOR_TOOLS
 
 
 async def test_primary_mode_exposes_exactly_five_tools(tmp_path: Path) -> None:
-    mcp = build_server("primary", cwd=tmp_path)
+    mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()
     assert {tool.name for tool in tools} == _PRIMARY_TOOL_NAMES
 
 
 async def test_consolidator_mode_exposes_exactly_four_tools(tmp_path: Path) -> None:
-    mcp = build_server("consolidator", cwd=tmp_path)
+    mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()
     assert {tool.name for tool in tools} == _CONSOLIDATOR_TOOL_NAMES
@@ -48,7 +48,7 @@ async def test_a_consolidator_config_provably_cannot_reach_search_or_fetch(
     decorated onto it at all (`server.py`'s own docstring), so they are not merely refused —
     `tools/list` cannot name them and `tools/call` has no handler to dispatch to, which this test
     checks from both directions rather than only the enumeration one."""
-    mcp = build_server("consolidator", cwd=tmp_path)
+    mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tool_names = {tool.name for tool in await client.list_tools()}
         assert "zikaron_search" not in tool_names
@@ -62,7 +62,7 @@ async def test_a_consolidator_config_provably_cannot_reach_search_or_fetch(
 async def test_a_primary_config_has_no_consolidator_tools_either(tmp_path: Path) -> None:
     """The structural absence runs both directions — D32's two tool sets are disjoint, not one
     set with a "primary" subset and a "consolidator" superset."""
-    mcp = build_server("primary", cwd=tmp_path)
+    mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tool_names = {tool.name for tool in await client.list_tools()}
     assert tool_names.isdisjoint(_CONSOLIDATOR_TOOL_NAMES)
@@ -105,8 +105,8 @@ async def test_building_either_server_makes_no_service_call(
         "zikaron.mcp.connection.connect_start_if_absent", _fail_if_connection_attempted
     )
 
-    build_server("primary", cwd=tmp_path)
-    build_server("consolidator", cwd=tmp_path)
+    build_server("primary", scope_dir=tmp_path)
+    build_server("consolidator", scope_dir=tmp_path)
     # No assertion beyond "this did not raise": if either `build_server` call, or the
     # `register_*_tools` calls it makes, had reached any of the three patched seams for any
     # reason, the version above would have raised already.
@@ -142,6 +142,6 @@ async def test_listing_tools_makes_no_service_call_either(
         "zikaron.mcp.connection.connect_start_if_absent", _fail_if_connection_attempted
     )
 
-    mcp = build_server("primary", cwd=tmp_path)
+    mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         await client.list_tools()

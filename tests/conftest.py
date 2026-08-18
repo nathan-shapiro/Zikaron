@@ -62,6 +62,11 @@ def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         if spec.marker_variable is not None:
             monkeypatch.delenv(spec.marker_variable, raising=False)
         monkeypatch.delenv(spec.session_variable, raising=False)
+        # Added 2026-08-18 with D17's amended store scope. This one repoints the **store**, so a
+        # test that sets a marker and then reaches resolution would otherwise adopt whichever
+        # project launched pytest — this repository — and read and write its real memories.
+        if spec.project_dir_variable is not None:
+            monkeypatch.delenv(spec.project_dir_variable, raising=False)
 
 
 #: The tiers whose whole purpose is to notice a wrong `HarnessSpec.harness_binary`, and which

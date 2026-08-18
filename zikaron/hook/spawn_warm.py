@@ -22,7 +22,7 @@ from zikaron.hook import connect, envelope, tripwire, write_policy
 from zikaron.service import paths
 
 
-def run(*, cwd: Path, payload_session_id: object) -> str | None:
+def run(*, scope_dir: Path, payload_session_id: object) -> str | None:
     """Return the write-policy text to print, or `None` in a subagent session — and, as a side
     effect on the non-subagent path, best-effort spawn the detached warm helper.
 
@@ -44,13 +44,13 @@ def run(*, cwd: Path, payload_session_id: object) -> str | None:
     if envelope.is_subagent_session(
         env_session_id=env_session_id, payload_session_id=payload_session_id
     ):
-        tripwire.record_if_misdetected(spec=spec, cwd=cwd)
+        tripwire.record_if_misdetected(spec=spec, scope_dir=scope_dir)
         return None
-    _spawn_warm_helper_best_effort(cwd)
-    return write_policy.resolved_policy_text(cwd, spec=spec)
+    _spawn_warm_helper_best_effort(scope_dir)
+    return write_policy.resolved_policy_text(scope_dir, spec=spec)
 
 
-def _spawn_warm_helper_best_effort(cwd: Path) -> None:
+def _spawn_warm_helper_best_effort(scope_dir: Path) -> None:
     """Best-effort, whole-operation: path derivation and the spawn itself are both allowed to
     fail with no effect on what `run()` returns. Wrapping only the `Popen` call itself in
     `contextlib.suppress(OSError)` would leave path derivation (`resolve_sock_path`'s own
@@ -62,7 +62,7 @@ def _spawn_warm_helper_best_effort(cwd: Path) -> None:
     guarantee true regardless of which step inside it fails.
     """
     with contextlib.suppress(Exception):
-        store_dir = paths.store_dir(cwd)
+        store_dir = paths.store_dir(scope_dir)
         sock_path = connect.resolve_sock_path(store_dir)
         command = [
             sys.executable,

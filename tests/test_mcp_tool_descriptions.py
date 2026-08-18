@@ -13,7 +13,7 @@ from zikaron.mcp.server import build_server
 
 
 async def _description_of(mode: str, tool_name: str, tmp_path: Path) -> str:
-    mcp = build_server(mode, cwd=tmp_path)  # type: ignore[arg-type]
+    mcp = build_server(mode, scope_dir=tmp_path)  # type: ignore[arg-type]
     async with Client(mcp) as client:
         tools = await client.list_tools()
     (tool,) = [tool for tool in tools if tool.name == tool_name]

@@ -119,6 +119,16 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert _identifier(_cell(rows, "Session variable", spec)) == spec.session_variable
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_project_dir_variable(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """D17's store scope, which is the one row where absence is itself the measurement.
+
+        Kiro's cell must read as *absent* rather than naming something: there is no such variable,
+        and a future row that quietly named one would repoint every kiro store.
+        """
+        cell = _cell(rows, "Project-directory variable (D17 store scope)", spec)
+        assert _identifier(cell) == spec.project_dir_variable
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_spawn_trigger(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         assert _identifier(_cell(rows, "Spawn trigger", spec)) == spec.spawn_trigger
 

@@ -43,7 +43,7 @@ _DEADLINE_SECONDS = 2.0
 _SURFACE_LIMIT = 5
 
 
-def run(*, cwd: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
+def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
     """Run the whole `userPromptSubmit` sequence and return what to print to stdout, or `None` if
     nothing should be printed — the caller (`main.py`) owns the actual `print`, so this function
     stays trivially testable without capturing real stdout.
@@ -68,13 +68,13 @@ def run(*, cwd: Path, payload_session_id: object, prompt: str, pid: int) -> str 
         # environment session ids are invariantly equal it instead means the harness was
         # misdetected — the single case `tripwire` records, and the only one that writes a line
         # here.
-        tripwire.record_if_misdetected(spec=spec, cwd=cwd)
+        tripwire.record_if_misdetected(spec=spec, scope_dir=scope_dir)
         return None
 
     # `hook_log_path` is resolved *before* the degraded boundary, deliberately: it is the one
     # value `_degrade` itself needs to report *any* failure, including one raised by resolving
     # everything else below it — so it cannot itself be inside the boundary it feeds.
-    store_dir = paths.store_dir(cwd)
+    store_dir = paths.store_dir(scope_dir)
     hook_log_path = paths.hook_log_path(store_dir)
 
     sock: socket.socket | None = None

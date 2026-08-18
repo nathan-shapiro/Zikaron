@@ -34,7 +34,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D14 | End-to-end task-benefit evaluation stoved until an implementation exists (component benchmarks are not) |
 | D15 | Write-time dedup, agent-resolved: `remember` writes, then hands back near-duplicates for the agent to resolve |
 | D16 | Soft delete only — retire, never `DELETE` |
-| D17 | Scope key = literally the current working directory |
+| D17 | Scope key = the harness's own project directory where it names one, else the cwd (**amended 2026-08-18**) |
 | D18 | Write policy injected by an `agentSpawn` hook |
 | D19 | Python venv, latest stable; SQLite + FTS5 + sqlite-vec + fastembed; store never in git |
 | D20 | Keep `bge-small-en-v1.5`, pass the BGE query prefix, record model id + dim per vector |

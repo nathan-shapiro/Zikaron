@@ -3,8 +3,9 @@
 > **Normative for every harness-coupled fact in Zikaron.** Where this document and an older section of
 > **another design document** disagree about kiro-versus-Claude-Code behaviour, this one is right and the
 > other is stale — say so and fix it rather than reconciling them in your head. Deltas are currently placed
-> in `architecture.md` (six) and `schema.md` (one); `retrieval.md`'s push section still describes kiro
-> trigger names and placement and has not been annotated.
+> in `architecture.md` (**eight** — two added 2026-08-18 for D17's amended store scope) and `schema.md`
+> (one); `retrieval.md`'s push section still describes kiro trigger names and placement and has not been
+> annotated.
 >
 > **Evidence, scoped precisely — an earlier draft of this preamble overclaimed.** Every **Claude Code**
 > claim below is either traceable to a numbered section of `research/claude-code-harness-probe.md`
@@ -49,6 +50,7 @@ against someone adding an expensive import.
 |---|---|---|
 | Marker variable (detection) | absent | `CLAUDECODE` (§1) |
 | Session variable | `KIRO_SESSION_ID` | `CLAUDE_CODE_SESSION_ID` (§1) |
+| Project-directory variable (D17 store scope) | **none** — measured: 17 KIRO_ variables across 42 probe records, not one spatial | `CLAUDE_PROJECT_DIR` — measured in **both** clients' processes (hook processes, and all six MCP server starts in `spikes/claude-code-harness/mcp.log`) and fixed while the payload `cwd` wanders (`dogfood-checkpoint` §11b) |
 | Spawn trigger | `agentSpawn` (array format also accepts PascalCase trigger names generally, and `SessionStart` as an alias) | `SessionStart` (§2) |
 | Prompt trigger | `userPromptSubmit` | `UserPromptSubmit` (§2) |
 | Prompt field | `prompt` | `prompt` (§2) |
@@ -108,6 +110,27 @@ is the other one: **a kiro session — or any process tree — running under an 
 inherits `CLAUDECODE` and `CLAUDE_CODE_SESSION_ID`.** The root failure there is **misdetection of the
 harness**; the stale session variable is one consequence, and the misdetected hook would also apply Claude
 Code's channel table and 10,000-character budget (harmless today, but it is the mechanism, not a detail).
+
+**A consequence that is not harmless was added on 2026-08-18, by D17's amended store scope.** The
+inherited variables now include `CLAUDE_PROJECT_DIR`, and it names a directory that *exists* — so
+`HarnessSpec.store_scope_dir`'s refusal of unusable values does not catch it, and the resolver
+**adopts the enclosing project's directory**. A nested kiro session therefore reads and writes the
+*outer* project's store: its `remember` lands there and its `search` answers from another project's
+lore, silently. Before the amendment its MCP client keyed the correct inner store through
+`Path.cwd()`, so this is a regression the amendment introduces rather than an existing hazard it
+inherits, and it is durable memory rather than a lost push. The hook half is partly guarded by the
+payload-versus-environment tripwire below; the MCP write path is not. **This is not exotic here:**
+`pytest -m integration_kiro` run from inside a Claude Code session is exactly the scenario,
+protected in the suite only by `conftest._no_inherited_harness_environment`, and by nothing at all
+when a human runs kiro by hand. **The recorded remedy repairs the hook only, and that is the half
+already guarded.** `detect.py` records it precisely: the hook holds its payload's own `session_id`,
+so it can select whichever harness's variable actually equals that and detect by agreement. Note
+what this is *not* — agreement between the marker and the session variable would not discriminate
+here, because both are inherited and both agree, staleness and all. And the mechanism is **hook-only
+by construction**: an MCP client holds no payload, so nothing in it can tell an inherited variable
+from its own. **So the MCP write path — the half named unguarded above — has a named cost and no
+named repair.** The resolver is deliberately not the place to invent one; the root cause is
+misdetection.
 
 **Marked, per this document's own rule: the inheritance mechanism is *unmeasured*, argued by construction
 from how environment variables descend.** What §1 *does* measure, and the honest evidence that outer-session

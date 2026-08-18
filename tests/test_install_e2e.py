@@ -231,9 +231,10 @@ def _stop_service(project: Path) -> None:
 def _stdio(command: str, mode: str, project: Path) -> StdioTransport:
     """A real `zikaron-mcp` subprocess in `project`, exactly as kiro spawns one.
 
-    `cwd` is the load-bearing argument: the client scopes its store to its own working directory,
-    and kiro was measured to spawn an MCP server in the workspace directory — so a test spawning it
-    anywhere else would be testing a different store than the hooks use.
+    `cwd` is the load-bearing argument: the client scopes its store to its own working directory
+    (under kiro, which exports no project variable), and kiro was measured to spawn an MCP server
+    in the workspace directory — so a test spawning it anywhere else would be testing a different
+    store than the hooks use.
     """
     return StdioTransport(
         command=command,

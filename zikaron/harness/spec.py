@@ -14,6 +14,8 @@ for the two to disagree.
 """
 
 import enum
+import os
+from pathlib import Path
 from typing import Final, NamedTuple
 
 
@@ -99,6 +101,9 @@ class HarnessSpec(NamedTuple):
     budget_unit: BudgetUnit
     consolidator_model: str
     harness_binary: str
+    #: The variable naming the directory this harness considers "the project", or `None` where the
+    #: harness exports none. Read by `store_scope_dir` below; see its docstring for why.
+    project_dir_variable: str | None
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -125,6 +130,66 @@ class HarnessSpec(NamedTuple):
             measured = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
         return measured > self.injection_budget
 
+    def store_scope_dir(self, fallback: Path) -> Path:
+        """The directory D17 scopes a store to — **the one function both clients must call**.
+
+        The defect this exists to end was two implementations of one decision. `zikaron-hook` keyed
+        the store on the harness-supplied payload `cwd`, which under Claude Code follows the
+        agent's own `cd`; `zikaron-mcp` keyed it on `Path.cwd()` of a process spawned once at
+        session start, which never moves. They agreed only while nobody changed directory, and
+        diverged silently when anyone did: push read a freshly-created empty store while pull kept
+        answering from the real one, and nothing anywhere said so. Measured on one live session:
+        **39 cwd transitions**, a store created under a log directory, and 20 pushes in another
+        session returning nothing across two hours
+        (`research/claude-code-dogfood-checkpoint.md` §"Store scoping").
+
+        Two rungs, deliberately the same shape as the session-label ladder: read this harness's own
+        project variable, and fall back to `fallback` when the harness exports none or the value is
+        unusable. Claude Code's variable is measured present in **both** clients' processes — the
+        hook's, and all six MCP server starts in `spikes/claude-code-harness/mcp.log` — which is
+        what the agreement property actually rests on, since one client reading it and the other
+        not would reproduce the split this exists to close.
+
+        **The fallback is not a degraded mode for kiro** — kiro exports no such variable (measured:
+        17 `KIRO_*` names across 42 probe records, none spatial) and appears not to need one,
+        because its shell restores the working directory rather than persisting it. That last
+        clause is an operator observation plus twelve days and ~8,000 events producing no stray
+        store; it is **not measured**, and `tests/test_harness_store_scope.py` pins the dependency
+        at the point where it would have to change. Kiro's rung is exactly its behaviour before this
+        function existed.
+
+        **Refusing a value is narrower than it sounds, and the nesting case is not covered by it.**
+        A value that does not name an existing absolute directory is refused in favour of
+        `fallback`. But the case `design/harness.md` §"The nesting limit" documents — a process
+        tree inheriting an enclosing Claude Code session's variables — inherits a directory that
+        *does* exist, so `is_dir()` passes and **this function adopts it**. That is a regression
+        this change introduces, stated rather than hidden: before it, a nested kiro session's MCP
+        client keyed the correct *inner* store through `Path.cwd()`; now, having misdetected the
+        harness from the inherited marker, it reads and writes the **enclosing project's** store —
+        its `remember` landing in the outer store and its `search` answering from the outer
+        project's lore. The hook side is partly guarded by the misdetection tripwire; the MCP write
+        path is not. The root cause is misdetection, and the remedy `detect.py` records
+        repairs the **hook only** — it turns on the hook's own payload `session_id`, which an MCP
+        client does not have — so the MCP half has a named cost and no named repair. This
+        function is deliberately not the place to invent one.
+
+        **When a value *is* refused, the two clients diverge again**, because they fall back to
+        different inputs — the hook to the harness's wandering payload `cwd`, the MCP client to its
+        fixed spawn cwd. So the refusal is safe for the store's *location* and not for the two
+        clients' *agreement*, in exactly the pathological case (a deleted project directory, a
+        container boundary) where nobody is watching.
+        """
+        if self.project_dir_variable is None:
+            return fallback
+        named = os.environ.get(self.project_dir_variable)
+        if not named:
+            return fallback
+        candidate = Path(named)
+        # Absolute as well as existing: a *relative* value would be resolved against each
+        # client's own process cwd, which is precisely the pair of different directories this
+        # function exists to collapse. The harness sets an absolute path; this costs one call.
+        return candidate if candidate.is_absolute() and candidate.is_dir() else fallback
+
 
 #: Kiro states `max_output_size` explicitly in every object-format hook entry, so the budget here is
 #: the value the installer writes rather than the harness's own 10240-byte default.
@@ -147,6 +212,9 @@ KIRO: Final = HarnessSpec(
     # `chat --list-models` — a check an alias would fail, since that command lists ids.
     consolidator_model="claude-sonnet-5",
     harness_binary="kiro-cli",
+    # Measured, not assumed: the lifecycle probe captured every `KIRO_*` variable across 42
+    # records and none names a workspace or project directory.
+    project_dir_variable=None,
 )
 
 #: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
@@ -172,6 +240,7 @@ CLAUDE_CODE: Final = HarnessSpec(
     # consolidator fails at spawn. Experiments pin; the shipped default does not have to.
     consolidator_model="sonnet",
     harness_binary="claude",
+    project_dir_variable="CLAUDE_PROJECT_DIR",
 )
 
 SPECS: Final[dict[Harness, HarnessSpec]] = {

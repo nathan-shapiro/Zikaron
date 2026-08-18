@@ -26,7 +26,7 @@ def test_returns_the_write_policy_prompt_on_a_top_level_session(
     """
     monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
     monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: None)
-    output = spawn_warm.run(cwd=tmp_path, payload_session_id="anything")
+    output = spawn_warm.run(scope_dir=tmp_path, payload_session_id="anything")
     assert output == WRITE_POLICY_PROMPT
 
 
@@ -34,7 +34,7 @@ def test_returns_none_in_a_subagent_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KIRO_SESSION_ID", "top-level-session")
-    output = spawn_warm.run(cwd=tmp_path, payload_session_id="a-different-subagent-session")
+    output = spawn_warm.run(scope_dir=tmp_path, payload_session_id="a-different-subagent-session")
     assert output is None
 
 
@@ -51,7 +51,7 @@ def test_a_subagent_session_never_spawns_the_warm_helper(
         spawned.append(command)
 
     monkeypatch.setattr(subprocess, "Popen", _fail_if_called)
-    spawn_warm.run(cwd=tmp_path, payload_session_id="a-different-subagent-session")
+    spawn_warm.run(scope_dir=tmp_path, payload_session_id="a-different-subagent-session")
     assert spawned == []
 
 
@@ -67,7 +67,7 @@ def test_a_top_level_session_spawns_the_warm_helper_with_this_stores_paths(
             spawned.append(command)
 
     monkeypatch.setattr(subprocess, "Popen", _FakePopen)
-    spawn_warm.run(cwd=tmp_path, payload_session_id=None)
+    spawn_warm.run(scope_dir=tmp_path, payload_session_id=None)
     assert len(spawned) == 1
     command = spawned[0]
     assert command[1:3] == ["-m", "zikaron.hook.warm_helper"]
@@ -85,7 +85,7 @@ def test_a_spawn_failure_does_not_change_what_is_printed(
         raise OSError("no such interpreter")
 
     monkeypatch.setattr(subprocess, "Popen", _raise_oserror)
-    output = spawn_warm.run(cwd=tmp_path, payload_session_id=None)
+    output = spawn_warm.run(scope_dir=tmp_path, payload_session_id=None)
     assert output == WRITE_POLICY_PROMPT
 
 
@@ -107,7 +107,7 @@ def test_a_non_oserror_failure_in_path_derivation_does_not_suppress_the_policy(
         raise RuntimeError("a symlink loop, or any other non-OSError failure")
 
     monkeypatch.setattr(connect, "resolve_sock_path", _raise_runtime_error)
-    output = spawn_warm.run(cwd=tmp_path, payload_session_id=None)
+    output = spawn_warm.run(scope_dir=tmp_path, payload_session_id=None)
     assert output == WRITE_POLICY_PROMPT
 
 
@@ -133,7 +133,7 @@ class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("## Operator policy\n")
-        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == "## Operator policy\n"
+        assert spawn_warm.run(scope_dir=tmp_path, payload_session_id=None) == "## Operator policy\n"
         assert not (store / "hook.log").exists()
 
     def test_a_refused_override_prints_the_constant_and_logs_one_line(
@@ -144,7 +144,7 @@ class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").mkdir()
-        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
+        assert spawn_warm.run(scope_dir=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
         logged = (store / "hook.log").read_text().splitlines()
         assert len(logged) == 1
         assert logged[0].endswith(OVERRIDE_REFUSED)
@@ -162,7 +162,7 @@ class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
             raise RuntimeError("an unanticipated reader failure")
 
         monkeypatch.setattr(write_policy, "read_policy", _raise)
-        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
+        assert spawn_warm.run(scope_dir=tmp_path, payload_session_id=None) == WRITE_POLICY_PROMPT
 
     def test_a_failure_while_logging_the_label_still_prints_the_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -181,4 +181,4 @@ class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
             raise OSError("disk full")
 
         monkeypatch.setattr(failure, "record_failure", _raise)
-        assert spawn_warm.run(cwd=tmp_path, payload_session_id=None) == oversize
+        assert spawn_warm.run(scope_dir=tmp_path, payload_session_id=None) == oversize

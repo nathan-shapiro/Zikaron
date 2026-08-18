@@ -24,9 +24,11 @@ def _reject_symlinked_store_dir(store_dir: Path) -> None:
 
     `architecture.md` §"Filesystem security": "`realpath` the store directory and require the
     resolved parent to be the cwd." That sentence states the rule from `zikaron-service`'s own
-    point of view, where the store path is *derived* from the process's cwd in the first place
-    (D17: "Store scoped to the harness's directory... literally the current working
-    directory") — deriving `store_dir` from `os.getcwd()` is that caller's job, not this
+    point of view, where the store path is *derived* from the caller's scope directory in the
+    first place (D17 as originally written: "Store scoped to the harness's directory... literally
+    the current working directory" — **amended 2026-08-18** to the harness's own project directory
+    where it names one; the vetting below is unaffected either way, since it never compares against
+    an ambient cwd) — deriving `store_dir` is that caller's job, not this
     function's, since `Store.create`/`Store.open` take `store_dir` as an explicit parameter and
     have no way to know whether the caller's own cwd is the concept the caller meant by it. A
     caller that resolved `store_dir` from somewhere other than its own cwd — a test, a tool

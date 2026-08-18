@@ -127,7 +127,7 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
         is a broken instruction, and a tool that exists but is never mentioned is a capability the
         model has no reason to know it has.
         """
-        mcp = build_server("consolidator", cwd=tmp_path)
+        mcp = build_server("consolidator", scope_dir=tmp_path)
         async with Client(mcp) as client:
             registered = {tool.name for tool in await client.list_tools()}
         assert set(re.findall(r"zikaron_[a-z_]+", CONSOLIDATOR_PROMPT)) == registered

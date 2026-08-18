@@ -35,7 +35,7 @@ from zikaron.hook import write_policy
 CONSOLIDATOR_AGENT_TYPE = "zikaron-consolidator"
 
 
-def run(*, cwd: Path, agent_type: object) -> str | None:
+def run(*, scope_dir: Path, agent_type: object) -> str | None:
     """Return the write-policy text to deliver to this subagent, or `None` for the consolidator.
 
     `agent_type` is typed `object` because it arrives as untrusted JSON from the harness's own
@@ -54,4 +54,4 @@ def run(*, cwd: Path, agent_type: object) -> str | None:
     # Resolved through the seam rather than assumed to be the one harness that sends this trigger:
     # a path that hard-coded a harness here would be the forked code path the single-implementation
     # rule exists to prevent, however unreachable the other branch looks today.
-    return write_policy.resolved_policy_text(cwd, spec=detect.current_spec())
+    return write_policy.resolved_policy_text(scope_dir, spec=detect.current_spec())

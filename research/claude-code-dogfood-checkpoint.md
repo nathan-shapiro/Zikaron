@@ -475,6 +475,67 @@ causes: *"Either this machine has no kiro … or `HarnessSpec.harness_binary` na
 The brief's observation was written independently of the fix. `_require_claude` in the new live tier
 is modelled on it deliberately, so the two tiers fail the same way for the same reason.
 
+## 11b. Store scoping — one decision, two implementations (measured 2026-08-18)
+
+Found by the operator noticing stray `.zikaron` directories, not by any test.
+
+**The mechanism.** Claude Code's Bash tool persists the working directory across calls, so an agent's
+own `cd` moves the session's cwd. `UserPromptSubmit` then fires with `cwd` set to wherever the session
+is sitting, and `zikaron-hook` keyed the store on exactly that. `zikaron-mcp` keyed it on
+`Path.cwd()` of a process spawned once at session start, which never moves. **So push and pull
+answered from different stores**, and the failure is silent in the worst way: an empty store is
+indistinguishable from "nothing relevant".
+
+**Measured, on real sessions rather than a fixture.**
+
+| Evidence | Value |
+|---|---|
+| cwd transitions in one live session (transcript) | **39** — into Scala source trees, a log directory, `/tmp` |
+| `CLAUDE_PROJECT_DIR` on that same session's live process | **fixed** at the project root |
+| stray store under `Trading.local/log` | 5 pushes, 0 memories |
+| stray store under `Memory/harness-v0` | **20 pushes over two hours**, 0 memories, while the same session's MCP tools kept answering from the real store |
+
+**Why only some wanderings create a store:** the hook fires per *user message*, not per tool call. So a
+stray store appears only when you happen to send a message while the session sits elsewhere — which is
+why it looks sporadic and why nobody caught it for two days.
+
+**No memories were lost, and that is structural rather than lucky.** Every stray event is
+`client_kind='hook'`; `remember` travels over MCP, which never moved. The loss is *recall*, silently.
+
+**Link coverage cannot see this.** It checks that both clients resolved the same **session label**,
+which they did. Nothing checked that they resolved the same **store**. The session that lost two hours
+of push reads as fully linked.
+
+**Why headless probing missed it, worth recording as an instrument limit.** A `claude -p` run does not
+reproduce the persistence — the agent itself reported *"each Bash call starts back in
+/tmp/zk-cwdprobe"* — so two synthetic probes returned a confident false negative. The real transcripts
+on disk answered it in one query. **`-p` is the wrong instrument for anything about cwd persistence.**
+
+**Kiro, measured separately:** the lifecycle probe captured 17 `KIRO_*` variables across 42 records and
+**none names a workspace or project directory**, so there is no analogue to adopt. Kiro also appears not
+to need one — its shell restores the working directory rather than persisting it, and twelve days with
+~8,000 events in `~/Memory` produced no stray store, against two days and two under Claude Code. **That
+last point is observational, not measured**: if nobody happened to `cd` in those twelve days it proves
+nothing, and `tests/test_harness_store_scope.py` names the dependency where it would have to change.
+
+**The premise the fix rests on is measured on both sides, which the first draft of this section
+undersold.** Agreement needs the *MCP server* to see the same value as the hook, not just the hook:
+`spikes/claude-code-harness/mcp.log` records `CLAUDE_PROJECT_DIR` in **all six** MCP server starts
+across three sessions, nested ones included. Without that, the MCP arm would rest on a documentation
+claim, and this corpus has twice recorded that documentation is not measurement.
+
+**Not measured, and it bounds how strongly the amended rule can be read:** what `CLAUDE_PROJECT_DIR`
+*means* when a session does not start at the project root. Every measurement here comes from
+sessions launched at the root, where launch directory and project directory coincide. Whether the
+variable names the launch directory or a discovered root under `--add-dir`, or for a `claude`
+started in `proj/src`, is unknown — and it decides whether such a session keys a second store beside
+the installed one, which is the subdirectory pain D17's revisit condition was originally written
+for.
+
+**The fix** is D17's own revisit condition firing: one resolver both clients call
+(`HarnessSpec.store_scope_dir`), two rungs, harness-varying data in the seam. Kiro's rung returns its
+argument unchanged, which is its behaviour before the resolver existed.
+
 ## 12. Not measured here
 
 - **Mid-task recall.** Every search in this checkpoint happened at task-framing time, on the first

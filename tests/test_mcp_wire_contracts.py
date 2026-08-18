@@ -40,7 +40,7 @@ async def _client_for(
     monkeypatch.setattr(ServiceConnection, "envelope", fake_envelope)
     monkeypatch.setattr(ServiceConnection, "request", fake_request)
 
-    mcp = build_server(mode, cwd=tmp_path)
+    mcp = build_server(mode, scope_dir=tmp_path)
     return Client(mcp), calls
 
 

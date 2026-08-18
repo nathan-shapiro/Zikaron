@@ -182,7 +182,7 @@ async def test_end_to_end_through_the_real_tool_plan_groups_precedes_the_first_s
     )
     monkeypatch.setattr(ServiceConnection, "request", fake)
 
-    mcp = build_server("consolidator", cwd=tmp_path)
+    mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         result = await client.call_tool("zikaron_next_group", {})
 
@@ -206,7 +206,7 @@ async def test_end_to_end_a_second_next_group_does_not_replan(
     )
     monkeypatch.setattr(ServiceConnection, "request", fake)
 
-    mcp = build_server("consolidator", cwd=tmp_path)
+    mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         await client.call_tool("zikaron_next_group", {})
         await client.call_tool("zikaron_next_group", {})

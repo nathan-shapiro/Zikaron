@@ -61,8 +61,9 @@ def _parser() -> argparse.ArgumentParser:
         "--project",
         type=Path,
         default=Path.cwd(),
-        help="the project to install into (default: the current directory, which is also the "
-        "directory Zikaron scopes its store to)",
+        help="the project to install into (default: the current directory). At runtime the "
+        "store is keyed by the harness's own project directory where it names one, else the "
+        "working directory (D17)",
     )
     parser.add_argument(
         "--harness",

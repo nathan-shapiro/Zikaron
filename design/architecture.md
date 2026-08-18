@@ -362,8 +362,10 @@ rescuing, because the prefix test is the only test.
 
 ## Paths
 
-- **Store:** `<cwd>/.zikaron/memory.db` — D17 scopes to the working directory literally, and `.zikaron/` is
-  already in `.gitignore` per D19.
+- **Store:** `<scope>/.zikaron/memory.db`, where `<scope>` is `HarnessSpec.store_scope_dir` — the
+  harness's own project directory where it names one, else the working directory (D17, **amended
+  2026-08-18**; `design/harness.md` D34 row "Project-directory variable"). `.zikaron/` is already in
+  `.gitignore` per D19.
 - **Socket:** *not* in the project tree — UDS on a network filesystem is unreliable, and the tree stays
   clean. `$XDG_RUNTIME_DIR/zikaron/<h>.sock` when that is set (already user-private `0700`), else
   `/tmp/zikaron-<uid>/<h>.sock` with the directory created `0700`. `<h>` is the **first 32 hex characters
@@ -558,7 +560,10 @@ Rules that go with the modes:
 - **Never unlink a socket you have not vetted.** The start-if-absent sequence below unlinks a stale socket;
   it may only do so after confirming the path is a socket, in a vetted directory, owned by the running uid.
 - **Refuse a store reached through a symlinked `.zikaron`.** `realpath` the store directory and require the
-  resolved parent to be the cwd.
+  resolved parent to be the **scope directory** (D17 as amended — under Claude Code deliberately not the
+  spawning process's cwd). `core/store/permissions.py` documents how this is implemented: ancestor-symlink
+  vetting rather than a comparison against an ambient cwd, which is what makes the clause survive the
+  amendment unchanged.
 - **Stated plainly: this is not authentication against the same user.** A 0600 UDS and a 0600 database keep
   *other* local users out. Every process running as the owning uid — including any other tool the user
   runs — can read the store and call the API. That is the same trust boundary as the user's own files, it is
@@ -1964,12 +1969,22 @@ things and refuses rather than guesses when it cannot.
   **printed anyway and recorded in `hook.log`**, because the harness's truncation is silent and a policy the
   model only half-received is exactly the confidently-partial instruction the corpus keeps finding.
 
-**One premise this rests on was measured rather than assumed.** D17 scopes the store to the current working
-directory, so the hook and the MCP client must resolve the *same* directory or they address different stores
-from one session. The hook is safe by construction — it uses the payload's own `cwd`. The MCP client uses
-`Path.cwd()`, which is only correct if kiro spawns the server in the workspace: all **21** records of
-`research/kiro-mcp-lifecycle-probe.jsonl` report `cwd` as the directory the probe was launched from, across
-three server instances, so it does.
+**One premise this rests on was measured rather than assumed** — and half of it was **refuted on
+2026-08-18**, which is why the text stands here with its correction rather than being rewritten. The
+requirement is unchanged and is the important part: the hook and the MCP client must resolve the *same*
+directory, or they address different stores from one session.
+
+> Original: *"The hook is safe by construction — it uses the payload's own `cwd`. The MCP client uses
+> `Path.cwd()`, which is only correct if kiro spawns the server in the workspace: all 21 records of
+> `research/kiro-mcp-lifecycle-probe.jsonl` report `cwd` as the directory the probe was launched from,
+> across three server instances, so it does."*
+
+**The hook was the unsafe one.** Under Claude Code the payload's `cwd` follows the agent's own `cd` — 39
+transitions measured in one live session — while the MCP client's `Path.cwd()` stayed at its spawn
+directory, so the two addressed different stores and push silently read an empty one
+(`research/claude-code-dogfood-checkpoint.md` §11b). The kiro half of the paragraph stands: 21/21 records
+put the server in the workspace. Both clients now resolve through `HarnessSpec.store_scope_dir`, so the
+requirement is met by one function rather than by two mechanisms that happened to agree.
 
 ## Open, and now narrower
 Open question 4 asked what the hook→service transport should be and what happens when the server is absent.
