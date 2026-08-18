@@ -183,3 +183,77 @@ async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rathe
         finally:
             monkeypatch.setattr(Path, "stat", real_stat)
             await running.shut_down()
+
+
+@pytest.mark.asyncio
+async def test_a_clean_stop_writes_a_record_naming_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A clean exit must be visible in the log, and say which of the two conditions fired.
+
+    The defect this closes was found by inspection of a running machine rather than by a test:
+    four stores, one live service, and four `service.log` files whose last entry was the startup
+    config dump — because `idle_self_stop` unlinked, shut down and returned in silence. The only
+    line any exit path wrote was `main.py`'s forced-exit `exception()`, so the log's contract was
+    inverted: silence meant a clean stop, a line meant a failed one, and "stopped or wedged?" was
+    answerable only with `ps`.
+
+    Asserted on both reasons, because a record that always says `idle` would satisfy a
+    single-branch test while telling an operator the wrong thing on the branch that actually
+    matters — a store moved or restored underneath a running service.
+    """
+    monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
+    async with open_context(tmp_path) as ctx:
+        ctx.activity.in_flight = 1  # never idle, so only the replacement branch can fire.
+        sock_path = tmp_path / "server.sock"
+        running = await server.serve(ctx, str(sock_path))
+        original_inode = ctx.store.path.stat().st_ino
+
+        with caplog.at_level("INFO", logger="zikaron.service"):
+            idle_task = asyncio.create_task(
+                lifecycle.idle_self_stop(
+                    ctx, running, sock_path, original_store_inode=original_inode
+                )
+            )
+            ctx.store.path.unlink()
+            ctx.store.path.write_text("a different store now lives at the identical path")
+            await asyncio.wait_for(idle_task, timeout=5.0)
+
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stopping:")]
+    assert len(records) == 1, f"expected exactly one stop record, got {records}"
+    assert "reason=store_replaced" in records[0], records[0]
+    assert str(tmp_path) in records[0], "the record must name which store stopped"
+
+
+@pytest.mark.asyncio
+async def test_an_idle_stop_says_idle_rather_than_store_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The other branch, and the one an operator reads most often.
+
+    The **activity clock** is aged rather than the **timeout** lowered, which is the difference
+    between testing the mechanism and testing a smaller version of it: `idle_timeout` keeps its
+    real 1800 s default here, and `may_stop` is made true the way production makes it true — by
+    time passing with nothing in flight. Lowering the key was the first attempt and is not even
+    expressible: `IntBounds(60, 86400)` refuses it, which is the config layer doing its job.
+
+    Pairs with the test above: between them, a record that hard-coded either reason fails one.
+    """
+    monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
+    async with open_context(tmp_path) as ctx:
+        ctx.activity.in_flight = 0
+        ctx.activity.last_activity -= 86_400  # a day of idleness, against a 1800 s default.
+        sock_path = tmp_path / "server.sock"
+        running = await server.serve(ctx, str(sock_path))
+
+        with caplog.at_level("INFO", logger="zikaron.service"):
+            await asyncio.wait_for(
+                lifecycle.idle_self_stop(
+                    ctx, running, sock_path, original_store_inode=ctx.store.path.stat().st_ino
+                ),
+                timeout=5.0,
+            )
+
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stopping:")]
+    assert len(records) == 1, f"expected exactly one stop record, got {records}"
+    assert "reason=idle" in records[0], records[0]

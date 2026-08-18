@@ -445,6 +445,17 @@ error payload now carries the file and key.
 **The resolved config is written to `service.log` at startup, with the layer each non-default value came
 from.** With three layers, "why does this project behave differently" is otherwise a two-file hunt.
 
+**And one record is written when the service stops cleanly, naming which condition fired** —
+`reason=idle` or `reason=store_replaced`, with the store directory and how long it had been idle.
+Added after an inspection of a real machine found four stores, one live service, and four
+`service.log` files whose last entry was the startup config dump: `idle_self_stop` unlinked, shut
+down and returned in silence, so the only line any exit path had ever written was the forced-exit
+`exception()` below. That inverted this log's contract — silence meant a clean stop and a line meant
+a failed one — and left "did this service stop, or is it wedged?" answerable only with `ps`. The two
+reasons are distinguished because their diagnoses differ: `idle` is routine, while `store_replaced`
+means the file this process had open is no longer the one at its path, which is someone moving,
+deleting or restoring a store underneath a running service.
+
 ### Read once, at service startup
 
 Both files are read when the service starts and not re-read afterwards. This is a correctness requirement, not
@@ -618,6 +629,16 @@ unchanged, only *where the log file can land* needed a directory to exist first,
 safety is never traded away to get one.
 
 ### Idle self-stop
+
+**Only the service has this lifecycle, and the distinction is not obvious from `ps`.** `zikaron-mcp`
+is a client, not a server: the harness spawns it over stdio at session start and it lives exactly as
+long as that session, with no idle timeout and nothing to self-stop. So a machine running three
+Claude Code sessions shows **six** `zikaron-mcp` processes plus at most one service per store, and
+that is the design working rather than a leak — observed being mistaken for one. Two consequences
+worth stating together: a client that has never called a tool opens no socket and starts no service
+at all, and a *long-lived* client does not pin a service open either, because `may_stop` keys on
+requests in flight and time since the last one, never on open connections.
+
 `last_activity` is refreshed when each request completes. A background task polls every 30 s and exits
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
 is unlinked before the process ends.

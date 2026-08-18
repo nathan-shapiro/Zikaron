@@ -46,3 +46,28 @@ def log_resolved_config(config: EffectiveConfig) -> None:
     for name, value in sorted(config.provenance.items()):
         source = str(value) if value is not None else "<default>"
         logger.info("config %s = %r (from %s)", name, config.get(name), source)
+
+
+def log_self_stop(*, reason: str, store_dir: Path, idle_seconds: float) -> None:
+    """The one record a *clean* exit writes, and the reason it exists.
+
+    Before this, every exit path but one was silent: `lifecycle.idle_self_stop` unlinked the
+    socket, shut the server down and returned without logging, so the only line any exit ever
+    produced was `main.py`'s forced-exit `exception()`. That inverted the log's contract —
+    silence meant a clean stop and a line meant a failed one — and made "did this service stop or
+    is it wedged?" answerable only with `ps`. Observed directly: four stores on one machine, one
+    live service, and four `service.log` files whose last entry was the startup config dump, with
+    no way to tell an idle stop from a crash or a kill.
+
+    `reason` distinguishes the two conditions `idle_self_stop` polls, because they carry different
+    diagnoses: `idle` is routine, while `store_replaced` means the file this process had open is
+    no longer the one at its path — someone moved, deleted or restored the store underneath a
+    running service, which is worth seeing in a log rather than inferring from a restart.
+    """
+    logger = logging.getLogger("zikaron.service")
+    logger.info(
+        "stopping: reason=%s store=%s idle_for=%.1fs",
+        reason,
+        store_dir,
+        idle_seconds,
+    )

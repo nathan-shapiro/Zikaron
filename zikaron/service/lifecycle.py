@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.service import security
+from zikaron.service import log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.server import RunningServer
 
@@ -98,9 +98,20 @@ async def idle_self_stop(
     idle_timeout = ctx.config.get_int("idle_timeout")
     while True:
         await asyncio.sleep(IDLE_POLL_INTERVAL_SECONDS)
-        if ctx.activity.may_stop(idle_timeout=idle_timeout) or _store_path_now_differs(
-            ctx.store.path, from_inode=original_store_inode
-        ):
+        # Bound to a name rather than left inline so the reason can be *named* in the log record
+        # below. The `or` still short-circuits, which is load-bearing rather than incidental:
+        # `_store_path_now_differs` stats the store on every poll it is reached on, and an idle
+        # service must not pay that.
+        idle = ctx.activity.may_stop(idle_timeout=idle_timeout)
+        if idle or _store_path_now_differs(ctx.store.path, from_inode=original_store_inode):
+            # Written *before* the socket is unlinked, so the record survives anything that goes
+            # wrong in the two steps after it. A stop nobody can see in the log is the state this
+            # line exists to end.
+            log.log_self_stop(
+                reason="idle" if idle else "store_replaced",
+                store_dir=ctx.store.path.parent,
+                idle_seconds=ctx.activity.idle_for(),
+            )
             sock_path.unlink(missing_ok=True)
             await server.shut_down()
             return
