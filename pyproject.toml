@@ -175,6 +175,15 @@ markers = [
 # without a per-test `@pytest.mark.asyncio`, which would otherwise be required on every one of
 # them with no exceptions worth carving out.
 asyncio_mode = "auto"
+# Stated rather than defaulted, because the default is on its way to changing: pytest-asyncio warns
+# that an unset value currently caches async fixtures at `fixture` scope and will later default to
+# `function`. Leaving it unset means an ordinary dependency bump silently re-scopes every async
+# fixture in the suite, and the symptom would be flaky store tests rather than a configuration
+# error — the same shape as a pinned floor that quietly stops holding. `function` is both the
+# value the library is moving toward and the stricter one: fixtures here hand out real SQLite
+# stores, and a store shared further than the test that asked for it is exactly the cross-test
+# coupling this suite must not have.
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true

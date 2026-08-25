@@ -29,8 +29,23 @@ def test_skips() -> None:
 """
 
 
+#: The nested run gets its own ini in a temporary directory and so inherits nothing from this
+#: project's `pyproject.toml`. Only two things need to be in it. The markers, because the skip
+#: conversion under test is marker-driven and `--strict-markers` would otherwise reject the run.
+#: And the async fixture loop scope, which changes nothing here — these nested bodies are
+#: synchronous — but which pytest-asyncio warns about whenever it is unset, once per nested
+#: session. Five such warnings on every gate run is how a suite teaches its readers to skim past
+#: warnings, and the next one will be real.
+_NESTED_INI = """[pytest]
+markers =
+    integration_kiro: x
+    integration_claude: x
+asyncio_default_fixture_loop_scope = function
+"""
+
+
 def _nested(pytester: pytest.Pytester, body: str, marker: str | None) -> pytest.RunResult:
-    pytester.makeini("[pytest]\nmarkers =\n    integration_kiro: x\n    integration_claude: x\n")
+    pytester.makeini(_NESTED_INI)
     # Import the real hook rather than restating it: a copy would pass while the original rotted.
     pytester.makeconftest("from tests.conftest import pytest_runtest_makereport  # noqa: F401")
     pytester.makepyfile(body)
