@@ -27,7 +27,7 @@ from zikaron.core.store import permissions
 from zikaron.service import lifecycle, log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.paths import service_log_path
-from zikaron.service.server import ShutdownTimeoutError, serve
+from zikaron.service.server import RunningServer, ShutdownTimeoutError, serve
 
 
 @asynccontextmanager
@@ -129,6 +129,41 @@ def _ensure_store_dir_exists(store_dir: Path) -> Path:
     return store_dir
 
 
+def _self_stopping_tasks(
+    ctx: ServiceContext,
+    server: RunningServer,
+    sock_path: Path,
+    *,
+    original_store_inode: int,
+) -> list[asyncio.Task[object]]:
+    """The background tasks that stop this service on their own terms, rather than on a signal.
+
+    Kept apart from the signal wait because the difference decides who unlinks the socket: each of
+    these unlinks before closing the server, to close the connect-during-exit race window, so
+    `run` must not unlink again after one of them has fired. Returning them as a list, rather than
+    letting `run` name each one, is also what keeps this set open to a third condition without
+    another branch appearing in the wait.
+
+    The load watch is created only when there is a deferred load to watch. A store this process
+    created has already waited for its model, so a failure there was raised during assembly and
+    this process never reached the point of serving anything.
+    """
+    tasks: list[asyncio.Task[object]] = [
+        asyncio.create_task(
+            lifecycle.idle_self_stop(
+                ctx, server, sock_path, original_store_inode=original_store_inode
+            )
+        )
+    ]
+    if ctx.encoder_load is not None:
+        tasks.append(
+            asyncio.create_task(
+                lifecycle.stop_on_encoder_failure(ctx, server, sock_path, ctx.encoder_load)
+            )
+        )
+    return tasks
+
+
 async def run(sock_path: Path, store_dir: Path) -> None:
     """Assemble the store, bind the socket, and serve until an idle exit or a signal.
 
@@ -142,10 +177,12 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     to a detached child's `/dev/null` stderr, which is why every startup failure is logged here
     before it propagates.
 
-    Both exit paths converge on the same cleanup: whichever of `idle_self_stop`'s poll loop or a
-    `SIGTERM`/`SIGINT` handler finishes first sets the one `stop` event, and `server.shut_down()`
-    is what actually closes the listener and every connection it can observe, under one bounded
-    deadline. **`asyncio.Server.serve_
+    Every exit path converges on the same cleanup: whichever finishes first of `idle_self_stop`'s
+    poll loop, the watch on a deferred model load, or a `SIGTERM`/`SIGINT` handler, and
+    `server.shut_down()` is what actually closes the listener and every connection it can observe,
+    under one bounded deadline. The load watch exists only when the encoder was still loading when
+    the socket was bound, which is the open path; a store this process created has already waited
+    for its model and has nothing left to watch. **`asyncio.Server.serve_
     forever()` is deliberately never called at all** — `asyncio.start_unix_server` (inside
     `serve()`) already accepts and dispatches connections the instant it returns, with no separate
     "start serving" call needed; `serve_forever()` is only a convenience wrapper for blocking until
@@ -157,9 +194,9 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     a chance to run. Waiting only on `idle_task` and `signal_wait`, and calling `server.shut_down()`
     directly, removes the competing wait entirely rather than trying to sequence around it.
 
-    The socket is unlinked exactly once — by `idle_self_stop` on the idle path (since it needs to
-    unlink *before* closing the server to close the connect-during-exit race window, per its own
-    docstring) and by this function on the signal path, where no such race exists to close early.
+    The socket is unlinked exactly once — by whichever self-stopping task fired (each unlinks
+    *before* closing the server, to close the connect-during-exit race window, per their own
+    docstrings) and by this function on the signal path, where no such race exists to close early.
 
     Raises:
         ZikaronError: whatever `config.resolution.resolve` or `ServiceContext.assemble` raise —
@@ -190,22 +227,19 @@ async def run(sock_path: Path, store_dir: Path) -> None:
             async with _stop_on_sigterm_or_sigint(stop):
                 tasks: list[asyncio.Task[object]] = []
                 try:
-                    idle_task = asyncio.create_task(
-                        lifecycle.idle_self_stop(
-                            ctx, server, sock_path, original_store_inode=original_store_inode
-                        )
+                    self_stopping = _self_stopping_tasks(
+                        ctx, server, sock_path, original_store_inode=original_store_inode
                     )
-                    tasks.append(idle_task)
+                    tasks.extend(self_stopping)
                     signal_wait = asyncio.create_task(stop.wait())
                     tasks.append(signal_wait)
                     done, _pending = await asyncio.wait(
-                        {idle_task, signal_wait}, return_when=asyncio.FIRST_COMPLETED
+                        set(tasks), return_when=asyncio.FIRST_COMPLETED
                     )
                     _raise_if_any_task_genuinely_failed(done, ignoring=signal_wait)
-                    idle_exited = idle_task in done
-                    if not idle_exited:
-                        # `idle_self_stop` unlinks before closing the server, to close the
-                        # connect-during-exit race window — see its own docstring. A signal
+                    if not done & set(self_stopping):
+                        # Both self-stopping tasks unlink before closing the server, to close the
+                        # connect-during-exit race window — see their own docstrings. A signal
                         # exit has no such window to close early, so this path owns the
                         # unlink instead.
                         sock_path.unlink(missing_ok=True)

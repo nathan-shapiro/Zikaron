@@ -1688,6 +1688,33 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
 
 
 ## References
+- **M17 implementation review** — rounds 5-7 of `reviews/m17-cold-start-review.md`, APPROVED
+  2026-08-19, on the code rather than the brief. **Its value was almost entirely in the test
+  layer.** Round 5 found *two of the new tests vacuous* — each passed under the exact mutation it
+  existed to catch: the milestone's flagship unit test was satisfied by its own gate's 5 s timeout
+  expiring, and a second asserted `ticks == 5`, which cannot be false. Both were the shape the
+  author had *already found and fixed* in a third test an hour earlier and not carried across. It
+  also found the wire-level `-32023` assertion missing entirely, left to composition of two tested
+  halves. Round 6 found the author's *correction* to a hang paragraph wrong; round 7 verified the
+  third version link by link against the installed 3.12 stdlib. **The lesson worth keeping: a green
+  gate plus 98% coverage plus seven mutation-verified guards still shipped two tests that certified
+  a property only when the code was right.** Coverage counts execution, not implication.
+- **M17 cold-start design review** — **four** rounds, APPROVED 2026-08-19, on
+  `design/build-plan.md` §M17 before a line of code was written. Worth reading for how the option set
+  moved rather than for the verdict. Round 1 found that **`Store.open` already performs the
+  config-vs-store comparison** the brief was proposing to build (`store.py:472-475`, invariant 11),
+  which collapsed one candidate into a *deletion* and narrowed the whole choice to a single guard that
+  cannot fire on today's code. Round 2 was asked to argue *against* the provisional choice and instead
+  strengthened it three ways: the latch and the self-stop are **common cost** under every option, so
+  the chosen design's premium is ~15 lines, not 40; a test cannot substitute for a constructor
+  invariant, because a test pins the call sites its author enumerated and the drift class is by
+  definition an unenumerated one; and the researcher's own "vacuous by construction" objection was
+  **false in its own disfavour** — the mandated comment would itself have been a misleading comment.
+  Round 3 caught the contradiction that fixing the previous round introduced: the invariant still
+  routed a disagreeing model *name* through the latch, which the same document's echo argument makes
+  impossible, so its letter named an unsatisfiable observable. **Three of the four rounds' most
+  valuable findings were self-inflicted contradictions between adjacent paragraphs**, which no test in
+  this repository can see — `reviews/m17-cold-start-review.md`.
 - **M15 review trail** — **six** rounds, APPROVED. Rounds 1–3 covered the milestone; rounds 4–6 were
   targeted at what two operator questions changed afterwards (pure-shell installs, a symmetric
   absent-harness refusal, and splitting the binary-dependent tests into their own tiers). The trail

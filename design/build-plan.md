@@ -761,6 +761,365 @@ experiment, since the corpus cannot be regrown, and one this checkpoint would co
 under a changed harness *and* a changed model. A future session executing this brief literally will reach for
 the primary real-work store; that is the mistake this sentence exists to prevent.
 
+## M17 — The cold start loses the race it was given, and the encoder is why
+
+Normative: `design/architecture.md` §Lifecycle and §"Filesystem security"; `design/schema.md`
+§"Creating the dense index". Evidence: `FINDINGS.md` priority item 6, which carries the negative
+result and most of the numbers below — one range differs, and the note under the table says so.
+
+**The defect, observed in production twice before it was understood.** The first user message after
+any gap longer than `idle_timeout` (default 30 min) loses its injected memories, silently. The store's
+own logs give the whole chain, and it was only diagnosable because the idle-stop record added on
+2026-08-18 exists:
+
+```
+03:34:53  service.log  stopping: reason=idle store=/home/nathan/Trading/LeibaTrader/.zikaron idle_for=1810.5s
+15:57:09  service.log  a new service starts — spawned by the hook's own start-if-absent
+15:57:10  hook.log     transport            ← the hook gave up roughly one second later
+```
+
+The service was never broken; it was not *ready*. `zikaron-hook` gives a freshly spawned service
+`HEALTH_POLL_DEADLINE_SECONDS` — **1.2 s** — to answer `health()`, and a real cold start needs
+**1177–1257 ms merely to bind its socket**, before `health()` can be answered at all. So the deadline
+expires on a service that is working correctly and has simply not finished starting.
+
+**Why the deadline is not the thing to change.** Its own comment says a cold spawn racing it and
+losing "is exactly the case that must degrade (log to `hook.log`, relay on stdout) rather than make
+the user wait", and `test_hook_connect_integration.py` covers that degradation against a fake service
+that binds 5 s after spawn. Losing is a *specified* outcome. What is not specified is that it should
+happen every morning. **Do not raise the constant to make this go away** — that converts a lost push
+into a slower one for every user, and on a heavily loaded machine it would produce a longer wait
+*and* still lose. The commit "Stop asserting a race the design says may be lost" (2026-08-19) already
+separated the test question from the product question; this milestone is the product question.
+
+**Why the warm helper does not already cover it.** The helper is spawned by the `SessionStart` hook,
+so it protects the first message of a *session*. It does nothing when the service idles out *within*
+one, which is the observed case: both failures are ~20:57 UTC a day apart — the first message after
+an overnight break, which is also the message most likely to need memory. The loss is bounded and
+self-healing (the service the losing attempt spawned stays up, so the next message is warm), but it
+is one push per idle gap, indefinitely.
+
+### What was already tried, measured, and reverted — read this before designing
+
+**Attempt (2026-08-19): defer `FastEmbedEncoder.load()` to a background thread so the socket binds
+first.** A `BackgroundLoadedEncoder` satisfying the sync `Encoder` protocol, started on a daemon
+thread at construction, every protocol member blocking on a `threading.Event`; `ServiceContext.
+assemble` split so the **open** path used it and the **create** path stayed eager. It works in
+isolation — construction returns in 0.2 ms against 1059 ms, first access blocks ~985 ms, subsequent
+calls ~4 ms — and `assemble` itself drops from **~1100 ms to 245 ms** on the open path.
+
+**It changed socket-ready latency not at all: 1224 ms deferred versus 1216 ms eager, three runs
+each.** Reverted.
+
+**The cause, and it is the trap this brief exists to keep the next session out of.**
+`IndexingContext.__post_init__` (`core/indexing/writes.py:83–97`) reads `encoder.model_name` and
+`encoder.dim` to validate them against the store's recorded identity, so assembly blocks on the load
+whenever it was started. Reading `IndexingContext.for_store`'s *body* is what produced the wrong
+conclusion — the body only stores the reference and takes its dimensions from `store.meta`; the eager
+read is in `__post_init__`, one frame further in. **Verify what touches the encoder by experiment,
+not by reading a constructor**: disabling the load thread entirely made the service hang, and a
+`traceback.print_stack` in the accessor named the caller in one run.
+
+The guard itself is good and must survive: *"an encoder that disagrees would write vectors labelled
+with a model that did not produce them."*
+
+### Measurements to design against, all taken 2026-08-19 on a machine at load ~6
+
+| Quantity | Value |
+|---|---|
+| socket-ready, cold, open path | **1177–1257 ms** (deadline 1200 ms) — see the note below |
+| `FastEmbedEncoder.load()` | **1059 ms** |
+| `import zikaron.service.main` | ~360 ms — and it therefore does **not** import `fastembed` eagerly |
+| `import fastembed` | **640 ms**, paid inside `load()` |
+| `TextEmbedding.list_supported_models()`, marginal | **0.4 ms**, and it reports `dim=384` with no weights loaded |
+| `assemble`, open path, encoder deferred | **245 ms** |
+| `assemble`, create path (eager, required) | ~847 ms |
+| first `embed()` once loaded | 4–7 ms |
+
+**One number in that table is unreconciled, and it is left that way deliberately.** `FINDINGS.md`
+priority item 6 records socket-ready as **1184-1235 ms** where the table says **1177-1257 ms**; the
+two were captured in separate sittings and no record survives of which runs fed which, so picking
+one would be inventing a provenance. Both say the same thing — a cold bind straddles the 1200 ms
+deadline — and the done-when's idle-machine A/B supersedes both. Do not quote either as *the*
+figure.
+
+The arithmetic that matters: ~360 ms of imports plus ~245 ms of deferred assembly is ~600 ms, which
+is comfortably inside the deadline. The remaining ~600 ms in the failed attempt was the model load
+being pulled back onto the critical path by the guard.
+
+### Four facts established after this brief was first written, which move the option set
+
+Read out of the code rather than measured, so each costs nothing to re-check.
+
+1. **`FastEmbedEncoder.model_name` is the string it was constructed with, not a fact read off the
+   artifact.** `load` sets `ArtifactFacts.model_name=model_name` from its own argument, while `dim`
+   comes from one real embedding. This is load-bearing twice below: it is why a deferred wrapper can
+   answer `model_name` immediately without waiting for weights, and it is why today's guard cannot
+   fire on the open path at all. **It is not an argument that dropping the guard is free** — an
+   earlier revision of this brief drew that conclusion, and it holds only while `assemble` passes the
+   config string to `load`, which is to say only while the programming error the guard exists to
+   catch has not happened.
+2. **The hook's binding constraint is the 1.2 s *connect* deadline, not its 2.0 s total.**
+   `push.py`'s `_DEADLINE_SECONDS = 2.0` budgets connect *plus* the `surface` request, handing
+   whatever is left to the request as a socket timeout. A service that binds at ~600 ms can
+   therefore finish a background model load inside the `surface` call and still answer. Deferring
+   the load does not merely move the wait — it moves it across the boundary that decides whether the
+   push is delivered at all. **The corollary is a new risk to size:** the whole sequence must now fit
+   2.0 s rather than the bind alone fitting 1.2 s, so the margin has to be measured end to end, not
+   at the socket. The arithmetic, since a fresh session will otherwise size the margin from a guess:
+   a load thread starting at assemble (~360 ms after spawn) and costing ~1059 ms completes
+   ~1.42-1.56 s after spawn, so a `surface` arriving at ~700 ms on the hook's clock blocks
+   ~700-900 ms *inside* the call and answers ~1.5-1.6 s into the 2.0 s budget. It fits, with roughly
+   400-500 ms to spare — comfortably, but not so comfortably that the end-to-end measurement can be
+   skipped.
+3. **Every encoder access on the read path is already off the event loop.**
+   `retrieval/reads.py::_prepare` runs `query.external_query` — all of the tokenizer work — through
+   `asyncio.to_thread`, and `indexing/vectors.py` embeds through it too. A deferred encoder whose
+   accessors block on a `threading.Event` blocks a worker thread there, which is exactly the
+   acceptable case the invariants below name.
+4. **One access is *not* off the loop, and it is the one to handle explicitly.**
+   `indexing/writes.py::prepare` calls `chunking.plan_chunks` directly in a coroutine, and that
+   uses `count_tokens`/`token_char_spans`. Today it is free because the model is already loaded;
+   under any deferral it can block the event loop once, for whatever is left of the load. Bounded
+   and terminating, so it is inside the invariant — but it must be stated, and wrapping that one
+   call in `asyncio.to_thread` is the cheap remedy if the block is judged too long.
+
+### What is actually at stake in the option choice, which is narrower than it looks
+
+**Every option below presupposes re-landing the reverted `BackgroundLoadedEncoder` deferral.** None
+of them moves socket-ready latency on its own; each is a *guard-side enabler* that decides how
+`IndexingContext.__post_init__` stops dragging the load back onto the critical path. An
+implementation that changes the guard and leaves the eager `FastEmbedEncoder.load` at
+`context.py:150` improves nothing, and the done-when would eventually say so — but a sentence here
+is cheaper than a discovered dead end.
+
+**Three things are therefore common cost, and none of them is any option's marginal price:** the
+wrapper itself; a *latched-failure channel*, because `FastEmbedEncoder.load` fails after the bind
+for reasons that have nothing to do with identity — `encoder.py:151-155`'s two `BAD_CONFIG`
+artifact failures, plus download and disk failures on a cold fastembed cache — and that exception
+must be caught in the thread and re-raised on access; and the *self-stop*, because the
+resident-zombie state that follows a latched failure is identical under every option. What the
+options actually buy or decline is only the identity handoff and one comparison in the loader.
+
+**A latched failure must end the process, not sit in it.** `health()` never touches the encoder, so
+a latched service would answer `ready=true` indefinitely while rejecting every real call — and
+start-if-absent never replaces a live socket, so an operator's corrected config would not take
+effect until idle-stop fired, up to 30 minutes later. Worse, each rejected message refreshes
+`ActivityTracker`, so a user retrying keeps the broken service alive. On a latched failure the
+service drains in-flight requests through the existing shutdown path, writes `log_self_stop` with a
+new reason, unlinks and exits — **initiated by the loader thread the moment it latches, not by the
+first access that raises**, so a mismatched service with no traffic does not sit resident until
+idle-stop. Note that invariant 1's test cannot tell those two wirings apart, since observing
+`-32023` requires sending a request either way. Exiting restores today's recovery loop exactly: the
+next message spawns a fresh process against the corrected config. There is a genuine improvement
+over today buried here, worth stating: the in-flight caller's hook normally receives `-32023` and relays
+`bad_config (-32023)` to the model, where today's startup-failure path gives it only a poll-deadline
+`transport`.
+
+**`Store.open` already performs the config-vs-store comparison, on every open, with no encoder in
+hand.** `zikaron/core/store/store.py:472-475` compares `config.get_str("embed_model")` and
+`config.get_int("embed_dim")` against `meta` and raises `BAD_CONFIG` — invariant 11, named in
+`open`'s own docstring. It runs before the socket exists and before `IndexingContext` is ever
+constructed. So the **operator-error** case — someone editing `embed_model` against an existing
+store — fails at startup under every option below, unchanged, and is not what any of them is about.
+
+What the options decide is solely the fate of the **artifact-vs-store** check in
+`IndexingContext.__post_init__`: the one that catches an encoder *object* whose measured facts
+disagree with what the store recorded. Note what that guard is really for. On today's open path it
+cannot fire — `assemble` passes the config string to `load`, and `Store.open` has already proved
+config equals meta — so it is defence against **future code drift**, not against anything a user can
+do. That is worth knowing before deciding how much machinery to spend on it.
+
+### Three candidate designs, and the trade each makes
+
+**Chosen: (d), operator decision 2026-08-19, after two review rounds
+(`reviews/m17-cold-start-review.md`).** The case that decided it is not that (d) is safest — it is
+that (d) is barely more expensive than the alternatives once the bookkeeping is honest. The wrapper,
+the latched-failure channel and the self-stop are common cost, so (d)'s entire premium over the
+cheapest (b) is two constructor arguments, two immediate properties and one `dim` comparison in the
+loader: roughly fifteen lines. Against that, (b) would have to delete a shipped invariant test,
+rewrite `IndexingContext`'s "Self-validating" docstring, and record an accepted silent-corruption
+channel. **(b) and (c) are kept below with their trades intact** rather than deleted, because the
+reasoning that ranked them is the part worth having if this is ever revisited — and because the one
+serious argument against (d), that a test is the normal defence against our own programming errors,
+deserves to be findable next to the reason it lost: a test pins the call sites its author enumerated,
+and the drift this guards against is by definition a call site nobody has written yet.
+
+**(b) Delete the `IndexingContext` check and rely on what already ships.** Not something to build:
+`Store.open`'s comparison above is (b), already in the product. **The trade, stated at its real
+shape:** the `dim` half stays *loud* — a wrong-width vector is refused at first embed by
+`vectors.py:65` (`INDEX_FAILED`) and a wrong-width query fails against `vec0`, later and
+worse-labelled than a startup `BAD_CONFIG` but never silent. The silence lives in the **name half at
+equal width**: a different-model, same-dim encoder object reaching the write path writes vectors
+labelled `identity.embed_model` that a different model produced, and nothing downstream fires. That
+is exactly the `vec0` mislabelling `__post_init__`'s docstring names and D20 exists to prevent. If
+this is ever chosen, the record cannot go in the guard's own comment, because the guard is gone: it
+belongs in `IndexingContext`'s class docstring, whose "Self-validating, so every write inward may
+assume the encoder matches the index it is writing into" (`writes.py:67-71`) becomes false under
+(b) and has to be rewritten regardless. Record the weakening *and* the accepted silent channel
+there, rather than letting either be discovered later.
+
+**(c) Keep the check exactly as it is, and perform it lazily at first encoder use.** Nothing about
+the comparison changes; only its moment does. **The trade is smaller than it first reads**, because
+the config-vs-store mismatch still fails inside `Store.open` before bind: the only class that moves
+to first-use is the narrow artifact-disagreement one — a registry serving different weights under an
+unchanged name, or call-site drift. A per-first-use check must remember its verdict, so (c) needs
+the same latch (d) does; the difference between them is *when* the verdict is computed, not how much
+machinery it takes.
+
+**(d) Load in a background thread, and validate inside that thread the moment the load finishes,
+latching the failure.** The loader compares the freshly loaded artifact's measured `dim` against the
+store's recorded identity — the artifact's `model_name` is an echo of `load`'s own argument (fact 1),
+so `dim` is that comparison's entire content — and stores either the encoder or the `ZikaronError`,
+which every blocking member then raises. **What it preserves:** the same artifact-derived `dim`
+comparison, the same `BAD_CONFIG` payload, and no window in which a mismatched encoder is usable —
+the validation stays eager *relative to the load*, which is the only ordering the guard's rationale
+actually requires.
+
+**How `__post_init__` is satisfied without blocking, which the implementation must get right or it
+re-enters the reverted trap.** A wrapper whose every accessor waits on a `threading.Event` still
+blocks assembly, because `__post_init__` reads `model_name` and `dim` during it — that is the
+measured 1224-vs-1216 ms failure, arrived at from a different direction. The wrapper must therefore
+answer those two properties *immediately*, from the expected identity: `model_name` from config
+(byte-identical to what the artifact will report, since `load` sets `ArtifactFacts.model_name` from
+its own argument) and `dim` from `store.meta.embed_dim`, which is itself an artifact-derived
+measurement cached at create time rather than a transcribed constant.
+
+**What that does and does not make vacuous, stated precisely, because the loose version of this
+sentence is itself a defect.** An earlier revision of this brief mandated a comment saying
+`__post_init__` "structurally cannot fail" for the wrapper. That comment would be false, and a
+false reassurance in the opposite direction is no better than the thing it warns about. Taken half
+by half: the **name** comparison keeps *exactly* the strength it has today, because per fact 1
+today's check already compares a declared string — `load`'s echoed argument, sourced from config —
+against `meta`, and the wrapper's expected `model_name` comes from the same config key with the same
+provenance. Nothing weakens. The **dim** comparison is the only half that goes vacuous for the
+wrapper, becoming meta against meta; its real content, the *measured* width, moves into the loader's
+latched comparison rather than disappearing. And the check as a whole still fires for a wrapper
+seeded from one store's config and wired into another's `IndexingContext` — the cross-wiring case,
+which is the concrete shape of the future drift §"What is actually at stake" says this guard exists
+for. That is the comment the code should carry. One parenthetical for the implementer: since the
+wrapper calls `load(expected.model_name)`, the loader's *name* comparison is an echo and vacuous by
+fact 1, so `dim` is that comparison's entire content — do not write a name assertion there and
+believe it tests something.
+
+The check stays fully eager on the create path and for every direct construction, including
+`FakeEncoder` and the tests. **No protocol change is needed and `FakeEncoder` is untouched**, which
+is worth stating rather than leaving to be re-checked: `Embedder`'s own docstring already licenses
+declared identity — "this protocol says nothing about *how* `dim` is produced; only that it is
+available without embedding anything" (`embedder.py:21`) — and `FakeEmbedder` is shipped precedent.
+The wrapper conforms by the protocol's charter, not by a loophole in it.
+
+**One ordering consequence, and it is not a free choice.** The wrapper needs `store.meta.embed_dim`,
+which only exists after `Store.open`. So either the load thread starts after the open — losing
+~140 ms of overlap — or it starts at the top of `assemble` and waits on a set-once identity event
+satisfied ~140 ms in. **Start early is the default**, on this brief's own numbers: starting after
+the open pushes load completion to ~1.56-1.70 s, so a `surface` arriving at ~700 ms answers
+~1.65-1.75 s into the 2.0 s budget — a margin of ~250-350 ms, straddling the ~300 ms threshold below
+which the shelved split-deadline lever would have to be pulled. It spends roughly a third of fact
+2's margin to avoid one event. The event costs nothing at runtime in exchange: it gates only
+*validation*, and by the time `load` returns at ~1.4 s the identity has been set for over a second,
+so the loader thread never actually waits on it. The milestone must still record which it chose.
+
+**Rejected, recorded so none is re-proposed:**
+- **Answering `dim` from `TextEmbedding.list_supported_models()` (the brief's original option (a)).**
+  Two independent reasons, either sufficient. Its critical path is ~360 ms of service imports plus
+  the ~640 ms `fastembed` import that call requires plus ~245 ms of assembly — **~1.25 s against a
+  1.2 s deadline**, so it fails this brief's own done-when on this brief's own numbers, and running
+  the load concurrently does not help because both threads serialize on the same module import lock.
+  And it does not keep the guard as strong: `list_supported_models()` reports the registry's
+  *claimed* dimension for a name, not the artifact's measured width, which is a transcribed constant
+  outsourced one shelf over — the same character of thing as the model→dim table below.
+- **A Zikaron-owned model→dim constant table.** Makes the lookup free by reintroducing exactly the
+  transcribed-from-a-model-card constant D20 forbids and `FastEmbedEncoder.load`'s docstring
+  disclaims.
+- **Raising `HEALTH_POLL_DEADLINE_SECONDS`** (see above).
+- **Re-triggering the warm helper on a cold start** — the service is *already* spawned by
+  start-if-absent, so this changes nothing.
+- **Binding the socket before assembling the store**, which `main.py`'s own docstring rules out —
+  "rather than binding a socket for a store it could not open" — and which this milestone must not
+  quietly reinterpret. That argument is about the **store**; it has never been about the encoder,
+  and that distinction is the whole opening this milestone works in.
+
+**One lever deliberately left on the shelf, named so it is not mistaken for an oversight.** The
+1.2 s deadline is shared between two unlike situations: connecting to a service that already exists
+and might be wedged, and waiting for one this very process just spawned. Splitting it — a short
+deadline for the former, a longer one for the latter — is *not* the same move as raising the
+constant, because only the case where we know a service is coming would wait. It is still refused
+here: it makes the user wait rather than making the service ready, and the 2.0 s total would have to
+move with it. Keep it as the fallback if the measured end-to-end margin turns out thin — under
+~300 ms is the threshold worth acting on.
+
+**Fix in passing:** `zikaron/hook/connect.py::_poll_until_reachable`'s docstring breaks off
+mid-sentence at "…well before `ServiceContext.assemble()`'s model load" (connect.py:264-266), and
+under any deferral its premise inverts — assemble no longer contains the model load, and `health()`
+becomes true before the encoder is ready. M17's implementer edits exactly that behaviour story. The
+same correction is owed to `health`'s own docstring (`dispatch.py:85-89`), whose justification — "a
+service that can answer at all has, by construction, already opened its store" — stays true of the
+*store* but stops covering the encoder: after M17 an encoder failure latches post-bind, so
+`ready=true` no longer implies a working encoder, and a reader of that docstring would draw exactly
+the conclusion the self-stop exists to prevent.
+
+### Invariants to cover
+
+- A **dimension** whose measured value disagrees with the store's recorded identity is still
+  **refused** with `BAD_CONFIG` and the same payload — asserted **where a client sees it**, not at an
+  internal latch: the blocking member raises the latched error, the in-flight RPC answers `-32023`,
+  and the service self-stops with the new reason. Assert it by *breaking* it — hand the loader an
+  artifact whose measured `dim` disagrees with the store's — rather than by unit-testing the
+  comparison function alone or by asserting the happy path. **A disagreeing model *name* cannot
+  reach the latch at all**, because the artifact echoes `load`'s argument (fact 1), and chasing it
+  through this chain would mean writing a stub that misrepresents the real loader. It is still
+  refused exactly where it always was: config-vs-meta at `Store.open`, before the bind, and
+  `__post_init__` on a cross-wired wrapper — both startup-shaped, and unchanged by this milestone.
+  **Under (b) this invariant could not have been met at all** and its test would have been deleted:
+  the construction-time guard is gone there, a disagreeing `dim` surfaces later and differently as
+  `INDEX_FAILED` at first embed (`vectors.py:65`), and a disagreeing name at equal width surfaces
+  never. That was part of (b)'s price, and it is why this invariant in its original form would have
+  silently decided an option choice the brief was presenting as open.
+- The **create** path is unchanged: a first-ever run still loads the model before `Store.create`,
+  because sizing the dense index needs `.dim`/`.model_name` before any table exists.
+- Nothing blocks the event loop in a way that cannot terminate. A wait on work being done by another
+  thread is acceptable and must be *stated*; a wait on work that needs the loop is the `busy_timeout`
+  deadlock class `architecture.md` names and is not.
+- The `Encoder` protocol does not change under (d). `FakeEncoder` (`tests/fake_encoder.py`) stays
+  untouched and the whole hermetic tier keeps running on it; a change here would be evidence the
+  design has drifted, not a step in implementing it.
+
+**DONE 2026-08-25** — measurements and both arms in `research/m17-cold-start-ab.md`; the defect was
+reproduced under synthetic load (old: 0/5 clean pushes, a `transport` line every run) and removed
+(new: 5/5 at higher load). One thing the brief did not anticipate, worth carrying: **the defect is
+load-dependent, so the idle machine this done-when asked for cannot demonstrate it** — at idle the
+old code wins the race 3/3. The idle numbers are the clean timing comparison; the *outcome* needed
+load.
+
+**Done when:** socket-ready on the **open** path is measured below the hook's deadline with margin,
+by the same A/B shape used above — three runs each of the old and new code on a pre-existing store,
+numbers recorded — and the identity guard is shown still failing on a deliberate mismatch. The
+create path's timing is explicitly *not* a target. `./check.sh` exits 0.
+
+**And assert the defect's absence directly, not only its instruments.** The defect is "the push is
+silently lost", so the outcome-level observable is the one that has to be shown gone: against a
+genuinely cold service, the hook's stdout is the surface block rather than a degrade relay, and
+`hook.log` gains no `transport` line — three of three runs, idle machine, load recorded.
+Socket-ready-with-margin and the whole-sequence timing are the right instruments, but neither of them
+*is* the defect.
+
+**Measure the whole hook sequence, not only the bind, and record the machine's load beside every
+number.** Fact 2 above moves the binding constraint from the 1.2 s connect deadline to the 2.0 s
+total, so a bind that fits with margin proves nothing on its own; the end-to-end push has to be
+timed against a genuinely cold service. And every number in the table above was taken at load ~6,
+which is why they are stated with a range rather than a figure: this project's earlier benchmarks
+were taken on a near-idle machine, and a loaded one is fine for deciding *whether* something works
+but is not a source of truth for *how fast*. Take the deciding A/B on an idle machine, and say in
+the note which it was.
+
+**Scope fence:** do not change `HEALTH_POLL_DEADLINE_SECONDS`, do not change the socket-before-store
+ordering, and do not weaken the identity guard without saying so where the guard's own contract is
+stated — its comment under (d), and `IndexingContext`'s class docstring under (b), which is where
+that claim would live once the guard itself is gone. The idle timeout is not the subject either: a
+service idling out after 30 minutes is correct, and making it linger would trade a bounded,
+self-healing loss for a permanent resident process per project.
+
 ---
 
 ## Standing notes for whoever picks this up

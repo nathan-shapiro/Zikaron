@@ -14,6 +14,7 @@ can answer anything", plus the two facts `dispatch.py`'s idle-tracking needs to 
 request: `last_activity` and `in_flight`.
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from typing import Self
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.consolidation.context import ConsolidationSettings
-from zikaron.core.indexing.encoder import Encoder, FastEmbedEncoder
+from zikaron.core.indexing.encoder import BackgroundLoadedEncoder, Encoder, FastEmbedEncoder
 from zikaron.core.indexing.writes import IndexingContext
 from zikaron.core.retrieval.retrieve import RetrievalSettings
 from zikaron.core.store.store import Store
@@ -88,6 +89,10 @@ class ServiceContext:
     consolidation: ConsolidationSettings
     supersession_max_depth: int
     activity: ActivityTracker
+    #: The deferred load behind `encoder`, when there is one, for a holder that must react to a
+    #: load or identity failure rather than wait to trip over it. `None` whenever `encoder` is
+    #: already a loaded artifact — a directly-constructed context, or a store this process created.
+    encoder_load: BackgroundLoadedEncoder | None = None
 
     @property
     def store_id(self) -> str:
@@ -118,13 +123,22 @@ class ServiceContext:
         `schema_version` this build does not support) that must not be silently treated as "create
         one," only the specific absence of the database file itself.
 
-        The encoder loads **before** either store call now, rather than after `Store.open` as in
-        the open-only path this replaced: `Store.create` needs it (`embedder.dim`/`.model_name`
-        checked against the effective config before any table exists — `schema.md` §"Creating the
-        dense index"), and `Store.open` never depended on load order in the first place, so loading
-        it first costs the open path nothing while it is what makes the create path possible at
-        all. Loading is still the expensive step (hundreds of milliseconds cold) and still happens
-        exactly once here rather than being re-derived per request.
+        **The model load starts first and is waited for last**, because it is the expensive step by
+        an order of magnitude — hundreds of milliseconds cold, against tens for everything else
+        here — and a caller waiting on this function is usually waiting to bind a socket. Starting
+        it before the store call overlaps it with the open; not waiting for it lets the open path
+        return while the model is still loading. The create path cannot do that and does not try:
+        see `_open_or_create`. Either way the load happens exactly once here rather than being
+        re-derived per request.
+
+        **What must not creep back in is a read of the encoder between here and the caller's own
+        first use of it.** Every property of the *artifact* blocks until the load finishes, so one
+        such read anywhere on this path puts the whole load back on the critical path and the
+        deferral silently buys nothing — the failure mode is a latency measurement that does not
+        move, with no error and nothing in a log. `IndexingContext` is the one construction here
+        that inspects an encoder, and it reads only the declared identity, which answers without
+        the artifact. A new caller that needs a token count or a width measured off the model
+        belongs after this function returns, not inside it.
 
         Every step after the encoder loads runs inside a `try` that closes whichever of the store
         or the encoder already succeeded on any later failure: `coding-standards.md` §6's binding
@@ -132,29 +146,43 @@ class ServiceContext:
         process exit, not tidiness — `aiosqlite`'s worker thread is non-daemon, so a store this
         function opened or created and then abandoned on a later failure would keep the whole
         interpreter alive after `main.run()` has already logged the failure and is trying to exit.
-        `FastEmbedEncoder.load` failing, or the encoder loading but the store call after it
-        failing, are not hypotheticals: this function's own `Raises` section already names both.
+        The store call failing after the encoder has been constructed is not a hypothetical, and
+        on the create path neither is the load itself failing; this function's own `Raises` section
+        states which of those can still reach a caller from which path.
 
         Raises:
-            ZikaronError: whatever `Store.open`/`Store.create` or `FastEmbedEncoder.load` raise —
-                `REINDEXING`, `BAD_CONFIG`, or `SCHEMA_INCOMPATIBLE` for an existing store;
-                `BAD_CONFIG` naming `embedding.embed_dim`/`embedding.embed_model` for a first-time
-                create whose configured embedder disagrees with itself; or `BAD_CONFIG` naming
-                `embedding.embed_model` if the configured model exposes no usable tokenizer. Any
+            ZikaronError: whatever `Store.open`/`Store.create` raise — `REINDEXING`, `BAD_CONFIG`,
+                or `SCHEMA_INCOMPATIBLE` for an existing store — and, **on the create path only**,
+                whatever `FastEmbedEncoder.load` raises: `BAD_CONFIG` naming
+                `embedding.embed_dim`/`embedding.embed_model` for a first-time create whose
+                configured embedder disagrees with itself, or `BAD_CONFIG` naming
+                `embedding.embed_model` if the configured model exposes no usable tokenizer.
+                **On the open path a load failure does not raise here at all**: it is latched, and
+                surfaces at the first access that needs the artifact and through the watch on the
+                deferred load, which stops the service. A reader diagnosing an open-path startup
+                that never became reachable should therefore not be looking for a model failure
+                here. Any
                 store this function itself opened or created is closed before either propagates,
                 and it is the **original** failure that propagates even if closing the store
                 itself also fails — a caller diagnosing why startup failed is owed the
                 construction error, not a close error that only exists because construction had
                 already failed.
         """
-        encoder = FastEmbedEncoder.load(config.get_str("embed_model"))
-        store = await cls._open_or_create(store_directory, config, encoder)
+        loading = BackgroundLoadedEncoder(
+            model_name=config.get_str("embed_model"), load=FastEmbedEncoder.load
+        )
+        try:
+            store, encoder, pending = await cls._open_or_create(store_directory, config, loading)
+        except BaseException:
+            loading.release()
+            raise
         try:
             index = IndexingContext.for_store(store, config, encoder)
             return cls(
                 store=store,
                 config=config,
                 encoder=encoder,
+                encoder_load=pending,
                 index=index,
                 retrieval=RetrievalSettings.from_config(config),
                 consolidation=ConsolidationSettings.from_config(config),
@@ -178,19 +206,36 @@ class ServiceContext:
 
     @staticmethod
     async def _open_or_create(
-        store_directory: Path, config: EffectiveConfig, encoder: FastEmbedEncoder
-    ) -> Store:
-        """`Store.open` if `memory.db` already exists there, else `Store.create` it first.
+        store_directory: Path, config: EffectiveConfig, loading: BackgroundLoadedEncoder
+    ) -> tuple[Store, Encoder, BackgroundLoadedEncoder | None]:
+        """`Store.open` if `memory.db` already exists there, else `Store.create` it first — and
+        the encoder each of those two cases can actually use.
 
         The existence check is the database file itself, not `store_directory` — a `.zikaron`
         directory can exist (created by an earlier, unrelated failure, or by nothing more than
         `mkdir -p` in a deploy script) with no `memory.db` inside it, and that is exactly the state
         this function's create branch exists to leave behind correctly rather than to special-case
         away.
+
+        **Only the open path gets to defer the model load, and that asymmetry is forced rather than
+        chosen.** Opening an existing store needs no model at all: the width to check the artifact
+        against is already recorded in `meta`, so the check can be declared now and performed
+        whenever the load finishes. Creating one needs the artifact itself, because the width the
+        store is about to record *is* whatever the model turns out to produce and there is nothing
+        yet to compare it to — `schema.md` §"Creating the dense index". So the create path blocks
+        on the load here, exactly as it always has, and returns no deferred load for anyone to
+        watch: by the time it returns, there is nothing left to fail.
+
+        Returns:
+            The store, the encoder to use with it, and the deferred load behind that encoder if
+            there is one still to finish.
         """
         if (store_directory / "memory.db").exists():
-            return await Store.open(store_directory, config)
-        return await Store.create(store_directory, config, encoder)
+            store = await Store.open(store_directory, config)
+            loading.declare_dim(store.meta.embed_dim)
+            return store, loading, loading
+        artifact = await asyncio.to_thread(loading.artifact)
+        return await Store.create(store_directory, config, artifact), artifact, None
 
     async def close(self) -> None:
         """Close the underlying store connection. Safe to call once."""

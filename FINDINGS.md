@@ -54,16 +54,17 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-### Phase: porting to Claude Code. **M16 is the last milestone, and it is landing.**
-Every milestone **M0–M15 is built and reviewed**, and **M16's measurement half is done** — the
-dogfooding checkpoint ran on 2026-08-16 and its evidence is
-`research/claude-code-dogfood-checkpoint.md`. What remains of M16 is the review round it is in.
-M15 (the installer adapter) landed 2026-08-16,
+### Phase: **M17 has landed. No milestone in `design/build-plan.md` is outstanding** — the next one
+has to be written before it can be worked.
+Every milestone **M0–M17 is built and reviewed**. M17 landed 2026-08-25, APPROVED after seven rounds
+— four on the brief and three on the code — and its A/B is `research/m17-cold-start-ab.md`. M16
+landed 2026-08-16, APPROVED after five rounds; its dogfooding evidence is
+`research/claude-code-dogfood-checkpoint.md`. M15 (the installer adapter) landed 2026-08-16,
 APPROVED after six rounds; what it built and what its rounds taught is in `FINDINGS-archive.md`
-§"M15 as built" — read that only if you need the history, not to start M16.
+§"M15 as built" — history, not a starting point.
 
-**Where M16 starts: `design/build-plan.md` §M16.** Read the brief, then `design/harness.md`, which is
-normative for every harness-coupled fact — do not re-derive one from an older section of
+**`design/harness.md` is normative for every harness-coupled fact.** Read it before touching the
+hook, the MCP client or the installer, and do not re-derive one from an older section of
 `architecture.md`.
 
 **What is true of the product right now, which M15 changed.** Both thin clients *and* the installer
@@ -159,6 +160,57 @@ state at 13 events / 2 journal records), and by a **review finding forcing a rec
 store**. Both lie outside the loop the agent controls.
 
 **What to do next, in priority order.**
+0. **M17 — the cold start loses the race it was given. Built, reviewed (APPROVED, seven rounds),
+   and measured. Landed 2026-08-25 as "M17: the same wait, on the other side of the deadline"**,
+   with the pytest-asyncio fixture-scope pin following it as a separate commit. What it built:
+   `BackgroundLoadedEncoder` in `core/indexing/encoder.py`, `assemble` split open-vs-create,
+   `lifecycle.stop_on_encoder_failure`, and two new test files. `./check.sh` exits 0 (1738 passed,
+   coverage 97.65%, and **zero warnings** — the five it used to emit came from the nested pytester
+   sessions in `test_harness_tier_guard.py`, not from the outer run, which is why setting the
+   option in `pyproject.toml` alone did not silence them). **What is not done is the A/B**, by agreement rather than oversight: this
+   machine is loaded, and the brief requires the deciding numbers to come from an idle one. Four
+   mutations were verified — an eager artifact read in `assemble`, deleting the width check, and
+   gutting the self-stop teardown — and that exercise found one of the *new tests* vacuous: it
+   asserted a gate had not been released where the gate used a timeout, so it passed while
+   `assemble` blocked for the full five seconds. Fixed and re-verified. **A test written to catch
+   a wrong claim can itself be the wrong claim**, and only mutation showed it.
+   **The A/B is done, on an idle machine, and the defect was reproduced on demand before being
+   fixed.** Full detail, both arms, both conditions and three caveats:
+   `research/m17-cold-start-ab.md`; harnesses `experiments/m17_cold_start_ab.py` and
+   `experiments/m17_hook_outcome.sh`, both re-runnable. Socket-ready **805 ms → 242 ms** idle and
+   **1157 ms → 395 ms** under load, against the hook's 1200 ms poll deadline. Through the shipped
+   `zikaron-hook` under load: old **0/5** clean pushes — 241 B of degrade relay and a `transport`
+   line in `hook.log` every time, which is byte-for-byte the LeibaTrader production failure — and
+   new **5/5**, full 1513 B block, `hook.log` never created, at *higher* load than the old arm.
+   **The fix makes nothing faster and that is the point:** end-to-end is unchanged (827 → 809 ms
+   idle) and under load the new arm's `surface` is *slower*, because the load that used to precede
+   the bind is now paid inside the request. What moved is which side of the deadline the wait falls
+   on.
+   **Read the caveats before quoting any of it**, one of which matters for how this is tested in
+   future: **the defect is load-dependent, so an idle machine cannot demonstrate it** — at idle the
+   old code wins the race 3/3 and an outcome test passes on both arms.
+   Brief: `design/build-plan.md` §M17, which is self-contained and carries every measurement, the
+   design options with their trades, and — most importantly — **the attempt that was already made
+   and reverted**, so it is not made twice. One-line version: the first user message after any idle
+   gap loses its injected memories, because a cold service takes ~1.2 s to bind against the hook's
+   1.2 s readiness deadline, and `FastEmbedEncoder.load()` is 1059 ms of that. Priority item 6 below
+   carries the numbers.
+   **The design is option (d), operator decision 2026-08-19** after two review rounds
+   (`reviews/m17-cold-start-review.md`): load in a background thread, and validate the artifact
+   against the store's recorded identity *inside that thread* the moment the load returns, latching
+   the failure for every blocking accessor to raise. **Correction to the entry this replaces, which
+   said deferral "does not work":** deferral works — `assemble` drops ~1100 ms to 245 ms on the open
+   path. What did not work was deferring *without* satisfying `IndexingContext.__post_init__`, which
+   reads `encoder.model_name`/`.dim` during assembly and pulls the model straight back onto the
+   critical path (measured 1224 ms versus 1216 ms). The wrapper answers those two properties
+   immediately from the expected identity; the measured check moves into the loader.
+   **Three things the review established that are worth knowing before touching this**, all verified
+   against the code: `Store.open` already performs the config-vs-store comparison on every open
+   (`store.py:472-475`, invariant 11), so the operator-error case never depended on this guard;
+   the wrapper, the latched-failure channel and the self-stop are **common cost** under every design
+   considered, because `FastEmbedEncoder.load` fails after the bind for non-identity reasons too;
+   and the hook's binding constraint is the 1.2 s *connect* deadline, not its 2.0 s total, which is
+   why moving the load past the bind changes the outcome rather than merely the timing.
 0. **M16 — the dogfooding checkpoint under Claude Code**, the last milestone of the port. Brief:
    `design/build-plan.md` §M16; what it inherits is in the resume block above. It **gates items 1
    and 2**, which both need the memory tools and the push hook live in whichever harness the work
@@ -312,6 +364,49 @@ store**. Both lie outside the loop the agent controls.
    than a test one: a cold start-if-absent loses the race on a loaded machine, so the warm helper is
    load-bearing rather than an optimisation, and a user message that races it silently loses push.
 
+**The first message after any idle gap loses push, observed in production twice.** Recorded
+2026-08-19 from `~/Trading/LeibaTrader`, and diagnosed only because the idle-stop log added the day
+before existed. The store's own logs give the whole chain: `stopping: reason=idle idle_for=1810.5s`
+at 03:34, a new service started by start-if-absent at 15:57:09, and `transport` in `hook.log` at
+15:57:10 — the hook gave up ~1 s after spawning it. The service was fine; it was not *ready*.
+`HEALTH_POLL_DEADLINE_SECONDS` is 1.2 s and a real cold start needs ~1.2 s merely to bind, because
+`main.py` assembles before binding. **The warm helper does not cover this**: it fires on
+`SessionStart`, so it protects the first message of a *session*, not the first message after the
+service idles out *within* one. Both observed failures are ~20:57 UTC a day apart — the first
+message after an overnight break, which is also the message most likely to need memory. The loss is
+bounded and self-healing (the spawned service stays up, so the next message is warm), but it is one
+push per idle gap, every day. **Measured breakdown of the ~1.2 s, which is what makes the fix cheap
+to argue:** imports ~270 ms, config and store open ~140 ms, **`FastEmbedEncoder.load()` 1059 ms**,
+first embed 7 ms. So **88% of the cold start is a component the socket bind does not depend on.**
+`assemble`'s stated reason for preceding the bind — "rather than binding a socket for a store it
+could not open" — is an argument about the *store*, and it is being applied to the encoder, which is
+not the same thing. Note the one real constraint: `Store.create` genuinely needs the encoder (it
+checks `embedder.dim`/`.model_name` before any table exists), so only the **open** path can defer it
+— and the cold-start-after-idle case is always an open.
+
+**The obvious fix was built, measured, and does not work — reverted, with the reason.** Deferring
+`FastEmbedEncoder.load()` to a background thread so the socket binds first changed socket-ready
+latency **not at all**: 1224 ms deferred versus 1216 ms eager, three runs each on a pre-existing
+store. The cause is a claim this session asserted in a docstring without checking, which is the same
+failure mode the D17 review caught twice: *"nothing between here and the bind touches the returned
+encoder"* is **false**. `IndexingContext.__post_init__` reads `encoder.model_name` and `encoder.dim`
+to check them against the store's recorded identity — a guard with a good reason ("an encoder that
+disagrees would write vectors labelled with a model that did not produce them") — so assembly blocks
+on the load regardless of when the load was started. Found by disabling the load thread entirely and
+watching the service hang, then capturing the stack of whoever touched it. **What the measurements
+do establish, and they are the useful part.** `assemble` itself drops from ~1100 ms to **245 ms** on
+the open path when the encoder is deferred, so the deferral works; it is the eager identity check
+that puts the model back on the critical path. And the guard does not actually need a *loaded*
+model: `TextEmbedding.list_supported_models()` returns the dimension in **0.4 ms**, with the 638 ms
+it appeared to cost being the `fastembed` import that the service pays anyway — importantly,
+`zikaron.service.main` imports in ~360 ms and therefore does **not** import fastembed eagerly, so a
+dim lookup would drag that import onto the critical path unless the check is restated. **Two paths,
+neither taken here.** Answer `model_name`/`dim` from metadata rather than from a loaded model, which
+keeps the guard exactly as strong; or compare the *config's* `embed_model` against the store's
+recorded one, which is free and needs no encoder but validates configuration rather than the
+artifact actually in hand. Both change a validated component and belong in a milestone with a brief,
+not in a session's tail.
+
 **Two instrument properties worth knowing before quoting a number.** The dedup signal reports nothing for
 30 days unless `signal_horizon_days` is lowered (only the fully-resolved outcome closes early), and
 amend-after-surface currently reads `rate=1.00` meaning *3 of 3 resolved pairs* with 51 still pending.
@@ -344,6 +439,18 @@ a second time.
 Code (M16), and the pre-migration numbers are recorded as a **different-harness baseline that is not
 to be compared against** — the harness, the model, the injection position and the write-policy
 delivery all change at once. **Do not quietly compare across the boundary.**
+
+**The self-review loop has a single point of failure, and it was observed failing.** During M17
+the reviewer became unavailable: four consecutive spawns died on server-side 500s, including a
+deliberate probe that read no files and wrote two lines, which rules out prompt size and points at
+the model. `py-runner` (haiku) was working normally throughout, so this was not the harness. Two
+things follow. **The loop stops entirely when one model is down** — memory-reviewer is the only
+independent critic in the crew, so there is no degraded mode, only a halt; the fallback is to wait,
+to land at the last completed round and resume later from the review file, or to self-verify and
+*say so in the review file*, which is much weaker evidence and must never be recorded as a review.
+**And the file-based protocol earned its keep**: every failure wrote nothing, so the trail ends
+cleanly at the last completed round with no partial round to reconcile. A reviewer that streamed
+findings back conversationally would have left half a review and no way to tell which half.
 
 **Crew fidelity lost in the move, both deliberate.** memory-reviewer ran `gpt-5.6-sol`; Claude Code
 takes Claude models only, so it now runs `fable` — same family, so **cross-family independence is

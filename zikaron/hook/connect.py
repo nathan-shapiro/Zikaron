@@ -262,7 +262,15 @@ def _poll_until_reachable(sock_path: Path) -> tuple[socket.socket, Health]:
     `HEALTH_POLL_DEADLINE_SECONDS` elapses.
 
     Mirrors `zikaron.service.lifecycle._poll_until_reachable`'s own reasoning exactly: a freshly
-    spawned process can accept a connection well before `ServiceContext.assemble()`'s model load
+    spawned process can accept a connection before it is able to answer anything, so a poll that
+    stopped at `connect()` would hand the caller a socket the service is not yet serving on.
+    Answering `health()` is the readiness signal because it is the first thing that requires the
+    store to be open.
+
+    It does **not** mean the model is loaded. The service binds while a deferred load is still
+    running, deliberately, so a `health()` answer bounds the wait for the *store* and not for the
+    first embedding — the request after it may still block on the model.
+
     Returns:
         The connected socket and the `Health` this function's own poll attempt already read from
         it — the caller must not call `_health` a second time over this identical connection, since

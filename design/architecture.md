@@ -448,15 +448,18 @@ error payload now carries the file and key.
 from.** With three layers, "why does this project behave differently" is otherwise a two-file hunt.
 
 **And one record is written when the service stops cleanly, naming which condition fired** —
-`reason=idle` or `reason=store_replaced`, with the store directory and how long it had been idle.
+`reason=idle`, `reason=store_replaced` or `reason=encoder_failed`, with the store directory and how
+long it had been idle.
 Added after an inspection of a real machine found four stores, one live service, and four
 `service.log` files whose last entry was the startup config dump: `idle_self_stop` unlinked, shut
 down and returned in silence, so the only line any exit path had ever written was the forced-exit
 `exception()` below. That inverted this log's contract — silence meant a clean stop and a line meant
 a failed one — and left "did this service stop, or is it wedged?" answerable only with `ps`. The two
-reasons are distinguished because their diagnoses differ: `idle` is routine, while `store_replaced`
+reasons are distinguished because their diagnoses differ: `idle` is routine; `store_replaced`
 means the file this process had open is no longer the one at its path, which is someone moving,
-deleting or restoring a store underneath a running service.
+deleting or restoring a store underneath a running service; and `encoder_failed` means the model
+this service bound the socket ahead of never loaded, or loaded at a width the store cannot use
+(§"The model loads behind the socket").
 
 ### Read once, at service startup
 
@@ -604,10 +607,12 @@ different causes (a missing required `meta` key, an unsupported `schema_version`
 absence of `memory.db` may be silently treated as "create one" — every other `bad_config` cause is still a
 real rejection.
 
-The encoder loads before this decision is made, not after — `Store.create` needs it (the configured
-embedder's actual width and model name, checked against the effective config before any table exists,
-§"Creating the dense index" in `schema.md`) — so first-run startup pays the cold model-load cost once,
-exactly as every other startup already does, and the create path costs nothing beyond that.
+The encoder's load *starts* before this decision is made, on its own thread, and only the create path
+waits for it. `Store.create` needs the artifact itself — the configured embedder's actual width and model
+name, checked against the effective config before any table exists, §"Creating the dense index" in
+`schema.md` — so first-run startup still pays the cold model-load cost in full before it can proceed.
+Opening an existing store needs no such thing, and §"The model loads behind the socket" below is why that
+difference is worth having.
 
 A second `assemble` against the same directory finds `memory.db` already there and opens it, exactly as
 before this decision existed: creation happens at most once per store, on whichever startup is first to
@@ -632,6 +637,67 @@ Calling the real validator here rather than a weaker one invented for this narro
 left correctly vetted and at `0700`; the ordering the paragraph above states for *why* the log runs first is
 unchanged, only *where the log file can land* needed a directory to exist first, and that directory's own
 safety is never traded away to get one.
+
+### The model loads behind the socket
+
+**The measured problem.** A cold service takes about 1.2 s merely to bind its socket, and the push hook
+gives a freshly spawned one about the same before it gives up and degrades. Loading the embedding model is
+roughly 1.0 s of that — the great majority — and the socket bind depends on none of it. So the first user
+message after the service has idled out loses its injected memories, silently, every time: the service is
+working, it is simply not *ready* yet. The loss is bounded and self-healing, because the service the losing
+attempt spawned stays up, but it costs one push per idle gap indefinitely, and the message most likely to
+need memory is the first one after a break.
+
+**So `ServiceContext.assemble` starts the load on a background thread and returns without waiting for it**,
+on the open path. The store opens, the socket binds, `health()` answers, and the model finishes loading
+behind all of it — inside the hook's own request budget rather than inside its readiness deadline, which is
+the boundary that decides whether the push is delivered at all.
+
+**Two properties answer immediately; five wait.** The encoder handed to the rest of the service reports the
+*declared* identity — the model the configuration named, and the width the store recorded — without the
+artifact. Everything that is genuinely a fact of the artifact (its special-token count, its sequence cap,
+tokenization, embedding) blocks until the load finishes. That split is what keeps the deferral real: a
+consistency check written against the declared identity costs nothing, and one written against the artifact
+still cannot be answered without it.
+
+**The identity check keeps its full strength and only moves.** The width the artifact actually produces is
+compared against the store's recorded width by the loading thread itself, the moment the load returns —
+still before any caller can reach a member that would use it, so no write is ever made through an encoder
+whose vectors would not fit the index they are labelled for. What changes is *when* a disagreement is
+discovered, not whether it is. The model *name* is deliberately not re-checked there, because the artifact
+reports back the name it was asked for; a name that disagrees with the store is refused eagerly at
+`Store.open`, against `meta`, before the socket exists.
+
+**A failure now happens after the bind, so the service ends itself.** A load that raises, or a width that
+disagrees, is latched and re-raised on every access. Left alone that would be the worst state this service
+can occupy: `health()` answers from the store's metadata and never touches the encoder, so the process would
+go on advertising itself as ready while failing every request that needs a vector — and start-if-absent
+never replaces a server that is still listening, so an operator's corrected configuration would not take
+effect until the idle timeout eventually fired, with every retry pushing that further away. Instead the
+process stops itself, initiated by the loading thread the moment it latches rather than by whichever request
+first trips over it, so a service nobody happens to call does not sit resident and mislabelled. The next
+message spawns a fresh one against the corrected configuration, which is the ordinary recovery loop
+restored. A request already in flight is usually answered rather than dropped — it wakes from the same latch
+the watch does, so its `bad_config` normally reaches the model ahead of the teardown — but that is a race
+and not a guarantee, since shutdown cancels handler tasks rather than draining them. Losing it costs nothing
+that was ever delivered before: the equivalent failure used to reach the client as a poll deadline and
+nothing else.
+
+**One state this does not cover, named because the machinery around it looks complete.** Everything above
+assumes the load terminates. A load that *hangs* rather than fails — a cold artifact download against a
+network read with no deadline — never latches, so the watch never fires and `health()` goes on answering
+`ready`. **A resident process is left either way**, and traffic decides only whether it stays reachable.
+With no traffic, idle self-stop fires and the socket goes, so the next message spawns a fresh service — but
+the process never finishes exiting, because the wait for the load runs on an executor thread that
+cancellation abandons rather than unblocks, and interpreter shutdown joins it with no deadline. What is left
+is unreachable residue holding neither store nor socket, until someone kills it. With traffic it is worse: the first request
+needing the model blocks, `in_flight` never returns to zero, so idle self-stop cannot fire either and the
+process stays reachable with start-if-absent unable to replace it. The hang is not new; what is new is that
+it now happens behind a bound socket, on the far side of the same non-daemon-thread trap this project
+already records for store connections.
+
+**`health()` therefore speaks for the store and not for the encoder**, and both clients' readiness polls
+must be read that way: they bound the wait for an open store, never for the first embedding.
 
 ### Idle self-stop
 

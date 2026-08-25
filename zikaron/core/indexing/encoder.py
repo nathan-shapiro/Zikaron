@@ -13,7 +13,8 @@ character-level token boundaries are needed only by something that has to *cut t
 the read path borrows this definition rather than owning a second one.
 """
 
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
@@ -94,6 +95,30 @@ def _artifact_failure(model_name: str, expected: str) -> ZikaronError:
         key="embedding.embed_model",
         value=model_name,
         expected=expected,
+    )
+
+
+def index_identity_disagrees(
+    *, reported_model: str, reported_dim: int, recorded_model: str, recorded_dim: int
+) -> ZikaronError:
+    """`bad_config` for an encoder whose identity disagrees with the index it would write into.
+
+    One definition rather than one per checking site, because the *payload* is the contract: a
+    caller diagnosing this is told what the encoder reports and what the store recorded, and the
+    two checks that can raise it — eagerly at construction, and off-thread once a deferred load
+    returns — are the same refusal discovered at different moments, not two different errors.
+
+    `source='meta'`: the store's recorded identity is the authority being contradicted, and it is
+    what a reader has to look at to understand the disagreement.
+    """
+    return ZikaronError(
+        ErrorCode.BAD_CONFIG,
+        source=BadConfigSource.META,
+        key="embed_model/embed_dim",
+        value=f"{reported_model}/{reported_dim}",
+        expected=f"{recorded_model}/{recorded_dim} (what this store's existing index was built "
+        "with — an encoder that disagrees would write vectors labelled with a model that did not "
+        "produce them)",
     )
 
 
@@ -247,3 +272,183 @@ class FastEmbedEncoder:
     def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
         """Embed every text in order. Blocking; the caller keeps it off any event loop."""
         return tuple(tuple(float(value) for value in vector) for vector in self._model.embed(texts))
+
+
+class BackgroundLoadedEncoder:
+    """An `Encoder` that answers its declared identity at once and loads its artifact off-thread.
+
+    Exists so a process can bind a socket, or do anything else, while the model is still loading:
+    the load dominates startup, and every step between construction and the first *use* of an
+    embedding or a token count is independent of it.
+
+    **Two properties answer immediately and five block.** `model_name` and `dim` are the store's
+    declared identity — the model the caller asked to load, and the width the store recorded — so
+    a consistency check that only compares those two against the store runs without weights.
+    `n_special_tokens`, `max_sequence_tokens`, `count_tokens`, `token_char_spans` and `embed` are
+    facts of the artifact, so each waits for the load. That split is the whole point: a check
+    written against the declared identity does not drag the model onto a critical path, and one
+    written against the artifact still cannot be answered without it.
+
+    **The artifact is checked against the declared width by the loading thread itself**, the
+    moment the load returns, rather than by whoever happens to touch it first. Checking here keeps
+    the guarantee every caller actually needs — that no write is ever made through an encoder
+    whose measured width disagrees with the index it is writing into — while moving *when* it is
+    discovered off the critical path. The model *name* is deliberately not re-checked: the
+    artifact reports back the name it was asked for, so comparing them tests nothing.
+
+    **Every failure is latched and re-raised on each blocking access**, whether it is the width
+    disagreeing or the load itself failing — a missing artifact, an unreadable tokenizer, a
+    download that did not complete. Nothing is swallowed and nothing is retried: the load is
+    attempted once, and a caller that reaches a blocking member gets the original failure rather
+    than a second attempt's.
+
+    A holder that must react to a failure *without* touching the encoder — to stop a process that
+    would otherwise sit accepting requests it can never serve — waits on `failure()` instead.
+    """
+
+    __slots__ = ("_artifact", "_declared", "_dim", "_failure", "_loaded", "_model_name")
+
+    def __init__(self, *, model_name: str, load: Callable[[str], Encoder]) -> None:
+        self._model_name = model_name
+        self._dim: int | None = None
+        self._artifact: Encoder | None = None
+        self._failure: BaseException | None = None
+        # Separate events because the two facts become true independently and in either order: a
+        # caller declares the store's width whenever it has opened the store, which may be before
+        # or after the load finishes.
+        self._declared = threading.Event()
+        self._loaded = threading.Event()
+        # Daemon, because this thread must never be the reason a process outlives its work. A
+        # non-daemon loader would keep the interpreter alive through a shutdown that had already
+        # decided to exit, and it holds nothing that needs releasing.
+        threading.Thread(
+            target=self._load_and_check, args=(load,), name="zikaron-encoder-load", daemon=True
+        ).start()
+
+    def declare_dim(self, dim: int) -> None:
+        """Declare the width the store recorded, releasing the loader to check the artifact.
+
+        Call exactly once, and before using this object as an `Encoder`: `dim` has nothing to
+        answer until it is called. A caller that wants the artifact itself, with no recorded width
+        to check it against, calls `artifact()` instead — which also releases the loader.
+        """
+        self._dim = dim
+        self._declared.set()
+
+    def release(self) -> None:
+        """Release the loader with no width to check, for a caller that will not use this encoder.
+
+        The counterpart to `declare_dim` for a caller that has abandoned the store it was going to
+        check against — an open that failed after this was constructed. Without it the loading
+        thread waits for a declaration that will never come, and while it is a daemon thread and so
+        never keeps a process alive, a process that constructs many of these would accumulate one
+        blocked thread per abandonment.
+        """
+        self._declared.set()
+
+    def artifact(self) -> Encoder:
+        """Block until the load finishes and return the loaded encoder itself.
+
+        For a caller that needs the real artifact rather than this facade — creating a store,
+        where the recorded width is about to be *derived* from the model rather than checked
+        against it. Releases the loader with nothing to check, so it must not be combined with
+        `declare_dim` on the same object.
+
+        Raises:
+            BaseException: whatever the load raised, re-raised unchanged.
+        """
+        self._declared.set()
+        return self._resolved()
+
+    def failure(self) -> BaseException | None:
+        """Block until the load finishes, then report what it raised, if anything.
+
+        The one member that reports a failure instead of raising it, so a caller whose job is to
+        *react* to the failure does not have to catch what it is watching for.
+        """
+        self._loaded.wait()
+        return self._failure
+
+    @property
+    def model_name(self) -> str:
+        """The model this encoder was asked to load. Answered without waiting for it."""
+        return self._model_name
+
+    @property
+    def dim(self) -> int:
+        """The width declared by `declare_dim`. Answered without waiting for the load.
+
+        Raises:
+            ZikaronError: `BAD_CONFIG` if no width has been declared yet, which means this object
+                is being used as an `Encoder` before the store it belongs to was opened.
+        """
+        if self._dim is None:
+            raise _artifact_failure(
+                self._model_name, "a declared index width, set once the store has been opened"
+            )
+        return self._dim
+
+    @property
+    def n_special_tokens(self) -> int:
+        """The artifact's special-token count. Waits for the load."""
+        return self._resolved().n_special_tokens
+
+    @property
+    def max_sequence_tokens(self) -> int:
+        """The artifact's sequence cap. Waits for the load."""
+        return self._resolved().max_sequence_tokens
+
+    def count_tokens(self, text: str) -> int:
+        """The artifact's token count for `text`. Waits for the load."""
+        return self._resolved().count_tokens(text)
+
+    def token_char_spans(self, text: str) -> tuple[tuple[int, int], ...]:
+        """The artifact's character spans for `text`. Waits for the load."""
+        return self._resolved().token_char_spans(text)
+
+    def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        """The artifact's embeddings for `texts`. Waits for the load."""
+        return self._resolved().embed(texts)
+
+    def _resolved(self) -> Encoder:
+        # An undeclared facade would otherwise deadlock here rather than fail: this wait is for a
+        # load that is itself waiting for the declaration that is never coming. `dim` answers the
+        # same misuse with a refusal, and the members that block should not answer it with a hang.
+        # Safe to read without synchronization, because every legitimate declaration
+        # happens-before this object is published to anything that could call this.
+        if not self._declared.is_set():
+            raise _artifact_failure(
+                self._model_name, "a declared index width, set once the store has been opened"
+            )
+        self._loaded.wait()
+        if self._failure is not None:
+            raise self._failure
+        if self._artifact is None:  # pragma: no cover - unreachable while both are set together
+            raise _artifact_failure(self._model_name, "a loaded model")
+        return self._artifact
+
+    def _load_and_check(self, load: Callable[[str], Encoder]) -> None:
+        """Load the artifact, check its measured width against the declared one, and latch either.
+
+        `BaseException` rather than `Exception`: this runs on its own thread, so nothing else can
+        observe an escaping failure, and a caller blocked in `_resolved` would otherwise wait for
+        an event that is never set. Everything reaches a waiting caller or `failure()`.
+        """
+        try:
+            self._artifact = self._load_or_reject(load)
+        except BaseException as error:
+            self._failure = error
+        finally:
+            self._loaded.set()
+
+    def _load_or_reject(self, load: Callable[[str], Encoder]) -> Encoder:
+        artifact = load(self._model_name)
+        self._declared.wait()
+        if self._dim is not None and artifact.dim != self._dim:
+            raise index_identity_disagrees(
+                reported_model=artifact.model_name,
+                reported_dim=artifact.dim,
+                recorded_model=self._model_name,
+                recorded_dim=self._dim,
+            )
+        return artifact

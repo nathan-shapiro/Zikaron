@@ -46,10 +46,17 @@ def _mechanism_not_the_shipped_deadline(monkeypatch: pytest.MonkeyPatch) -> None
 
     So asserting a real cold start finishes inside 1.2 s asserts a guarantee this project declines
     to make, and whether it holds depends on the machine rather than the code. Measured on a loaded
-    developer box (load ~6, three concurrent agent sessions): a real service takes **1184-1235 ms
-    merely to bind its socket** — before `health()` can answer at all — because `main.py` assembles
-    the store and loads the encoder *first*, deliberately, so it never advertises a store it could
-    not open. Both tests here failed deterministically, and had passed all day at lower load.
+    developer box (load ~6, three concurrent agent sessions): a real service took **1184-1235 ms
+    merely to bind its socket** — before `health()` could answer at all — because startup waited
+    for the model load before binding anything. Both tests here failed deterministically, and had
+    passed all day at lower load.
+
+    The model load no longer precedes the bind on the open path, so those numbers describe a
+    startup this code does not have any more. The reasoning survives the change, which is why this
+    fixture does: what the bind now waits for is the *store*, and a machine slow enough to make
+    even that lose the race is still a machine on which losing is the specified outcome rather
+    than a defect. Asserting otherwise here would re-make the same wrong claim against a smaller
+    number.
 
     The number they were calibrated against never described this peer: `spike-results.md` §"Cold
     start" measured **~101 ms**, "dominated by Python interpreter start", against spike 3's toy

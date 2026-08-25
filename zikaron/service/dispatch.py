@@ -87,6 +87,11 @@ def health(ctx: ServiceContext) -> HealthStatus:
     raises before the socket is ever opened otherwise), so `ready` is always `True` here — the
     *unreachable* case a client's start-if-absent is polling for is a connection failure this
     function is never called to answer.
+
+    **`ready` speaks for the store, not for the encoder.** The model may still be loading behind a
+    service that answers here, and a load that fails does so after the socket is already bound. So
+    this is not the place a broken embedder is reported: the request that needs the model is, and
+    the service stops itself rather than going on answering `ready` it cannot honour.
     """
     return HealthStatus(
         ready=True,

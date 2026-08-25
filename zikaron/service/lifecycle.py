@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.indexing.encoder import BackgroundLoadedEncoder
 from zikaron.service import log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.server import RunningServer
@@ -115,6 +116,73 @@ async def idle_self_stop(
             sock_path.unlink(missing_ok=True)
             await server.shut_down()
             return
+
+
+async def stop_on_encoder_failure(
+    ctx: ServiceContext,
+    server: RunningServer,
+    sock_path: Path,
+    loading: BackgroundLoadedEncoder,
+) -> None:
+    """Wait for a deferred model load to finish, and stop the process if it failed.
+
+    Runs as a background task wherever the encoder was still loading when the socket was bound.
+    Without it a failed load leaves the worst state this service can be in: `health()` answers
+    from the store's own metadata and never touches the encoder, so the process keeps advertising
+    itself as ready while rejecting every request that needs a token count or a vector. Nothing
+    replaces it either — a client's start-if-absent only spawns a server when it finds none
+    listening — so an operator who fixes the configuration would see no change until the idle
+    timeout eventually fired, and every retry in the meantime refreshes the activity clock and
+    pushes that further away.
+
+    Stopping restores the ordinary recovery loop instead: the socket goes, and the next request
+    spawns a fresh process against whatever the configuration now says. A request already in
+    flight is usually answered rather than dropped — it wakes from the same latch this task does,
+    so its `bad_config` normally reaches the client ahead of the teardown — but that is a race
+    rather than a guarantee: shutdown cancels handler tasks, it does not drain them. Losing the
+    race costs nothing that was ever delivered before, since the equivalent failure used to reach
+    the client as a poll deadline and nothing else.
+
+    **Everything here assumes the load terminates.** A load that hangs rather than fails — a cold
+    artifact download against a network read with no deadline — reaches none of this: the latch
+    never sets, so this task never fires, and `health()` goes on answering `ready`. **A resident
+    process is left either way**, and traffic decides only whether it is still reachable.
+
+    With no traffic, idle self-stop fires and the socket goes, so the next message does spawn a
+    fresh service — but this process never finishes exiting. The wait for the load runs on an
+    executor thread, cancelling this task abandons that thread rather than unblocking it, and
+    interpreter shutdown joins it with no deadline, so what remains is an unreachable process
+    holding neither store nor socket. With traffic it is worse: the first request needing the model
+    blocks, a request counts as in flight for its whole duration, so `in_flight` never returns to
+    zero, idle self-stop is out of reach as well, and the process stays *reachable* with
+    start-if-absent unable to replace it.
+
+    The hang itself is not new — before this milestone the same load hung before the socket was
+    ever bound, where it was invisible rather than resident. What is new is that it now hangs on
+    the far side of a bind, which is the same non-daemon-thread trap `coding-standards.md` records
+    for store connections, reached through the executor instead.
+
+    **Initiated here rather than by the first access that trips over the failure**, so a service
+    nobody happens to send a request to does not sit resident and mislabelled as ready.
+
+    On a successful load this task waits forever and is cancelled at shutdown with everything
+    else. That is deliberate: its completion is a caller's signal to tear down, so returning
+    normally on success would mean success and failure were indistinguishable to whoever is
+    waiting on it.
+    """
+    failure = await asyncio.to_thread(loading.failure)
+    if failure is not None:
+        # Written before the socket is unlinked, for the same reason the idle path writes first:
+        # the record survives anything that goes wrong in the two steps after it.
+        log.log_self_stop(
+            reason="encoder_failed",
+            store_dir=ctx.store.path.parent,
+            idle_seconds=ctx.activity.idle_for(),
+        )
+        sock_path.unlink(missing_ok=True)
+        await server.shut_down()
+        return
+    await asyncio.Event().wait()
 
 
 def _store_path_now_differs(store_path: Path, *, from_inode: int) -> bool:

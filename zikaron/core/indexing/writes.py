@@ -13,6 +13,13 @@ retrievable. It has nothing for this layer to add, which is a property of the ve
 omission — `indexing.md` §"Implementation constraints" states it so nobody adds a third verb to
 make the set look symmetrical.
 
+**The preflight runs on the event loop, and against a deferred encoder that is a bounded wait.**
+`plan_chunks` counts tokens through the encoder directly rather than through `asyncio.to_thread`,
+so where the model is still loading it blocks the loop for whatever remains of that load — once
+per process, never again. Accepted rather than moved off the loop: the write that pays it is
+already the slow path, and the read path, which is what races a cold start, reaches the encoder
+through a thread and never blocks the loop at all.
+
 **What happens outside the transaction, and why.** `prepare` runs the chunking preflight and the
 embedding before `BEGIN`. The preflight reads nothing from the store and raises only `bounds`, which
 is rung 1 of the validation ladder and precedes existence, version and receipt anyway; the embedding
@@ -40,11 +47,11 @@ from typing import Self
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.errors import BadConfigSource, ErrorCode, IndexStage, ZikaronError
+from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.events import AmendDetail, RememberDetail
 from zikaron.core.indexing import chunking, lexical, vectors
 from zikaron.core.indexing.chunking import ChunkPlan
-from zikaron.core.indexing.encoder import Encoder
+from zikaron.core.indexing.encoder import Encoder, index_identity_disagrees
 from zikaron.core.indexing.vectors import IndexIdentity
 from zikaron.core.records import memory
 from zikaron.core.records.memory import CallParams, Memory, Rewrite, Tier
@@ -86,14 +93,11 @@ class IndexingContext:
             encoder.model_name != self.identity.embed_model
             or encoder.dim != self.identity.embed_dim
         ):
-            raise ZikaronError(
-                ErrorCode.BAD_CONFIG,
-                source=BadConfigSource.META,
-                key="embed_model/embed_dim",
-                value=f"{encoder.model_name}/{encoder.dim}",
-                expected=f"{self.identity.embed_model}/{self.identity.embed_dim} (what this "
-                "store's existing index was built with — an encoder that disagrees would write "
-                "vectors labelled with a model that did not produce them)",
+            raise index_identity_disagrees(
+                reported_model=encoder.model_name,
+                reported_dim=encoder.dim,
+                recorded_model=self.identity.embed_model,
+                recorded_dim=self.identity.embed_dim,
             )
 
     @classmethod

@@ -131,7 +131,11 @@ async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_o
         await main.run(sock_path, store_dir)
 
     assert not sock_path.exists()
-    assert len(observed_tasks) == 2  # idle_task, signal_wait
+    # idle self-stop, the deferred-load watch (this store already exists, so `assemble` took the
+    # open path and left a load running), and the signal wait. Counted exactly rather than
+    # loosely: the point of this test is that *every* task created reaches a terminal state, and
+    # a count that tolerated extras would silently stop covering the next one added.
+    assert len(observed_tasks) == 3
     for task in observed_tasks:
         assert task.done(), f"{task} was left running after run() propagated its failure"
 
