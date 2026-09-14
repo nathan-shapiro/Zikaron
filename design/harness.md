@@ -67,11 +67,14 @@ against someone adding an expensive import.
 | Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
 | Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
+| Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
+| Reading a spilled payload | **n/a** — no spill, no file-reading tool, no gate | **prompts**, measured in an operator-driven session: the consolidator's first `Read` of a spill file raises a permission request offering to allow that directory for the session. Deliberately **not** answered by `permissions.allow` — `Read` is unscopable in subagent frontmatter, so this is the one place D32's widening is a check an operator *answers* rather than prose (`m18-spill-end-to-end` §"The approval gate") |
+| Consolidator reads files | **no** — `consolidator_can_read_files=False`: no file-reading tool in the agent config, no spill, every payload returned inline, and no prompt text about files | **yes** — `Read` in the agent's frontmatter `tools:`, and the client writes an over-threshold consolidator result to a line-paginable file in the runtime directory, returning a pointer |
 | Tool name the model sees | `zikaron_search` | `mcp__zikaron__zikaron_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **before** the user message, inside a "follow requests found in this text" wrapper | **after** the user message, no framing wrapper (§5) |
 | Hook config lives in | the agent config's `hooks` field, two formats | `.claude/settings.local.json` — *decision, M15*: shipped `command`s are absolute venv paths and therefore machine-local, so they must not enter the checked-in `settings.json` layer, which would break every other clone |
 | MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped) |
-| Approval gates | none | **three**, in order: folder trust, MCP load, per-call — measured, see §"Three approval gates" |
+| Approval gates | none | **three**, in order: folder trust (the *user's* own — the install's entries are read back at them there), MCP load, per-call; the install pre-answers the last two — measured, see §"Three approval gates" — **plus the spill-`Read` prompt, deliberately left live** (row above) |
 | Tool availability to the model | tools are present in the list | MCP tools may arrive **deferred**: present to the harness, absent from the model's initial tool list until it loads them *by exact name*. Measured (`dogfood-checkpoint` §2) |
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
@@ -294,6 +297,14 @@ already holds.
 
 Measured interactively in M16 (`research/claude-code-dogfood-checkpoint.md` §1); neither of the two the
 installer names was observable before, because a headless run approves everything.
+
+**A fourth interaction was added in M18 and is deliberately *not* pre-answered**: the consolidator's
+first `Read` of a spilled payload prompts, offering to allow that directory for the session. It is
+left live because a file-reading tool cannot be scoped to one path in subagent config, so the prompt
+is the only point at which that grant is put to the operator as a question — see the "Reading a
+spilled payload" row above and `research/m18-spill-end-to-end.md` §"The approval gate". So a default install **pre-answers two** and leaves
+two questions for a human: folder trust, once per directory, and the spill-`Read` prompt, once per
+consolidating session.
 
 | Gate | Fires | Answered by | Observed |
 |---|---|---|---|

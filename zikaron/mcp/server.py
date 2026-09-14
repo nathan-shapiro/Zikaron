@@ -20,9 +20,13 @@ from typing import Literal
 
 from fastmcp import FastMCP
 
-from zikaron.mcp.connection import ServiceConnection
+from zikaron.harness import detect
+from zikaron.mcp import spill
+from zikaron.mcp.connection import ServiceConnection, resolve_effective_config
 from zikaron.mcp.consolidator import register_consolidator_tools
 from zikaron.mcp.primary import register_primary_tools
+from zikaron.mcp.spill import SpillPolicy
+from zikaron.service import paths
 
 #: The two agent configs D32 names, and the only two values `build_server` accepts — a third
 #: string would be a caller bug, not a mode this project has ever specified, so it is rejected
@@ -46,5 +50,35 @@ def build_server(mode: Mode, *, scope_dir: Path) -> FastMCP:
     if mode == "primary":
         register_primary_tools(mcp, connection)
     else:
-        register_consolidator_tools(mcp, connection)
+        spill_policy = _spill_policy(connection)
+        # Before serving anything: remove what a previous consolidator left behind. This process's
+        # own exit cannot be relied on — a harness terminates its MCP server rather than letting it
+        # exit, so cleanup has to be something the *next* start does rather than something the last
+        # one promised.
+        spill.sweep_stale(spill_policy)
+        register_consolidator_tools(mcp, connection, spill_policy=spill_policy)
     return mcp
+
+
+def _spill_policy(connection: ServiceConnection) -> SpillPolicy:
+    """Whether this process may write an over-large result to a file, and above what size.
+
+    Built here rather than inside the consolidator module so that the primary branch above cannot
+    acquire one by accident: spilling is a property of the consolidator mode, and the only way to
+    obtain a policy is to be on that branch.
+
+    The config read is blocking and deliberately runs here, at build time, before anything is
+    served — `build_server`'s contract is that it opens no connection and makes no RPC, which this
+    keeps; a local file read is not a round trip. Resolving it per call instead would put a `stat`
+    and two file reads on every tool invocation to answer a question whose answer cannot change
+    while the process lives (`schema.md`: config is read once, at startup).
+    """
+    config = resolve_effective_config(connection.location.store_dir)
+    return SpillPolicy(
+        enabled=detect.current_spec().consolidator_can_read_files,
+        threshold_bytes=config.get_int("spill_threshold"),
+        directory=connection.location.runtime_dir,
+        # The same hash the socket is named for, so one store's spill files are findable among
+        # every store's without opening any of them — which is what the erasure procedure needs.
+        store_key=paths.socket_hash(connection.location.store_dir.resolve()),
+    )

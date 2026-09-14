@@ -81,8 +81,11 @@ def _expected_bounds(type_cell: str, range_cell: str) -> ConfigBounds:
 
 def _expected_unit(type_cell: str, name: str) -> ConfigUnit:
     """The unit the design gives a key, from its type column or, failing that, its own name."""
-    if "seconds" in literal(type_cell):
+    declared = literal(type_cell)
+    if "seconds" in declared:
         return ConfigUnit.SECONDS
+    if "bytes" in declared:
+        return ConfigUnit.BYTES
     if name.endswith("_days"):
         return ConfigUnit.DAYS
     return ConfigUnit.NONE

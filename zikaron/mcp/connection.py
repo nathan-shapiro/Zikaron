@@ -70,6 +70,10 @@ class StoreLocation:
 
     store_dir: Path
     sock_path: Path
+    #: Kept rather than discarded after the socket path is built, because an over-large tool result
+    #: is written here too: user-private `0700`, already vetted for the socket, on tmpfs where the
+    #: desktop provides one, and never inside the project tree.
+    runtime_dir: Path
 
     @classmethod
     def resolve(cls, scope_dir: Path) -> "StoreLocation":
@@ -79,7 +83,7 @@ class StoreLocation:
             xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid()
         )
         sock_path = paths.socket_path(runtime_dir, resolved_store_dir)
-        return cls(store_dir=store_dir, sock_path=sock_path)
+        return cls(store_dir=store_dir, sock_path=sock_path, runtime_dir=runtime_dir)
 
 
 async def _read_store_identity(store_dir: Path) -> str | None:
@@ -188,6 +192,11 @@ class ServiceConnection:
         # different service-minted labels. The lock makes the whole round trip atomic with
         # respect to every other call through this same connection.
         self._lock = asyncio.Lock()
+
+    @property
+    def location(self) -> StoreLocation:
+        """Where this connection's store, socket and runtime directory are."""
+        return self._location
 
     def envelope(self, *, kind: str) -> ClientEnvelope:
         """This process's own `client` envelope for one request: the adopted session label (if

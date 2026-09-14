@@ -53,6 +53,7 @@ class ConfigUnit(StrEnum):
     NONE = "none"
     SECONDS = "seconds"
     DAYS = "days"
+    BYTES = "bytes"
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +305,13 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
         IntBounds(60, 86400),
         1800,
         unit=ConfigUnit.SECONDS,
+    ),
+    ConfigKey(
+        ConfigSection.CONSOLIDATION,
+        "spill_threshold",
+        IntBounds(4096, 1_048_576),
+        27000,
+        unit=ConfigUnit.BYTES,
     ),
     ConfigKey(
         ConfigSection.SERVICE,

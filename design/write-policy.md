@@ -227,6 +227,19 @@ the same string. `warmup.log` and `hook.log` do not need the same treatment: nei
 memory content, or anything beyond a fixed failure-kind label and an error code (`architecture.md` §"Paths",
 §"Degraded modes"), so neither can hold a secret by construction.
 
+**And delete this store's spill files from the runtime directory**, `$XDG_RUNTIME_DIR/zikaron/` (or its
+per-uid `/tmp` fallback — `architecture.md` §Paths). A consolidator group too large for a harness to deliver
+is written there verbatim, so a record erased from the store can survive in one of those files until the next
+reboot clears the directory. They are `0600`, and each is named for the store it came from: `<store-hash>-<method>-<pid>-<random>.json`,
+where the hash is the one that names this store's socket in the same directory — so
+`rm "$XDG_RUNTIME_DIR"/zikaron/<store-hash>-*.json` reaches exactly this store's files and no other's.
+A consolidator removes the previous group's files as it advances and sweeps a dead
+predecessor's when it starts, so what remains here is at most one group's files — the current group of
+a live run, or the last group a killed one was holding — until the next consolidator start sweeps them.
+The `rm` above waits for neither. This is the one copy of
+record prose that lives outside the store and outside the log rules, and it is listed here because nothing
+else in this procedure would reach it.
+
 #### What this still does not guarantee
 - **`event.detail` is not covered, and one field of it is prose.** Event details store counts, not memory
   text — with one exception, `discard.detail.reason`, which is model-authored. If the secret could be in a

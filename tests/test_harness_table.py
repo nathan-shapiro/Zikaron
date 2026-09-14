@@ -75,6 +75,20 @@ def _cell(rows: dict[str, dict[str, str]], fact: str, spec: HarnessSpec) -> str:
     return rows[fact][column]
 
 
+def _leading_bold(cell: str) -> str:
+    """The first `**bolded**` word in `cell`, lowercased.
+
+    This table's cells carry prose after their value, so the answer is extracted rather than the
+    cell read whole — and a cell with no bolded word raises rather than returning something
+    falsy, since a guard that quietly read nothing would pass unconditionally.
+    """
+    match = re.search(r"\*\*([A-Za-z]+)\*\*", cell)
+    if match is None:
+        message = f"cell states no bolded answer: {cell!r}"
+        raise ValueError(message)
+    return match.group(1).lower()
+
+
 def _identifier(cell: str) -> str | None:
     """The first backticked identifier in `cell`, or `None` if the cell says the value is absent.
 
@@ -141,6 +155,25 @@ class TestTheCodeTableMatchesTheDesignTable:
         self, rows: dict[str, dict[str, str]], spec: HarnessSpec
     ) -> None:
         assert _identifier(_cell(rows, "Subagent triggers", spec)) == spec.subagent_start_trigger
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_consolidator_reads_files(
+        self, rows: dict[str, dict[str, str]], spec: HarnessSpec
+    ) -> None:
+        """Whether this harness's consolidator may be handed a file, and therefore whether an
+        over-large result is written to one.
+
+        One field for two consequences — the tool grant and the spill — so a design that flipped
+        one cell without the other would put a consolidator with no file-reading tool in front of a
+        path it cannot open, which is the stall the spill exists to end, rebuilt from the other
+        side.
+        """
+        cell = _cell(rows, "Consolidator reads files", spec)
+        answer = _leading_bold(cell)
+        if answer not in {"yes", "no"}:
+            message = f"cell does not open with **yes** or **no**: {cell!r}"
+            raise ValueError(message)
+        assert (answer == "yes") == spec.consolidator_can_read_files
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_harness_binary(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:

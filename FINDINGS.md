@@ -54,9 +54,12 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-### Phase: **M17 has landed. No milestone in `design/build-plan.md` is outstanding** — the next one
-has to be written before it can be worked.
-Every milestone **M0–M17 is built and reviewed**. M17 landed 2026-08-25, APPROVED after seven rounds
+### Phase: **every milestone in `design/build-plan.md` is landed.** M18 was the last, APPROVED
+after 24 rounds and committed 2026-09-14 as "M18: the result that did not fit, and the path that
+did"; every question its done-when asked is answered by measurement. **The next work is not a
+milestone** — it is the archive pass noted below, then open question 12's positive merge criterion
+on a journal grown by real work.
+Every milestone **M0–M18 is built and reviewed**. M17 landed 2026-08-25, APPROVED after seven rounds
 — four on the brief and three on the code — and its A/B is `research/m17-cold-start-ab.md`. M16
 landed 2026-08-16, APPROVED after five rounds; its dogfooding evidence is
 `research/claude-code-dogfood-checkpoint.md`. M15 (the installer adapter) landed 2026-08-16,
@@ -71,8 +74,9 @@ hook, the MCP client or the installer, and do not re-derive one from an older se
 speak both harnesses. `python -m zikaron.install --project .` writes either harness's artefacts, runs
 from a plain shell with no harness process, and refuses when the harness's own binary is absent.
 **But nothing is installed into this repository yet** — that is a choice, not a gap. Until someone
-runs it, the memory tools and the push hook are **not live in this session**, and M16's first act is
-to change that:
+runs it, the memory tools and the push hook are **not live in this session**. M16 chose a throwaway
+over installing here (see its item below); installing into this repo remains available, and
+unexercised, as:
 
 ```bash
 .venv/bin/python -m zikaron.install --project . --harness claude-code
@@ -106,7 +110,7 @@ Every milestone M0–M12 is built and reviewed; **M13** (the Claude Code design 
 2026-08-16, APPROVED after three review rounds
 (`reviews/claude-code-harness-design-review.md`); and **M14** (the harness seam, both clients, and
 the gist character bound) landed 2026-08-16, APPROVED after **four** rounds
-(`reviews/m14-harness-seam-review.md`). **M16's measurement half is done** and it is in review — see item 0 below.
+(`reviews/m14-harness-seam-review.md`).
 **Milestones are cited here by commit *subject*, not by hash, and that is deliberate.** This file
 recorded M13 as commit `7628946`; that hash does not exist in the repository — the history was
 rebased, as `backup-pre-rebase` and `backup-pre-rebase-2` attest. A hash is the most confident-looking
@@ -160,20 +164,79 @@ state at 13 events / 2 journal records), and by a **review finding forcing a rec
 store**. Both lie outside the loop the agent controls.
 
 **What to do next, in priority order.**
+*Owed now that M18 has landed: M17 and M16 are landed milestones still filed under this heading, all
+three items numbered `0.`. Moving them to `FINDINGS-archive.md` is its own pass, not a drive-by —
+the M17 item must travel together with the superseded cold-start diagnosis paragraphs below it so
+that one pointer stays internal. The rest break on the move — including two from
+`design/build-plan.md` §M17 into item 6 and the diagnosis paragraphs, one of which merely needs
+re-checking rather than repair, and the resume block's own "see its item below". Inventory and
+warning: `reviews/m18-payload-spill-review.md` round 22 finding 4 and round 23 finding 2.*
+0. **M18 — a group too big for the harness to deliver. Built, measured end to end, APPROVED after
+   24 rounds, and landed 2026-09-14** (`reviews/m18-payload-spill-review.md` — round 9 approved
+   the implementation, the end-to-end run then reopened it, and rounds 21–24 were this file's own
+   consistency rather than the milestone's; its artefacts were stable from round 21).
+   Brief: `design/build-plan.md` §M18.
+   `zikaron-mcp`, in consolidator mode only, writes an over-threshold result to a line-paginable
+   file in the runtime directory and returns a pointer; the consolidator reads it with `Read`.
+   **Both bounds are proofs rather than margins** — a token spans at least one byte, so
+   `spill_threshold` (27,000 bytes, a config key) is at most 27,000 tokens against the ≈29,923 the
+   harness was observed to deliver, and `SPILL_MAX_LINE_BYTES` (24,000, fixed) is under `Read`'s
+   25,000. No characters-per-token ratio appears in either. Evidence:
+   `research/claude-code-mcp-result-truncation.md` and `research/consolidation-payload-sizes.md`.
+   **The end-to-end run is done and it changed the milestone.** Evidence, with transcripts copied
+   out of the harness's pruning window to `~/zikaron-m18-evidence/`:
+   `research/m18-spill-end-to-end.md`. The spill works — groups spilled, the consolidator read
+   every file on the exact path, first try, and **did not balk at a pointer that is structurally an
+   injection**, on the shipped guidance alone in a run whose whole prompt was the installed skill's
+   own block. But **`atexit` never fires in production**: the harness terminates its MCP server, so
+   the original cleanup left 217 KB of record prose in tmpfs. Cleanup is now release-on-`next_group`
+   plus a start-of-process sweep, neither depending on a graceful exit; release is verified in that
+   lifecycle, the sweep only in the hermetic tier.
+   **The gate question is answered: it prompts.** Measured in an operator-driven session — `Read`
+   of the runtime directory raises a permission request, and the harness's own option grants that
+   directory **for the session**. A `permissions.allow` entry was considered and **rejected**
+   (reasoning: `design/build-plan.md` §M18; the installer now carries a third note warning the
+   prompt is coming), because `Read` is unscopable in subagent frontmatter, so this is the one
+   place D32's widening is a check an operator answers rather than prose.
+   **One observation from those runs is worth knowing before trusting a consolidation's
+   dispositions.** Given pagination on a deliberately degenerate corpus — five templates rotated
+   twelve times — the consolidator read gists and skipped `content`, then dispositioned members
+   whose prose it had never read. **That was reasonable**: recognising duplicate input and not
+   re-reading it is intelligence, and the fixture invited it. The verb was `discard`, which D16
+   keeps recoverable. What it leaves is that compliance with the pointer's "read it, to its end"
+   is **unmeasured on real prose** in either direction — `research/m18-spill-end-to-end.md`
+   §"Windowed reading".
+   **And one methodological finding worth more than the feature.** Repeatedly in this milestone —
+   the review file has the running record, and it kept growing after every round that claimed to
+   have ended it — prose asserted what the adjacent code or transcript contradicted: a test
+   asserting a process lifecycle the harness never provides, a docstring claiming a cleanup policy
+   the code did not implement, an experiment whose own prompt primed the behaviour it measured, a
+   "corrected" docstring restating a lemma the note beside it had just withdrawn, and this very
+   entry having opened with a claim a later line of it refuted. **Not one was caught by ruff,
+   mypy, the full test suite or 97% coverage.** Every one was caught by a reader comparing a
+   sentence against the thing it described. Two mechanical causes, both mine: edits applied with a
+   replace-once and checked with an assert that cannot fail on a partial fix; and audits that
+   enumerate the *phrasings* a reviewer quoted rather than the *claim*, so the same assertion
+   survives in other words. The check that catches it is reading the changed passage end to end
+   after editing.
+   **Two facts worth carrying, both measured against the operator's real store:** spilling is the
+   *majority* path on a mature corpus (67 of 116 groups), so this is ordinary behaviour rather
+   than a rare fallback; and a candidate-trimming alternative was rejected because it loses data —
+   12–33% of candidates at any budget that fits reliably.
+
 0. **M17 — the cold start loses the race it was given. Built, reviewed (APPROVED, seven rounds),
    and measured. Landed 2026-08-25 as "M17: the same wait, on the other side of the deadline"**,
    with the pytest-asyncio fixture-scope pin following it as a separate commit. What it built:
    `BackgroundLoadedEncoder` in `core/indexing/encoder.py`, `assemble` split open-vs-create,
-   `lifecycle.stop_on_encoder_failure`, and two new test files. `./check.sh` exits 0 (1738 passed,
-   coverage 97.65%, and **zero warnings** — the five it used to emit came from the nested pytester
-   sessions in `test_harness_tier_guard.py`, not from the outer run, which is why setting the
-   option in `pyproject.toml` alone did not silence them). **What is not done is the A/B**, by agreement rather than oversight: this
-   machine is loaded, and the brief requires the deciding numbers to come from an idle one. Four
-   mutations were verified — an eager artifact read in `assemble`, deleting the width check, and
-   gutting the self-stop teardown — and that exercise found one of the *new tests* vacuous: it
-   asserted a gate had not been released where the gate used a timeout, so it passed while
-   `assemble` blocked for the full five seconds. Fixed and re-verified. **A test written to catch
-   a wrong claim can itself be the wrong claim**, and only mutation showed it.
+   `lifecycle.stop_on_encoder_failure`, and two new test files. `./check.sh` exited 0 at landing
+   (1738 passed, coverage 97.65%, and **zero warnings** — the five it used to emit came from the
+   nested pytester sessions in `test_harness_tier_guard.py`, not from the outer run, which is why
+   setting the option in `pyproject.toml` alone did not silence them). The mutations verified
+   **included** an eager artifact read in `assemble`, deleting the width check, and gutting the
+   self-stop teardown; the exercise found one of the *new tests* vacuous: it asserted a gate had
+   not been released where the gate used a timeout, so it passed while `assemble` blocked for the
+   full five seconds. Fixed and re-verified. **A test written to catch a wrong claim can itself be
+   the wrong claim**, and only mutation showed it.
    **The A/B is done, on an idle machine, and the defect was reproduced on demand before being
    fixed.** Full detail, both arms, both conditions and three caveats:
    `research/m17-cold-start-ab.md`; harnesses `experiments/m17_cold_start_ab.py` and
@@ -191,10 +254,10 @@ store**. Both lie outside the loop the agent controls.
    old code wins the race 3/3 and an outcome test passes on both arms.
    Brief: `design/build-plan.md` §M17, which is self-contained and carries every measurement, the
    design options with their trades, and — most importantly — **the attempt that was already made
-   and reverted**, so it is not made twice. One-line version: the first user message after any idle
-   gap loses its injected memories, because a cold service takes ~1.2 s to bind against the hook's
-   1.2 s readiness deadline, and `FastEmbedEncoder.load()` is 1059 ms of that. Priority item 6 below
-   carries the numbers.
+   and reverted**, so it is not made twice. One-line version of what it fixed: the first user
+   message after any idle gap *lost* its injected memories, because a cold service took ~1.2 s to
+   bind against the hook's 1.2 s readiness deadline, and `FastEmbedEncoder.load()` was 1059 ms of
+   that. Priority item 6 below and the superseded diagnosis paragraphs after it carry the numbers.
    **The design is option (d), operator decision 2026-08-19** after two review rounds
    (`reviews/m17-cold-start-review.md`): load in a background thread, and validate the artifact
    against the store's recorded identity *inside that thread* the moment the load returns, latching
@@ -211,18 +274,20 @@ store**. Both lie outside the loop the agent controls.
    considered, because `FastEmbedEncoder.load` fails after the bind for non-identity reasons too;
    and the hook's binding constraint is the 1.2 s *connect* deadline, not its 2.0 s total, which is
    why moving the load past the bind changes the outcome rather than merely the timing.
-0. **M16 — the dogfooding checkpoint under Claude Code**, the last milestone of the port. Brief:
-   `design/build-plan.md` §M16; what it inherits is in the resume block above. It **gates items 1
-   and 2**, which both need the memory tools and the push hook live in whichever harness the work
-   happens in — and after M15 that is a matter of running the installer, not of building anything.
-   The M13–M15 detail a fresh session might go looking for is in the briefs and in
-   `FINDINGS-archive.md`; nothing outstanding remains in any of them.
+0. **M16 — the dogfooding checkpoint under Claude Code. Landed 2026-08-16, APPROVED after five
+   rounds (`reviews/m16-dogfood-checkpoint-review.md`), the last milestone of the port.** Brief:
+   `design/build-plan.md` §M16; what it inherits is in the resume block above. It **gated items 1
+   and 2**; item 2 closed with it, item 1 remains open. Both needed the memory tools and the push
+   hook live in whichever harness the work happens in — and after M15 that is a matter of running
+   the installer, not of building anything. The M13–M15 detail a fresh session might go looking
+   for is in the briefs and in `FINDINGS-archive.md`; nothing outstanding remains in any of them.
 
    **M16's dogfooding half is DONE, 2026-08-16. Evidence:
    `research/claude-code-dogfood-checkpoint.md`; raw artefacts in `~/zikaron-m16-evidence/` —
    `store.db` plus both session transcripts and the consolidator's, since Claude Code prunes
-   `~/.claude/projects/` on `cleanupPeriodDays` and the note's every quoted line came from there.** Every done-when clause is met and five findings arrived
-   that the brief did not ask for. **Read the note before proposing anything about the write
+   `~/.claude/projects/` on `cleanupPeriodDays` and the note's every quoted line came from
+   there.** Every done-when clause is met and five findings arrived that the brief did not ask
+   for. **Read the note before proposing anything about the write
    policy, the budget, or recall** — it is the only measurement of this system under real use by an
    agent that was never told to use it.
    What it settled: **three** approval gates, not two (folder trust reads our `permissions.allow`
@@ -352,17 +417,25 @@ store**. Both lie outside the loop the agent controls.
    degrade (log to hook.log, relay on stdout) rather than make the user wait"*. Losing is a
    **specified outcome**, covered against a fake service that binds 5 s after spawn. Asserting that
    a *real* cold start wins the race asserts something the product never promised, and whether it
-   holds depends on the machine: a real service takes **1184-1235 ms merely to bind its socket**,
-   because `main.py` assembles the store and loads the encoder first, deliberately, so it never
-   advertises a store it could not open. **The number that constant was calibrated against never
+   held depended on the machine: a real service then took **1184-1235 ms merely to bind its
+   socket**, because `main.py` assembled the store and loaded the encoder first, deliberately, so
+   it never advertised a store it could not open — the store half of that ordering survives M17;
+   the encoder half is what it moved. **The number that constant was calibrated against never
    described this peer** — `spike-results.md` §"Cold start" measured ~101 ms "dominated by Python
    interpreter start" against spike 3's *toy* server, with no store and no fastembed. Fixed by
    giving those two tests their own 30 s deadline via an autouse fixture that states all of this, so
    they assert the mechanism while the shipped value stays asserted where it belongs. Mutation-
    verified: a server that never starts still fails them. **The shipped constant is unchanged, and
    is still right for the user.** What this does leave open, and it is a product question rather
-   than a test one: a cold start-if-absent loses the race on a loaded machine, so the warm helper is
-   load-bearing rather than an optimisation, and a user message that races it silently loses push.
+   than a test one: a cold start-if-absent loses the race on a loaded machine, so the warm helper
+   is load-bearing rather than an optimisation, and a user message that races it silently loses
+   push. **Closed by M17**, which moved the encoder load to the other side of the bind; the
+   shipped hook delivered 5/5 clean pushes under load (`research/m17-cold-start-ab.md`). The warm
+   helper's structural limit — it fires on `SessionStart` only, so it never covered a mid-session
+   idle-out — stands; whether the helper is still load-bearing after M17's margin is unmeasured.
+
+**Superseded 2026-08-25 by M17 (the M17 priority item above): the loss described below is fixed
+and measured. Kept as the production diagnosis that motivated it.**
 
 **The first message after any idle gap loses push, observed in production twice.** Recorded
 2026-08-19 from `~/Trading/LeibaTrader`, and diagnosed only because the idle-stop log added the day
@@ -383,6 +456,10 @@ could not open" — is an argument about the *store*, and it is being applied to
 not the same thing. Note the one real constraint: `Store.create` genuinely needs the encoder (it
 checks `embedder.dim`/`.model_name` before any table exists), so only the **open** path can defer it
 — and the cold-start-after-idle case is always an open.
+
+**Superseded 2026-08-25 by M17, which took a third path — option (d), the wrapper answering
+identity from expectation with the measured check moved into the loader thread. Neither path below
+was taken, as predicted. Kept for the measurements.**
 
 **The obvious fix was built, measured, and does not work — reverted, with the reason.** Deferring
 `FastEmbedEncoder.load()` to a background thread so the socket binds first changed socket-ready

@@ -1688,6 +1688,68 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
 
 
 ## References
+- **M18's end-to-end run** — the milestone's done-when, and the reason its review reopened after
+  round 9 had already approved the implementation. It confirmed the feature and destroyed a
+  mechanism: groups spilled, the consolidator read every file on the exact path first try, and
+  **did not balk at a pointer that is structurally an injection** — on the shipped guidance alone,
+  in a run whose entire prompt was the installed skill's own block. But `atexit` **never fires in
+  production**, because the harness terminates its MCP server rather than letting it exit, so the
+  cleanup left 217 KB of record prose in tmpfs while a hermetic test asserting that lifecycle
+  passed throughout. The first attempt at the no-balk finding was also **self-contaminated** — its
+  own accounting prompt named the pointer's shape and asked what was done to obtain the content —
+  and had to be re-run clean. Both runs' transcripts and the seeding script are in
+  `~/zikaron-m18-evidence/`, outside the harness's pruning window —
+  `research/m18-spill-end-to-end.md`.
+- **M18 payload-spill review** — **twenty-four** rounds, APPROVED 2026-09-14: six on the brief,
+  three on the implementation, and **fifteen more on one defect that kept recurring** — prose
+  asserting what the adjacent code or transcript contradicted. The instances: a test asserting a
+  process lifecycle the harness never provides; a docstring claiming a cleanup policy the code did
+  not implement; an experiment whose prompt primed the behaviour it measured; "identically
+  reseeded" against transcripts showing fresh uuids and a different group count; a release-timing
+  claim transplanted from a docstring's ideal run onto a run of another shape; a preserved seed
+  script describing a corpus that never existed; and a *corrected* docstring restating the exact
+  lemma the note beside it had withdrawn one fix earlier; the always-loaded `FINDINGS.md` entry
+  for this very milestone opening with a claim its own body refuted; and that same file holding
+  **both states of a production defect at once** — M17's cold-start loss recorded as fixed and
+  measured in one item, and as live and awaiting a milestone 170 lines below it. **None was caught
+  by ruff, mypy, 1774 tests or 97% coverage** — every one by a reader comparing a sentence against
+  the thing it described. **Four** approvals were issued — rounds 6, 9, 16 and 24 — and each of
+  the first three was superseded by evidence that arrived after it: round 6's when implementation
+  began, round 9's by the end-to-end run, round 16's by finding the experiment contaminated. **An
+  approval is only as good as the evidence available when it was given.** The reviewer also
+  corrected a *policy*: descriptive claims about a run are where deletion is the right remedy,
+  analytical passages a transcript cannot carry are not — `reviews/m18-payload-spill-review.md`.
+- **M18 payload-spill review, first nine rounds** — six on the brief before any
+  code, three on the implementation. Worth reading for two things. **The brief rounds were almost
+  entirely about numbers and units, never the mechanism** — a bracket quoted as measured when it
+  was derived, a floor rounded in the author's own favour by 9 tokens, a spill rate paired with a
+  threshold it was not measured at, and a line bound whose unit was ambiguous by 6× on non-ASCII
+  content. The design was stable from round 1; the arithmetic needed five rounds. **The
+  implementation rounds found the reverse**: the code was faithful and the *tests* were not.
+  `_spill_policy` — the one function turning harness data into the gate — had no test at all, so
+  three mutations left 1763 green, including `enabled=True` under kiro, which rebuilds the exact
+  stall the milestone exists to end. And a test asserting `threshold_bytes == 27_000` could not
+  distinguish reading config from hard-coding the same number, so the operator's knob could be
+  severed silently by the test that claimed to guard it. **Ten mutations were verified in total,
+  and three of them were green before the test that catches them existed** —
+  `reviews/m18-payload-spill-review.md`.
+- **Claude Code MCP-result truncation, measured 2026-09-13** — what the harness does with a tool
+  result too large to deliver, and the finding that killed the obvious fix. The harness *does*
+  spill to a file and name it, but that file is **one line of JSON** and `Read` cannot paginate it
+  (31,247 of 104,179 characters; `offset`/`limit` refused). The opening was that `Read`'s cap is
+  **per read, not per file** — a 206,719-character, 2,002-line file came back whole in three calls
+  — so a payload is recoverable if and only if whoever wrote it made it line-paginable. Also
+  measured: long lines are never clipped *as lines* (a 60,000-character line was recovered intact
+  by a targeted offset), the harness's own notice claiming the file "cannot be paginated by line"
+  is **false**, and the spill notice carries embedded instructions that both probe models correctly
+  treated as prompt injection and refused — `research/claude-code-mcp-result-truncation.md`.
+- **Consolidation payload sizes, measured 2026-09-13** — how big a group actually gets, against
+  `~/Trading/LeibaTrader` at 252 memories and 116 planned groups. Max 69,265 prose characters,
+  median 27,206; **candidates are a median 70% of a group and up to 94%**; serialization overhead
+  is a measured 1.074×, not the 10–20% two people guessed. Carries the rejected trimming
+  alternative's real price (12–33% of candidates dropped at any budget that fits) and a method note
+  recording an anchor double-count corrected between passes —
+  `research/consolidation-payload-sizes.md`.
 - **M17 implementation review** — rounds 5-7 of `reviews/m17-cold-start-review.md`, APPROVED
   2026-08-19, on the code rather than the brief. **Its value was almost entirely in the test
   layer.** Round 5 found *two of the new tests vacuous* — each passed under the exact mutation it

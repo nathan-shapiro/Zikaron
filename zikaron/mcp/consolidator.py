@@ -26,10 +26,13 @@ import asyncio
 from enum import Enum
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from zikaron.core.errors import ZikaronError
+from zikaron.mcp import spill
 from zikaron.mcp.connection import AmbiguousMutationError, ServiceConnection
 from zikaron.mcp.errors import ServiceRejectionError, TransportFailureError, response_to_tool_result
+from zikaron.mcp.spill import SpillPolicy
 
 _CLIENT_KIND = "consolidator"
 
@@ -155,21 +158,45 @@ class _PlanBridge:
                 self._state = _BridgeState.READY
 
 
-async def _call(connection: ServiceConnection, method: str, params: dict[str, object]) -> object:
+async def _call(
+    connection: ServiceConnection,
+    method: str,
+    params: dict[str, object],
+    *,
+    spill_policy: SpillPolicy,
+) -> object:
     """One tool call's worth of translation — identical in shape to `primary.py`'s own `_call`,
     duplicated rather than shared because the one thing that differs, `client.kind`, is exactly
     the module-level constant each file already declares for its own tool set; sharing would mean
     threading that constant through a shared helper's own parameter list for two call sites.
+
+    **Every consolidator result passes through the spill check here**, not only `next_group`'s.
+    A `merge`/`promote`/`discard` conflict carries the full prose of every conflicting row, which
+    is the other shape large enough to be refused — and gating on the verb would leave that one to
+    be discovered the way the first one was. That the primary client has no such check is this
+    duplication earning its keep: spilling is a property of the consolidator mode, and here that
+    is structural rather than a branch.
     """
     envelope = connection.envelope(kind=_CLIENT_KIND)
     try:
         response = await connection.request(method, params, envelope=envelope)
     except (OSError, ConnectionError, ZikaronError, AmbiguousMutationError) as error:
         raise TransportFailureError(str(error)) from error
-    return response_to_tool_result(response)
+    result = response_to_tool_result(response)
+    try:
+        return await asyncio.to_thread(spill.apply, result, policy=spill_policy, tool=method)
+    except spill.PayloadLineTooLongError as error:
+        # `errors.py`'s own rule: `ToolError` is the one exception type whose message reaches the
+        # model regardless of `mask_error_details`. A refusal whose whole value is naming a uuid
+        # must not be the one failure that arrives as a generic internal error.
+        raise ToolError(str(error)) from error
+    except OSError as error:
+        raise ToolError(f"could not write this result to a file: {error}") from error
 
 
-def register_consolidator_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
+def register_consolidator_tools(
+    mcp: FastMCP, connection: ServiceConnection, *, spill_policy: SpillPolicy
+) -> None:
     """Decorate all four consolidator tools onto `mcp`.
 
     Called at most once per process, from `server.py`'s `build_server("consolidator")` branch —
@@ -201,8 +228,15 @@ def register_consolidator_tools(mcp: FastMCP, connection: ServiceConnection) -> 
         the group this call just delivered — so it reaching 0 means this is the last group left,
         not that none remain at all.
         """
+        # First, before anything that can fail: releasing after the planning bridge would skip
+        # cleanup on exactly the runs that go wrong. Safe here not because the previous group
+        # becomes unreachable — a failed request leaves it fully actionable, and an unfinished one
+        # is re-served — but because every route back to it delivers a freshly spilled payload, so
+        # no released file is ever the only copy of something still needed. Releasing any *earlier*
+        # would delete a payload still in use, since a conflict response spills through this path.
+        spill.release_finished(spill_policy)
         await bridge.ensure_planned(connection)
-        return await _call(connection, "next_group", {})
+        return await _call(connection, "next_group", {}, spill_policy=spill_policy)
 
     @mcp.tool
     async def zikaron_merge(
@@ -233,6 +267,7 @@ def register_consolidator_tools(mcp: FastMCP, connection: ServiceConnection) -> 
                 "content": content,
                 "absorb": absorb,
             },
+            spill_policy=spill_policy,
         )
 
     @mcp.tool
@@ -251,6 +286,7 @@ def register_consolidator_tools(mcp: FastMCP, connection: ServiceConnection) -> 
             connection,
             "apply_promote",
             {"group_id": group_id, "gist": gist, "content": content, "absorb": absorb},
+            spill_policy=spill_policy,
         )
 
     @mcp.tool
@@ -265,5 +301,8 @@ def register_consolidator_tools(mcp: FastMCP, connection: ServiceConnection) -> 
         `zikaron_merge`.
         """
         return await _call(
-            connection, "apply_discard", {"group_id": group_id, "absorb": absorb, "reason": reason}
+            connection,
+            "apply_discard",
+            {"group_id": group_id, "absorb": absorb, "reason": reason},
+            spill_policy=spill_policy,
         )

@@ -300,6 +300,17 @@ def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
       registration is session-wide in `.mcp.json` or it does not happen.
     - **The model may be an alias**, because this harness refuses an unknown id loudly at spawn
       rather than substituting its default. `harness.md` §"The consolidator's model".
+    - **`Read` is granted here and withheld from kiro's config**, from the one seam field that also
+      decides whether the client writes an over-large result to a file at all. One field for both,
+      because the mismatches are what hurt: the tool without the file widens this agent's reach for
+      nothing, and the file without the tool hands it a path it cannot open. The prompt's two fills
+      follow the same field, so a config and a prompt can never disagree about which tools exist.
+
+    It widens D32, which withholds retrieval so that "code picks the candidates" is enforced
+    mechanically rather than by prose, and the widening is bounded by prose alone: this harness has
+    no per-subagent path rule, so `Read` is grantable but not scopable. A `PreToolUse` hook in this
+    agent's own frontmatter is the mechanical version if that ever needs to be more than a
+    convention.
 
     `commands` is unused and stays in the signature deliberately: it keeps this builder's shape
     identical to `consolidator_agent_config`'s, so the two targets call one interface, and the fact
@@ -315,10 +326,14 @@ def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
             f"model: {model}",
             "tools:",
             f"  - mcp__{CONSOLIDATOR_AGENT_NAME}",
+            *(["  - Read"] if CLAUDE_CODE.consolidator_can_read_files else []),
             "---",
         )
     )
-    return f"{frontmatter}\n\n{consolidator_prompt(claude_tool_vocabulary())}\n"
+    body = consolidator_prompt(
+        claude_tool_vocabulary(), can_read_files=CLAUDE_CODE.consolidator_can_read_files
+    )
+    return f"{frontmatter}\n\n{body}\n"
 
 
 def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
@@ -343,7 +358,9 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
         "name": CONSOLIDATOR_AGENT_NAME,
         "description": _CONSOLIDATOR_DESCRIPTION,
         "model": model,
-        "prompt": consolidator_prompt(identity_vocabulary()),
+        "prompt": consolidator_prompt(
+            identity_vocabulary(), can_read_files=KIRO.consolidator_can_read_files
+        ),
         "tools": [TOOL_SELECTOR],
         "allowedTools": [TOOL_SELECTOR],
         "mcpServers": mcp_servers_value(commands, mode="consolidator"),

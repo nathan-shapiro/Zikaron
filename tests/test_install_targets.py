@@ -321,14 +321,19 @@ class TestACleanClaudeCodeInstall:
         assert _frontmatter(paths["agent"])["name"] == CONSOLIDATOR_AGENT_NAME
         assert _frontmatter(paths["skill"])["name"] == "zikaron-consolidate"
 
-    def test_the_consolidator_is_granted_the_whole_server_and_nothing_else(
+    def test_the_consolidator_is_granted_the_whole_server_and_read_and_nothing_else(
         self, installed: Path
     ) -> None:
         """A whole-server wildcard, measured to grant that server's tools and exclude the primary
         server's `search`/`fetch` (`claude-code-installer-probe.md` §7). Preferred over four
-        explicit names because an unrecognised name in frontmatter refuses the spawn outright."""
+        explicit names because an unrecognised name in frontmatter refuses the spawn outright.
+
+        `Read` joins it because this harness caps a tool result and an over-large group is written
+        to a file instead — the consolidator needs a way to open it. Asserted as an exact list
+        rather than a membership check: the point of this test is what is *absent*, and a
+        containment assertion would pass against a config that had quietly gained `Bash`."""
         tools = _frontmatter(_claude_paths(installed)["agent"])["tools"]
-        assert tools == [f"mcp__{CONSOLIDATOR_AGENT_NAME}"]
+        assert tools == [f"mcp__{CONSOLIDATOR_AGENT_NAME}", "Read"]
 
     def test_the_model_is_this_harnesss_own_default(self, installed: Path) -> None:
         assert _frontmatter(_claude_paths(installed)["agent"])["model"] == (

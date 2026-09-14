@@ -6,15 +6,19 @@ real socket, per `coding-standards.md` §4's own testing convention for this fra
 instance and whether calling one reaches the network, not about the transport FastMCP itself uses.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
+from tests.test_mcp_spill import _a_dead_pid
+from zikaron.mcp import spill
 from zikaron.mcp.connection import ServiceConnection
 from zikaron.mcp.server import build_server
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
+from zikaron.service import paths
 
 #: Read from `zikaron.mcp.tool_names` rather than restated here, and that is the point of the
 #: module: the installer now spells these names into shipped prose, because Claude Code addresses a
@@ -145,3 +149,78 @@ async def test_listing_tools_makes_no_service_call_either(
     mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         await client.list_tools()
+
+
+class TestTheSpillCleanupIsActuallyWired:
+    """The two cleanup calls, tested where they are *called* rather than where they are defined.
+
+    `spill.release_finished` and `spill.sweep_stale` each have their own unit coverage, and both
+    passed while neither was reachable — removing the call sites left the suite green. That is the
+    same hole that hid the policy wiring, so the call sites get their own tests.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _private_runtime_and_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Redirect both the runtime directory and the config layer into `tmp_path`.
+
+        Without the first, a sweep would run against the real `$XDG_RUNTIME_DIR/zikaron` where live
+        services keep their sockets; without the second, these read whatever config the developer
+        happens to have.
+        """
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.setenv("CLAUDECODE", "1")
+
+    def _runtime_dir(self, tmp_path: Path) -> Path:
+        return ServiceConnection(tmp_path).location.runtime_dir
+
+    def test_building_a_consolidator_sweeps_a_dead_predecessors_files(self, tmp_path: Path) -> None:
+        """The measured production case: the harness terminates its MCP server, so the previous
+        process ran no exit handler and its files are still there when the next one starts."""
+        runtime = self._runtime_dir(tmp_path)
+        runtime.mkdir(parents=True, exist_ok=True)
+        key = paths.socket_hash(paths.store_dir(tmp_path).resolve())
+        left_behind = runtime / f"{key}-next_group-{_a_dead_pid()}-abc.json"
+        left_behind.write_text("{}", encoding="utf-8")
+
+        build_server("consolidator", scope_dir=tmp_path)
+
+        assert not left_behind.exists()
+
+    def test_building_a_primary_client_sweeps_nothing(self, tmp_path: Path) -> None:
+        """Spilling is the consolidator's alone, and so is its cleanup: a primary process must not
+        be deleting files a consolidator on the same store is reading."""
+        runtime = self._runtime_dir(tmp_path)
+        runtime.mkdir(parents=True, exist_ok=True)
+        key = paths.socket_hash(paths.store_dir(tmp_path).resolve())
+        left_behind = runtime / f"{key}-next_group-{_a_dead_pid()}-abc.json"
+        left_behind.write_text("{}", encoding="utf-8")
+
+        build_server("primary", scope_dir=tmp_path)
+
+        assert left_behind.is_file()
+
+    async def test_asking_for_a_group_releases_the_previous_ones_spill(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`next_group` is the only safe release point, so it must actually release. Driven through
+        the registered tool rather than by calling the helper, because the helper passed while the
+        call site did not exist."""
+        runtime = self._runtime_dir(tmp_path)
+        runtime.mkdir(parents=True, exist_ok=True)
+        key = paths.socket_hash(paths.store_dir(tmp_path).resolve())
+        stale = runtime / f"{key}-next_group-{os.getpid()}-fromlastgroup.json"
+        stale.write_text("{}", encoding="utf-8")
+        spill._written.append(stale)
+
+        mcp = build_server("consolidator", scope_dir=tmp_path)
+
+        async def _no_service(*_args: object, **_kwargs: object) -> object:
+            raise OSError("no service in this test; the release happens before the call")
+
+        monkeypatch.setattr(ServiceConnection, "request", _no_service)
+        async with Client(mcp) as client:
+            with pytest.raises(ToolError):
+                await client.call_tool("zikaron_next_group", {})
+
+        assert not stale.exists(), "the previous group's spill must go when the next is requested"

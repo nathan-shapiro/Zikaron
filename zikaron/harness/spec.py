@@ -104,6 +104,15 @@ class HarnessSpec(NamedTuple):
     #: The variable naming the directory this harness considers "the project", or `None` where the
     #: harness exports none. Read by `store_scope_dir` below; see its docstring for why.
     project_dir_variable: str | None
+    #: Whether this harness's consolidator subagent can be granted a tool that reads a file, and
+    #: therefore whether an over-large tool result may be written to one instead of returned.
+    #:
+    #: One field for both, deliberately, because they are one capability and the mismatches are
+    #: what hurt: granting the tool without spilling widens the consolidator's reach for nothing,
+    #: and spilling without granting it hands the model a path it cannot open, which is the same
+    #: stall this was built to end. Where this is false the client returns every payload inline,
+    #: the consolidator config gains no tool, and its prompt gains no text about files.
+    consolidator_can_read_files: bool
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -215,6 +224,10 @@ KIRO: Final = HarnessSpec(
     # Measured, not assumed: the lifecycle probe captured every `KIRO_*` variable across 42
     # records and none names a workspace or project directory.
     project_dir_variable=None,
+    # What this harness does with an over-large MCP result is **unmeasured**. Rather than invent a
+    # remedy for behaviour nobody has observed, every payload is returned inline here exactly as
+    # before, and the consolidator keeps the four verbs and nothing else.
+    consolidator_can_read_files=False,
 )
 
 #: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
@@ -241,6 +254,10 @@ CLAUDE_CODE: Final = HarnessSpec(
     consolidator_model="sonnet",
     harness_binary="claude",
     project_dir_variable="CLAUDE_PROJECT_DIR",
+    # Measured: an over-large result is replaced wholesale by an error notice, and the harness's
+    # own spill file is one line of JSON that `Read` cannot paginate. A file this project writes
+    # can be paginated, so the capability is real — `research/claude-code-mcp-result-truncation.md`.
+    consolidator_can_read_files=True,
 )
 
 SPECS: Final[dict[Harness, HarnessSpec]] = {

@@ -104,6 +104,30 @@ _APPROVAL_NOTE: Final = (
     "are present but every write interrupts you, it is the second key that did not take."
 )
 
+#: Said for the same reason as `_APPROVAL_NOTE`, about a gate that install-time config deliberately
+#: does **not** answer. Measured in an operator-driven session: the consolidator's first `Read` of a
+#: spilled payload raises a prompt, and the harness offers to allow that directory for the session.
+#:
+#: A `permissions.allow` entry for the runtime directory was considered and **rejected**. `Read` is
+#: grantable but not scopable in subagent frontmatter, so this prompt is the one place D32's
+#: widening becomes a check an operator answers rather than prose; the harness's own session-scoped
+#: option is narrower than anything an installed settings entry could express; D10 makes
+#: consolidation operator-invoked, so there is no unattended run for it to stall; and on a mature
+#: store spilling is the *majority* path, so a permanent entry would have the widened grant
+#: exercised silently on essentially every consolidation forever. What the note buys is that the
+#: prompt arrives expected rather than mid-run and unexplained.
+_SPILL_READ_NOTE: Final = (
+    "A group too large for this harness to deliver is written to a file and the consolidator is "
+    "given its path, so the first time a consolidation meets such a group — routine on a mature "
+    "store, possibly never on a small one — Claude Code will ask whether it may read from the "
+    "runtime directory (`$XDG_RUNTIME_DIR/zikaron`, or `/tmp/zikaron-<uid>` where that variable "
+    "is unset). That prompt is expected, **recurs in each new session** because the grant it "
+    "offers is session-scoped, and is deliberately not answered by this install: choose the "
+    "option allowing that directory for the session. A file-reading tool cannot be restricted to "
+    "one path in subagent config, so this prompt is the only point at which that grant is put to "
+    "you as a question."
+)
+
 #: The exposure D32 cannot mechanically prevent here, reported rather than passed over in silence —
 #: the same reflex M12 applied to the array format's inherited `max_output_size`.
 _EXPOSURE_NOTE: Final = (
@@ -441,7 +465,7 @@ class ClaudeCodeTarget(HarnessTarget):
         return (
             f"Add these to {self._settings(plan.project)}:\n\n{settings}\n\n"
             f"and these to {self._mcp_config(plan.project)}:\n\n{mcp}\n\n"
-            f"- {_APPROVAL_NOTE}\n- {_EXPOSURE_NOTE}"
+            f"- {_APPROVAL_NOTE}\n- {_SPILL_READ_NOTE}\n- {_EXPOSURE_NOTE}"
         )
 
     def refuse_unknown_model(self, model: str) -> None:
@@ -476,7 +500,7 @@ class ClaudeCodeTarget(HarnessTarget):
 
     def notes(self, plan: Plan) -> list[str]:
         del plan
-        return [_APPROVAL_NOTE, _EXPOSURE_NOTE]
+        return [_APPROVAL_NOTE, _SPILL_READ_NOTE, _EXPOSURE_NOTE]
 
 
 #: Both `.mcp.json` keys this install writes. Derived from the two names `entries.py` already owns

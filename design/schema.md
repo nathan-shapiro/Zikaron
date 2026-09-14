@@ -473,6 +473,7 @@ anchor_cutoff      = 0.65
 group_max          = 12
 max_group_serves   = 3
 run_lease          = 1800
+spill_threshold    = 27000
 
 [service]
 idle_timeout = 1800
@@ -503,6 +504,7 @@ signal_horizon_days = 30
 | `consolidation` | `group_max` | int | 2–64 | `12` | shard size for an oversized cohesive group |
 | `consolidation` | `max_group_serves` | int | 1–16 | `3` | maximum **deliveries** of one group per run, counting the first; a group that has had this many is `deferred` for the rest of the run (invariant 17) |
 | `consolidation` | `run_lease` | seconds int | 60–86400 | `1800` | consolidation run lease |
+| `consolidation` | `spill_threshold` | bytes int | 4096–1048576 | `27000` | the serialized size above which a consolidator tool result is written to a file and replaced by a pointer, where the harness can read one. A **proof, not a margin**: a token spans at least one byte, so 27,000 bytes is at most 27,000 tokens, under the ≈29,923 the harness was observed to deliver (`research/claude-code-mcp-result-truncation.md`) |
 | `service` | `idle_timeout` | seconds int | 60–86400 | `1800` | service idle self-stop |
 | `signals` | `signal_horizon_days` | int | 1–3650 | `30` | after this many days an unresolved joined pair in D30's two cross-event signals counts as **unresolved by definition** — see §"`signal_horizon_days`". A *reporting* parameter; it is not a retention rule and deletes nothing |
 

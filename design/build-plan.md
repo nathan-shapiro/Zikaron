@@ -1122,6 +1122,317 @@ self-healing loss for a permanent resident process per project.
 
 ---
 
+
+## M18 — A group too big to deliver, and a file the consolidator can actually read
+
+Normative: `design/architecture.md` §Components and §"Filesystem security"; `design/harness.md`
+§"The D34 table"; `design/consolidation.md` §"Candidate construction". Evidence:
+`research/claude-code-mcp-result-truncation.md` for every harness measurement, and
+`research/consolidation-payload-sizes.md` for how large a group actually gets in a real store —
+including what the rejected trimming alternative would have cost.
+
+**The defect, observed in production before it was understood.** A consolidation run against
+`~/Trading/LeibaTrader` stalled: `zikaron_next_group` returned a group the harness refused to
+deliver. Re-running appeared to fix it, which is the misleading part — the first run had merged
+part of the journal, so the second run's groups were smaller and fit. The fault is not
+intermittent; it is a function of how much prose a group happens to carry, and it returns whenever
+a group is large again.
+
+**What the harness does, measured.** Claude Code caps a tool result in *tokens*, replaces it
+entirely with `Error: result (N characters) exceeds maximum allowed tokens.`, and writes the full
+result to `…/tool-results/mcp-<server>-<tool>-<epoch-ms>.txt`. The threshold is content-dependent
+and was never stated numerically by the harness; it is bracketed, not known.
+
+**Why the obvious fix does not work, and this is the trap to avoid.** Granting the consolidator
+`Read` so it can open that spill file fails, for a reason that is structural rather than
+incidental: the harness writes the tool's JSON on **one line**, and `Read` says outright that such
+a file "cannot be paginated by line". Measured: 31,247 of 104,179 characters returned, and
+`offset=1, limit=1` refused outright. An earlier attempt shipped exactly this, with prompt text
+telling the consolidator the file "is still your payload" — which is false.
+
+**What makes the fix possible.** The `Read` cap applies **per read, not per file**. A
+206,719-character, 2,002-line file was read to its end in three calls, the tail recovered by a
+targeted `offset`, with an over-long offset degrading to an advisory naming the true line count
+rather than an error. So an over-large payload is fully recoverable if — and only if — whoever
+wrote the file made it line-paginable. The harness does not. Zikaron can.
+
+### The design
+
+**`zikaron-mcp` spills; the service does not.** The client is what hands a result to a harness and
+the only component that knows which harness it is. The service keeps returning whole payloads over
+the socket, unchanged, so nothing about the store, the serve path or kiro moves.
+
+**Spill at the client's shared result-translation seam, so every tool result is covered.**
+`next_group` is the observed offender, but it is not the only large shape: a `merge`/`promote`/
+`discard` **conflict** response carries `current: [...]` with the full prose of every conflicting
+row, and a dozen large rows is plausibly over any conservative threshold. Gating on the verb would
+leave that shape to be discovered the same way this one was.
+
+**Scoped to the consolidator client mode, though, and that qualifier is load-bearing.**
+`response_to_tool_result` is shared with the primary client, so spilling at the seam unqualified
+would hand a primary agent a pointer too — and everything that makes a pointer intelligible is
+consolidator-only: the prompt sentence, the `Read` grant, and the pointer-shape invariant, which
+discriminates against a served group rather than against a `fetch` result. A primary agent handed a
+pointer would have been told nothing, anywhere, about what it means. Whether the primary client can
+overrun the same cap is **unmeasured and out of scope**; mode is already a `build_server` parameter,
+so the scoping costs nothing.
+
+**What the file must satisfy, measured rather than assumed.** The requirement is *not* "short
+lines". `Read` never clips a line as a line: lines of 2,000, 8,000 and 20,000 characters came back
+complete, and a 60,000-character line cut from a whole-file read was recovered **intact, with no
+truncation notice**, by a targeted `offset`. What bit was the per-read token cap on the whole file.
+
+So the rule is: **no single line may exceed the per-read cap**, because a line is the smallest unit
+`Read` can address and there is no sub-line pagination to fall back on. Pretty-printing is how that
+is achieved, but the reason is narrower than it first appears — indentation splits JSON *structure*,
+not *strings*, so a record's `content` remains exactly one line however the document is indented.
+The longest line in a spill file is therefore the longest single string value it contains, and that
+is the quantity to bound and to assert.
+
+**That bound is `SPILL_MAX_LINE_BYTES`, a fixed constant of 24,000, counted in UTF-8 bytes of the
+serialized line** — and the unit is the whole point. A character count would need a
+characters-per-token ratio to bound anything, and that ratio is content-dependent: `json.dumps`
+with `ensure_ascii=True` inflates a CJK character to six characters while it tokenizes to about
+one, and with `ensure_ascii=False` the same character counts as one while still tokenizing to one,
+so the two escapings differ by up to 6× and only one of them makes a ratio argument hold.
+
+**Bytes need no ratio, because a token spans at least one byte.** Tokens are therefore bounded by
+bytes for any content whatsoever — emoji, CJK, minified code, anything — **for any counter that
+does not expand its input before counting**, which byte-level BPE cannot and which no measurement
+here contradicts. That qualifier is the assumption, stated rather than buried: a counter that
+Unicode-normalized first could expand one compatibility character into many tokens and break the
+bound. A violation would surface as the loud refusal below, never as silent loss. So a 24,000-byte
+line is at most 24,000 tokens, strictly under `Read`'s measured 25,000-token cap. Both measured
+pairs are consistent (104,179 characters measured 70,848 tokens; 94,328 measured 31,183 — both
+ASCII, so characters and bytes coincide there). It also clears the longest `content` in the observed store,
+**17,275 bytes**, by 1.39×. A consequence worth having: the spill file may then be written with
+`ensure_ascii=False`, which keeps non-ASCII prose readable to the consolidator, because the bound
+no longer depends on the escaping.
+
+**A record whose serialized line would exceed it is refused, loudly, when the client serializes the
+spill file.** That is *client serialization* time, not `remember` time: the scope fence forbids
+bounding `content`, and nothing here constrains what a user may record. The refusal is a tool error
+naming the offending record's uuid and its escaped line length, because unlike the threshold there
+is **no key an operator can lower** to make a single over-long record deliverable — the remedy is
+amending or retiring that record, and the error is the only thing that can say which one it is.
+
+**The response that replaces the payload is a pointer**: small, fixed in shape, naming the path and
+saying plainly that the file is the payload. It must be unmistakable for a served group — a
+consolidator that read a pointer as content would decide a merge from a filename — which is an
+assertion about its shape, not a hope: it carries no `journal_entries` key.
+
+**Location: the runtime directory**, beside the socket — already `0700`, already per-user, already
+tmpfs, so it never enters the project tree. `architecture.md` §"Filesystem security" governs the
+mode. The store directory is deliberately not used.
+
+**Lifetime.** Between reboots the runtime directory is RAM, and a spilled serve is a verbatim copy
+of record prose living outside the store. Filenames are unique per serve, so a re-serve can never
+overwrite a file a `Read` is midway through. Cleanup is **two mechanisms, neither of which depends
+on this process exiting**:
+
+- **Release on `next_group`.** Safe for a narrower reason than it looks: *not* that the previous
+  group becomes unreachable — authorization is rewritten per group rather than globally, a failed
+  request rewrites nothing, and an unfinished group is deliberately re-served before the run
+  advances — but because **every route back passes through a fresh serve, which spills a fresh
+  copy**, so a released file is never the last copy of anything reachable. The trigger is a new
+  *group*, not a new *file*. Runs before anything in the call that can fail, so a planning failure
+  does not skip cleanup, and bounds the live set to one group's files.
+- **Sweep at start.** A consolidator, before serving anything, unlinks this store's spill files
+  whose pid is no longer running. A run that ends properly leaves nothing — the consolidator learns
+  it is over by asking for a group and receiving `{done: true}`, and that call releases the last
+  group first — so what the sweep reaches is the run that **stops without asking again**: a killed
+  process, or a consolidator that quits after the final `group_complete`. One window it cannot
+  close: the pid is the MCP server's, not the reader's, so a server that dies mid-session has its
+  files swept by its replacement, possibly one the session is partway through reading. That fails
+  loudly with a missing file and recovers on one re-serve, and it is also why the primary client
+  must not sweep.
+
+**Corrected after the end-to-end run, which is the reason there are two.** The design said "the
+client unlinks what it wrote when it exits", implemented as an `atexit` handler, and a real
+consolidation **left four spill files behind** — 217 KB of record prose in tmpfs. The harness runs
+one MCP server per session and *terminates* it when the session ends; a terminated process runs no
+`atexit` handler, and a killed one could not. The hermetic test passed because its subprocess exits
+normally, so it asserted a lifecycle the production process never has. `atexit` is kept for the
+clean-exit case and is explicitly **not** the mechanism. Evidence, including the transcripts copied
+out of the harness's pruning window: `research/m18-spill-end-to-end.md`.
+
+**Also withdrawn, earlier and for a different reason: "the client unlinks its previous spill when
+writing the next."** It would delete a payload still in use — a conflict response spills through the
+same path, so writing one would remove the group's file while the consolidator is still
+dispositioning that group from it. Note how narrowly that differs from what ships: the trigger is
+a new *group*, not a new *file*. `write-policy.md`'s operator erasure procedure gains one line naming the
+runtime directory, because a secret erased from the store could otherwise survive in a spill file
+until reboot — a fourth surface that procedure does not currently enumerate. That directory is
+shared by every store this user has, so the filename must lead with the same hash the socket is
+named for; without it the procedure instructs an operator to find "this store's" files among files
+that do not say which store they came from.
+
+**The threshold is a config key.** `consolidation.spill_threshold`, default **27,000**, unit
+**UTF-8 bytes of the serialized result** — the bytes the client would otherwise return, not prose
+characters, and the distinction matters because the *prose* figures in
+`research/consolidation-payload-sizes.md` are floors; the byte pass in that same note is what the
+58% below reads from.
+
+**The default is a proof rather than a margin, and that is what makes it future-proof.** The
+harness states character counts and never token counts, so its token bracket is **derived**: a
+payload of 44,000 characters was delivered and one of 50,012 refused, which at the only token
+accounting the harness exposes (0.68006 tokens per character) is ≈29,923 delivered and ≈34,011
+refused — the arithmetic is in `research/claude-code-mcp-result-truncation.md` §"The cap in tokens,
+derived". Since a token spans at least one byte, a payload of 27,000 bytes is at most 27,000
+tokens, **≈2,900 tokens (9.8%) under the largest payload the harness was observed to deliver**. No
+characters-per-token ratio appears in that argument, so the emoji, CJK and minified-code cases that
+defeat a character threshold are bounded by construction.
+
+**What that costs, stated because it is the visible consequence:** 67 of the observed store's 116
+groups — 58% — exceed 27,000 serialized bytes and would spill. That is a large share, and it is the
+right trade because of the asymmetry this whole design rests on: a spill costs one `Read`
+round-trip, and the alternative costs the group.
+
+**How much of that is the bracket being loose was checked rather than assumed.** A second
+bisection tightened the delivered floor from 40,000 to 44,000 characters, which raises the largest
+*provable* threshold to ~29,900 bytes — 54 of 116, 47% — or 51% at a more prudent 29,000. So a
+tighter bracket does buy points, and a third could buy more: the note's table shows 37% at 32,000,
+which becomes provable if ~47,000 characters ever delivers, and nothing recorded rules that out.
+
+**The argument against chasing it is the margin, not the bracket.** Every one of those thresholds
+buys spill points by hugging the measured floor — at 29,900 the margin is 0.1% — and the margin is
+the whole reason this default is future-proof: it is what absorbs the harness changing its cap
+between versions. Trading 9.8% protection for eleven points of round-trips inverts the property the
+section is named for. That is why a third bisection is not the remedy, and it is also why the
+store's median payload sitting within 3% of the proven floor matters: spilling is simply the normal
+path on a mature store, which is an argument *for* the done-when exercising it end to end rather
+than a defect.
+
+**And the failure mode — if the harness ever lowers its cap below 27,000 tokens, or its counter
+ever assigns a payload more tokens than it has bytes — is the honest part:**
+a payload refused inline is the original loud stall, never silent loss, and the operator's remedy is
+lowering the key. That is what keeps "does not need revisiting" a claim this brief can defend — the
+threshold is recoverable by configuration in both directions, without a code change, and at the
+default it depends on nothing about the content.
+
+**`Read` is granted to the consolidator on Claude Code only, and spill eligibility is
+`HarnessSpec` data, not a branch.** CLAUDE.md forbids a harness difference living downstream of
+detection, so "kiro returns over-threshold payloads inline" must be a field the client reads, not an
+`if harness is KIRO:`. `design/harness.md` states that every harness-varying value is a `HarnessSpec`
+field **with a D34 table row**, and a drift test enforces it, so M18 adds rows for: the MCP-result
+cap and its overrun behaviour (the table has neither today), the consolidator's `Read` capability,
+and spill applicability.
+
+The `Read` grant widens D32, which withholds retrieval so that D7's "code picks the candidates" is
+enforced mechanically rather than by prose. The widening is real and is bounded by prose alone: this
+harness has no per-subagent path rule, so `Read` is grantable but not scopable. Operator decision,
+taken with that stated.
+
+**One gate was unresolved, and the end-to-end run settled it: it prompts, and that is left alone.**
+Measured in an operator-driven session in default permission mode — the consolidator's first `Read`
+of a spilled payload raises a permission request, and the harness offers to allow reading from that
+directory **for the session**. Every earlier run missed it by running with the gate pre-answered.
+
+**A `permissions.allow` entry for the runtime directory was considered and rejected.** The argument
+for one was that repeated prompts would push operators into auto-accept mode, which grants
+everything and is strictly worse than a narrow entry — but the harness's own option is per-directory
+and per-session, so one prompt covers a whole consolidation and that pressure does not arise.
+Against an entry: `Read` is grantable but not scopable in subagent frontmatter, so this prompt is
+the single point at which D32's widening becomes a check an operator *answers* rather than prose;
+the session-scoped grant is narrower than anything an installed settings entry could express; D10
+makes consolidation operator-invoked, so there is no unattended flow to stall; and on a mature store
+spilling is the **majority** path, so a permanent entry would have the widened grant exercised
+silently on essentially every consolidation forever, where the prompt costs one answer per session.
+Its recurrence per session is therefore periodic re-visibility of the one widening D32 cannot
+enforce, rather than friction to apologise for. What the install does owe is warning: a third note
+tells the operator the prompt is coming and which option to pick.
+
+**The Claude Code consolidator prompt gains one truthful sentence.** The pointer is, by shape, tool
+output telling the reader to go and act — the same shape as the harness's own spill notice, which
+both models in the probe correctly flagged as untrusted and declined to follow. A consolidator
+applying that stance to *our* pointer would balk or improvise. So the prompt states plainly that an
+over-large group arrives as a pointer naming a file in Zikaron's own runtime directory, that the
+file is the payload, and that it is to be read to its end before anything is decided. Unlike the
+reverted attempt's text, this is true.
+
+**kiro gets none of this, deliberately.** Its consolidator has no file-reading tool, and what kiro
+does with an over-large MCP result is **unmeasured** — an earlier attempt asserted it "truncates in
+silence with no path", and there is no evidence for that. Recording it as unmeasured is better than
+inventing a remedy for behaviour nobody has observed.
+
+### Rejected, recorded so none is re-proposed
+
+- **Reading the harness's own spill file.** Single-line JSON; measured unreadable. This is the
+  attempt that motivated the milestone.
+- **Trimming candidates to a size budget.** Works — 18 of the 20 oversized groups in the observed
+  store fit once low-ranked candidates are dropped — but it *loses* data, so its threshold must be
+  right, which means fitting it to one store's distribution and revisiting it as corpora grow.
+  Modelled over that store, a budget low enough to fit reliably — 35,000 or below, since 40,000 prose
+  characters at the maximum measured framing overhead (1.165×) reaches ≈46,600 serialized, inside
+  the 44,000–50,012 spill bracket — drops 12–33% of all candidates, and
+  each dropped candidate is a merge the consolidator was never offered
+  (`research/consolidation-payload-sizes.md`). The spill keeps every one of them.
+- **Serving candidates as gists only.** Rejected by the operator on the ground that a gist is never
+  sufficient to decide from — and independently unsafe: `verbs.py` permits a merge target to be
+  "its anchor or one of its candidates", and `merge` rewrites the target's whole prose, so a merge
+  decided from a candidate's gist would destroy prose nobody read.
+- **Bounding `content` at write time**, so the payload becomes provable by arithmetic. Attractive
+  and closest to M14's gist bound, but it constrains what a user may record in order to satisfy a
+  consumer's undocumented limit — the tail wagging the dog — and it cannot be applied retroactively
+  to stores that already hold long records.
+
+### Invariants to cover
+
+- **No line in the spill file exceeds `SPILL_MAX_LINE_BYTES`**, counted in UTF-8 bytes of the
+  serialized line. This is the property recovery depends on, since a line is the smallest unit
+  `Read` can address. Assert the longest line, not the line count — a compact-JSON regression and
+  an unsegmented over-long string must each fail it.
+- **A record too long to serialize within `SPILL_MAX_LINE_BYTES` is refused loudly at client
+  serialization time**, rather than written into a file whose tail cannot be reached.
+- An **under-threshold** payload is returned inline and unchanged, so the spill path is reached only
+  when it is needed. Note that on a mature store the majority case is *over* threshold, so this is
+  not "the ordinary case pays nothing" — it is "a payload that fits is not touched".
+- The pointer response **names a file that exists and is readable**, at `0600`, inside the runtime
+  directory and nowhere else — and **carries no `journal_entries` key**, so it cannot be read as a
+  served group.
+- **Round-trip fidelity**: what the file holds parses back to exactly the payload that would have
+  been returned inline. Assert by comparing the two, not by inspecting the file's shape.
+- **Under a kiro-detected client an over-threshold payload is returned inline**, and this follows
+  from `HarnessSpec` data rather than from a branch on the detected harness.
+- **Under the primary client mode an over-threshold payload is returned inline and unchanged** —
+  spilling is a property of the consolidator mode, asserted against `build_server`'s mode
+  parameter. Without this, an implementation that spills at the shared seam satisfies every other
+  invariant here while handing a primary agent a pointer nothing has ever explained to it.
+- Nothing about the **service or the store** changes. Kiro's consolidator config gains no tool, and
+  its prompt gains no truncation text.
+
+**Done when:** a consolidation completes against a store holding a group over the threshold, driven
+end to end through a real Claude Code session rather than asserted from a unit test, with the
+harness refusing no result and the consolidator shown reading the spill file **to its end**. The
+store used must contain **at least one record whose serialized line is 17,275 bytes or longer** —
+the longest observed in a real store — otherwise "readable to its end" passes on short-lined fixtures
+while every real store fails.
+
+**The end-to-end run demonstrates one-call spill-and-read, and multi-call pagination is accepted on
+the probe's evidence.** That is a decision rather than an oversight: no group in the observed store
+produces a spill file over `Read`'s per-read cap — the largest serializes to 73,184 bytes, which at
+prose densities measured in M14 (≥3.89 characters per token, embedding tokenizer) is about 18,800 tokens against a 25,000
+cap — so an end-to-end run against a realistic store
+cannot exercise the targeted-`offset` continuation however it is arranged. Manufacturing a store
+that could would be testing the fixture. The continuation path is measured in
+`research/claude-code-mcp-result-truncation.md` and covered in the unit tier; if a corpus ever
+produces a spill file over the cap, this is the clause to revisit. The run also
+settles whether `Read` of the runtime directory prompts for approval — **it does**, and the answer
+is `harness.md`'s "Reading a spilled payload" row. The `permissions.allow` entry this clause
+originally promised was **considered and rejected** once the prompt's shape was measured; the
+reasoning is in §"The design" above.
+`./check.sh` exits 0.
+
+**Scope fence:** do not bound `content`, do not change the sharding rule, do not add a consolidator
+verb, and do not invent kiro behaviour that has not been measured. The groups in the observed
+store whose anchor and members alone exceed **40,000 prose characters** — two of them, sizes in
+`research/consolidation-payload-sizes.md`, and that is the bound they were measured at rather than
+the threshold — need no special handling here, and neither does any smaller group the byte
+threshold now also spills, because **the spill delivers them all whole**; whether such a group ought to be *split* for the consolidator's benefit
+is the size-aware sharding question, which needs its own brief and its own evidence.
+
+---
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

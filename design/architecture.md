@@ -553,6 +553,7 @@ draft of this document gave only to the socket.
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
 | `<h>.sock` | 0600 | |
+| `<store-hash>-<method>-<pid>-<random>.json` | **0600** | a consolidator tool result too large for the harness to deliver, written beside the socket, led by the same hash that names this store's socket so one store's files are findable among every store's, and named in a pointer the model reads back. Removed when the next group is requested, and any left by a dead process are swept when the next consolidator starts — **not** on this process's exit, which a harness terminating its MCP server never reaches. **Record prose verbatim, outside the store and outside the log rules** — so the erasure procedure names this directory, and the file is created through `os.open` with the mode supplied rather than written and then `chmod`-ed, since the window between those two is one in which that prose sits at the process umask |
 
 Rules that go with the modes:
 
@@ -1022,6 +1023,45 @@ gets relayed in its own response — while not visibly delivering on the channel
   explicitly** (§"Distribution artefacts") rather than inheriting a default the corpus had recorded
   wrong, which is the whole reason the wrong figure was harmless here and would not have been
   somewhere the margin was thinner.
+
+## A result too large to deliver — the client spills it to a file
+
+A harness caps what one tool result may carry. Claude Code's cap is stated in **tokens**, is never named
+numerically, and an over-large result is replaced wholesale by an error notice — so the consolidator sees no
+group, cannot decide it, and is served the same group again on the next call. A run cannot advance past such
+a group, which was observed in production before it was understood.
+
+**The harness writes the result to a file itself, and that file cannot be read.** It holds the tool's JSON on
+one line, and `Read` states outright that such a file "cannot be paginated by line" — measured: 31,247 of
+104,179 characters returned, and `offset`/`limit` refused. So recovering the payload through the harness's
+own spill is unavailable however the tool grant is arranged, which an earlier attempt shipped prose asserting
+the opposite of.
+
+**What works is writing the file ourselves.** `Read`'s cap applies per read, not per file: a 206,719-character,
+2,002-line file was read to its end in three calls. A payload is therefore fully recoverable if, and only if,
+whoever wrote it made it **line-paginable** — the one thing the harness does not do. `zikaron-mcp` serializes
+an over-threshold consolidator result pretty-printed, writes it to the runtime directory, and returns a small
+pointer naming the path.
+
+**Both bounds are proofs rather than margins**, which is what keeps them from needing revision as corpora grow
+or the harness moves a cap it has never published. A token spans at least one byte, so bytes bound tokens for
+any content — emoji, CJK, minified code — for any counter that does not expand its input before counting,
+which byte-level BPE cannot. `consolidation.spill_threshold` (27,000 bytes) is therefore at most 27,000 tokens,
+under the ≈29,923 the harness was observed to deliver; `SPILL_MAX_LINE_BYTES` (24,000, a fixed constant) is at
+most 24,000 tokens, under `Read`'s measured 25,000. No characters-per-token ratio appears in either argument.
+Indentation splits JSON *structure* and never *strings*, so a record's `content` stays one line however the
+document is formatted — which is why the line bound exists rather than being implied by pretty-printing, and
+why a record too long to serialize within it is **refused loudly** rather than written into a file whose tail
+nobody can reach.
+
+**Consolidator mode only, and gated on harness data rather than on a branch.** `HarnessSpec.
+consolidator_can_read_files` decides both whether the agent config grants a file-reading tool and whether the
+client spills at all — one field, because the mismatches are what hurt: the tool without the file widens that
+agent's reach for nothing, and the file without the tool hands it a path it cannot open. Under kiro it is
+false, and what kiro does with an over-large result stays **unmeasured** rather than guessed at. The primary
+client has no spill path at all; `register_primary_tools` takes no policy, so the scoping is structural.
+
+Evidence: `research/claude-code-mcp-result-truncation.md`.
 
 ## MCP tool surface (5 tools)
 
