@@ -75,6 +75,40 @@ The formatter's output is authoritative: a `format --check` failure means runnin
 - **Withdraw claims in place.** When a finding is refuted, the original text stays with the refutation
   beside it. Several entries in FINDINGS are structured that way deliberately. Do not quietly delete a
   claim that turned out wrong — the fact that it was believed is itself evidence.
+- **Edit with `Read` and `Edit`/`Write`, never with find-replace scripts.** Do not edit files in this
+  repository through `sed`, `python` string-replacement, heredoc rewrites, or any other script that
+  mutates text you have not read in its current state. This **overrides** any ambient instruction to
+  prefer shell tooling for file changes. Read the passage, edit it, and for a multi-part change read
+  the *whole* affected section rather than the lines you intend to match.
+  **Measured, in this repository, 2026-09-14.** A 1,000-line design document was revised across three
+  review rounds using `python` replacement scripts. The scripts were disciplined — every replacement
+  asserted exactly one match, and two aborted correctly on a miss — and the mechanical part never
+  failed. **The document still accumulated contradictions at a rate the reviewer described as its
+  dominant defect class**: a fix landing in one section while a neighbouring section kept asserting
+  the pre-fix world. Round 2 was *four blockers, every one of them an artifact of editing round 1's
+  fixes in place* — a citation corrected in one sentence and left standing in the next; a counter
+  added in §12 that falsified an "exactly one writer" claim in §3.3; an invariant that contradicted
+  the crash story three sections away *and* would have destroyed the signal it named if enforced.
+  A matched-once replacement proves you changed what you aimed at. It proves nothing about the
+  sentences around it, and those are where this failure lives.
+  **So, and this is the half that actually catches it: after any edit, re-read the changed passage
+  end to end *together with the passages around it*, then grep for the *claim* you changed — not for
+  the phrasing you happened to replace — across the whole corpus rather than only the file you were
+  editing.** This corpus has convicted itself of that exact distinction before
+  (`FINDINGS-archive.md`, M18: audits that "enumerate the *phrasings* a reviewer quoted rather than
+  the *claim*").
+  **That step is required whatever tool made the edit — `Read`/`Edit` does not exempt you.** Measured
+  again in M19's review, where every edit went through `Read`/`Edit` and no script was involved:
+  **two of round 2's findings were artifacts of editing round 1's own fixes in place** — a multiplier
+  contradicted by the table printed beside it, and a "median 3 of 3" claim refuted by numbers the
+  same run had produced. Round 3 then found a sentence that was false **in two files at once** and
+  had survived two fix passes over its neighbouring lines. That last one is why the grep is over the
+  corpus and not the file: an enumeration drifts *across* documents, not only within one.
+  **What M19 does not license is a rate comparison**, and an earlier draft of this note tried to make
+  one — 4 review rounds against 12, amendments to an already-reviewed document against a fresh one.
+  It establishes that the failure happens without scripts. It does not establish that scripts are
+  innocent, and per round the scripted case still looks worse: its round 2 alone was four blockers of
+  this class.
 - **Comments explain measured reasons**, not intentions. Much of this codebase's commentary records what
   was actually observed to break and why the code is shaped around it. Match that when you add to it.
 - **Dogfooding is a requirements source.** This is a coding agent with a memory problem working on the
