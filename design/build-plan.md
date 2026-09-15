@@ -1513,7 +1513,7 @@ sizes K8's argument but cannot change the design, so it rides along in M21.
 
 ---
 
-## M20 — The registry, and knowledge-base lifecycle without indexing
+## M20 — The registry, and knowledge-base lifecycle without indexing — **complete**
 
 Normative: §3.1, §3.1a, §3.2, §8.4, §8.6, §9, §11; invariants 11, 14, 15.
 
@@ -1534,13 +1534,29 @@ that *"a newer `schema_version` is not [tolerated]"* — an unknown value is ref
 Decide it in the brief, write it into `schema.md`, and **do not let the first migration this project has
 ever performed be settled by whichever line of code gets written first.**
 
+**Decided: do not bump.** `schema.md` §"Additive tables and the version gate" now carries the rule and
+its reasoning; the one-line version is that the version gates *compatibility*, and a table no older code
+path reads or writes leaves every older read and write exactly as correct as it was. What the decision
+obliges is that `knowledge_bases` has exactly **one** creation site and that site is idempotent: the
+registry's own open runs `CREATE TABLE IF NOT EXISTS`, and the table is deliberately **not** in
+`ddl.FIXED_STATEMENTS`. A second creation path for fresh stores would buy nothing — the registry needs
+the idempotent one regardless, for every store predating the table — and would give the two copies room
+to disagree. It is also what makes the final done-when clause below true by construction rather than by
+test: the memory store's open path is not touched at all.
+
 **No encoder dependency, which is why this milestone can precede M23.** `embed_dim` is already a
 configuration key (`embedding.embed_dim`, resolved through `EffectiveConfig`), so seeding `meta` and
 creating `chunks_vec` at a fixed width needs no model load and no `fastembed` import — the cost M17
 measured at 1,059 ms and moved off the critical path.
 
-The CLI ships as a **console script**, matching the existing pattern and for the reason `pyproject.toml`
-already records: a console script's shebang pins the interpreter Zikaron is installed into.
+~~The CLI ships as a **console script**, matching the existing pattern and for the reason
+`pyproject.toml` already records: a console script's shebang pins the interpreter Zikaron is installed
+into.~~ **Withdrawn, on the grounds it cites.** The reason `pyproject.toml` records for its two console
+scripts is that *a config file has to name the command by one absolute path* — a hook entry's `command`
+and an `mcpServers` entry's `command`. Nothing names this CLI in a config file. It is run by a person,
+which is `zikaron.install`'s own recorded argument for **not** being a console script: `python -m` names
+the interpreter whose Zikaron owns the store, and an ambient name on `PATH` obscures exactly that. §9,
+which is normative here, already spells `python -m zikaron.knowledge`, and that is what ships.
 
 CLI only: `add`, `list`, `remove`, `rename`, `status`. Registry-first ordering for both `add` and
 `remove`, with the interrupted states §8.4 specifies. Name lower-casing and uniqueness. `add`'s path
@@ -1558,7 +1574,11 @@ never opens; two KBs differing only in case collide on the `UNIQUE` constraint; 
 migration opens and answers normally.
 
 **Also lands here:** `design/knowledge-index.md` becomes **normative**, and `CLAUDE.md`'s design-document
-table gains its row. Until then it is an approved proposal, and `design/overview.md` wins any conflict.
+table gains its row. **Both done, on operator sign-off.** The split of authority that follows, since two
+documents now describe one file: `design/schema.md` owns `memory.db`'s tables including the registry,
+`design/overview.md` owns every memory-store decision, and `knowledge-index.md` owns the rest of the
+index. **D1 was amended in the same sign-off** — the separate system it delegated to is now Zikaron's
+own, and what `remember` accepts is unchanged.
 
 **Fence:** no walking, no chunking, no search. Creating and tracking corpora only.
 

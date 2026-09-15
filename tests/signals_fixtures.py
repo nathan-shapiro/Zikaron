@@ -16,7 +16,7 @@ from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
 
-#: A fixed, valid ISO-8601 instant to anchor fixtures on, in exactly `records.memory.timestamp()`'s
+#: A fixed, valid ISO-8601 instant to anchor fixtures on, in exactly `core.clock.timestamp()`'s
 #: own format (offset-aware, microseconds, `T` separator) — the format every signal's Python-side
 #: deadline comparison assumes, so a fixture using anything else would test a format none of this
 #: store's real writers ever produce.

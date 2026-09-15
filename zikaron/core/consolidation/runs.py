@@ -18,13 +18,14 @@ forbids. The observable consequence is that a store can hold an `active` row who
 that is a lazily-collected tombstone, not drift, because every reader already computes the same
 answer from the column beside it.
 
-**The lease arithmetic lives here, with the lease.** It is the only place in the system comparing
-two stored timestamps, and it does so by **parsing** them rather than comparing the strings: the
-strings happen to sort correctly today, because `datetime.isoformat()` omits the microseconds field
-exactly when it is zero and `+` sorts below `.`, but that is a property of one formatting decision
-rather than of the contract, and a lease that silently inverts on a boundary is the kind of thing
-nobody looks for. Every timestamp still comes from `records.memory.timestamp`, so there is one
-format.
+**The lease arithmetic lives here, with the lease.** It **parses** rather than comparing strings —
+not because string order is untrustworthy (`core.clock` states and pins the opposite: lexicographic
+order on these strings agrees with temporal order) but because a lease is a start plus a duration,
+and adding seconds is not something ordering can do for you. Parsing then makes the comparison that
+follows independent of the format as well, which is the cheaper half of a step taken for another
+reason. Every timestamp this module stores is either a `core.clock.timestamp` reading or
+`lease_expiry`'s parse-add-`isoformat()` of one, and that derivation preserves the format — so
+there is still one.
 """
 
 from collections.abc import Sequence
@@ -36,11 +37,12 @@ from uuid import uuid4
 
 import aiosqlite
 
+from zikaron.core.clock import timestamp
 from zikaron.core.consolidation import groups
 from zikaron.core.consolidation.context import RunOwner
 from zikaron.core.consolidation.groups import RunCounts
 from zikaron.core.events import ConsolidateRunDetail, RunPhase
-from zikaron.core.records.memory import CallParams, log_event, timestamp
+from zikaron.core.records.memory import CallParams, log_event
 
 
 class RunStatus(StrEnum):
@@ -276,10 +278,10 @@ async def refresh_lease(
 def now() -> str:
     """The current instant in the store's own timestamp format.
 
-    Re-exported from `records.memory` so every module in this package reads one clock, and reads
-    it by a name that does not invite a second implementation. One call per transaction is the
-    intent: a serve's `served_at`, its members' `disposed_at` and its lease refresh should all name
-    the same instant, because they describe one event.
+    Re-exported from the shared clock so every module in this package reads one clock, and reads it
+    by a name that does not invite a second implementation. One call per transaction is the intent:
+    a serve's `served_at`, its members' `disposed_at` and its lease refresh should all name the same
+    instant, because they describe one event.
     """
     return timestamp()
 

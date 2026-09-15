@@ -99,7 +99,7 @@ User-stated unless noted; change only with the user.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **Tribal knowledge only.** Codebase KB is a separate system. | Keeps the store small, and keeps memory to what cannot be re-derived from source. |
+| D1 | **Tribal knowledge only.** ~~Codebase KB is a separate system.~~ **Amended 2026-09-15, operator sign-off: the separate system is now Zikaron's own** (`design/knowledge-index.md`, normative). The scope line governing what `remember` accepts is **unchanged** — *could you learn this by reading the code?* still excludes it from the memory store, and the two corpora never mix in a ranking or share the push budget. What changed is who supplies the other half. | Keeps the store small, and keeps memory to what cannot be re-derived from source. **The amendment is a dependency failing, not a decision reversing:** D1 delegated to kiro-cli's built-in `knowledge` and `code` tools, Claude Code ships neither, and D1's own text stayed true while the system it named stopped existing. No test, review round or harness seam can see that class of failure, because the decision remains internally consistent and only its environment moved. |
 | D2 | **No extra LLM on the write path.** Hard constraint. | Cost and latency on the hot path. The primary agent already has the context and the judgment. |
 | D3 | **Two tiers: journal (unconsolidated) + long-term (consolidated).** | Cheap append now, quality later, off the critical path. |
 | D4 | **Memory record = `{uuid, gist, content}`.** | Progressive disclosure: gists are cheap to surface, content is fetched on demand. |

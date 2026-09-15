@@ -1,12 +1,13 @@
 # Knowledge index — design
 
-> **STATUS: design under review.** Opened 2026-09-14 on operator direction. **The question "should
-> this live in Zikaron?" is settled by the operator and is not open**: it ships as part of Zikaron
-> because nobody wants to install two MCP servers when one will do. This document specifies *what is
-> built*, not *whether*.
+> **STATUS: normative**, on operator sign-off, from the milestone that first wrote product code
+> against it. **The question "should this live in Zikaron?" is settled by the operator and is not
+> open**: it ships as part of Zikaron because nobody wants to install two MCP servers when one will
+> do. This document specifies *what is built*, not *whether*.
 >
-> Normative once approved. Until then, `design/overview.md` and the D-table remain the authority for
-> anything this document contradicts.
+> It is the authority for the knowledge index. `design/schema.md` remains the authority for
+> `memory.db`'s own tables — including the registry table §3.1a specifies, which now lives there —
+> and `design/overview.md` for every memory-store decision.
 
 ## 1. Scope, and why D1 survives intact
 
@@ -119,14 +120,22 @@ Rationale for the file-per-KB split, in order of weight:
 **The list of knowledge bases is a table in `memory.db`, not a directory scan.** Operator decision.
 
 ```sql
--- in memory.db
-knowledge_bases(
-  id          TEXT PRIMARY KEY,   -- uuid4; names the file at knowledge/<id>.db
+-- in memory.db. `schema.md` §"The knowledge-base registry" is the contract; this is the reference.
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+  id          TEXT PRIMARY KEY,      -- uuid4; names the file at knowledge/<id>.db
   name        TEXT NOT NULL UNIQUE,  -- free-form, lower-cased on write (§3.1)
   description TEXT NOT NULL,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+
+  CHECK (length(trim(name)) > 0),
+  CHECK (name = lower(name))        -- a partial backstop: SQLite's lower() is ASCII-only
 )
 ```
+
+**`IF NOT EXISTS` is load-bearing rather than defensive.** The table is created by the registry's own open,
+once per store, for every store alike — including one created before it existed — and that single
+idempotent creation site is what lets `meta.schema_version` stay at 1 (`schema.md`
+§"Additive tables and the version gate", which carries the rule and the measurement behind it).
 
 **Authority is split deliberately.** The registry owns `name` and `description` — the two fields a
 caller needs in order to *choose* a corpus without opening it (§1.2, §8.3). Each KB's own `meta` owns
@@ -157,10 +166,11 @@ though every corpus is intact. Acceptable because both files live in `.zikaron/`
 by the installer, and are owned by the same service — but a lost `memory.db` costs the KB *list*, and
 recovery means reading each orphan's breadcrumb name.
 
-**`design/schema.md` is normative for `memory.db`'s tables and is not edited yet.** This table is
-specified here while the design is being settled; `schema.md` gains its corresponding section when the
-schema change is actually made, at which point this becomes the reference and that becomes the
-contract.
+**`design/schema.md` is normative for `memory.db`'s tables, and it now carries this one.** Its
+§"The knowledge-base registry" holds the DDL as the contract, states why the table is created by the
+registry rather than by `Store.create`, and carries the version-gate rule that decision rests on. The
+block above is the reference; that section is the contract, and a drift guard compares the code against
+it rather than against this document.
 
 **"One file" is true at rest and false while open.** Each KB database runs in **WAL mode** — required,
 not incidental: §4.6 and §6.3 promise that a search serves committed state *while* the indexer writes,
@@ -181,59 +191,122 @@ each KB keeps its name as a breadcrumb.
 
 ### 3.2 Schema, per KB database
 
+**This block is executable DDL, in creation order, and the code transcribes it statement for
+statement** — the same arrangement `schema.md` §Tables has with `core/store/ddl.py`, and for the same
+reason: a test reads this fence and compares, so an edit on either side fails rather than producing a
+table that silently does not match its own specification. Order is load-bearing even with no foreign
+keys in it, because `chunks_fts` is external-content against `chunks` and the index follows the table.
+
 ```sql
--- Identity and configuration. Mirrors the memory store's `meta` contract.
--- THIS LIST IS AUTHORITATIVE. Prose elsewhere must name these keys exactly; a section that
--- writes or reports a key absent here is a defect in one of the two places.
-meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)
-  -- identity/config:  id, name_breadcrumb (NON-authoritative copy; the registry in memory.db
-  --                   owns name and description -- §3.1a), root_path, include_globs,
-  --                   exclude_globs, git_mode, embed_model, embed_dim, chunk_max_tokens,
-  --                   rrf_k, fusion_depth, max_file_bytes, schema_version
-  -- scan outcome:     last_scan_started_at, last_walk_completed_at, last_scan_completed_at,
-  --                   last_scan_git_mode_effective (§5.2)
-  -- scan progress:    files_seen, files_indexed, files_skipped, bytes_indexed (§6.3)
-  -- skip reasons:     skipped_binary, skipped_denied_extension, skipped_over_size_cap,
-  --                   skipped_excluded_by_glob, skipped_gitignored, skipped_decode_error,
-  --                   skipped_symlink, skipped_unreadable, pruned_directories (§8.5)
-  -- indexer lock:     lock_pid, lock_host, lock_started_at (§6.2)
-  -- counters:         searches, searches_empty, results_returned, results_stale (§12)
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
 
 -- One row per indexed file.
-files(
-  path            TEXT PRIMARY KEY,   -- relative to root_path, POSIX separators, byte-exact
-  size            INTEGER NOT NULL,   -- readers: per-file caps, reporting, cheap staleness (§5.5)
-  content_hash    TEXT NOT NULL,      -- sha1 of the raw bytes indexed. THE authority (§5.1)
-  git_blob_hash   TEXT,               -- NULL outside git / for untracked. Candidate filter only (§5.2)
+CREATE TABLE files (
+  path            TEXT    PRIMARY KEY,   -- relative to root_path, POSIX separators, byte-exact
+  size            INTEGER NOT NULL,      -- per-file caps, reporting, cheap staleness (§5.5)
+  content_hash    TEXT    NOT NULL,      -- sha1 of the raw bytes indexed. THE authority (§5.1)
+  git_blob_hash   TEXT,                  -- NULL outside git / untracked. Candidate filter (§5.2)
   chunk_count     INTEGER NOT NULL,
-  indexed_at      TEXT NOT NULL
-)
+  indexed_at      TEXT    NOT NULL,
+
+  CHECK (length(path) > 0),
+  CHECK (size >= 0),
+  CHECK (chunk_count >= 0)
+);
 
 -- Paths the WALK PHASE found changed and the INDEX PHASE has not yet disposed of.
 -- Drives §7.5's first staleness disjunct. Replaced wholesale in one transaction when the
 -- walk phase ends. A row is deleted by whichever index-phase transaction disposes of that
 -- path -- and every disposal is on this list: reindex (§4.6), deletion, or a recorded
 -- text-detection skip (both §5.5).
-pending(path TEXT PRIMARY KEY, noticed_at TEXT NOT NULL)
+CREATE TABLE pending (
+  path       TEXT PRIMARY KEY,
+  noticed_at TEXT NOT NULL,
+
+  CHECK (length(path) > 0)
+);
 
 -- One row per chunk. Line ranges are 1-based and inclusive.
-chunks(
+CREATE TABLE chunks (
   id          INTEGER PRIMARY KEY,
-  path        TEXT NOT NULL,          -- plain indexed column, NOT a foreign key (see below)
+  path        TEXT    NOT NULL,      -- plain indexed column, NOT a foreign key (see below)
   part_index  INTEGER NOT NULL,
   start_line  INTEGER NOT NULL,
   end_line    INTEGER NOT NULL,
-  text        TEXT NOT NULL,      -- VERBATIM file content for lines start_line..end_line.
-                                  -- The K6 path prefix is prepended at embed time and is
-                                  -- NOT stored here (§4.3, §8.3): this column must always
-                                  -- equal what reading those lines from the file returns.
-  UNIQUE(path, part_index)
-)
+  text        TEXT    NOT NULL,      -- VERBATIM file content for lines start_line..end_line.
+                                     -- The K6 path prefix is prepended at embed time and is
+                                     -- NOT stored here (§4.3, §8.3): this column must always
+                                     -- equal what reading those lines from the file returns.
+  UNIQUE (path, part_index),
+
+  CHECK (part_index >= 0),
+  CHECK (start_line >= 1),
+  CHECK (start_line <= end_line)
+);
+
 CREATE INDEX chunks_path ON chunks(path);
 
-chunks_fts  -- FTS5 over chunk text + path, external-content against `chunks`
-chunks_vec  -- vec0(chunk_id INTEGER PRIMARY KEY, embedding float[<embed_dim>])
+CREATE VIRTUAL TABLE chunks_fts USING fts5 (
+  text, path,
+  content      = 'chunks',
+  content_rowid= 'id',
+  tokenize     = 'unicode61'
+);
+
+-- Identity and configuration. Mirrors the memory store's `meta` contract.
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- Last, because its width is the one thing here that is not fixed by this document.
+CREATE VIRTUAL TABLE chunks_vec USING vec0 (
+  chunk_id  INTEGER PRIMARY KEY,
+  embedding float[<embed_dim>]
+);
 ```
+
+**Invariants 2 and 6 are constraints rather than conventions.** `part_index >= 0`, `start_line >= 1`
+and `start_line <= end_line` are `CHECK`s because a chunk writer that got one wrong would otherwise
+produce a row that reads back plausibly and points `Read` at nothing. Contiguity itself (invariant 2)
+is not expressible as a row constraint and stays a tested invariant; what the `CHECK` fixes is the
+origin the count starts from, which is the half an implementer can get wrong silently.
+
+**Invariant 9 is deliberately *not* a `CHECK`.** A constraint strong enough to reject a `..` segment
+without rejecting a file legitimately named `a..b.txt` is not expressible here, and a blunt
+`path NOT LIKE '%..%'` would silently drop real files. It is enforced where paths are made — at the
+walk — and tested there.
+
+**`meta`'s keys are the authoritative list, and they are not DDL.** Prose elsewhere must name these
+exactly; a section that writes or reports a key absent here is a defect in one of the two places.
+
+| group | keys |
+|---|---|
+| identity/config | `id`, `name_breadcrumb` (NON-authoritative copy; the registry in `memory.db` owns `name` and `description` — §3.1a), `root_path`, `include_globs`, `exclude_globs`, `git_mode`, `embed_model`, `embed_dim`, `chunk_max_tokens`, `rrf_k`, `fusion_depth`, `max_file_bytes`, `schema_version` |
+| scan outcome | `last_scan_started_at`, `last_walk_completed_at`, `last_scan_completed_at`, `last_scan_git_mode_effective` (§5.2) |
+| scan progress | `files_seen`, `files_indexed`, `files_skipped`, `bytes_indexed` (§6.3) |
+| skip reasons | `skipped_binary`, `skipped_denied_extension`, `skipped_over_size_cap`, `skipped_excluded_by_glob`, `skipped_gitignored`, `skipped_decode_error`, `skipped_symlink`, `skipped_unreadable`, `pruned_directories` (§8.5) |
+| indexer lock | `lock_pid`, `lock_host`, `lock_started_at` (§6.2) |
+| counters | `searches`, `searches_empty`, `results_returned`, `results_stale` (§12) |
+
+**Which of those exist at creation is itself part of the contract**, and the split follows the memory
+store's: the thirteen identity/config keys and every counter — scan progress, skip reasons, and §12's
+four — are **written at creation** and validated on every open, so nothing ever reads a missing key and
+a fresh KB is fully described. The four scan-outcome keys and the three lock keys are **absent until
+something writes them**, like the memory store's `reindexing` sentinel: their absence is the normal
+state of a KB that has not been scanned or is not being indexed, and `last_scan_completed_at`'s absence
+is precisely what §8.4's second `reindex_required` cause reads.
+
+**Two of the memory store's three pragmas, not three.** WAL and `busy_timeout` carry the same meaning
+here that they do there — §3.1a requires WAL, and `busy_timeout` is what makes a reader wait out the
+indexer rather than fail. `foreign_keys` is **not** applied because this schema declares none, and
+switching it on would state a guarantee the section below spends its length denying.
+
+**The pragma set is therefore a per-database parameter of whatever opens a connection, and this is
+worth stating because the obvious implementation gets it wrong.** A shared opener that applies "the"
+pragmas applies one schema's to both, and the resulting defect is invisible: the constant naming the
+correct two still exists, still matches this document, and is executed nowhere. A test comparing that
+constant against this paragraph passes throughout. **The check that holds is reading `PRAGMA
+foreign_keys` back off a live knowledge-base connection**, which is a fact about the running system
+rather than about two texts agreeing.
 
 **`chunks.path` is deliberately not a foreign key, because the *declarative* cascade a reader would
 expect does not exist.** No foreign key spans these three tables:
@@ -1295,6 +1368,12 @@ the KB's name and a note that indexing has started — never blocking on a walk 
 searching it (§1.2), and a KB named `docs` with no description is close to useless to a caller that did
 not create it.
 
+**A successful `add` therefore returns `state: reindex_required`, and that is the truth rather than a
+wart.** Its database exists and its `meta` is sound, but no scan has completed, which is the second
+cause below; the state answers *can I trust results from this corpus* and the honest answer until the
+first scan finishes is no. It settles to `ok` when that scan's completing transaction writes
+`last_scan_completed_at`.
+
 `add` generates the KB's id, **inserts and commits the registry row**, then creates `knowledge/<id>.db`,
 writes its `meta`, spawns the indexer, and returns.
 
@@ -1309,6 +1388,16 @@ satisfies both:
 - **Interrupted `remove`** leaves a **file without a row** — an orphan: invisible to every query, never
   opened, and reported by `status`. It leaks disk until someone clears it (§16 item 10), which is the
   lesser harm.
+
+**Two states, not two *possibilities* — and the difference matters because creating the database is
+itself several steps.** The file exists from the moment it is connected to, before any table is in it,
+so a failure between those points would leave a registered name pointing at an empty database: §11's
+`error`, which tells an operator a refresh will not help, for a condition a refresh repairs entirely.
+**`add` therefore removes the database it created on every failure it can catch** — the connect
+onwards, not merely the schema it then writes — folding those into the row-without-file state above.
+What survives is a **hard kill inside that window**, which no handler can catch; it is reported as
+`error` and repaired by deleting the file. Stated rather than omitted, so the pair above is read as
+what this design produces rather than as an exhaustive list of what can happen.
 
 The reverse ordering is worse in both directions. An `add` that wrote the row last would leave an
 orphan on interruption, and because a retried `add` mints a fresh id, that orphan is **permanent** —
@@ -1406,18 +1495,29 @@ failures are both about *how the statements are issued*:
 which issues an explicit `BEGIN`, and never as an `executescript`.** The project is safe here by
 construction and only by construction, which is why the constraint is stated rather than assumed.
 
-**The other cause of `reindex_required` — no database file (§11) — needs none of this.**
-There is nothing to drop, nothing to violate, and nothing to refuse: the KB serves as an empty corpus
-(§7.4) until the scan builds it. The two causes share a state name and a trigger rule; they do not share
-a mechanism.
+**The other two causes of `reindex_required` — no database file, and no scan yet completed — need none
+of this.** There is nothing to drop, nothing to violate, and nothing to refuse: the KB serves as an
+empty corpus (§7.4) until the scan builds it. All three causes share a state name and a trigger rule;
+only one of them shares this mechanism.
 
-**`reindex_required` has two causes, and a scan begun under either *is* the repair variant, however it
-was invoked** — a plain `refresh`, a `full=true`, or a `refresh(None)` reaching that KB. The repair is a
-property of the store's state, not of the verb.
+**`reindex_required` has three causes, and a scan begun under any of them *is* the repair variant,
+however it was invoked** — a plain `refresh`, a `full=true`, or a `refresh(None)` reaching that KB. The
+repair is a property of the store's state, not of the verb. **Only the encoder mismatch takes the
+drop**; the other two are ordinary scans against a corpus that is missing rather than wrong.
 
 - **No database file** (§11). Nothing to drop: create the database, write `meta` from the current
   configuration, and index every candidate. This is the ordinary path for a KB whose `add` was
   interrupted, and for one whose file was deleted out from under the registry.
+- **No scan has ever completed** — `meta.last_scan_completed_at` is absent. The database exists and its
+  `meta` is sound; what is missing is a corpus. This is the state a freshly created KB is in before its
+  first scan finishes, and the state a KB whose *first* scan crashed is in. Nothing to drop here either:
+  an ordinary scan builds it, resuming under §6.4 where a crash left `pending` rows behind.
+  **Stated as a persisted fact rather than as an emptiness test**, because the two differ on exactly the
+  case that matters: a first scan that crashed after committing some files has chunks, and a corpus
+  reported `ok` on the strength of having *some* rows would be claiming currency it has no evidence for.
+  It is also why the state is not inferred from `files_indexed == 0` — a KB over a directory that
+  genuinely holds no indexable file has completed a scan, and `ok` over an empty corpus is the true
+  answer there (§7.4).
 - **Encoder mismatch** — `meta.embed_model`/`embed_dim` differ from the configured values. The drop
   described below applies, because derived tables exist and cannot be extended at the new dimension. The upfront drop
 happens unconditionally — it recreates the derived tables, so a crash-recovery re-drop is never a no-op
@@ -1482,9 +1582,9 @@ async def zikaron_knowledge_status(knowledge_base: str | None = None) -> object
 
 | `state` | meaning |
 |---|---|
-| `ok` | built and serving; no scan running |
+| `ok` | built and serving; no scan running. **Built** means a scan has completed — `meta.last_scan_completed_at` is present — not that the corpus is non-empty: a root holding no indexable file completes a scan and is honestly `ok` with `files_indexed: 0` |
 | `indexing` | built and serving, **partial** — a scan is in flight (§6.3), so results are whatever has committed |
-| `reindex_required` | **not usable until built.** Either no database file (an empty KB, §11) or an encoder mismatch, which refuses to serve outright. A scan may be running; `files_remaining` says so |
+| `reindex_required` | **not usable until built** — three causes (§8.4): no database file, no scan yet completed (`meta.last_scan_completed_at` absent), or an encoder mismatch. The first two serve as an **empty** corpus (§7.4) and the third **refuses to serve outright** (§11), which is why the state answers *can the corpus be trusted* rather than *will it answer*. A scan may be running; `files_remaining` says so |
 | `root_missing` | the indexed directory is gone. The index is retained (§11) but **search answers an empty group** rather than serving chunks whose files cannot be read — §5.6's rule that a result pointing at an unreadable file is worse than no result |
 | `error` | the database file is present but cannot be opened — corrupt, or permissions. Distinct from `reindex_required`, because `refresh` does not obviously repair it and the operator needs to know the difference |
 
@@ -1514,8 +1614,8 @@ therefore also writes **`last_walk_completed_at`** (§3.2), and the rule is:
 > `last_walk_completed_at ≥ last_scan_started_at`; otherwise `null`.
 
 **What `list` omits** is the diagnostic half of `status`: `root_path`, the `include`/`exclude`/
-`git_mode` echo, `git_mode_effective`, `chunks`, `bytes_indexed`, `max_file_bytes`, `files_seen`, the
-four §12 counters, the nine-way `skipped` breakdown, `last_scan_started_at` and
+`git_mode` echo, `git_mode_effective`, `chunks`, `bytes_indexed`, `max_file_bytes`, `files_seen`,
+`files_skipped`, the four §12 counters, the nine-way `skipped` breakdown, `last_scan_started_at` and
 `last_scan_completed_at`. Those answer *why is this corpus the way it is*, which is a different question
 from *which corpus should I search*.
 
@@ -1548,11 +1648,15 @@ below tells the caller to compare them and one operand alone cannot; the KB's
 `include`/`exclude`/`git_mode` **echoed from `meta`** (a caller that did not create the KB cannot
 otherwise tell why a file is missing); **`git_mode_effective`** from `last_scan_git_mode_effective`
 (§5.2), so a corpus built under a silent degradation says so; the four **§12 counters** (`searches`,
-`searches_empty`, `results_returned`, `results_stale`); `max_file_bytes`; and **`skipped`, broken down
+`searches_empty`, `results_returned`, `results_stale`); `max_file_bytes`; **`files_skipped`**, the total
+this breakdown decomposes — which is the sum of the eight *file* reasons and **not** of all nine, since
+`pruned_directories` counts directories, so a reader summing the breakdown against the total needs to be
+told which of the two it is; and **`skipped`, broken down
 by reason**: `binary`, `denied_extension`, `over_size_cap`, `excluded_by_glob`, `gitignored`,
 `decode_error`, `symlink`, `unreadable`, and `pruned_directories` (a count **of directories**, labelled
-as such, not of files). `files_seen` is reported additionally while a scan is running — it is the
-walk phase's progress, and the only signal available before `files_remaining` becomes non-`null`.
+as such, not of files). And **`files_seen`** — the walk phase's progress, ~~reported additionally while
+a scan is running~~ **reported always** (see the withdrawal below); it is the only signal available
+while a scan is in flight and `files_remaining` is still `null`.
 
 **There is no separate `indexing` boolean.** `state == "indexing"` carries it, and a second field
 meaning the same thing at a different fidelity is the seam this section exists to avoid — a caller
@@ -1573,9 +1677,16 @@ totals" would name a source that does not exist in it.
 file missing from the corpus* — is asked overwhelmingly **after** a scan. Live partials during one are
 what §6.3's rationale wants anyway ("this corpus is 40% indexed").
 
-`files_indexed` appears in the main list rather than the indexing-only sentence for the same reason —
-it is a running count during a scan and a total after one, which is one field with one meaning under
-the rule above, not two fields.
+**`files_seen` is reported always too, and the sentence above that scoped it to a running scan is
+withdrawn.** It is seeded at creation like every other counter, so there is always a value; and idle it
+reads as the last walk's total under exactly the partials-versus-totals rule the skip breakdown already
+states, which makes it answer *how much of this root the last build looked at* — a question asked after
+a scan at least as often as during one. Scoping one counter to a running scan while its neighbours are
+unconditional would also have been a second rule for no gain.
+
+`files_indexed` appears in the main list for the same reason — it is a running count during a scan and
+a total after one, which is one field with one meaning under the rule above, not two fields. That is now
+true of every counter rather than a contrast with `files_seen`, per the withdrawal above.
 
 **This list and §3.2's `meta` list must agree**; §3.2 is authoritative for key names. The coupling is
 not decorative — §8.4 defines `add` and `refresh` as returning "the same status shape", so a field

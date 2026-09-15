@@ -18,7 +18,6 @@ from zikaron.core.store.meta import StoreMeta
 from zikaron.core.store.store import (
     SUPPORTED_SCHEMA_VERSION,
     Store,
-    _open_connection,
     _physical_vec0_width,
 )
 
@@ -182,10 +181,10 @@ async def test_open_raises_filenotfound_when_the_path_becomes_unstatable_right_a
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`memory.db` deleted, with nothing recreated at all, strictly *after* the real connect call
-    has already returned but *before* `_open_connection`'s own `opened_inode = db_path.stat()`
+    has already returned but *before* `open_connection`'s own `opened_inode = db_path.stat()`
     read runs. That read itself is what fails here — a plain `FileNotFoundError`, since there is
     genuinely nothing left to `stat` at the path — rather than reaching the pragma-application
-    loop that follows it at all. This is the accepted, documented gap `_open_connection`'s own
+    loop that follows it at all. This is the accepted, documented gap `open_connection`'s own
     docstring names explicitly: a replacement landing in this exact narrow window is detected as
     a failure (the store cannot be opened), but not classified as a `store_identity` mismatch,
     since this build deliberately does not implement the VFS-level mechanism that would be
@@ -271,7 +270,7 @@ async def test_open_on_a_file_that_exists_but_aiosqlite_connect_itself_rejects(
         with pytest.raises(aiosqlite.Error):
             # `SELECT 1` alone would succeed even against this garbage file — it is a pure
             # literal, never touching the database's own on-disk format — so this uses the exact
-            # pragma `_open_connection`'s own pragma-application loop applies first
+            # pragma `open_connection`'s own pragma-application loop applies first
             # (`ddl.PRAGMAS`), which genuinely does need to read/rewrite the file header and is
             # what surfaces "file is not a database" against a plainly non-SQLite file.
             await fresh.execute("PRAGMA journal_mode = WAL")
@@ -728,10 +727,10 @@ async def test_a_pre_existing_wide_db_file_is_tightened_before_any_fallible_oper
     db_path.chmod(0o644)
     config = _config(tmp_path)
 
-    async def _always_fail(_db_path: Path) -> tuple[aiosqlite.Connection, int]:
+    async def _always_fail(_db_path: Path, **_kwargs: object) -> tuple[aiosqlite.Connection, int]:
         raise RuntimeError("simulated connection setup failure")
 
-    monkeypatch.setattr(store_module, "_open_connection", _always_fail)
+    monkeypatch.setattr(store_module, "open_connection", _always_fail)
     with pytest.raises(RuntimeError, match="simulated connection setup failure"):
         await Store.create(store_dir, config, _default_embedder())
 
@@ -816,55 +815,23 @@ async def test_sqlite_vec_extension_is_loaded(tmp_path: Path) -> None:
         assert isinstance(version[0], str)
 
 
-async def test_open_connection_closes_on_a_pragma_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`_open_connection` connects, then loads the extension, then applies every pragma — any
-    of which can fail after `aiosqlite.connect` has already succeeded. A failure applying a
-    pragma must close the connection before propagating, or the caller — which only wraps its
-    *own* work afterwards — would be handed nothing to close."""
-    store_dir = tmp_path / ".zikaron"
-    store_dir.mkdir(mode=0o700)
-    db_path = store_dir / _DB_FILENAME
-
-    real_execute = aiosqlite.Connection.execute
-
-    async def _fail_on_pragma(
-        self: aiosqlite.Connection, sql: str, parameters: object = None
-    ) -> object:
-        if sql.strip().upper().startswith("PRAGMA"):
-            raise RuntimeError("simulated pragma failure")
-        return await real_execute(self, sql, parameters)
-
-    monkeypatch.setattr(aiosqlite.Connection, "execute", _fail_on_pragma)
-
-    with pytest.raises(RuntimeError, match="simulated pragma failure"):
-        _ = await _open_connection(db_path)
-
-    monkeypatch.undo()
-    # A fresh connection afterwards must succeed — proof the failed attempt left no dangling
-    # connection or lock on the file.
-    async with aiosqlite.connect(db_path) as fresh:
-        await fresh.execute("SELECT 1")
-
-
 async def test_opened_inode_survives_a_replacement_during_later_open_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The exact race a round of independent review measured against this milestone's own first
     fix attempt: `Store.open`'s own `_validate_on_open` call runs real, awaited SQL *after*
-    `_open_connection` has already returned — a version of the inode-drift baseline that read a
-    fresh `stat()` at that later point, rather than the value `_open_connection` itself captured,
+    `open_connection` has already returned — a version of the inode-drift baseline that read a
+    fresh `stat()` at that later point, rather than the value `open_connection` itself captured,
     would have silently adopted whichever file existed at the path by the time validation
     finished, not the one this store's own connection actually opened.
 
     Forced directly: `_validate_on_open` is monkeypatched so that, partway through its own
-    execution — genuinely after `_open_connection` has already returned and captured
+    execution — genuinely after `open_connection` has already returned and captured
     `opened_inode` — `memory.db` is deleted and a different file is written at the identical
     path, then the real validation proceeds against the connection that is still bound to the
     *original* file. `Store.opened_inode` must still equal the original file's own inode,
     unaffected by a replacement that happened during this later step — proving the captured
-    baseline predates, and is independent of, everything that runs after `_open_connection`
+    baseline predates, and is independent of, everything that runs after `open_connection`
     itself returns.
     """
     store_dir = tmp_path / ".zikaron"

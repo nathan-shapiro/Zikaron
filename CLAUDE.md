@@ -38,6 +38,7 @@ settled decision from that index alone.** Read `overview.md` first.
 | `design/write-policy.md` | the `agentSpawn` prompt text, its rationale, the secrets and poisoning boundary, the operator erasure procedure, six instrumented signals, known gaps |
 | **`design/build-plan.md`** | **Per-milestone briefs: scope, normative sections, invariants, done-when, scope fence.** Read the brief for the milestone you are on |
 | **`design/coding-standards.md`** | **Binding.** Structure, domain model, typing, the three test tiers, invariant tests, comment rules, dependency rules, the check gate |
+| **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, K1–K13 and 16 invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
 | **`design/harness.md`** | **The two supported harnesses as one table (D34)**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership, the consolidator's model, and **the installer's two targets** — the value/shape split, the three flags and what each refuses |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 

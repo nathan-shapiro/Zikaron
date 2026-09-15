@@ -300,6 +300,77 @@ the existing table, while a changed `embed_dim` cannot.
 than pinned so that D20's deferred question — whether a more capable embedder helps, `FINDINGS.md` open
 question 8 — is a config edit plus a reindex rather than a schema change. Any other width is untested.
 
+## The knowledge-base registry
+
+`memory.db` carries one table that is **not** part of the memory store and is **not** created by store
+creation. It is the registry the knowledge index keys its corpora on; `design/knowledge-index.md` §3.1a is
+normative for what it means, and this section is the contract for its shape and its creation.
+
+```sql
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+
+  CHECK (length(trim(name)) > 0),
+  CHECK (name = lower(name))
+)
+```
+
+`id` is a server-generated uuid4 and names the KB's own database file at `.zikaron/knowledge/<id>.db`. `name`
+is free-form and lower-cased on write with Python's `str.lower()`; the `UNIQUE` constraint on a `TEXT` column
+compares under the default `BINARY` collation, which is the plain string equality invariant 14 states. Both
+are constraints rather than caller discipline, because the alternative is a rule enforced by every call site
+and by none of them.
+
+**The `lower(name)` `CHECK` is a partial backstop and is documented as one, because SQLite's `lower()` is
+ASCII-only** (measured). Two consequences, and only the second is a limit:
+
+- **It never rejects a correctly normalised name.** SQLite's `lower()` maps `A`–`Z` and nothing else, and a
+  string that has been through Python's `str.lower()` contains no `A`–`Z`, so `name = lower(name)` holds for
+  every value the write path can produce. That is a proof rather than a sample, which is what makes the
+  constraint safe to impose on free-form text including non-ASCII.
+- **It catches an un-normalised name only when one contains an ASCII capital.** A writer that skipped the
+  normalisation and inserted `ΣΟΦΙΑ` satisfies the `CHECK`, because SQLite leaves every one of those
+  characters alone. The constraint is therefore a cheap guard against the common mistake, not an enforcement
+  of invariant 14 — that rests on the write path, which is where the test for it lives.
+
+### Additive tables and the version gate
+
+**`meta.schema_version` is not bumped for this table, and the rule that licenses it is stated here so the
+next such change is decided by a rule rather than by convenience.**
+
+> **The version gates compatibility, not content.** It is bumped when a binary at the old version would read
+> the store **wrongly** — a changed table, a changed index an invariant rests on, a changed meaning of an
+> existing key, or a new invariant an old binary would violate by writing. It is **not** bumped for a table
+> that no older code path reads or writes and that no existing invariant mentions: every read and write an
+> older binary performs over such a store is exactly as correct as it was before.
+
+`knowledge_bases` is the first change of that kind. Bumping would make every older build refuse the store
+outright with `−32024 schema_incompatible` — the correct answer for a schema it cannot read, and the wrong
+one for a schema it can — and would force the supported-range-plus-migration contract §"Migration posture"
+defers, for a change that needs none of its machinery.
+
+**What the rule obliges in exchange is a single idempotent creation site.** A store created before this
+table existed must still open and serve memory, so the table is created **on first use by the knowledge
+registry**, with the `CREATE TABLE IF NOT EXISTS` above, for every store alike. It is deliberately absent
+from §Tables' DDL block and from store creation: a second, eager creation path for fresh stores would buy
+nothing — the idempotent one is needed regardless — and would give two copies of one statement room to
+disagree. It is also what makes "a store predating this table opens and answers normally" true by
+construction rather than by test, since the memory store's own open path is not touched at all.
+
+**Measured, because the ensure runs on every registry open and the memory path's latency is what the
+knowledge index's out-of-process indexer exists to protect:** `CREATE TABLE IF NOT EXISTS` against a table
+that **already exists** takes no write lock — it succeeds while another connection holds the writer lock —
+while the same statement against an absent table does take it and blocks. The steady-state cost is a schema
+read, and contention is possible only on the one occasion the table is genuinely created.
+
+**This table is outside every invariant in §"Invariants the code must hold".** Those are stated over the
+memory store, and none of them mentions it; the knowledge index states its own (`knowledge-index.md` §13,
+invariants 11, 14 and 15 covering this table). Said explicitly because an invariant list that silently
+acquired a table would be the enumeration drift this corpus keeps convicting itself of.
+
 ## `meta` — the store-coupled values, and the initialization contract
 
 **`meta` holds only what is coupled to the bytes already stored.** Operator preferences live in TOML — two
@@ -422,11 +493,12 @@ value moved on the strength of a level from that report would be moved on a misr
 
 ## Configuration keys
 
-**Twenty-two file keys: nineteen that moved out of `meta` outright, plus three dual-homed ones**
+**Twenty-three file keys: nineteen that moved out of `meta` outright, three dual-homed ones**
 (`embed_model`, `embed_dim`, `chunk_max_tokens`) that also persist in `meta` as the record of what the
-existing index was actually built with. Resolved from the two TOML layers per `architecture.md`
-§"Configuration". Ranges and defaults are unchanged from when the nineteen lived in `meta`; only their home
-moved. The dual-homed three are the reason the file can be said to express *intent* while `meta` records
+existing index was actually built with, and one belonging to the knowledge index rather than to the
+memory store (`knowledge_max_file_bytes`), which is why it carries that prefix inside a shared section.
+Resolved from the two TOML layers per `architecture.md` §"Configuration". Ranges and defaults are unchanged
+from when the nineteen lived in `meta`; only their home moved. The dual-homed three are the reason the file can be said to express *intent* while `meta` records
 *what was done* — without a file key there would be no way to state the intent at all, and the
 hard-mismatch path `architecture.md` documents would be unreachable.
 
@@ -452,6 +524,8 @@ embed_prefix_query = "Represent this sentence for searching relevant passages: "
 [indexing]
 chunk_max_tokens = 450       # also recorded in meta; see the dual-key note above
 gist_max_tokens  = 64
+# the knowledge index's per-file cap, seeded into each knowledge base's own meta
+knowledge_max_file_bytes = 1048576
 
 [retrieval]
 chunk_overfetch        = 8
@@ -489,6 +563,7 @@ signal_horizon_days = 30
 | `embedding` | `embed_prefix_query` | string | — | the BGE literal, **including its trailing space** | quoted verbatim from the model card via `research/embedding-models-technical-prose.md`; it is the exact string the benchmark measured, given as a literal because a paraphrase is a different measured pipeline. Empty string disables it. Query-side only, so it is a preference — but a footgun one: changing it invalidates the applicability of every figure in `retrieval.md` |
 | `indexing` | `chunk_max_tokens` | int | 64–8192 | `450` | governs **new** writes; `meta` records what existing chunks were cut at. `indexing.md` preflight |
 | `indexing` | `gist_max_tokens` | int | 8–256 | `64` | the one bound that can **reject** an agent's write. Lowering it below an existing gist's length does not revalidate stored rows, but that row's next `amend` will fail until the gist is shortened |
+| `indexing` | `knowledge_max_file_bytes` | bytes int | 1–67108864 | `1048576` | the knowledge index's per-file size cap (`knowledge-index.md` §10), seeded into each knowledge base's own `meta` as `max_file_bytes` at creation. Over-cap files are skipped and counted, never truncated. Its **maximum** bounds the peak memory one file costs, since text detection decodes a candidate whole; its `StoreCoupling` is `none` because nothing about it is recorded in `memory.db` — the per-KB seeding is that document's concern, not this one's |
 | `retrieval` | `chunk_overfetch` | int | 1–64 | `8` | KNN multiplier, `retrieval.md` |
 | `retrieval` | `fusion_depth` | int | 1–500 | `50` | **per-arm** depth before fusion — the most memories one arm can contribute. 50 is the depth every quality figure in `retrieval.md` was measured at. Each arm probes `fusion_depth + 1` and discards the surplus; that row is a termination diagnostic only (invariant 20), never fused. Distinct from the output `limit` |
 | `retrieval` | `rrf_k` | int | ≥1 | `60` | inherited from `~/Memory`, unchanged through the benchmark |
@@ -1304,3 +1379,9 @@ The first version that needs to open more than one schema gets an explicit **sup
 or capability contract**, written then. Until it exists, the version is a hard gate rather than a hint, and
 unknown-key tolerance (above) is scoped to supported versions only — it buys nothing across a version bump
 and must not be mistaken for doing so.
+
+**"No migrations yet" does not mean "no tables may be added", and §"The knowledge-base registry" carries the
+rule that separates the two.** A table no older code path reads or writes leaves every older read and write
+exactly as correct as it was, so it is created idempotently at first use and the version does not move —
+which is why this section is still accurate with `knowledge_bases` in the file. What would move the version
+is a change an old binary would read *wrongly*, and that is the change this section is waiting for.

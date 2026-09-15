@@ -7,6 +7,7 @@ import pytest
 
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.store.permissions import (
+    database_files,
     enforce_existing_store_permissions,
     enforce_store_file_mode,
     ensure_store_dir,
@@ -182,3 +183,36 @@ def test_enforce_existing_store_permissions_does_nothing_to_an_absent_directory(
     absent = tmp_path / "does-not-exist" / ".zikaron"
     enforce_existing_store_permissions(absent)  # must not raise or create anything
     assert not absent.exists()
+
+
+class TestTheThreeFilesOneDatabaseIs:
+    """In WAL mode a database at rest is one file and a database in use is three, so every
+    operation that moves, removes or re-permissions one has to handle all of them. Enumerating
+    them in one place is what keeps a caller from tightening `memory.db` while leaving its `-wal`
+    world-readable, or from unlinking a knowledge base and leaving its journal for the next
+    database at that path to inherit."""
+
+    def test_the_database_and_its_two_siblings_are_returned_in_order(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "memory.db"
+        assert database_files(db_path) == (
+            db_path,
+            tmp_path / "memory.db-wal",
+            tmp_path / "memory.db-shm",
+        )
+
+    def test_the_rule_is_the_suffix_rather_than_a_hardcoded_name(self, tmp_path: Path) -> None:
+        """A knowledge base's database is the same three files by the same rule, which is why the
+        enumeration takes a path instead of assuming `memory.db`."""
+        db_path = tmp_path / "knowledge" / "7f3a9c21-0000-4000-8000-000000000000.db"
+        assert [path.name for path in database_files(db_path)] == [
+            "7f3a9c21-0000-4000-8000-000000000000.db",
+            "7f3a9c21-0000-4000-8000-000000000000.db-wal",
+            "7f3a9c21-0000-4000-8000-000000000000.db-shm",
+        ]
+
+    def test_every_returned_path_sits_beside_the_database(self, tmp_path: Path) -> None:
+        """Siblings, not children: building them by appending to the name rather than by joining
+        onto the path is what keeps `-wal` a file next to the database instead of one inside a
+        directory that does not exist."""
+        db_path = tmp_path / "nested" / "store.db"
+        assert {path.parent for path in database_files(db_path)} == {db_path.parent}

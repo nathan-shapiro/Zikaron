@@ -212,8 +212,8 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     # or creation SQL *inside that one `await`*, after SQLite's own connect already succeeded —
     # every one of those is a real yield point a replacement could land in, all of them strictly
     # *before* control ever returns here. `Store.opened_inode` is captured immediately after
-    # `_open_connection`'s own connect returns instead, with no further `await` before the read
-    # (`_open_connection`'s own docstring has the full reasoning, including the narrow, human-
+    # `open_connection`'s own connect returns instead, with no further `await` before the read
+    # (`open_connection`'s own docstring has the full reasoning, including the narrow, human-
     # authorized gap this deliberately accepts rather than a materially larger VFS-level fix).
     original_store_inode = ctx.store.opened_inode
 

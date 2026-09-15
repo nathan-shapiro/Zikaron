@@ -15,14 +15,13 @@ import uuid
 from pathlib import Path
 from types import TracebackType
 from typing import Final, Self
-from urllib.parse import quote
 
 import aiosqlite
-import sqlite_vec
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 from zikaron.core.store import ddl, meta, permissions
+from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import Embedder
 
 #: The schema version every table and invariant in this build implements. Sourced from nowhere
@@ -88,7 +87,7 @@ async def _physical_vec0_width(db: aiosqlite.Connection) -> int:
 async def _read_meta_table(db: aiosqlite.Connection) -> dict[str, str]:
     """Every `meta` row's text value, or an empty mapping if `meta` itself does not exist.
 
-    `existing_only=True` on `_open_connection` stops `Store.open` from *creating* a missing
+    `existing_only=True` on `open_connection` stops `Store.open` from *creating* a missing
     store, but it does nothing about an existing `memory.db` whose `meta` table is itself
     absent — dropped by hand, or left behind by a process that failed between creating the
     file and running its DDL. That case must still fail at the Zikaron boundary as
@@ -105,93 +104,20 @@ async def _read_meta_table(db: aiosqlite.Connection) -> dict[str, str]:
     return {str(key): str(value) for key, value in rows}
 
 
-async def _load_sqlite_vec(db: aiosqlite.Connection) -> None:
-    """Load the `sqlite-vec` extension on this connection, through `aiosqlite`'s own method.
+def _store_not_created(db_path: Path) -> ZikaronError:
+    """What a failed connect to an existing-only `memory.db` means to the memory store.
 
-    `aiosqlite.Connection.load_extension` is the sanctioned path: the wrapped `sqlite3`
-    connection lives on `aiosqlite`'s own dedicated worker thread, so reaching into it directly
-    to call `sqlite_vec.load()` raises from the caller's thread instead.
+    Scoped to the connect rather than to the whole open, because a database that connected and
+    then refused a pragma has been created — saying it has not would send an operator looking for
+    a missing file that is right there.
     """
-    await db.enable_load_extension(True)
-    try:
-        await db.load_extension(sqlite_vec.loadable_path())
-    finally:
-        await db.enable_load_extension(False)
-
-
-async def _open_connection(
-    db_path: Path, *, existing_only: bool = False
-) -> tuple[aiosqlite.Connection, int]:
-    """Open `db_path` through `aiosqlite`, with the extension and pragmas every connection needs.
-
-    Returns the connection **and** the inode `db_path` resolved to at the moment this call's own
-    `aiosqlite.connect()` returned — needed so a caller (`Store.open`/`Store.create`) can hand it
-    onward to whatever later needs to detect this exact file being replaced out from under an
-    already-open connection (`zikaron.service.lifecycle`'s inode-drift self-stop).
-
-    Never bare `sqlite3`: a handler that called it directly could hold the single-threaded event
-    loop for as long as SQLite's own `busy_timeout` retries, which is a genuine, previously
-    reproduced self-inflicted deadlock (`design/coding-standards.md` §6) rather than a style
-    concern. `aiosqlite` closes that structurally by running the connection on its own thread.
-
-    A failure loading the extension or applying a pragma closes the connection before
-    propagating: `aiosqlite.connect` succeeding is not this function succeeding, and a caller
-    that only wraps its *own* work in `try`/`except` would otherwise be handed nothing to close
-    when the failure happened here instead.
-
-    **A known, deliberately accepted gap, settled on human authority rather than closed by
-    further engineering — read this before "improving" the capture below.** Several attempts
-    were made to close a much narrower race than the one this baseline actually needs to defend
-    against: a replacement landing in the specific, sub-millisecond window inside `aiosqlite`'s
-    own cross-thread connect handoff, between SQLite binding to a file on its worker thread and
-    this coroutine resuming to read the path. Pinning a file descriptor and connecting through
-    its own `/proc/self/fd/<n>` path — reasoned to sidestep pathname resolution entirely — was
-    measured, empirically, to *not* actually do so: `PRAGMA database_list` shows SQLite
-    canonicalizes that magic-symlink path back to the ordinary pathname internally, and a file
-    replaced at the path while an existing connection is live can make even an *already
-    established* connection fail on its next statement — meaning the assumption the whole
-    mechanism rested on was false, not merely incompletely implemented. Closing this properly
-    would require controlling SQLite's own VFS-level file handle directly (a custom VFS or
-    file-control integration), which is a materially larger undertaking than this milestone
-    warrants for a race with this shape: it requires an adversarial replacement to land inside a
-    sub-millisecond window at process startup, not the ordinary case this mechanism exists for
-    (a store deleted and recreated while the service has been sitting open and idle, which the
-    poll below closes completely). **The operator's own explicit direction is to accept this
-    narrow gap rather than pursue that undertaking**, and to keep the capture simple: read
-    `db_path.stat()` once, immediately after `await aiosqlite.connect()` returns, with no
-    `await` between the connect and the read — not provably instantaneous with SQLite's own
-    internal bind, but the tightest capture available without the VFS-level work this decision
-    declines, and correct for every case except the one named above.
-    """
-    if existing_only:
-        uri = f"file:{quote(str(db_path))}?mode=rw"
-        try:
-            db = await aiosqlite.connect(uri, uri=True)
-        except aiosqlite.Error as error:
-            raise ZikaronError(
-                ErrorCode.BAD_CONFIG,
-                source=BadConfigSource.FILE,
-                key="store_dir",
-                value=str(db_path),
-                expected="an existing, openable memory.db — this store has not been created",
-            ) from error
-    else:
-        db = await aiosqlite.connect(db_path)
-    try:
-        # The very first statement inside this `try`, with no `await` before it — a failure here
-        # (a permission error, the path having become unstatable) must close the just-established
-        # `db` exactly like a pragma failure a few lines below does; reading it *outside* this
-        # block would abandon a real, worker-thread-backed connection with nothing left to close
-        # it, which is a genuine resource leak this project's own history has already paid for
-        # once (`coding-standards.md` §6, §4's own "an unclosed handle hung the whole suite").
-        opened_inode = db_path.stat().st_ino
-        await _load_sqlite_vec(db)
-        for pragma in ddl.PRAGMAS:
-            await db.execute(pragma)
-    except BaseException:
-        await db.close()
-        raise
-    return db, opened_inode
+    return ZikaronError(
+        ErrorCode.BAD_CONFIG,
+        source=BadConfigSource.FILE,
+        key="store_dir",
+        value=str(db_path),
+        expected="an existing, openable memory.db — this store has not been created",
+    )
 
 
 def _dimension_mismatch(
@@ -265,10 +191,10 @@ class Store:
     validation their path requires before a `Store` exists to hand back, so holding one is
     holding a store already known to satisfy invariants 1, 3 and 11 for this open.
 
-    `opened_inode` is `db_path`'s own inode, captured by `_open_connection` immediately after
+    `opened_inode` is `db_path`'s own inode, captured by `open_connection` immediately after
     its own `aiosqlite.connect()` returned, with no `await` in between — the tightest available
     capture short of a materially larger VFS-level integration a deliberate, human-authorized
-    decision declined to pursue (see `_open_connection`'s own docstring for the full reasoning
+    decision declined to pursue (see `open_connection`'s own docstring for the full reasoning
     and the narrow, accepted gap this leaves). It is *not* re-derivable later from `self.path.
     stat()`: that would read whatever file currently sits at the path, which is precisely the
     question this field exists to answer independently of.
@@ -355,11 +281,11 @@ class Store:
         # the gap for files *this* call creates; it says nothing about a file that was already
         # here and wide before this call started, and a failure partway through must not leave
         # that file exactly as wide as it found it.
-        for name in (_DB_FILENAME, _DB_FILENAME + "-wal", _DB_FILENAME + "-shm"):
-            await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
+        for path in permissions.database_files(db_path):
+            await asyncio.to_thread(permissions.enforce_store_file_mode, path)
 
         with permissions.restrictive_umask():
-            db, opened_inode = await _open_connection(db_path)
+            db, opened_inode = await open_connection(db_path, pragmas=ddl.PRAGMAS)
             try:
                 defaults = await cls._create_tables_and_meta(
                     db, embed_dim, embed_model, chunk_max_tokens
@@ -368,8 +294,8 @@ class Store:
                 await db.close()
                 raise
 
-        for name in (_DB_FILENAME, _DB_FILENAME + "-wal", _DB_FILENAME + "-shm"):
-            await asyncio.to_thread(permissions.enforce_store_file_mode, store_dir / name)
+        for path in permissions.database_files(db_path):
+            await asyncio.to_thread(permissions.enforce_store_file_mode, path)
 
         current_meta = meta.parse_and_validate(defaults)
         return cls(db, db_path, current_meta, opened_inode)
@@ -435,13 +361,18 @@ class Store:
         # `asyncio.to_thread` rather than called directly, so this coroutine's first blocking
         # step does not hold the event loop of a caller that shares one across many concurrent
         # requests, exactly as every other blocking call this `open` path makes already does
-        # (`_open_connection`'s own `aiosqlite.connect`, `_validate_on_open`'s SQL). A caller with
+        # (`open_connection`'s own `aiosqlite.connect`, `_validate_on_open`'s SQL). A caller with
         # no such sharing to protect (a short-lived script, one request at a time) pays this
         # cost identically either way; only a caller like `zikaron-mcp` — one long-running
         # process holding many concurrent tool calls on one loop — depends on it.
         await asyncio.to_thread(permissions.enforce_existing_store_permissions, store_dir)
         db_path = store_dir / _DB_FILENAME
-        db, opened_inode = await _open_connection(db_path, existing_only=True)
+        db, opened_inode = await open_connection(
+            db_path,
+            pragmas=ddl.PRAGMAS,
+            existing_only=True,
+            connect_failure=lambda _: _store_not_created(db_path),
+        )
         try:
             current_meta = await cls._validate_on_open(db, config)
         except BaseException:

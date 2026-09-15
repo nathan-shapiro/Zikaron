@@ -29,7 +29,12 @@ class ConfigSection(StrEnum):
 
 
 class StoreCoupling(StrEnum):
-    """How far a key may move without contradicting what the store already contains.
+    """How far a key may move without contradicting what `memory.db` already contains.
+
+    Scoped to the memory store specifically, because it is not the only database Zikaron owns: a
+    knowledge base seeds several of these keys into its own `meta` at creation and then ignores
+    later changes to them, which is a different policy under a different document. A key that
+    couples only to a knowledge base is `NONE` here, and says so in its own notes.
 
     A configuration file states intent; a store records what was actually done. For most keys
     those cannot conflict, but three describe how existing rows were produced:
@@ -214,6 +219,16 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
         "gist_max_tokens",
         IntBounds(8, 256),
         64,
+    ),
+    ConfigKey(
+        ConfigSection.INDEXING,
+        "knowledge_max_file_bytes",
+        # The maximum is protective rather than arbitrary: text detection decodes a candidate
+        # whole, so this cap is what bounds the memory one file can cost. 64 MiB is far above
+        # any plausible text file and far below a figure that would matter.
+        IntBounds(1, 67_108_864),
+        1_048_576,
+        unit=ConfigUnit.BYTES,
     ),
     ConfigKey(
         ConfigSection.RETRIEVAL,

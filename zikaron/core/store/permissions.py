@@ -98,6 +98,26 @@ def restrictive_umask() -> Iterator[None]:
         os.umask(previous)
 
 
+def database_files(db_path: Path) -> tuple[Path, Path, Path]:
+    """`db_path` and its two WAL siblings — the three files one open database actually is.
+
+    In WAL mode a database at rest is one file and a database in use is three, and every operation
+    that moves, removes or re-permissions one has to handle all of them. Enumerating them in one
+    place rather than at each call site is what keeps a caller from tightening `memory.db` while
+    leaving its `-wal` world-readable, or from unlinking a knowledge base and leaving its journal
+    behind for the next create at that path to inherit.
+
+    Returned in a fixed order — database, `-wal`, `-shm` — so a caller that unlinks them does so
+    in an order a reader can reason about, and named by suffix rather than by a hardcoded
+    `memory.db` so a knowledge-base database is the same three files by the same rule.
+    """
+    return (
+        db_path,
+        db_path.with_name(db_path.name + "-wal"),
+        db_path.with_name(db_path.name + "-shm"),
+    )
+
+
 def enforce_store_file_mode(path: Path) -> None:
     """Tighten an existing store file to `0600` if it was created wider than that.
 
@@ -129,5 +149,5 @@ def enforce_existing_store_permissions(store_dir: Path) -> None:
         current = store_dir.stat().st_mode & 0o777
         if current != _STORE_DIR_MODE:
             store_dir.chmod(_STORE_DIR_MODE)
-    for name in ("memory.db", "memory.db-wal", "memory.db-shm"):
-        enforce_store_file_mode(store_dir / name)
+    for path in database_files(store_dir / "memory.db"):
+        enforce_store_file_mode(path)

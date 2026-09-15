@@ -79,7 +79,7 @@ async def idle_self_stop(
     **`original_store_inode` is a required parameter, captured by the caller, not by this
     function.** `main.py` reads it from `ctx.store.opened_inode` — a field `Store.open`/`Store.
     create` set immediately after their own `aiosqlite.connect()` returned, with no `await` in
-    between (`zikaron.core.store.store._open_connection`'s own docstring has the full reasoning
+    between (`zikaron.core.store.connection.open_connection`'s own docstring has the full reasoning
     for this capture point, including the narrow, human-authorized gap it deliberately accepts
     rather than a materially larger VFS-level integration).
 

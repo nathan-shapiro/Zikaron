@@ -14,13 +14,13 @@ queries either index, so no function in this module can observe the staleness it
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Final, cast
 from uuid import uuid4
 
 import aiosqlite
 
+from zikaron.core.clock import timestamp
 from zikaron.core.errors import ErrorCode, RowState, ZikaronError
 from zikaron.core.events import (
     EVENT_SPECS,
@@ -146,21 +146,6 @@ class Rewrite:
 
     gist: str
     content: str
-
-
-def timestamp() -> str:
-    """The current instant, ISO-8601 in UTC — every stored time in this store's own format.
-
-    Public, and the only clock any layer calls, because several tables record times that are then
-    compared against each other: a consolidation lease is `started_at` plus a duration, and every
-    reader decides whether a run has lapsed by comparing that string to this one. Two clocks with
-    two formats — one with microseconds and one without, or one naive — would make that comparison a
-    coin flip on a boundary nobody looks at. `created_at`, `updated_at`, `event.at`,
-    `read_receipt.at`,
-    `consolidation_run.started_at`/`expires_at`, `consolidation_group.served_at` and
-    `consolidation_group_member.disposed_at` all come from here.
-    """
-    return datetime.now(UTC).isoformat()
 
 
 #: `memory`'s columns in the fixed order `_row_to_memory` unpacks them — a module-level constant
