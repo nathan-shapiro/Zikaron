@@ -10,12 +10,15 @@ in-process extension rather than a service.
 import dataclasses
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig, resolve
-from zikaron.core.knowledge import lifecycle
+from zikaron.core.knowledge import lifecycle, registry
+from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
 
@@ -49,6 +52,57 @@ async def open_store(tmp_path: Path) -> AsyncIterator[tuple[Path, aiosqlite.Conn
     embedder = FakeEmbedder(config.get_str("embed_model"), config.get_int("embed_dim"))
     async with await Store.create(store_dir, config, embedder) as store:
         yield store_dir, store.connection
+
+
+@dataclass(frozen=True, slots=True)
+class Corpus:
+    """One registered knowledge base over a real directory, with everything a verb needs.
+
+    Held together because every knowledge-base verb takes the same four things, and a test that
+    assembled them one at a time could point a verb at a store other than the one it created.
+    """
+
+    store_dir: Path
+    db: aiosqlite.Connection
+    config: EffectiveConfig
+    name: str
+    root: Path
+
+
+def add_request(root: Path, **options: Any) -> lifecycle.AddRequest:  # noqa: ANN401
+    """An `AddRequest` over `root` with everything a test is not varying already filled in.
+
+    `options` are `AddRequest`'s own field names, checked by `dataclasses.replace` at call time —
+    which is why they are untyped here. Declaring each of them instead would be a second copy of
+    that signature, free to drift from it and to hide a field a test wanted to set.
+    """
+    return dataclasses.replace(
+        lifecycle.AddRequest(name="docs", root=root, description="a corpus"), **options
+    )
+
+
+@asynccontextmanager
+async def open_corpus(
+    tmp_path: Path, request: lifecycle.AddRequest | None = None
+) -> AsyncIterator[Corpus]:
+    """A store with one knowledge base registered, ready to be built.
+
+    With no request, the corpus is the default root `corpus_root` writes — which is what a test
+    about scanning rather than about configuration wants.
+    """
+    async with open_store(tmp_path) as (store_dir, db):
+        config = config_for(tmp_path)
+        asked = request if request is not None else add_request(corpus_root(tmp_path))
+        await add_base(store_dir, db, config, asked)
+        yield Corpus(store_dir=store_dir, db=db, config=config, name=asked.name, root=asked.root)
+
+
+@asynccontextmanager
+async def open_index(corpus: Corpus) -> AsyncIterator[KnowledgeDatabase]:
+    """This corpus's own database, open, for a test that needs to read what a build wrote."""
+    registered = await registry.require(corpus.db, corpus.name)
+    async with await KnowledgeDatabase.open(corpus.store_dir, registered.id) as opened:
+        yield opened
 
 
 async def add_base(

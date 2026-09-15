@@ -50,4 +50,29 @@ class InvalidRootError(KnowledgeError):
 
 
 class IndexerBusyError(KnowledgeError):
-    """An indexer holds this knowledge base's lock, so its database must not be unlinked."""
+    """An indexer holds this knowledge base's lock.
+
+    Raised by anything that must not proceed alongside a build: a second build, and the removal of
+    a database a writer may still hold. Whether the recorded holder is *live* is a question only
+    its own host can answer, so this is raised on a lock that cannot be shown to be dead rather
+    than on one proved alive — refusing is recoverable, and the alternative is not.
+    """
+
+
+class DanglingKnowledgeBaseError(KnowledgeError):
+    """The knowledge base is registered but its database file is gone, and with it its definition.
+
+    Everything that says what this corpus *is* — its root, its globs, its `git_mode`, its size cap
+    — lives in that file, because the registry deliberately owns only the name and description. So
+    a build has nothing to walk and cannot invent one; the way back is to remove the name and add
+    it again, which loses nothing, since a knowledge base in this state has never indexed anything.
+    """
+
+
+class CorpusRootMissingError(KnowledgeError):
+    """The directory this knowledge base indexes is gone.
+
+    A refusal rather than an empty walk, because an empty walk means *every indexed file has been
+    deleted* — which would destroy the whole index on the strength of an unmounted drive or a
+    renamed parent. The index is kept as it is, ready for the root's return.
+    """

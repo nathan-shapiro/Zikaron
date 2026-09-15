@@ -15,15 +15,13 @@ from types import MappingProxyType
 
 import aiosqlite
 
-from zikaron.core.knowledge import meta, state
+from zikaron.core.knowledge import counters, lock, meta, pending, state
 from zikaron.core.knowledge.registry import KnowledgeBase
-
-_SKIP_PREFIX = "skipped_"
 
 
 def _reported_skip_name(key: str) -> str:
     """The `status` field one skip-reason `meta` key is reported under."""
-    return key.removeprefix(_SKIP_PREFIX)
+    return key.removeprefix(counters.SKIP_PREFIX)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,12 +126,10 @@ def _git_mode_or_none(value: str | None) -> meta.GitMode | None:
         return None
 
 
-async def _count(db: aiosqlite.Connection, table: str) -> int:
-    # `table` is one of this module's own literals, never a caller's value, so there is nothing
-    # here for a parameter to protect: SQLite does not accept a table name as one in any case.
-    rows = await db.execute_fetchall(f"SELECT count(*) FROM {table}")  # noqa: S608
-    ((count,),) = list(rows)
-    return int(count)
+async def _chunk_count(db: aiosqlite.Connection) -> int:
+    rows = await db.execute_fetchall("SELECT count(*) FROM chunks")
+    ((found,),) = list(rows)
+    return int(found)
 
 
 async def files_remaining(db: aiosqlite.Connection, raw: Mapping[str, str]) -> int | None:
@@ -145,13 +141,13 @@ async def files_remaining(db: aiosqlite.Connection, raw: Mapping[str, str]) -> i
     timestamp. So the count is a number only when the lock is held **and** the walk phase's own
     completion instant is at least as recent as the build's start.
     """
-    if not state.lock_is_held(raw):
+    if not lock.is_held(raw):
         return None
     started = raw.get(meta.LAST_SCAN_STARTED_AT_KEY)
     walked = raw.get(meta.LAST_WALK_COMPLETED_AT_KEY)
     if started is None or walked is None or walked < started:
         return None
-    return await _count(db, "pending")
+    return await pending.count(db)
 
 
 async def gather(
@@ -183,7 +179,7 @@ async def gather(
             include_globs=current_meta.include_globs,
             exclude_globs=current_meta.exclude_globs,
             max_file_bytes=current_meta.max_file_bytes,
-            chunks=await _count(db, "chunks"),
+            chunks=await _chunk_count(db),
             bytes_indexed=_counter(raw, "bytes_indexed"),
             files_seen=_counter(raw, "files_seen"),
             files_skipped=_counter(raw, "files_skipped"),

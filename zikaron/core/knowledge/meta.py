@@ -23,6 +23,7 @@ from uuid import UUID
 
 from zikaron.core.config.keys import CONFIG_KEYS_BY_NAME, IntBounds
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
+from zikaron.core.knowledge import counters
 
 SCHEMA_VERSION_KEY: Final = "schema_version"
 ID_KEY: Final = "id"
@@ -75,27 +76,12 @@ class GitMode(StrEnum):
     OFF = "off"
 
 
-#: The scan-progress and skip-reason counters, plus the four search counters. Written at creation
-#: so nothing
-#: ever reads a missing key, and so `status` has an answer before any scan has run.
-PROGRESS_KEYS: Final[tuple[str, ...]] = (
-    "files_seen",
-    "files_indexed",
-    "files_skipped",
-    "bytes_indexed",
-)
-
-SKIP_REASON_KEYS: Final[tuple[str, ...]] = (
-    "skipped_binary",
-    "skipped_denied_extension",
-    "skipped_over_size_cap",
-    "skipped_excluded_by_glob",
-    "skipped_gitignored",
-    "skipped_decode_error",
-    "skipped_symlink",
-    "skipped_unreadable",
-    "pruned_directories",
-)
+#: The scan's own counters, defined where the scan defines them: a second list of these names here
+#: could disagree with the one a scan writes through, and the symptom would be a count nothing
+#: reports. Written at creation like every other counter, so nothing ever reads a missing key and
+#: `status` has an answer before any scan has run.
+PROGRESS_KEYS: Final[tuple[str, ...]] = counters.PROGRESS_KEYS
+SKIP_REASON_KEYS: Final[tuple[str, ...]] = counters.SKIP_REASON_KEYS
 
 SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = (
     "searches",

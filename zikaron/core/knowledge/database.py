@@ -16,7 +16,7 @@ path, which is a cost measured at roughly a second and deliberately moved off it
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -30,22 +30,13 @@ from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import ddl, meta, paths
 from zikaron.core.store import permissions
 from zikaron.core.store.connection import open_connection
-from zikaron.core.store.transactions import in_one_transaction
+from zikaron.core.store.transactions import in_one_transaction, propagate
 
 
 def _schema_too_new(found: int) -> ZikaronError:
     return ZikaronError(
         ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=meta.SUPPORTED_SCHEMA_VERSION
     )
-
-
-def _propagate(_error: aiosqlite.Error) -> None:
-    """Name a driver failure during schema creation as itself.
-
-    No wire code describes "creating a knowledge base's tables failed" — `index_failed` speaks of
-    index maintenance on the memory store — so the driver's own error is the honest answer, and
-    whichever lifecycle verb was running reports it.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +108,36 @@ async def read_meta(db: aiosqlite.Connection) -> dict[str, str]:
     except aiosqlite.Error:
         return {}
     return {str(key): str(value) for key, value in rows}
+
+
+async def write_meta(db: aiosqlite.Connection, rows: Mapping[str, str]) -> None:
+    """Set every one of `rows`, creating what is absent and overwriting what is not.
+
+    An upsert rather than an update because the two kinds of key here are written by different
+    rules: counters exist from creation and are overwritten, while a scan-outcome or lock key is
+    absent until the first thing that has one to record. One statement covers both, and the
+    alternative — asking which kind a key is before writing it — is a second statement of a split
+    that is already declared.
+
+    Called from inside a caller's transaction, never opening one of its own: a counter flush
+    belongs to the same transaction as the file disposal it describes, or it reports progress for
+    work that was rolled back.
+    """
+    await db.executemany(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        list(rows.items()),
+    )
+
+
+async def clear_meta(db: aiosqlite.Connection, keys: Sequence[str]) -> None:
+    """Remove every one of `keys`, ignoring those that are not there.
+
+    Absence is the ordinary outcome: these are the keys whose *absence* carries the meaning — no
+    indexer holds the lock, no scan has completed — so clearing one that was never written is the
+    state already being correct rather than a condition to report.
+    """
+    await db.executemany("DELETE FROM meta WHERE key = ?", [(key,) for key in keys])
 
 
 def encoder_matches_config(current: meta.KnowledgeMeta, config: EffectiveConfig) -> bool:
@@ -270,7 +291,7 @@ class KnowledgeDatabase:
                     "INSERT INTO meta (key, value) VALUES (?, ?)", (key, value)
                 )
 
-        await in_one_transaction(db, _work, failure=_propagate)
+        await in_one_transaction(db, _work, failure=propagate)
 
     @classmethod
     async def open(cls, store_dir: Path, kb_id: UUID) -> Self:

@@ -1,37 +1,24 @@
-"""`python -m zikaron.knowledge` — the five knowledge-base verbs, for a person at a shell.
+"""`python -m zikaron.knowledge` — the knowledge-base verbs, for a person at a shell.
 
 Flow, argument parsing and printing live here; every decision lives in `zikaron.core.knowledge`,
 which the agent-facing tools will call through the same functions. This module deliberately holds
 no rule of its own, so the two surfaces cannot diverge on what a verb means.
 
-**This command opens `memory.db` directly** rather than going through the memory service. It is
-not on any latency path, it runs when no harness process need exist, and its writes are one small
-transaction against a table the service does not read — which is what WAL and `busy_timeout` are
-for. The service is not a gatekeeper here, and requiring one would make managing corpora depend on
-a harness being live.
+`refresh` is the one verb whose work lives elsewhere: building an index is its own command with
+its own entry point, and this verb calls it rather than repeating it.
 """
 
 import argparse
-import asyncio
-import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import aiosqlite
 
-from zikaron.core.config.resolution import (
-    EffectiveConfig,
-    default_system_config_path,
-    project_config_path,
-    resolve,
-)
-from zikaron.core.errors import ZikaronError
+from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.knowledge import lifecycle, meta, reporting
-from zikaron.core.knowledge.errors import KnowledgeError
-from zikaron.core.store.store import Store
-from zikaron.harness import detect
-from zikaron.service import paths as service_paths
+from zikaron.knowledge import scope
+from zikaron.knowledge.indexer import main as indexer
 
 _UNSET = "—"
 
@@ -61,8 +48,21 @@ def _parser() -> argparse.ArgumentParser:
         help="what this corpus holds. Required: it is what lets a later caller choose between "
         "corpora without searching every one of them.",
     )
-    adding.add_argument("--include", action="append", default=[], metavar="GLOB", help="repeatable")
-    adding.add_argument("--exclude", action="append", default=[], metavar="GLOB", help="repeatable")
+    adding.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="repeatable. Matched against the path relative to --path, where '*' crosses '/' — so "
+        "'*.md' reaches every markdown file and 'docs/*' means the whole tree under docs.",
+    )
+    adding.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="repeatable, and applied before --include. Same matching as --include.",
+    )
     adding.add_argument(
         "--git-mode",
         type=meta.GitMode,
@@ -93,6 +93,9 @@ def _parser() -> argparse.ArgumentParser:
     reporting_parser = verbs.add_parser("status", help="the detail behind a knowledge base's state")
     reporting_parser.add_argument("name", nargs="?", default=None)
 
+    refreshing = verbs.add_parser("refresh", help="build a knowledge base's index")
+    refreshing.add_argument("name")
+
     return parser
 
 
@@ -103,54 +106,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     reads both the status and the output. `__main__` is the only place a status becomes an exit.
     """
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
-    try:
-        return asyncio.run(_run(args))
-    except KnowledgeError as exc:
-        print(f"refused: {exc}", file=sys.stderr)
-        return 1
-    except ZikaronError as exc:
-        print(f"refused: {exc.message} ({exc.data})", file=sys.stderr)
-        return 1
-    except (aiosqlite.Error, OSError) as exc:
-        # Every predictable refusal is raised above. This is the remainder — a full disk, a
-        # revoked permission, a database that will not open — reported as a failed command rather
-        # than as a traceback, which tells whoever ran it nothing they can act on.
-        print(f"failed: {exc}", file=sys.stderr)
-        return 1
-
-
-def _scope_dir(project: Path | None) -> Path:
-    """Which project's store to act on.
-
-    Resolved through the same harness seam both clients use, so this command and the agent's own
-    tools address one store rather than two. An explicit `--project` wins over the harness, since
-    naming one is the caller saying they mean a different project from the one they are sitting
-    in.
-    """
-    if project is not None:
-        return project
-    return detect.current_spec().store_scope_dir(Path.cwd())
-
-
-def _config(store_dir: Path) -> EffectiveConfig:
-    return resolve(
-        default_system_config_path(os.environ.get("XDG_CONFIG_HOME"), Path.home()),
-        project_config_path(store_dir),
-    )
+    return scope.execute(lambda: _run(args), printer=lambda line: print(line, file=sys.stderr))
 
 
 async def _run(args: argparse.Namespace) -> int:
-    """Open the store's `memory.db` once, run the verb, and close it however it ends.
-
-    The memory store is opened through `Store.open` rather than by connecting to the file, so this
-    command inherits every check that path runs — permissions, the symlink refusal, `meta`
-    validation — and refuses a store this build cannot read instead of writing a registry row into
-    it.
-    """
-    store_dir = service_paths.store_dir(_scope_dir(args.project))
-    config = _config(store_dir)
-    async with await Store.open(store_dir, config) as store:
-        return await _dispatch(args, store_dir, store.connection, config)
+    """Open the store once, run the verb, and close it however it ends."""
+    async with scope.open_store(args.project) as store:
+        return await _dispatch(args, store.directory, store.connection, store.config)
 
 
 async def _dispatch(
@@ -175,6 +137,8 @@ async def _dispatch(
         return 0
     if args.verb == "remove":
         return await _remove(args, store_dir, db, config)
+    if args.verb == "refresh":
+        return await indexer.build(store_dir, db, config, name=args.name)
     # Unreachable through the command, which refuses an unknown verb before dispatch. Loud rather
     # than a trailing `return`, because the branch a fall-through would land in is the destructive
     # one — a verb added to the parser and forgotten here must fail, not remove a knowledge base.
@@ -210,7 +174,7 @@ async def _add(
             f"inside a git work tree, so this corpus is built as "
             f"{created.git_mode_effective.value!r}."
         )
-    print("\nNothing is indexed yet; this knowledge base is registered but empty.")
+    print("\nNothing is indexed yet. Run `refresh` to build it.")
     return 0
 
 

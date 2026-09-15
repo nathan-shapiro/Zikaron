@@ -1584,9 +1584,9 @@ own, and what `remember` accepts is unchanged.
 
 ---
 
-## M21 — Discovery, filtering, and change detection
+## M21 — Discovery, filtering, and change detection — **complete**
 
-Normative: §4.1, §4.2, §5.1–§5.6, §6.2, §6.4, §7.5 (the `pending` half), §8.5's skip breakdown.
+Normative: §4.1, §4.2, §5.1–§5.6, §6.2, §6.3, §6.4, §7.5 (the `pending` half), §8.5's skip breakdown.
 
 The walk: directory pruning before descent, symlink refusal, `.gitignore` via batched `check-ignore`
 under `all`, globs, size cap, and text detection **at first read** rather than at walk time. The
@@ -1594,12 +1594,12 @@ under `all`, globs, size cap, and text detection **at first read** rather than a
 the changed set and replaces `pending` wholesale, writing `last_walk_completed_at`; index phase disposes
 of each path by one of the three disposals. Per-KB advisory lock, taken even though the indexer still
 runs in the foreground of the CLI invocation — **with same-host pid reclamation, which belongs here
-rather than in M24**: the lock exists from this milestone, so a process killed mid-scan would otherwise
-leave a knowledge base with no way back until M24 lands. Cross-host reporting and `--force-unlock` stay
-in M24, where the state machinery they report through exists.
+rather than with the rest of the lock machinery**: the lock exists from this milestone, so a process
+killed mid-scan would otherwise leave a knowledge base with no way back until M23 lands. Cross-host
+reporting and `--force-unlock` stay in **M23**, where the state machinery they report through exists.
 
 **The indexer is a separate entry point from the first line of code** — invoked synchronously here,
-detached in M24. Same module, different invocation; M24 adds spawning and progress, not a rewrite.
+detached in **M23**. Same module, different invocation; M23 adds spawning and progress, not a rewrite.
 
 **Throughput is measured here and recorded**, sizing K8's separate-process argument against the ~124 s
 modelled in §6.1: wall time, peak RSS, the binary-with-unknown-extension fraction that decides
@@ -1617,6 +1617,15 @@ scan; killing the indexer mid-scan leaves `pending` non-empty and the next scan 
 reason in §8.5 is reachable and counted; the git fast path and `git_mode = off` agree on a clean tree.
 
 **Fence:** no chunking, no embedding, no search. The `files` table and its maintenance only.
+
+**Landed 2026-09-15, APPROVED after five review rounds** (`reviews/m21-scan-review.md`), the last
+closing with no findings at any tag level. Every done-when clause is covered by a test. The two
+throughput questions this brief deferred to the measurement are **closed negative** in
+`research/m21-scan-throughput.md` — the remembered-skip memo is not built (1 binary-with-unknown-
+name file in 2,491) and directory-level `check-ignore` pruning is not adopted (4.81% and 0.00%,
+with the larger repository's `.gitignore` naming directories the fixed prune list already carries).
+Its timings are upper bounds taken on a loaded machine and are owed a re-run; `FINDINGS.md` carries
+that as an explicit OWED item.
 
 ---
 
@@ -1644,6 +1653,18 @@ a smaller diff at the cost of a knowingly-inconsistent store.
 
 **This is the first milestone that ships the capability the operator asked for**: search over indexed
 documents that grep cannot reach.
+
+**It inherits an obligation from M21 that nothing else will surface, because the store it produces
+is internally consistent.** M21's scan writes `files` rows with `chunk_count = 0` — honestly, since
+it has no chunker — and change detection reindexes on a content hash, so a knowledge base built
+before this milestone would keep every one of those rows and never gain a chunk. Neither the
+encoder-identity check nor any invariant can see it: the encoder matches, `chunk_count` agrees with
+the zero chunks present, and `state` reports `ok`. **The lever is the per-KB `meta.schema_version`,
+bumped here and given a rule this build does not yet have**: today's open path refuses only a
+version *newer* than it supports, so a fourth `reindex_required` cause — a recorded version older
+than the supported one — is what converts the bump into a rebuild. Both halves are this
+milestone's, and neither is optional: the bump without the rule changes nothing, and the rule
+without the bump fires on nobody.
 
 **Invariants:** 3, 6, 7, 9, 10, 13, 16. **Done when:** `Read(path, start_line, end_line)` returns a
 result's snippet byte-for-byte including the no-trailing-newline case, as a property test over a fixture

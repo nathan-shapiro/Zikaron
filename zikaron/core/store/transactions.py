@@ -55,6 +55,17 @@ _PRIMARY_RESULT_MASK: Final = 0xFF
 _CARVE_OUT_CODES: Final = (ErrorCode.VERSION_CONFLICT, ErrorCode.NO_READ_RECEIPT)
 
 
+def propagate(_error: aiosqlite.Error) -> None:
+    """The `FailureMap` for work no wire error code describes: raise the driver's own exception.
+
+    Returning `None` has to be a deliberate choice rather than a default, because a raw driver
+    exception escaping unnamed leaves whoever serializes a response with no code to send. This is
+    that choice, made once, for every caller whose work is genuinely outside the wire contract —
+    the knowledge-base registry and each knowledge base's own tables, neither of which any RPC
+    returns a code about. A caller inside the contract names its failures instead.
+    """
+
+
 def is_contention(error: aiosqlite.Error) -> bool:
     """Whether this driver failure means the store was locked rather than the work failed.
 

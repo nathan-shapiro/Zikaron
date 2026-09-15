@@ -15,7 +15,6 @@ from zikaron.core.knowledge.state import (
     PRECEDENCE,
     KnowledgeState,
     StateInputs,
-    lock_is_held,
     never_built,
     resolve,
 )
@@ -94,14 +93,9 @@ def test_the_precedence_lists_every_state_exactly_once() -> None:
     assert len(set(PRECEDENCE)) == len(PRECEDENCE)
 
 
-class TestTheTwoPersistedFacts:
-    def test_the_lock_is_held_when_its_pid_key_is_present(self) -> None:
-        assert lock_is_held({meta.LOCK_PID_KEY: "4242"})
-        assert not lock_is_held({})
-
-    def test_a_corpus_is_unbuilt_until_a_completion_instant_is_recorded(self) -> None:
-        """Read as a persisted fact rather than as an emptiness test, because a first build that
-        crashed after committing some files has rows — and reporting a corpus trustworthy on the
-        strength of having *some* rows would claim a currency nothing backs."""
-        assert never_built({})
-        assert not never_built({meta.LAST_SCAN_COMPLETED_AT_KEY: "2026-01-01T00:00:00+00:00"})
+def test_a_corpus_is_unbuilt_until_a_completion_instant_is_recorded() -> None:
+    """Read as a persisted fact rather than as an emptiness test, because a first build that
+    crashed after committing some files has rows — and reporting a corpus trustworthy on the
+    strength of having *some* rows would claim a currency nothing backs."""
+    assert never_built({})
+    assert not never_built({meta.LAST_SCAN_COMPLETED_AT_KEY: "2026-01-01T00:00:00+00:00"})

@@ -11,17 +11,11 @@ a corpus root outside the project directory is a legitimate use (a docs tree, a 
 dependency), so the rule rejects only roots that are degenerate rather than merely distant.
 """
 
-import asyncio
-import subprocess
 from pathlib import Path
 
+from zikaron.core.knowledge import git
 from zikaron.core.knowledge.errors import InvalidRootError
 from zikaron.core.knowledge.meta import GitMode
-
-#: How long the one synchronous git probe may take before it is treated as no answer. Generous
-#: against a sub-millisecond call, and present at all because a hung `git` on a network filesystem
-#: would otherwise hang the command a person is waiting on.
-_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 def validate_root(path: Path, *, home: Path) -> Path:
@@ -52,32 +46,6 @@ def validate_root(path: Path, *, home: Path) -> Path:
     return resolved
 
 
-def _inside_work_tree(root: Path) -> bool:
-    """Whether `git` reports `root` as inside a work tree.
-
-    Every failure is one answer — *no* — rather than an enumeration of causes, which is the same
-    rule the scan itself degrades under and it bites here for the same reason. `git` missing from
-    `PATH`, a directory that is not a repository, and a `safe.directory` refusal inside a
-    container all return different things, and the last is the common modern case that an
-    enumeration of the first two would classify wrongly. Anything that is not a clean exit 0
-    saying `true` is therefore not an answer that git is available here.
-    """
-    try:
-        # A fixed argument vector with no shell and no caller value in it; `git` is
-        # resolved from `PATH`, which is what makes this the same git the operator uses.
-        completed = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=_PROBE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.returncode == 0 and completed.stdout.strip() == "true"
-
-
 async def effective_git_mode(root: Path, requested: GitMode) -> GitMode:
     """The `git_mode` that will actually apply at `root`, which may be weaker than the one asked
     for.
@@ -87,11 +55,14 @@ async def effective_git_mode(root: Path, requested: GitMode) -> GitMode:
     is an endorsed use, so a caller that was not told would discover it as a silently different
     corpus.
 
-    The probe is run here, synchronously, purely so a caller learns at creation time that its
-    choice will not take effect. It is not the authority afterwards — what explains an *indexed
-    corpus* is the mode the build that produced it actually used, which that build records.
+    Probed at creation, so the caller learns immediately that its choice will not take effect
+    there, and again at the start of every build, whose opening transaction persists the answer as
+    the mode that build began under.
+
+    **Neither answer is the authority on an indexed corpus afterwards.** What explains one is the
+    effective mode the build that produced it actually ran under — which a degradation discovered
+    later in the walk may weaken further, and which that build rewrites when it does.
     """
     if requested is GitMode.OFF:
         return GitMode.OFF
-    inside = await asyncio.to_thread(_inside_work_tree, root)
-    return requested if inside else GitMode.OFF
+    return requested if await git.inside_work_tree(root) else GitMode.OFF

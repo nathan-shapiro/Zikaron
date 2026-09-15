@@ -219,7 +219,7 @@ CREATE TABLE files (
 -- Drives §7.5's first staleness disjunct. Replaced wholesale in one transaction when the
 -- walk phase ends. A row is deleted by whichever index-phase transaction disposes of that
 -- path -- and every disposal is on this list: reindex (§4.6), deletion, or a recorded
--- text-detection skip (both §5.5).
+-- skip -- text detection or the size cap (both §5.5).
 CREATE TABLE pending (
   path       TEXT PRIMARY KEY,
   noticed_at TEXT NOT NULL,
@@ -410,7 +410,19 @@ Discovery walks `root_path`. **Filtering is deny-by-default at the directory lev
      was split and answered about a *different* path, with exit 0 and no diagnostic.
 
    Paths are resolved against the **process cwd**, not the repository root.
-4. **User `exclude_globs`**, then `include_globs` if non-empty.
+4. **User `exclude_globs`**, then `include_globs` if non-empty. Both are matched against the
+   candidate's **path relative to `root_path`, in POSIX form, case-sensitively** — the same
+   byte-exact string `files.path` stores, so a pattern means the same thing to the walk and to
+   anyone reading the index back. **`*` crosses `/`**, which is what makes `*.md` reach
+   `docs/a.md` and `docs/*` mean the whole tree under `docs` rather than its direct children.
+   Stated because nothing else fixes it and the alternatives are all defensible: a pattern that
+   matched only the basename, or only a whole path segment, would silently index a different
+   corpus from the same configuration file.
+   **The consequence, named because it is the one surprise in it: `**` carries no meaning of its
+   own.** It is two stars, so `docs/**/*.md` asks for a file two directories below `docs` and gets
+   exactly that, where a reader used to git's globbing expects it to mean the whole tree. It fails
+   **closed** — an empty corpus rather than a quietly wrong one — and `docs/*` is the pattern that
+   means what such a reader wanted.
 5. **Size cap** — the KB's own `max_file_bytes` (§3.2), seeded at creation from
    `knowledge_max_file_bytes`, default 1 MiB. Over-cap files are skipped and counted, never truncated.
    A file that crosses the cap in either direction is a §5.5 corpus change, not a silent one.
@@ -510,7 +522,8 @@ subprocess instead of thousands. Three properties it needs, none of which follow
 
 - **It runs *before* `pending` is replaced** (§7.5). An attribute-excluded path then never enters
   `pending` at all, the same shape as a walk-phase sniff failure (§4.1) — it removes a disposal case
-  instead of creating a fifth one, which §7.5 declares a defect.
+  instead of creating a fourth one, which §7.5 declares a defect. A previously-indexed path it
+  excludes is deleted by the walk phase, per §5.5.
 - **It covers every admitted candidate, including those the §5.2 fast path cleared.** This is the
   non-obvious half: when `.gitattributes` changes to mark an *unchanged* file binary, that file's own
   blob hash is unchanged, so the skip rule clears it — and a batch run only over files being read this
@@ -708,9 +721,12 @@ error, a silently empty corpus, or a walk, which is three corpora from one speci
 
 **The rule is stated over *any* git failure, not over an enumeration of causes.** If the root is not
 inside a work tree, `git` is not on `PATH`, **or any *enumeration-affecting* git invocation fails for
-any reason** — `rev-parse`, `ls-files`, `status`, `check-ignore` — the effective mode for that scan is
+any reason** — `rev-parse` in **both** its uses (`--is-inside-work-tree` and `--show-prefix`),
+`ls-files`, `status`, `check-ignore` — the effective mode for that scan is
 `off`. That list is exhaustive: every git invocation this design makes is either on it or is
-`check-attr`, classified immediately below.
+`check-attr`, classified immediately below. `--show-prefix` is on it because without it the status
+stream cannot be joined at all for a corpus rooted below its repository, so a scan that lost it
+could not apply the change guard it names.
 
 **"Fails" is the complement of "answered", and for `check-ignore` that distinction is not the obvious
 one.** It exits **1** to say *none of these paths is ignored*, which is an answer and the common one
@@ -736,6 +752,14 @@ close.
 rather than inferred. **It is recorded to `meta` at walk start** (`last_scan_git_mode_effective`) rather
 than recomputed at `status` time, because the value that explains the *indexed corpus* is the one the
 last scan actually used, not whatever the environment happens to be when someone asks.
+
+**Written twice, not once, and the second write is the one that matters.** At walk start only the
+work-tree probe has run, so what can be recorded then is what that probe established. A degradation
+the walk *discovers* — one of the batched calls failing partway through — happens after it, and the
+walk phase's closing transaction therefore rewrites the key with the mode the scan actually ran
+under. A build that crashed before that transaction leaves the probe's answer, which is the most
+that was known at the time; the alternative is a key nothing writes until a scan succeeds, which
+is silent about exactly the scans worth explaining.
 
 **`add` reports the degradation from its own probe, not from that key.** `add` returns immediately
 (§8.4) while the key is written by the detached indexer at walk start — after `add` has returned — so
@@ -791,6 +815,21 @@ is a schema change and is named in §16 rather than built here.
   directory on disk. It matches no `files` row, so nothing breaks — but that is an accident of the
   join rather than a property of the parser, and it is the only shape in the stream that is not a
   file.
+- **Every reported path is relative to the *repository* root, not to the corpus root, and this is
+  the one call in this design for which those differ.** Measured from `repo/docs`: `ls-files -s -z`
+  answers `guide.md` while `status --porcelain -z` answers `docs/guide.md`; porcelain output
+  ignores the working directory, and `status.relativePaths` governs only the human format. So for
+  any corpus rooted below its repository — a vendored dependency or a documentation tree, both of
+  which §8.6 endorses by name — the status stream must be reconciled against **`git rev-parse
+  --show-prefix`** (run at the corpus root; empty at the top of the repository) before anything
+  joins on it: **paths under the prefix have it stripped, and paths above it are dropped rather
+  than shortened**, since a sibling of the corpus root could otherwise be shortened into a name
+  that collides with one inside it. The rename pair's **bare** second field needs the same
+  treatment as its first. `--show-prefix` is enumeration-affecting and joins the list above.
+  **Left unreconciled the failure is silent and permanent**, which is why it is stated here rather
+  than left to an implementer: `ls-files` still reports the committed blob, the status guard
+  matches nothing, and an uncommitted edit to a tracked file is cleared as unchanged on every scan
+  until somebody commits it.
 
 **The fast path is correct up to clean filters, and this is a real limit rather than a theoretical
 one.** `ls-files -s` hashes are of clean-**filtered** content and `git status` compares filtered
@@ -839,6 +878,20 @@ costs and why it is not worth it.
 and why the trigger that would work is rejected. **The FTS half has an ordering constraint**: the
 `'delete'` command needs the chunk's *original* column values, so those are read before the `chunks`
 rows go. §4.6 states it once for both paths.
+
+**Which phase performs a deletion follows from which phase discovered it, and saying so is what
+reconciles this rule with §4.1's and §4.2's "never enters `pending` at all".** The walk phase knows
+the whole admitted set, so every path in `files` that it stops admitting — gone, over the cap,
+newly excluded by a glob or an attribute, or failing the sniff on the walk's own hashing read — is
+deleted **by the walk phase**, before it replaces `pending`. Such a path has nothing left for a
+later phase to decide, so putting it in `pending` would create a row whose only disposal is the
+deletion that already happened. The index phase's deletions are the ones only it can discover: its
+own read finds a file that is no longer indexable — no longer text, or no longer takeable at the
+size cap — and was already indexed. That happens when the walk could not settle it: its read there
+**failed**, or the file was still indexable when the walk read it and had changed by the time the
+index phase read it. That
+is why §7.5's three disposals are exactly the three outcomes of reading one `pending` file, and why
+this rule and those two are one mechanism rather than two.
 
 **"No longer admits as a candidate" rather than "no longer finds", deliberately.** A file can stop
 being part of the corpus without disappearing: it grows past `max_file_bytes`, the cap is lowered in
@@ -912,6 +965,19 @@ at all.
 Multi-process SQLite writing is already validated here: spike 3 measured `busy_timeout` behaving as
 documented under two real writers, provided blocking `sqlite3` calls stay off the event loop.
 
+**Everything *around* the embedding is now measured, and it is single-digit seconds**
+(`research/m21-scan-throughput.md`): a full build with no embedder at all — walk, git, read, hash,
+one transaction per file — costs **at most 2.9 s over 2,034 files and 11.9 MB**, and **at most
+0.26 s** to rebuild when nothing has changed. Peak resident memory is **~40 MiB** and barely moves
+with corpus size. Both figures are the slowest of the three git modes, which is what makes them
+bounds; the fastest, `tracked`, is 2.55 s cold and 0.15 s to rebuild. **Upper bounds rather than figures**, because the machine was under other load
+throughout — which is the conservative direction for this argument, and which that note flags for
+re-taking once a whole build, embedder included, can be timed on an idle machine.
+**That sharpens this section's argument rather than adding to it:** the estimate above *is* the
+whole case for a separate process, because every other part of a build is cheap. A build without
+chunking and embedding would be a sub-second job that belonged anywhere; with them it is the
+multi-minute one this section describes.
+
 ### 6.2 Lifecycle
 
 The indexer is spawned by the CLI (§9) or by the service handling `add`/`refresh` (§8.4) — there is no
@@ -956,6 +1022,13 @@ Progress is written to `meta` after each file transaction: `files_seen`, `files_
 authoritative. Because commits are per file (§4.6), **a search during
 a build returns whatever is committed**, and every group carries `state: "indexing"` with
 `files_remaining` (§8.5), so a partial answer says so rather than passing as complete.
+
+**`files_seen` is the exception to "after each file transaction", and it has to be**: the walk phase
+runs before the first file transaction exists, and during that window `files_remaining` is
+deliberately `null` (§8.5), so this counter is the only evidence a scan is progressing at all. It is
+therefore written periodically **during** the walk. The period is an implementation choice bounded
+on both sides — often enough that the number reads as motion, rarely enough that the write is noise
+against the walk itself — and nothing depends on its value.
 
 This is a deliberate trade: partial results with an honest flag beat either blocking or an empty
 answer. An agent told "this corpus is 40% indexed" can decide whether to wait; an agent given a silent
@@ -1105,8 +1178,13 @@ compares (§5.2), then **replaces** `pending` wholesale in one transaction — r
 appends, so a file edited and then reverted between scans correctly loses its row instead of being
 flagged stale forever. The **index phase** then disposes of each path, deleting its `pending` row in the
 transaction that does so. **Every disposal is one of three**: a reindex (§4.6), a deletion, or a
-recorded text-detection skip (both §5.5). Invariant 12 constrains it, and the list is exhaustive by
-construction — a fourth outcome would be a defect, because it would leave a row nothing removes.
+recorded skip — **text detection or the size cap** (both §5.5). Invariant 12 constrains it, and the
+list is exhaustive by construction — a fourth outcome would be a defect, because it would leave a
+row nothing removes.
+**The size cap belongs in that list because a pending file can grow past it after the walk
+measured it**, which the index phase's own bounded read is what discovers. It is the same rule
+arriving one phase later rather than a new one, and it disposes exactly as a text-detection refusal
+does: a recorded skip, plus a deletion where a row exists.
 
 **Disjunct 1 is why `pending` exists as a table** (§3.2): "the walk phase found this changed" needs a
 persisted representation the search path can read, and counters in `meta` cannot supply one.
@@ -1378,13 +1456,18 @@ first scan finishes is no. It settles to `ok` when that scan's completing transa
 writes its `meta`, spawns the indexer, and returns.
 
 **`add` and `remove` use the same ordering, not mirrored ones: the registry is always mutated first.**
-The rule is to leave the **self-healing** state where one exists and the **lesser harm** where none
-does — and after §11's absent-file rule the two interrupted states are not symmetric, so one ordering
-satisfies both:
+The rule is to leave the **recoverable** state where one exists and the **lesser harm** where none
+does — and the two interrupted states are not symmetric, so one ordering satisfies both:
 
-- **Interrupted `add`** leaves a **row without a file** — an empty knowledge base that `list` and
-  `status` show as `reindex_required` and that the next `refresh` builds. Self-healing, no operator
-  involvement.
+- **Interrupted `add`** leaves a **row without a file** — a **dangling name**, which `list` and
+  `status` show as `reindex_required`, and which is cleared by `remove` and re-created by `add`.
+  Nothing is lost, because nothing was ever indexed under it.
+  **`refresh` cannot repair it**, and an earlier revision of this bullet said it could. Everything
+  that defines a corpus other than its name and description — `root_path`, the globs, `git_mode`,
+  `max_file_bytes`, the encoder identity — lives in that knowledge base's **own `meta`**, per
+  §3.1a's authority split, so a missing database file is a missing definition and there is nothing
+  for a walk to walk. `refresh` therefore **refuses**, naming the remedy, rather than building a
+  corpus it would have to invent the shape of.
 - **Interrupted `remove`** leaves a **file without a row** — an orphan: invisible to every query, never
   opened, and reported by `status`. It leaks disk until someone clears it (§16 item 10), which is the
   lesser harm.
@@ -1399,11 +1482,14 @@ What survives is a **hard kill inside that window**, which no handler can catch;
 `error` and repaired by deleting the file. Stated rather than omitted, so the pair above is read as
 what this design produces rather than as an exhaustive list of what can happen.
 
-The reverse ordering is worse in both directions. An `add` that wrote the row last would leave an
-orphan on interruption, and because a retried `add` mints a fresh id, that orphan is **permanent** —
-whereas the dangling name it avoids is now self-healing. A `remove` that unlinked first would leave a
-dangling name that **silently resurrects**: the next `refresh` or `refresh(None)` would see an empty KB
-and rebuild the corpus the caller had just asked to destroy.
+The reverse ordering is worse in both directions, and stays worse now that the dangling name needs a
+command rather than healing on its own. An `add` that wrote the row last would leave an orphan on
+interruption, and because a retried `add` mints a fresh id, that orphan is **permanent** — a file
+nothing refers to and nothing will delete, where the dangling name it avoids costs one `remove`. And
+a `remove` that unlinked first would leave a dangling name **holding a live definition**: its `meta`
+is gone with the file, but the name is not, so the caller is left with a knowledge base that reports
+`reindex_required` for a corpus they asked to destroy — and under any rule that let `refresh` rebuild
+from an absent file, it would resurrect outright.
 
 `add` with a name that already exists is an **error**, never an upsert — silently reconfiguring a
 corpus underneath an agent that did not create it is worse than a failed call, and the registry's
@@ -1688,6 +1774,25 @@ unconditional would also have been a second rule for no gain.
 a total after one, which is one field with one meaning under the rule above, not two fields. That is now
 true of every counter rather than a contrast with `files_seen`, per the withdrawal above.
 
+**What each of the four counts, because "a total after one" does not say *a total of what* and the
+two readings differ where it matters most.** `files_seen` and `files_skipped` count the scan's own
+work — entries the walk evaluated as file candidates, and files it refused for one of the eight
+reasons. **`files_indexed` and `bytes_indexed` instead describe the corpus the scan leaves behind**:
+every admitted file the scan established is in the index increments them, whether it was reindexed
+or cleared as unchanged. The alternative reading — files this scan *wrote* — makes a rescan that
+finds nothing changed report `files_indexed: 0`, and this is the field `list` hands a caller in
+order to **choose** a corpus, so a healthy 412-file corpus would advertise itself as empty. Under
+the reading above the value is checkable rather than merely intended: on a scan that completes with
+nothing left `unreadable`, `files_indexed` equals `COUNT(files)` and `bytes_indexed` equals
+`SUM(files.size)`.
+
+**One consequence of `files_seen`'s definition, stated because it is otherwise read as a defect.**
+The walk evaluates every file it reaches, and under `git_mode = tracked` the `ls-files` intersection
+then removes the untracked ones — which are **seen** and outside the corpus without being
+**skipped**, since none of the eight reasons describes them and inventing a ninth would put a value
+on this reported table that §3.2 does not carry. The difference `files_seen − files_skipped −
+files_indexed` is where they are, and `git_mode` is what explains them.
+
 **This list and §3.2's `meta` list must agree**; §3.2 is authoritative for key names. The coupling is
 not decorative — §8.4 defines `add` and `refresh` as returning "the same status shape", so a field
 missing here is a field missing from the return that §5.2 requires to report degradation.
@@ -1807,7 +1912,7 @@ reader assumes owns it.
 | condition | behaviour |
 |---|---|
 | KB database present but **unreadable** (corrupt, permissions) | `list` and `status` report `state: "error"`; search returns that group with `state: "error"` and no results, others answer normally. **Not** `reindex_required` — `refresh` does not obviously repair a corrupt file, and the operator needs the difference |
-| KB database **absent** | **an empty knowledge base, not an error.** `list` and `status` both report `state: reindex_required` with `files_indexed: 0`; search returns an empty group (§7.4). `refresh` creates the database and indexes from scratch. Absence is the ordinary state of a KB whose `add` was interrupted, and is recoverable without operator involvement |
+| KB database **absent** | **an empty knowledge base, not an error**, for everything that reads: `list` and `status` both report `state: reindex_required` with `files_indexed: 0`, and search returns an empty group (§7.4). **`refresh` refuses**, because the file that is missing is the only place this corpus's definition was ever written (§8.4) — the remedy is `remove` and `add`, and it loses nothing, since a KB in this state has never indexed anything |
 | `knowledge/*.db` with no registry row (orphan) | reported by `status` with the file's breadcrumb name and size; never opened for search, never auto-deleted. The residue of an interrupted **`remove`** — under §8.4's registry-first ordering an interrupted `add` leaves the absent-database case above instead |
 | `memory.db` unreadable | **no KB is discoverable**, though every corpus is intact — the coupling §3.1a names. `status` reports `registry_unavailable` rather than an empty list, which would be indistinguishable from "no KBs configured" |
 | embed model/dim in `meta` ≠ configured | that KB refuses to serve and reports `reindex_required`; it does **not** answer with mismatched vectors |
@@ -1877,7 +1982,8 @@ or an actor — the same gap FINDINGS open question 1 records for the memory sid
     `memory.db` (§15).
 12. A path in `pending` names a file whose `files` row, if any, predates the current walk phase.
     `pending` is emptied by the **index phase disposing of every path** — by reindex, deletion, or a
-    recorded text-detection skip (§5.5, §7.5) — never by the indexer exiting. **Two
+    recorded skip, whether text detection or the size cap refused it (§5.5, §7.5) — never by the
+    indexer exiting. **Two
     exceptions are correct and must not be swept:** rows surviving a crash (§6.4), and paths whose
     disposal could not complete (an `unreadable` skip, §8.5). Both are served `stale: true` until the
     next walk phase replaces the table. An implementation that empties `pending` on **any occasion
@@ -2032,23 +2138,45 @@ One line each; the reasoning is in the section named.
    replaces-rather-than-appends property and the reverted-file guarantee resting on it. **Deferred
    rather than built**, because the trade is real in both directions and no measurement says how often a
    full refresh is interrupted.
-9. **A remembered-skip memo, to stop re-reading unindexable files.** §5.2 records that the fast path can
+9. ~~**A remembered-skip memo, to stop re-reading unindexable files.**~~ **CLOSED, negative, on the
+   measurement this item named** (`research/m21-scan-throughput.md`): binary-with-unrecognised-name
+   is **1 file in 2,491** across two real repositories — 0.22% of one and 0.00% of the other — and
+   the single instance is a `.coverage` database with no extension at all, which is `.gitignore`d
+   and therefore reaches the sniff only under `git_mode = off`. That is the rounding error the item
+   set as its own bar, so the memo is not built. **The threat is recorded rather than waved at:**
+   neither corpus carries an image directory or vendored binaries — though the §4.2 deny-list names
+   those extensions, which is *why* the residual is a file with no extension — so the number to
+   re-take is this one, against an asset-heavy repository, before this is settled for every shape.
+   Original text: *"§5.2 records that the fast path can
    never clear a file that was never indexed, so a binary asset with an unrecognised extension is read in
    full on every scan forever. A `skipped(path, content_hash, reason)` table the skip rule may clear
    against would fix it, at the cost of a second table with its own staleness and its own disposal rules
    — the same class of machinery that `pending` shows is hard to specify correctly. **Deliberately
    deferred**, and
    the deciding measurement is cheap: how much of a real corpus is binary-with-unknown-extension after
-   the §4.2 deny-list. If it is a rounding error, this never gets built.
+   the §4.2 deny-list. If it is a rounding error, this never gets built."*
 10. **Whether an orphan sweep should ever delete.** §11 reports orphaned `knowledge/*.db` files and
     deletes nothing, on the grounds that an unreferenced database may hold a corpus someone wants back
     after a botched `remove`. That is the safe default and it leaks disk indefinitely. Unmeasured, and
     the deciding question is how often an interrupted `remove` actually happens — the only operation
     that can leave one, under §8.4's registry-first ordering.
-11. **Should `check-ignore` prune directories during the walk?** Measured: it answers for directory
+11. ~~**Should `check-ignore` prune directories during the walk?**~~ **CLOSED, negative, on the
+    measurement this item named** (`research/m21-scan-throughput.md`): **4.81% of one real
+    repository and 0.00% of the other** sits under a `.gitignore`d directory step 1's fixed list
+    does not already name. At the worse of the two that is 22 files of 457, on a cold build of
+    0.57 s — on the order of 25 ms — against a per-directory subprocess call during descent and a
+    second site where a `check-ignore` failure has to be classified.
+    **The more useful half of the result is why the larger corpus scores zero.** Its `.gitignore`
+    names `node_modules/`, `target/`, `build/` and `coverage/`, and the first three are on the
+    fixed list already — so on that corpus the fixed list is a *superset* of the ignored
+    directories that would have mattered. **And that is where a future fix belongs**: adding a name
+    to the prune list costs a string comparison, where directory-level `check-ignore` costs a
+    subprocess protocol. The 4.81% comes from two directories under a research tree, which is this
+    repository's habit rather than a general property.
+    Original text: *"Measured: it answers for directory
     paths (`build` and `build/` both come back ignored), which §4.1 does not use — step 3 runs over
     walked *file* paths, after step 1's fixed-name pruning, so an ignored tree like `build/` is
     descended in full and every file under it is walked, statted and then discarded. Testing directory
     nodes as the walk reaches them would prune those subtrees instead. **Throughput, not correctness**,
     and it belongs with M21's throughput measurement: the deciding number is how much of a real
-    repository sits under a `.gitignore`d directory that step 1's fixed list does not already name.
+    repository sits under a `.gitignore`d directory that step 1's fixed list does not already name."*

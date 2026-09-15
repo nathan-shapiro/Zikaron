@@ -6,11 +6,15 @@
 - **Knowledge-base names are stored lower-cased, and unique by plain string equality.** `Docs` and
   `docs` are one name rather than two corpora, because the normalization happens on write.
 - **The registry row is the sole authority for a knowledge base's existence; its database file is
-  derived state that may be absent.** A row with no file is an empty corpus a build repairs; a file
-  with no row is an orphan that is reported, never opened, and never deleted on its own.
+  derived state that may be absent.** A row with no file reads as an empty corpus; a file with no
+  row is an orphan that is reported, never opened, and never deleted on its own.
 
 These are what make the design enforceable rather than aspirational, so each test is written to
 **fail if the property is violated** rather than to demonstrate the happy path.
+
+The invariants a *build* must hold — every chunk's path naming a row, a file's rows moving in one
+transaction, and the pending table being emptied only by a disposal or a wholesale replacement —
+are in `test_knowledge_build_invariants.py`, which needs a built corpus rather than a registry.
 """
 
 import sqlite3
@@ -200,8 +204,9 @@ class TestTheRegistryIsTheAuthorityOnExistence:
     """A row without a file is an empty knowledge base; a file without a row is an orphan."""
 
     async def test_a_row_without_a_file_is_an_empty_knowledge_base(self, tmp_path: Path) -> None:
-        """The state an interrupted `add` leaves — self-healing, and reported as needing a build
-        rather than as an error."""
+        """The state an interrupted `add` leaves. Everything that reads treats it as an empty
+        corpus rather than an error; a *build* refuses it, because the file that is missing is the
+        only place this corpus's definition was ever written."""
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await add_base(

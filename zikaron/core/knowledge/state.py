@@ -88,17 +88,6 @@ def resolve(inputs: StateInputs) -> KnowledgeState:
     return KnowledgeState.OK
 
 
-def lock_is_held(raw: Mapping[str, str]) -> bool:
-    """Whether an indexer holds this knowledge base's lock, from its `meta` rows alone.
-
-    Presence of the lock keys, not liveness of the process they name. Whether a present lock is
-    still *live* is a question its owner answers — and the conservative half is the one every
-    caller here wants, because acting as though a lock were absent when a writer holds it is the
-    unrecoverable direction.
-    """
-    return meta.LOCK_PID_KEY in raw
-
-
 def never_built(raw: Mapping[str, str]) -> bool:
     """Whether no build has ever completed against this knowledge base.
 
