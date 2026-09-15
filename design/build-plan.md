@@ -1433,6 +1433,285 @@ is the size-aware sharding question, which needs its own brief and its own evide
 
 ---
 
+## Knowledge index — M19 to M25
+
+**Normative for all of these: `design/knowledge-index.md`.** It is APPROVED and carries no operator
+sign-off. This preamble used to add *"it becomes normative when the first of these milestones lands"*
+— **that trigger has now fired**, since M19 is complete, and the conditional is withdrawn rather than
+silently satisfied: M19 is a spike that wrote no product code, and sign-off is not something a
+milestone can supply. **Whether the document is now normative is an operator call still owed**;
+`FINDINGS.md` carries the argument. Until it is made, `design/overview.md` remains the authority for
+anything the two disagree on. Section references below are to `knowledge-index.md`.
+
+**The through-line: every milestone leaves a working, shippable codebase**, and the capability grows
+monotonically — you can create knowledge bases before you can index them, index them before you can
+search them, search them lexically before the dense arm exists. No milestone leaves a half-wired
+surface that a later one repairs.
+
+**Why the order is what it is.** The risk is front-loaded into M19 because three of this design's
+mechanisms rest on behaviour nobody here has measured, and each would force a redesign rather than a
+patch if it turns out otherwise. Everything after M19 is construction against measured ground.
+
+---
+
+## M19 — Spikes: the three mechanisms that could force a redesign — **complete**
+
+Normative: §3.2, §4.1, §5.2, §5.6, §7.2, §8.4.
+
+**Landed 2026-09-15 without a pre-landing review gate, on operator direction — a research spike's
+output is measurement plus a design amendment. It was then reviewed post-landing** on the operator's
+subsequent instruction, the results having turned out substantial enough to warrant it: **four rounds,
+APPROVED 2026-09-15**, trail `reviews/m19-spikes-review.md`, which corrected a blocker and four
+overstated or unmeasured claims.
+All three mechanisms **held**; nothing forced a redesign. What
+the probes bought is **fourteen corrections**, enumerated in the three notes' own "What changes in the
+design" sections (5 + 6 + 3) and all folded into `design/knowledge-index.md`. **One of the fourteen was
+found by reading rather than by probing** — §7.2 called cosine ordering "blind" while §8.3 three
+sections away gives exactly such a chunk an explicit `chunks_vec` lookup — and it is counted inside
+spike C's three, not added to them. Notes:
+`research/knowledge-index-vec0-fts5-probe.md`, `research/knowledge-index-git-shapes.md`,
+`research/knowledge-index-group-ordering.md`; harnesses `spikes/spike_vec0_fts5_ddl.py`,
+`spikes/spike_git_shapes.py`, `spikes/spike_group_ordering.py`, all re-runnable.
+**`design/knowledge-index.md` §16 open question 2 is closed by spike C** and question 11 is opened by
+spike B (directory-level `check-ignore` pruning, throughput only, deferred to M21).
+
+**Throwaway probes under `spikes/`, results to `research/`. No product code.** Each answers a question
+the design currently *assumes*, and this project's own history is the argument for asking first:
+`research/kiro-mcp-lifecycle-probe.md` exists because a documented shape turned out not to hold, and
+this design's §5.2 was rewritten mid-review because a probe found `ls-files -s` lists sparse-checkout
+files that are not on disk.
+
+**Spike A — `vec0` drop-and-recreate inside one transaction, and external-content FTS5 delete/reinsert.**
+§8.4's encoder-mismatch repair drops `chunks`, `chunks_fts` and `chunks_vec` and recreates the vector
+table **at a new dimension in a single transaction**; §3.2 and §5.5 rest on external-content FTS5 not
+observing content-table deletes, so rows must be removed explicitly. Both are asserted from
+documentation. Probe: does DDL on a `vec0` table inside a transaction roll back cleanly on failure; what
+does an external-content FTS5 query return when content rows are gone; does a dimension change survive
+a reopen. **If any of this does not hold, §8.4's repair and §3.2's no-cascade reasoning both change.**
+
+**Spike B — git plumbing on real repository shapes.** `git check-ignore --stdin -z` and
+`check-attr --stdin -z` in batch, `ls-files -s` plus `status --porcelain -z -uall`, against: a submodule,
+a sparse checkout, a linked worktree, a `safe.directory`-refusing clone, a case-insensitive mount if one
+is available, and paths with spaces and newlines. §4.1, §5.2 and §5.6 are written against measured
+behaviour for `ls-files`/`status` and **inferred** behaviour for `check-ignore`/`check-attr`. Extends
+`spikes/spike_hash_timings.py`, which already exercises this ground.
+
+**Spike C — group ordering on a real multi-KB corpus.** §7.2 orders groups by best dense cosine and
+records (open question 2) that this is blind to a lexical-only hit, which is exactly the
+code-knowledge case. Build three small KBs, run identifier-shaped and prose-shaped queries, and compare
+cosine ordering against a fused-contribution ordering. **This one is a code-shape question, not a
+parameter question** — the fusion parameters are `meta` keys and can be swept later, but *which
+quantity orders the groups* is a branch in the ranking path.
+
+**Invariants:** none — no product code. **Done when:** three notes under `research/`, each naming the
+question, the method and whether the design's assumption survived; every re-runnable harness committed
+under `spikes/`; and any assumption the probes refute is corrected in `design/knowledge-index.md`
+**before M20 starts**.
+
+**Fence:** no product code, no schema changes. Throughput measurement is deliberately *not* here — it
+sizes K8's argument but cannot change the design, so it rides along in M21.
+
+---
+
+## M20 — The registry, and knowledge-base lifecycle without indexing
+
+Normative: §3.1, §3.1a, §3.2, §8.4, §8.6, §9, §11; invariants 11, 14, 15.
+
+`knowledge_bases` lands in `memory.db` — **and `design/schema.md` gains its section, closing the
+deliberate deferral in §3.1a.** KB databases are created at `knowledge/<uuid4>.db` with the full §3.2
+schema including `chunks_vec` and `chunks_fts`, and `meta` seeded from configuration.
+
+**The first decision of this milestone is a compatibility one, and it is not obvious.**
+`design/schema.md` §"`meta.schema_version`" states that v0 supports **exactly `schema_version = 1`** and
+that *"a newer `schema_version` is not [tolerated]"* — an unknown value is refused with
+`−32024 schema_incompatible`. So adding a table to `memory.db` forks:
+- **Bump to 2** and every older Zikaron **refuses to open the store** — correct by the stated contract,
+  and a breaking change for anyone running two versions against one project.
+- **Do not bump**, on the grounds that the table is purely additive and no older code path queries it —
+  which requires `schema.md` to say so explicitly, because silence plus a stated exact-match rule reads
+  as the first option.
+
+Decide it in the brief, write it into `schema.md`, and **do not let the first migration this project has
+ever performed be settled by whichever line of code gets written first.**
+
+**No encoder dependency, which is why this milestone can precede M23.** `embed_dim` is already a
+configuration key (`embedding.embed_dim`, resolved through `EffectiveConfig`), so seeding `meta` and
+creating `chunks_vec` at a fixed width needs no model load and no `fastembed` import — the cost M17
+measured at 1,059 ms and moved off the critical path.
+
+The CLI ships as a **console script**, matching the existing pattern and for the reason `pyproject.toml`
+already records: a console script's shebang pins the interpreter Zikaron is installed into.
+
+CLI only: `add`, `list`, `remove`, `rename`, `status`. Registry-first ordering for both `add` and
+`remove`, with the interrupted states §8.4 specifies. Name lower-casing and uniqueness. `add`'s path
+validation (§8.6) including the `rev-parse` probe for `git_mode_effective`. Orphan and absent-database
+reporting.
+
+**Every knowledge base reports `state: reindex_required` at the end of this milestone**, because nothing
+indexes yet. That is a coherent state the design already specifies, not a placeholder.
+
+**Invariants:** 11, 14, 15. **Done when:** a KB survives create → rename → list → remove with the file
+appearing and disappearing; `remove(name="../memory")` is impossible to express, verified by a test that
+tries; an interrupted `add` (kill between registry commit and file creation) leaves a KB that `list`
+shows as `reindex_required`; an interrupted `remove` leaves an orphan that `status` reports and search
+never opens; two KBs differing only in case collide on the `UNIQUE` constraint; a store predating the
+migration opens and answers normally.
+
+**Also lands here:** `design/knowledge-index.md` becomes **normative**, and `CLAUDE.md`'s design-document
+table gains its row. Until then it is an approved proposal, and `design/overview.md` wins any conflict.
+
+**Fence:** no walking, no chunking, no search. Creating and tracking corpora only.
+
+---
+
+## M21 — Discovery, filtering, and change detection
+
+Normative: §4.1, §4.2, §5.1–§5.6, §6.2, §6.4, §7.5 (the `pending` half), §8.5's skip breakdown.
+
+The walk: directory pruning before descent, symlink refusal, `.gitignore` via batched `check-ignore`
+under `all`, globs, size cap, and text detection **at first read** rather than at walk time. The
+`files` table with `content_hash`, `git_blob_hash` and `size`. The two-phase scan: walk phase computes
+the changed set and replaces `pending` wholesale, writing `last_walk_completed_at`; index phase disposes
+of each path by one of the three disposals. Per-KB advisory lock, taken even though the indexer still
+runs in the foreground of the CLI invocation — **with same-host pid reclamation, which belongs here
+rather than in M24**: the lock exists from this milestone, so a process killed mid-scan would otherwise
+leave a knowledge base with no way back until M24 lands. Cross-host reporting and `--force-unlock` stay
+in M24, where the state machinery they report through exists.
+
+**The indexer is a separate entry point from the first line of code** — invoked synchronously here,
+detached in M24. Same module, different invocation; M24 adds spawning and progress, not a rewrite.
+
+**Throughput is measured here and recorded**, sizing K8's separate-process argument against the ~124 s
+modelled in §6.1: wall time, peak RSS, the binary-with-unknown-extension fraction that decides
+§16 item 9, and — added by M19 spike B — **the fraction of a real repository that sits under a
+`.gitignore`d directory which §4.1 step 1's fixed prune list does not already name**, which is the
+number §16 item 11 needs to decide whether `check-ignore` should prune directories during the walk.
+Three deferred questions, one walk; a session working this brief must take all three numbers, because
+each item defers its decision to *this* measurement and none of them can be answered later without
+re-walking.
+
+**Invariants:** 1, 2, 4, 5, 12. **Done when:** a scan over a fixture repo produces the expected `files`
+rows with no `.git` contents and no pruned directories; a submodule, a sparse checkout and a linked
+worktree all behave as §5.6 states; a file that grows past the cap is deleted from the index on the next
+scan; killing the indexer mid-scan leaves `pending` non-empty and the next scan completes; every skip
+reason in §8.5 is reachable and counted; the git fast path and `git_mode = off` agree on a clean tree.
+
+**Fence:** no chunking, no embedding, no search. The `files` table and its maintenance only.
+
+---
+
+## M22 — Chunking, both index arms, and search
+
+Normative: §4.3, §4.5, §4.6, §7.1–§7.4, §7.6, §8.1, §8.3, §8.7, §10; invariants 3, 6, 7, 9, 10, 13, 16.
+
+Paragraph-greedy chunking with line ranges, the budget enforced against the assembled sequence, and the
+path prefix applied **at embed time only** so `chunks.text` stays verbatim file content. Both index arms
+written in the same per-file transaction (§4.6), with its `pending` delete: `chunks_fts` populated, and
+`chunks_vec` populated by the `BackgroundLoadedEncoder` M17 already built, batched at
+`knowledge_embed_batch` with **mask-aware pooling**.
+
+Retrieval: RRF over both arms within a KB, results grouped by KB and ordered by whichever quantity M19's
+spike C settled, empty groups reported with their state, the per-file chunk cap, the response byte cap
+with whole-group dropping and stubs. Snippet assembly with invariant 16's governing property and the
+`truncated` flag. Service RPC plus the `zikaron_knowledge_search` MCP tool in primary mode only, with the
+tool description §8.3 specifies.
+
+**Both arms land together deliberately, and the reason is invariant 3**: every `chunks` row must have
+exactly one `chunks_fts` row *and* one `chunks_vec` row. A lexical-only milestone would ship a store that
+violates a normative invariant and an invariant test that cannot pass — so "index the text" and "index
+the vectors" are one deliverable, not two. This is the largest milestone here, and splitting it would buy
+a smaller diff at the cost of a knowingly-inconsistent store.
+
+**This is the first milestone that ships the capability the operator asked for**: search over indexed
+documents that grep cannot reach.
+
+**Invariants:** 3, 6, 7, 9, 10, 13, 16. **Done when:** `Read(path, start_line, end_line)` returns a
+result's snippet byte-for-byte including the no-trailing-newline case, as a property test over a fixture
+corpus; a chunk over the snippet cap truncates at a line boundary and flags it; a chunk embedded alone
+and in a 32-wide batch produce identical vectors; a killed reindex leaves no partial chunk, FTS or vector
+state; a group with no matches appears with its state; a response over the byte cap drops whole groups
+and sets `groups_dropped`; the consolidator mode cannot name the search tool.
+
+**Fence:** no management tools over MCP, no detached indexing, and **no fusion tuning** — `rrf_k`,
+`fusion_depth` and arm weighting are `meta` keys belonging to M25. Do not sweep here.
+
+---
+
+## M23 — The detached indexer, progress, and the repair paths
+
+Normative: §6.1–§6.4, §8.4's repair rules, §8.5's state machinery, §11 in full, §9's `--force-unlock`;
+invariants 8, 12.
+
+The indexer detaches and outlives its invoker. Progress to `meta` after each file transaction;
+`files_remaining` from `COUNT(pending)` under the `last_walk_completed_at` rule; the full `state` enum
+with its precedence; search serving committed state with `state: "indexing"` while a build runs. Crash
+recovery with `pending` surviving deliberately.
+
+**The encoder-mismatch repair belongs here rather than with the dense arm**, because it is a recovery
+path and shares this milestone's machinery: the state-based trigger, the one-transaction drop and
+recreate at the new dimension, the rewrite of `meta` at the completing transaction, and the
+`refresh full=true` semantics that are an ordinary scan with change detection bypassed rather than a
+discard and rebuild.
+
+Cross-host lock reporting and `--force-unlock` with its same-host-live refusal; the remaining §11 rows —
+orphans, absent and unreadable databases, an unreadable registry.
+
+**Invariants:** 8, 12. **Done when:** a search during a build returns committed files and reports
+`indexing` with a falling `files_remaining`; `files_remaining` is `null` during the walk phase and a count
+after it; a killed indexer leaves a reclaimable lock and surviving `pending` rows served as stale;
+changing `embed_model` puts the KB into `reindex_required` and it refuses to serve until a refresh
+completes; killing that repair leaves it still refusing and the next scan completes it; a foreign-host
+lock is never auto-reclaimed and `--force-unlock` clears it while refusing a live same-host one.
+
+**Fence:** no new retrieval behaviour. Lifecycle, state and recovery only.
+
+---
+
+## M24 — The MCP management surface
+
+Normative: §8.2, §8.4, §8.5, §12.
+
+`add`, `remove`, `rename`, `refresh`, `list`, `status` as MCP tools alongside `search` — twelve tools
+total on the primary server. Tool descriptions written to the occasions standard §8.3 sets, which is this
+project's measured position rather than a style preference: Amazon Q ships a 25-word description stating
+what its tool *is* and never when to reach for it, and its own documentation makes the human the trigger.
+The four §12 counters, written best-effort and abandoned on `SQLITE_BUSY`.
+
+**Probe before building:** twelve tools on one server is new here, and M16 measured that tools arrive
+deferred under Claude Code. Confirm the tool list is delivered whole and the descriptions are not
+truncated, before writing six more.
+
+**Invariants:** none new. **Done when:** an agent creates, fills, searches, renames and removes a KB
+without leaving the harness; `remove` without `confirm` fails and says what would be destroyed; `refresh`
+under a held lock reports `already_indexing` rather than queueing; the consolidator mode registers none of
+the twelve; counters advance, and a `SQLITE_BUSY` during a counter write does not delay a query.
+
+**Fence:** `--force-unlock` stays CLI-only, per §8.2's stated exception.
+
+---
+
+## M25 — Dogfooding, and the parameters this design deliberately did not tune
+
+Normative: `FINDINGS.md` open questions 1–3 and §16 items 1–3 of the design.
+
+Install into a real corpus — the operator's own mirror-tree `.md` knowledge is the intended first
+subject — and use it. Then run the sweep the design has been deferring since it was written:
+`rrf_k`, `fusion_depth` and arm weighting against ~22,800 chunks rather than the 187-record benchmark
+they were chosen on, with the identifier-versus-prose split that FINDINGS open question 8 measures at
+0.194–0.233 and AWS's own guidance corroborates.
+
+**The measurement discipline is this project's, not a new one**: name the quantity before quoting a
+number, preregister the decision thresholds, and record what did not replicate.
+
+**Invariants:** none new. **Done when:** a research note reports search-per-session use on a real
+corpus, the empty-group rate from the §12 counters, and the swept parameters with the evidence for
+each; any parameter moved is moved in `meta` with a stated reason; and §16's open questions are each
+either closed with a measurement or restated with what is still missing.
+
+**Fence:** no new capability. Measurement and tuning only.
+
+---
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable
