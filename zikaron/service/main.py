@@ -217,14 +217,30 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     # authorized gap this deliberately accepts rather than a materially larger VFS-level fix).
     original_store_inode = ctx.store.opened_inode
 
+    stop = asyncio.Event()
     try:
-        security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
-        server = await serve(ctx, str(sock_path))
-        try:
-            sock_path.chmod(0o600)
+        # **The handlers go on before the socket exists, and that ordering is the whole of what
+        # makes a stale socket file impossible for either signal this process handles.** `serve()`
+        # publishes `sock_path` the instant it binds; until these handlers are installed, a
+        # `SIGTERM` arriving gets its default disposition and the process dies where it stands,
+        # leaving the socket on disk — which start-if-absent then reads as a live service and
+        # connects to nothing. Installed first, the file's existence implies a process that will
+        # clean it up on `SIGTERM`/`SIGINT`, and a signal arriving before the bind merely sets
+        # `stop`, so the run below binds and then stops at once. A death this process does **not**
+        # handle still leaves the file — `SIGKILL`, an OOM kill, a crash in native code (this
+        # process loads onnxruntime and the sqlite-vec extension, so that is a real death rather
+        # than a hypothetical), any other signal left at its default disposition (`SIGHUP` and
+        # `SIGQUIT` are catchable and deliberately uncaught), a power loss — which is what
+        # start-if-absent's vet-and-unlink is for.
+        # There is no observable event *after* installation that a caller could wait for instead:
+        # `asyncio.start_unix_server` accepts connections from the moment it returns, so even a
+        # successful health call proves only that the listener is up.
+        async with _stop_on_sigterm_or_sigint(stop):
+            security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
+            server = await serve(ctx, str(sock_path))
+            try:
+                sock_path.chmod(0o600)
 
-            stop = asyncio.Event()
-            async with _stop_on_sigterm_or_sigint(stop):
                 tasks: list[asyncio.Task[object]] = []
                 try:
                     self_stopping = _self_stopping_tasks(
@@ -294,53 +310,55 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                     _surface_any_genuine_task_failure(
                         outcomes, sock_path, primary_exception=primary_exception
                     )
-        except ShutdownTimeoutError:
-            _force_exit_after_failed_graceful_shutdown(sock_path)
-        except BaseException:
-            # `server` is already a bound, listening socket the instant `serve()` returns — a
-            # failure in any setup step between here and the signal-handler/task-installation
-            # block above (`chmod`, signal handler installation, task creation) must not leave
-            # that listener open with nobody holding it, nor its socket path behind on disk. The
-            # same resource-leak-on-exception-path shape recurs across this codebase (the store in
-            # `ServiceContext.assemble`, the socket in `lifecycle._connect`, the background tasks
-            # just above); `shut_down()` here is safe to run unconditionally even if the idle-exit
-            # branch above already ran its own identical shutdown, since
-            # `asyncio.Server.close()`/`wait_closed()` are both themselves idempotent no-ops once
-            # already closed (verified directly against the installed Python 3.12.3 source) and
-            # `close_all_connections` against an already-empty connection set is trivially a
-            # no-op too.
-            #
-            # A bare `await server.shut_down()` here would let *this* retry's own failure
-            # **replace** whatever is already propagating into this `except` clause — the
-            # identical exception-masking class already fixed once for `ctx.close()` in the
-            # outer `finally` below, now recurring at this call site specifically because this
-            # retry had no `try` of its own around it. Unlike the outer `finally`, there is no
-            # "nothing was already failing" case to distinguish here: reaching this `except`
-            # clause at all means something already failed — confirmed directly (`sys.exc_
-            # info()`'s `exc_value` is never `None` inside a running `except BaseException:`
-            # block, since being inside it at all requires an active exception) — so this
-            # retry's own failure is always the *secondary* one, logged, never allowed to
-            # displace whatever the bare `raise` below re-raises.
-            try:
-                await server.shut_down()
             except ShutdownTimeoutError:
-                # Ahead of the broad handler below on purpose: a shutdown deadline expiring *here*
-                # is the same terminal condition as one expiring on the ordinary paths, and the
-                # broad handler would otherwise log it as a mere secondary failure and let
-                # execution fall through to ordinary propagation and `ctx.close()` — exactly the
-                # "keep going after the graceful path already gave up" the operator's direction
-                # rules out. The primary exception that brought us into this clause is logged
-                # first, since forcing the exit means it will not propagate to anyone.
-                logging.getLogger("zikaron.service").exception(
-                    "shutdown deadline expired while handling an earlier failure"
-                )
                 _force_exit_after_failed_graceful_shutdown(sock_path)
             except BaseException:
-                logging.getLogger("zikaron.service").exception(
-                    "shut_down() failed while handling an earlier failure"
-                )
-            sock_path.unlink(missing_ok=True)
-            raise
+                # `server` is already a bound, listening socket the instant `serve()` returns — a
+                # failure in any setup step between here and the task-installation block above
+                # (`chmod` and task creation; the signal handlers are installed before the bind
+                # and so cannot fail inside this window) must not leave that listener open with
+                # nobody holding it, nor its socket path behind on disk. The
+                # same resource-leak-on-exception-path shape recurs across this codebase (the store
+                # in `ServiceContext.assemble`, the socket in `lifecycle._connect`, the background
+                # tasks just above); `shut_down()` here is safe to run unconditionally even if the
+                # idle-exit branch above already ran its own identical shutdown, since
+                # `asyncio.Server.close()`/`wait_closed()` are both themselves idempotent no-ops
+                # once already closed (verified directly against the installed Python 3.12.3
+                # source) and `close_all_connections` against an already-empty connection set is
+                # trivially a no-op too.
+                #
+                # A bare `await server.shut_down()` here would let *this* retry's own failure
+                # **replace** whatever is already propagating into this `except` clause — the
+                # identical exception-masking class already fixed once for `ctx.close()` in the
+                # outer `finally` below, now recurring at this call site specifically because this
+                # retry had no `try` of its own around it. Unlike the outer `finally`, there is no
+                # "nothing was already failing" case to distinguish here: reaching this `except`
+                # clause at all means something already failed — confirmed directly (`sys.exc_
+                # info()`'s `exc_value` is never `None` inside a running `except BaseException:`
+                # block, since being inside it at all requires an active exception) — so this
+                # retry's own failure is always the *secondary* one, logged, never allowed to
+                # displace whatever the bare `raise` below re-raises.
+                try:
+                    await server.shut_down()
+                except ShutdownTimeoutError:
+                    # Ahead of the broad handler below on purpose: a shutdown deadline expiring
+                    # *here* is the same terminal condition as one expiring on the ordinary paths,
+                    # and the broad handler would otherwise log it as a mere secondary failure and
+                    # let execution fall through to ordinary propagation and `ctx.close()` —
+                    # exactly the "keep going after the graceful path already gave up" the
+                    # operator's direction rules out. The primary exception that brought us into
+                    # this clause is logged first, since forcing the exit means it will not
+                    # propagate to anyone.
+                    logging.getLogger("zikaron.service").exception(
+                        "shutdown deadline expired while handling an earlier failure"
+                    )
+                    _force_exit_after_failed_graceful_shutdown(sock_path)
+                except BaseException:
+                    logging.getLogger("zikaron.service").exception(
+                        "shut_down() failed while handling an earlier failure"
+                    )
+                sock_path.unlink(missing_ok=True)
+                raise
     finally:
         await _close_context_preserving_any_active_failure(ctx)
 

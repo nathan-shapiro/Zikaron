@@ -781,24 +781,36 @@ async def test_a_store_open_failure_at_startup_is_also_logged(
 # ---------------------------------------------------------------------------
 
 
-async def test_idle_self_stop_unlinks_the_socket_before_the_process_exits(
+async def test_a_signal_arriving_as_soon_as_the_socket_appears_still_unlinks_it(
     tmp_path: Path, encoder: FastEmbedEncoder
 ) -> None:
-    """A very short `idle_timeout` (the same scale-down `research/spike-results.md` used for the
-    identical reason) makes the exit observable within a test run rather than requiring the real
-    30-minute default."""
+    """A real process, signalled at the earliest moment anything outside it can act — the instant
+    the socket file appears — and the socket must be gone when it exits.
+
+    **Renamed from `test_idle_self_stop_unlinks_the_socket_before_the_process_exits`, which named a
+    path it never took**: `idle_timeout`'s minimum is 60 seconds, so this has always terminated by
+    signal, as its own body said. The old name also hid what made it flaky. Signalling here races
+    whatever `run()` still has to do after `serve()` publishes the socket, and until the handlers
+    were moved ahead of the bind the default `SIGTERM` disposition won that race under load and
+    left the file behind. That ordering is asserted directly, in-process, by
+    `test_service_main.py::test_the_signal_handlers_are_installed_before_the_socket_is_bound`;
+    what this test adds is that a real spawned process, with a real model load and a real store
+    open behind it, honours the same guarantee end to end.
+    """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
+    # The shortest legal `idle_timeout` (60 s, `schema.md`'s declared minimum), written so the idle
+    # path sits as near this test as it legally can and still cannot fire inside the 5 s wait below
+    # — which is why the signal is the only exit this exercises.
     (store_dir / "config.toml").write_text("[service]\nidle_timeout = 60\n", encoding="utf-8")
     await _create_store(store_dir, encoder)
     sock_path = _runtime_dir(tmp_path) / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
         _wait_for_socket(sock_path, deadline_seconds=_SPAWN_DEADLINE_SECONDS)
-        # `idle_timeout`'s minimum is 60s (config.keys.CONFIG_KEYS), so this test does not wait
-        # out a real idle exit — it confirms the socket is live and then confirms a signal-driven
-        # shutdown unlinks it, which is `main.run`'s *other* exit path and exercises the same
-        # unlink-then-close code the idle path shares structurally.
+        # Signalled with no settling pause on purpose: the gap between the socket appearing and
+        # the process being ready to handle a signal is precisely what must not exist, so a sleep
+        # here would hide the defect this test is for rather than stabilise it.
         process.terminate()
         process.wait(timeout=5.0)
         assert not sock_path.exists()

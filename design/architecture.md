@@ -715,6 +715,15 @@ requests in flight and time since the last one, never on open connections.
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
 is unlinked before the process ends.
 
+**That holds for a signalled exit too, and it rests on an ordering worth stating: the `SIGTERM`/`SIGINT`
+handlers are installed *before* the socket is bound.** `serve()` publishes the socket the instant it binds,
+so handlers installed after it would leave a window in which a signal takes its default disposition and the
+file outlives the process — small, and wider under load. Installed first, a signal at any moment the file
+exists is handled. Only a death this process **does not** handle — `SIGKILL` (an OOM kill included), a crash
+in native code, any other signal left at its default disposition (`SIGHUP` and `SIGQUIT` are catchable and
+deliberately uncaught), a power loss — leaves a stale socket, which is the case §"Start-if-absent" step 4
+clears, and why the signature above names no cause.
+
 **The same poll also checks for the store having been replaced out from under it, and stops immediately if
 so — a second, independent exit condition alongside the idle one, not a variant of it.** `memory.db` being
 deleted and recreated at the identical path while this process still holds it open is possible and invisible

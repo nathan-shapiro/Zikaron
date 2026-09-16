@@ -1,11 +1,17 @@
 """`zikaron.service.main.run` — the process-entry-point coroutine, specifically its own resource
 ownership: once `serve()` has bound a real listening socket, a failure in any of the setup steps
-that still run before the idle/signal race begins (`chmod`, signal-handler installation, task
-creation) must not leave that listener open with nobody holding it, nor its socket path behind on
-disk. Every other M9 test exercises `run()`/`main()` only indirectly, as a subprocess `test_
+that still run before the idle/signal race begins (`chmod` and task creation) must not leave that
+listener open with nobody holding it, nor its socket path behind on disk. Every other M9 test
+exercises `run()`/`main()` only indirectly, as a subprocess `test_
 service_lifecycle_integration.py` spawns — this is the one place `run()` itself is called directly
 as a plain coroutine, which is what makes a setup-step failure between `serve()` and that race
 reachable without needing a real signal or a real client connection at all.
+
+**Signal-handler installation is no longer one of those steps**, and the test that it precedes the
+bind is here for the same reason: the ordering is only observable from inside the process. Until
+the handlers are on, a `SIGTERM` gets its default disposition and leaves the socket file behind —
+and no caller can wait for the moment they go on, since `asyncio.start_unix_server` serves from the
+instant it returns.
 
 Default tier: `FastEmbedEncoder.load` is monkeypatched to a `FakeEncoder`-compatible stand-in so
 `ServiceContext.assemble` (which `run()` calls internally) does not pay a real model load, matching
@@ -40,14 +46,19 @@ def _runtime_dir(tmp_path: Path) -> Path:
 async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`loop.add_signal_handler` is the setup step made to fail here, standing in for any of the
-    several fallible operations between `serve()` returning a bound listener and `async with
-    server:` taking it over — `chmod`, signal-handler installation, and task creation are all in
-    that same window, and this test targets one of them directly rather than trying to force all
-    three. Before this fix, `run()`'s only `finally` closed the `ServiceContext` and said nothing
-    about the listener `serve()` had already bound: the socket path would still exist on disk and
-    the underlying `asyncio.Server` would still be open, with nothing left holding a reference to
-    close it."""
+    """Task creation is the setup step made to fail here, standing in for the fallible operations
+    between `serve()` returning a bound listener and the idle/signal race beginning — `chmod` and
+    task creation are both in that window, and this test targets one of them directly rather than
+    trying to force both. Before this fix, `run()`'s only `finally` closed the `ServiceContext` and
+    said nothing about the listener `serve()` had already bound: the socket path would still exist
+    on disk and the underlying `asyncio.Server` would still be open, with nothing left holding a
+    reference to close it.
+
+    **It used to fail `loop.add_signal_handler` instead, and that stopped reaching this window.**
+    The handlers now go on before the bind, so a failure there aborts before any socket exists and
+    the assertion below would hold whether or not `run()` cleaned anything up — a guard passing
+    over a state it can no longer produce. Retargeted rather than deleted, since the property it
+    names is still real for the steps that remain."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     sock_path = _runtime_dir(tmp_path) / "server.sock"
@@ -67,23 +78,81 @@ async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the
         "zikaron.service.context.FastEmbedEncoder.load", staticmethod(_load_fake_encoder)
     )
 
-    def _add_signal_handler_always_fails(_sig: object, _callback: object, *_args: object) -> None:
-        raise RuntimeError("signal handler installation failed, deliberately, for this test")
+    def _task_creation_always_fails(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("task creation failed, deliberately, for this test")
 
-    monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
-        "add_signal_handler",
-        _add_signal_handler_always_fails,
-        raising=False,
-    )
+    monkeypatch.setattr(main, "_self_stopping_tasks", _task_creation_always_fails)
 
-    with pytest.raises(RuntimeError, match="signal handler installation failed"):
+    with pytest.raises(RuntimeError, match="task creation failed"):
         await main.run(sock_path, store_dir)
 
     # The listener `serve()` bound must not survive this failure: its socket path is gone, which
     # is the one externally observable fact a test with no reference to the closed `asyncio.
     # Server` object itself can still check directly.
     assert not sock_path.exists()
+
+
+async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ordering that decides whether a `SIGTERM` can leave a socket file behind.
+
+    `serve()` publishes `sock_path` the instant it binds. A `SIGTERM` arriving before the handlers
+    are on gets its default disposition — the process dies where it stands and the socket stays on
+    disk, which start-if-absent then reads as a live service and connects to nothing. The window is
+    small and widens under load, which is exactly the shape that makes it an intermittent rather
+    than a bug somebody notices.
+
+    **Asserted here rather than by signalling a real process, because no external observer can see
+    it.** A test that waits for the socket and then signals is waiting on the *start* of the very
+    window it means to rule out, and there is no later event to wait for instead: `asyncio.start_
+    unix_server` accepts from the moment it returns, so even a successful health call proves only
+    that the listener is up. What is observable from inside is that `loop.add_signal_handler`
+    installs a process-wide disposition, so reading it at the moment `serve()` is called answers
+    the question directly.
+    """
+    store_dir = tmp_path / ".zikaron"
+    store_dir.mkdir()
+    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
+
+    class _FakeEmbedder:
+        model_name = config.get_str("embed_model")
+        dim = config.get_int("embed_dim")
+
+    async with await Store.create(store_dir, config, _FakeEmbedder()):
+        pass
+
+    def _load_fake_encoder(_model_name: str) -> FakeEncoder:
+        return FakeEncoder()
+
+    monkeypatch.setattr(
+        "zikaron.service.context.FastEmbedEncoder.load", staticmethod(_load_fake_encoder)
+    )
+
+    before = signal.getsignal(signal.SIGTERM)
+    at_bind_time: list[object] = []
+
+    async def _record_the_disposition_then_stop(*_args: object, **_kwargs: object) -> None:
+        at_bind_time.append(signal.getsignal(signal.SIGTERM))
+        raise RuntimeError("bound, deliberately, for this test")
+
+    monkeypatch.setattr(main, "serve", _record_the_disposition_then_stop)
+
+    with pytest.raises(RuntimeError, match="bound, deliberately"):
+        await main.run(sock_path, store_dir)
+
+    assert at_bind_time, "serve() was reached, so the reading below is a real one"
+    assert at_bind_time[0] is not before, (
+        "SIGTERM still had its entry disposition when the socket was about to be published"
+    )
+    # `SIG_DFL` rather than `before`: `loop.remove_signal_handler` does not restore the previous
+    # disposition, it installs the default one — measured, not assumed. Asserting `is before` would
+    # pass here only because this runner leaves SIGTERM at `SIG_DFL`, and would fail against correct
+    # code under any runner that installs its own.
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL, (
+        "and the handler is removed again on the way out, whatever the way out is"
+    )
 
 
 async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_one(
@@ -95,8 +164,9 @@ async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_o
     `asyncio.wait` returned normally, leaking whichever tasks had already been created.
     `asyncio.wait` itself is the fallible step forced to fail here, standing in for that whole
     class of failure — it is the one call that only happens after both tasks genuinely exist,
-    which is exactly the window this test targets and the previous test (a failure *before*
-    either task exists) cannot reach."""
+    which is exactly the window this test targets and
+    `test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the_socket` (a failure
+    *before* either task exists) cannot reach."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     sock_path = _runtime_dir(tmp_path) / "server.sock"
@@ -147,8 +217,10 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
     whatever exception was already propagating — the identical exception-masking class already
     fixed once inside `ServiceContext.assemble` itself, but at a different call site: this is
     `run()`'s own cleanup, which runs *after* `assemble` has already returned successfully,
-    against whatever failure happens later in `run()`'s own body. Forces both a setup failure
-    (the same `loop.add_signal_handler` failure the first test in this file uses) and a
+    against whatever failure happens later in `run()`'s own body. Forces both a `loop.add_signal_
+    handler` failure — which, now that the handlers go on before the bind, is the earliest failure
+    `run()`'s outer `finally` must preserve, reached with no socket bound and no `except
+    BaseException:` clause in the way — and a
     `Store.close` failure, and asserts the *setup* failure is what a caller's own `except`
     catches — not the close failure that happened while handling it."""
     store_dir = tmp_path / ".zikaron"
@@ -208,7 +280,9 @@ async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_th
     return_exceptions=True)` in `run()`'s own cleanup `finally`, and the process would exit with
     status zero having genuinely failed. `lifecycle.idle_self_stop` is monkeypatched to raise
     immediately here, standing in for any real internal failure of that function; since `run()`
-    awaits `asyncio.wait(..., return_when=asyncio.FIRST_COMPLETED)` on both tasks together, the
+    awaits `asyncio.wait(..., return_when=asyncio.FIRST_COMPLETED)` on every task together — three
+    of them here, since this store exists and so the open path creates M17's load watch beside the
+    idle poll and the signal wait — the
     monkeypatched coroutine racing `signal_wait` at all is enough to land in the `done` set this
     test exists to defend — no synchronization needed beyond `create_task` scheduling it to run at
     the next opportunity, which `asyncio.wait` itself already waits for."""
@@ -279,9 +353,10 @@ async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserv
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The combined regression the previous test's own docstring names but does not itself force:
-    `idle_self_stop` raising lands in `run()`'s outer `except BaseException:` (via the innermost
-    `finally`'s task cancellation, then `_stop_on_sigterm_or_sigint`'s own signal-handler cleanup,
-    both of which run and re-propagate unchanged) — and that `except` clause's own `server.shut_
+    `idle_self_stop` raising lands in `run()`'s post-bind `except BaseException:` via the innermost
+    `finally`'s task cancellation, which runs and re-propagates unchanged (`_stop_on_sigterm_or_
+    sigint`'s own handler removal now runs *after* that clause, on the way out of the `async with`
+    that wraps the bind) — and that `except` clause's own `server.shut_
     down()` retry used to have no `try` of its own around it, so a *second* failure there would
     **replace** the first rather than being logged as secondary. Forces both to fail and asserts
     the *original* `idle_self_stop` failure — not the `shut_down()` retry's own `RuntimeError` —
@@ -326,8 +401,9 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
 ) -> None:
     """`loop.add_signal_handler` calls with no matching `remove_signal_handler` on any path used
     to leave a handler permanently installed even after a fully successful run — including the
-    narrower case this test targets specifically: `SIGTERM` (installed first, per `run()`'s own
-    `(signal.SIGTERM, signal.SIGINT)` order) succeeding while `SIGINT` (installed second) fails,
+    narrower case this test targets specifically: `SIGTERM` (installed first, per
+    `_stop_on_sigterm_or_sigint`'s own `(signal.SIGTERM, signal.SIGINT)` order) succeeding while
+    `SIGINT` (installed second) fails,
     which used to leave `SIGTERM`'s handler installed forever with nothing removing it, closing
     over this specific invocation's `stop` event. Wraps the real `remove_signal_handler` to record
     which signals it was actually called with, rather than merely asserting the fake `add_signal_
@@ -395,7 +471,18 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
     successfully and then exits cleanly (here, via the `stop` event being set directly rather
     than a real `os.kill`) must not leave either handler installed afterward — closing over a
     `stop` event whose own `run()` invocation has already returned is exactly the kind of stale
-    reference the removal fix exists to prevent."""
+    reference the removal fix exists to prevent.
+
+    **It is also the only in-process test that lets the pre-bind-signal path run to a clean exit.**
+    That path is what the handler-before-bind ordering newly made reachable: the callback fires
+    synchronously inside `add_signal_handler`, which now runs *before* `serve()`, so `stop` is
+    already set when the socket is bound and the run proceeds bind → `chmod` → tasks → unlink →
+    `shut_down()` → clean return. Three other tests in this file fire `SIGTERM` the same way but
+    force a failure downstream of the unlink, so only here does the socket assertion below pin
+    `run()`'s own signal-path unlink rather than a later cleanup's — the one sibling that also
+    asserts on the file
+    (`test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_coroutine`) has the
+    force-exit unlink satisfying it as well, and the other two assert nothing about it."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     sock_path = _runtime_dir(tmp_path) / "server.sock"
@@ -465,6 +552,11 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
     await main.run(sock_path, store_dir)
 
     assert set(removed) == {signal.SIGTERM, signal.SIGINT}
+    # The signal path's own unlink. `asyncio.Server.close()` does not remove a Unix socket's path on
+    # the pinned 3.12.3 — from 3.13 `create_unix_server` defaults to `cleanup_socket=True` and does
+    # unlink it, at which point this assertion stops distinguishing `run()`'s unlink from asyncio's.
+    # `pyproject.toml` pins `==3.12.*`, so the guard holds as long as that pin does.
+    assert not sock_path.exists()
 
 
 async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
