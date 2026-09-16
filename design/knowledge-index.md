@@ -158,8 +158,9 @@ the file and its `-wal`/`-shm` siblings, so a crash leaves an **orphaned file th
 — invisible to every query and reported by `status` (§11).
 
 The reverse would be materially worse rather than merely untidy: unlinking first would leave a name with
-no file, which §11 defines as an empty knowledge base, so the next `refresh` would **silently rebuild
-the corpus the caller had just asked to destroy**.
+no file, which §11 defines as an empty knowledge base — so the caller who asked for the corpus to be
+destroyed would be left with **a name that still answers, over a corpus nothing can rebuild**:
+`refresh` refuses it (§8.4), so clearing it takes the very `remove` that was just interrupted.
 
 **And it couples knowledge discovery to `memory.db`:** without that file no KB is discoverable, even
 though every corpus is intact. Acceptable because both files live in `.zikaron/`, are created together
@@ -293,7 +294,10 @@ four — are **written at creation** and validated on every open, so nothing eve
 a fresh KB is fully described. The four scan-outcome keys and the three lock keys are **absent until
 something writes them**, like the memory store's `reindexing` sentinel: their absence is the normal
 state of a KB that has not been scanned or is not being indexed, and `last_scan_completed_at`'s absence
-is precisely what §8.4's second `reindex_required` cause reads.
+is precisely what §8.4's second `reindex_required` cause reads. **That one key can also go absent
+again**: the drop a rebuild begins with clears it in the same transaction that empties the tables it
+vouched for (§8.4), so its absence reads as *no completed build's corpus is stored* rather than as
+*no build has ever run* — the two being the same statement about what is there.
 
 **Two of the memory store's three pragmas, not three.** WAL and `busy_timeout` carry the same meaning
 here that they do there — §3.1a requires WAL, and `busy_timeout` is what makes a reader wait out the
@@ -1066,6 +1070,25 @@ holder is provably running. It is CLI-only and has no MCP twin: an agent cannot 
 foreign lock from a live one any better than the service can, so this is a judgement that belongs to the
 operator who knows what else is running.
 
+**The refusal rests on a pid, and a pid is not an identity — stated because the rule above reads as
+though it were.** A liveness probe establishes only that *some* process on this host answers to that
+number. After a crash the number is free, and a machine that recycles them quickly can hand it to an
+unrelated process long before anybody reaches for `--force-unlock` — at which point the knowledge
+base is refused a build, refused a removal, and refused the clearing that exists to break exactly
+that deadlock. The refusal therefore says what it knows rather than what it would like to, and names
+the exit no check can block: the three `lock_*` rows are ordinary rows, and an operator who is sure
+may delete them. **Narrowing the probe to *our* process** — on Linux, comparing `/proc/<pid>/cmdline`
+against the indexer's own module — would close it, at the cost of a platform-specific read and a
+second answer for platforms without one; §16 carries it.
+
+**Two details of that flag, both of which follow from it being a flag on `refresh` rather than a verb
+of its own.** It clears the lock and then **goes on to start the build**, because wanting a build is
+overwhelmingly why anybody clears a lock that has stopped anything from running; and a knowledge base
+with no lock recorded at all is **not an error** — it says so and refreshes, since an operator who
+cannot see whether a lock is still there is exactly who reaches for this. The one case it refuses is
+the one the evidence contradicts — a process on this host answers to the recorded pid. That refusal
+happens before anything else, so `--force-unlock` against a live local build starts no build either.
+
 ### 6.3 Progress, and what search sees during a build
 
 Progress is written to `meta` after each file transaction: `files_seen`, `files_indexed`,
@@ -1583,7 +1606,8 @@ does — and the two interrupted states are not symmetric, so one ordering satis
 **Two states, not two *possibilities* — and the difference matters because creating the database is
 itself several steps.** The file exists from the moment it is connected to, before any table is in it,
 so a failure between those points would leave a registered name pointing at an empty database: §11's
-`error`, which tells an operator a refresh will not help, for a condition a refresh repairs entirely.
+`error`, which tells an operator a refresh will not help — for a condition `remove` then `add`
+repairs entirely, and which is not worth a second state to distinguish.
 **`add` therefore removes the database it created on every failure it can catch** — the connect
 onwards, not merely the schema it then writes — folding those into the row-without-file state above.
 What survives is a **hard kill inside that window**, which no handler can catch; it is reported as
@@ -1622,6 +1646,14 @@ defined — §5.5's stops-qualifying deletion, triggered by this design's own me
 destroyed. If an indexer holds the KB's lock, `remove` **refuses** with `already_indexing` rather than
 unlinking a database under a live writer; the caller may retry once the indexer exits.
 
+**"Holds" here is the same test a build's own acquisition applies (§6.2), not the mere presence of the
+rows**, and the difference is the crashed-indexer case. Those rows survive a crash deliberately, so
+refusing on presence would make one dead process enough to make a knowledge base unremovable for
+good — a knowledge base that can never be built again, because every build reclaims, and never
+destroyed either. A lock whose process this host can show is gone is therefore no obstacle to
+removing the corpus. Everything else still refuses, foreign locks included, and the exit for those is
+`--force-unlock` (§6.2).
+
 `refresh` without `full` scans and indexes only changes (§5). `refresh(name=None)` refreshes **every**
 KB, checking each one's lock independently and reporting `already_indexing` per KB rather than failing
 the call. Both forms return immediately; `full` is spelled explicitly because it is the expensive one.
@@ -1647,11 +1679,16 @@ match its unchanged bytes, so the reclaiming scan finds nothing to do and the re
 restoring byte-exactness after a clean-filter skip (§5.2), applying a changed `chunk_max_tokens` — is
 silently unfulfilled for whatever fraction was never reached. The surviving `pending` rows flag that
 remainder `stale: true`, but only until the next walk-phase replacement erases them, converting an
-honestly-flagged window into a silently mixed corpus. **The `reindex_required` variant is immune by
-construction**: `meta` still names the old identity, so any later scan begins under the mismatch and
-**is** the repair variant, which completes the repair whole. (The operative cause is the state, not the
-drop — a drop without the state trigger would leave a rebuilt corpus behind a KB refusing forever,
-because nothing would rewrite `meta`.) Making a full refresh genuinely
+honestly-flagged window into a silently mixed corpus. **The `reindex_required` variant cannot mix two
+models' vectors, for a different reason**: the drop records the identity refilling the corpus in the
+transaction that empties it, so the rows a killed rebuild committed and the rows a later scan adds are
+made by the one model `meta` names, whether that scan resumes the rebuild or redoes the corpus after a
+revert. The completion instant the same transaction cleared is what keeps a later scan **owed and
+reported** — nothing makes one happen, since v0 has no scheduler (§6.2) — and it survives a reverted
+configuration, so the remainder is never silently unfulfilled: whichever scan next runs indexes it,
+and by the model the finished corpus claims.
+(The operative cause is the state, not the drop — see *"Defining the repair by state rather than by
+verb"* below.) Making a full refresh genuinely
 resumable would mean unioning surviving `pending` rows into the replacement as forced-changed, which
 breaks §7.5's replaces-rather-than-appends property and the reverted-file guarantee that rests on it; it
 is named in §16 rather than built quietly.
@@ -1670,7 +1707,7 @@ inserted per file into an old-dimension table, and recreating `chunks_vec` empty
 `chunks_fts` rows persist would violate invariant 3 for the duration. There, `chunks`, `chunks_fts`,
 `chunks_vec` (recreated at the new dimension) and the `files` rows are dropped **together in one
 transaction** before the scan begins. Availability is moot, because §11 has the KB refusing to serve
-while the mismatch lasts.
+for as long as the completion instant that transaction cleared is absent.
 
 **That transaction is measured to work, and two ways of writing it are measured not to**
 (`research/knowledge-index-vec0-fts5-probe.md`). `DROP TABLE` on a `vec0` table and `CREATE` at a new
@@ -1689,23 +1726,34 @@ failures are both about *how the statements are issued*:
 which issues an explicit `BEGIN`, and never as an `executescript`.** The project is safe here by
 construction and only by construction, which is why the constraint is stated rather than assumed.
 
-**The other two causes of `reindex_required` — no database file, and no scan yet completed — need none
-of this.** There is nothing to drop, nothing to violate, and nothing to refuse: the KB serves as an
-empty corpus (§7.4) until the scan builds it. All three causes share a state name and a trigger rule;
-only one of them shares this mechanism.
+**The two causes that need none of this — no database file, and no scan yet completed — are not the
+same kind of thing as each other, and only one of them is a scan at all.** Neither has derived state
+to drop; what separates them is whether there is a corpus to scan. All four causes share a state
+name; only the two identity ones share this mechanism.
 
-**`reindex_required` has three causes, and a scan begun under any of them *is* the repair variant,
-however it was invoked** — a plain `refresh`, a `full=true`, or a `refresh(None)` reaching that KB. The
-repair is a property of the store's state, not of the verb. **Only the encoder mismatch takes the
-drop**; the other two are ordinary scans against a corpus that is missing rather than wrong.
+**`reindex_required` has four causes. A scan begun under any of the *three that can be scanned* is
+the scan that repairs it, however it was invoked** — a plain `refresh`, a `full=true`, or a
+`refresh(None)` reaching that KB. The repair is a property of the store's state, not of the verb.
+**Only the two identity causes take the drop.** The absent-database cause cannot be scanned at all,
+because the definition of what to scan went with the file.
 
-- **No database file** (§11). Nothing to drop: create the database, write `meta` from the current
-  configuration, and index every candidate. This is the ordinary path for a KB whose `add` was
-  interrupted, and for one whose file was deleted out from under the registry.
-- **No scan has ever completed** — `meta.last_scan_completed_at` is absent. The database exists and its
-  `meta` is sound; what is missing is a corpus. This is the state a freshly created KB is in before its
-  first scan finishes, and the state a KB whose *first* scan crashed is in. Nothing to drop here either:
-  an ordinary scan builds it, resuming under §6.4 where a crash left `pending` rows behind.
+- **No database file** (§11). Nothing to drop and nothing to scan: `root_path`, the globs,
+  `git_mode`, the size cap and the encoder identity all lived in that file, so a build has no corpus
+  to walk and nothing to invent one from. **`refresh` refuses**, naming `remove` then `add` as the
+  remedy, which loses nothing — a knowledge base in this state has never indexed anything. `list`,
+  `status` and search meanwhile treat it as an empty corpus. This is the state a KB whose `add` was
+  interrupted is in, and one whose file was deleted out from under the registry.
+- **No completed build's corpus is stored** — `meta.last_scan_completed_at` is absent. The database
+  exists and its `meta` is sound; what is missing is a corpus. This is the state a freshly created KB
+  is in before its first scan finishes, the state a KB whose *first* scan crashed is in, and — because
+  the drop withdraws that key along with the rows it vouched for — the state **a rebuild interrupted
+  after its drop** is in — and, where the swap is seen through, the only cause that reports one. Nothing to drop here: an ordinary
+  scan builds it, resuming under §6.4 where a crash left `pending` rows behind. **Resuming is correct
+  for the rebuild case too**, and only because the drop recorded the identity refilling the corpus in
+  the same transaction: the rows the dead rebuild committed were made by the model `meta` now names,
+  so clearing them as unchanged keeps one model's vectors rather than mixing two. Where the operator
+  instead reverts configuration, this cause is joined by an encoder mismatch, which takes the drop and
+  redoes the corpus whole.
   **Stated as a persisted fact rather than as an emptiness test**, because the two differ on exactly the
   case that matters: a first scan that crashed after committing some files has chunks, and a corpus
   reported `ok` on the strength of having *some* rows would be claiming currency it has no evidence for.
@@ -1713,39 +1761,80 @@ drop**; the other two are ordinary scans against a corpus that is missing rather
   genuinely holds no indexable file has completed a scan, and `ok` over an empty corpus is the true
   answer there (§7.4).
 - **Encoder mismatch** — `meta.embed_model`/`embed_dim` differ from the configured values. The drop
-  described below applies, because derived tables exist and cannot be extended at the new dimension. The upfront drop
-happens unconditionally — it recreates the derived tables, so a crash-recovery re-drop is never a no-op
-and always discards the crashed run's partial work — the scan embeds with the configured model, and its
-completing transaction rewrites the keys. The drop costs nothing observable even from a plain
-`refresh`, because §11 has the KB refusing to serve for as long as the mismatch lasts; and `add` can
+  described above applies, because derived tables exist and cannot be extended at the new dimension. The upfront drop
+happens unconditionally — it recreates the derived tables, so where a crash leaves the drop owed
+again (the reverted case below) the re-drop is never a no-op and always discards the crashed run's
+partial work — and it is the drop that records **the encoder's
+own identity** as the one now filling the corpus, before a single vector of it is written. The scan
+then embeds with that encoder and marks itself complete. The drop costs nothing observable even from
+a plain `refresh`, because §11 has the KB refusing to serve for as long as the completion instant the
+drop cleared is absent; and `add` can
 never meet this state, since a fresh KB seeds both keys from config (§10).
+- **The vector table is declared at a width `meta` does not name.** Same drop, same repair, and a
+  vector carrying the recorded identity cannot be inserted into such a table at all — so a corpus in
+  this condition cannot be added to, only rebuilt. `PRAGMA table_info` gives a `vec0` column an empty
+  type — measured — so the declaration in `sqlite_master` is the only place the width can be read
+  from; it is **read rather than recorded**, which is what keeps this out of the repair-checkpoint
+  territory the "no extra state" rule refuses. The rebuild is back to the **recorded** identity,
+  which is the one the corpus still claims.
+  **Nothing this system does can produce it**, which is what makes it a backstop rather than a
+  working cause: the drop declares the table and records the identity naming that width in one
+  transaction, so every route that moves either moves both. It covers a `meta` and a table that came
+  from different builds — a database file restored from a backup, a row edited by hand — where the
+  corpus would otherwise report `ok` and every later build would die inserting a vector of the
+  recorded width into a table declared for another, one rejected insert per file in a process whose
+  output nobody reads. The same read does both jobs for that case: `state` reports it, and
+  `repair.rebuilt_identity` declares the table back at the identity the corpus still claims.
 
-**`meta.embed_model` and `embed_dim` are rewritten by the repair scan's *completing* transaction, not
-by the drop.** Until then §11's mismatch stands and the KB keeps refusing to serve. Invariant 7 carries
-the matching exception.
+**A rebuild interrupted after its drop is reported by the second cause, and by that cause alone
+where the swap is seen through.** Swap a model for another of the same dimension —
+`bge-small-en-v1.5` and `all-MiniLM-L6-v2` are both 384, and both are models this project has named
+— interrupt the rebuild after its drop, and leave configuration naming the new model, as an operator
+finishing the swap would: `meta` names it too, because the drop recorded it, and the declaration
+never moved. So **nothing compared disagrees**, over tables the drop emptied.
+What covers it is that **the drop clears `last_scan_completed_at`**, in the same transaction that
+empties the tables that key vouched for. The corpus then reports that nothing a completed build made
+is stored, which is exactly true, and an ordinary scan resumes it — safely, because the same
+transaction recorded the model that is filling it, so the rows the dead run committed are that
+model's. **Reverting instead is the other half and takes the other path**: `meta` names the
+abandoned model, so the reverted encoder is an ordinary **encoder mismatch**, and the repair drops
+and redoes the corpus whole. Without the cleared instant the seen-through case
+would report `ok` and answer
+every search as *searched, found nothing* (§7.4) over tables the drop had emptied — misinformation
+of exactly the kind §7.4's "no matches is a real answer" becomes over a corpus that was emptied
+rather than searched, and which no comparison this system makes could see here —
+for as long as nobody happened to run `refresh`, which in v0 is nobody (§6.2: there is
+no scheduler). **This adds no key and records nothing about what is owed**: it withdraws a claim the
+same statement falsified, which is the "stated as a persisted fact" reasoning of the second cause
+applied to the fact the drop changed.
 
-**Both clauses are load-bearing: the trigger *and* the rewrite moment.** Binding the rewrite to "the
-repair scan" without defining which scans those are would fork recovery. If the repair were a mode of
-`full=true` alone, a crash would leave the next plain `refresh` rebuilding the whole corpus correctly —
-every `files` row gone, so every candidate changed by definition — while **nothing rewrote `meta`**,
-leaving the KB refusing to serve forever behind a perfectly consistent corpus until someone reinvoked
-`full=true`, which would drop and rebuild it a second time. It would also make a plain `refresh` on a
-mismatched KB no-op "successfully" while `reindex_required` persisted, with nothing naming the exit.
-Defining the repair by *state* removes both.
+**`meta.embed_model` and `embed_dim` are rewritten by the drop, in the transaction that empties the
+derived tables**, so the recorded identity describes what is stored at every instant a reader can
+observe — including the minutes a rebuild runs and the state a killed one leaves. Four things follow,
+and they are the whole of the rule: what keeps the KB from serving meanwhile is the **completion
+instant** that same transaction cleared, not a stale identity; **invariant 7 has no exception**; a
+killed rebuild whose configuration is left alone is **resumed** by the next scan, because the rows it
+committed came from the model `meta` now names; and one whose configuration was **reverted** is an
+ordinary encoder mismatch, so the next scan drops and redoes the corpus whole. The expensive path is
+taken exactly where the cheap one would be wrong. The moment was chosen against the alternative for
+reasons §15 records.
 
-This is not only textual economy — it is the safer of the two moments, and the difference is
-observable. **Flip at drop** and §11's refusal clears the instant the drop commits, so the KB *serves*
-throughout the rebuild: empty groups filling in over minutes, which turns §7.4's "no matches is a real
-answer" into misinformation for the whole window and contradicts the availability sentence above.
-**Flip at completion** additionally makes a crash mid-repair self-correcting: `meta` still names the old
-identity, so the KB keeps refusing, and the next scan — beginning under that mismatch — **is itself the
-repair variant, however invoked**. Its upfront drop removes the crashed run's partial work, so recovery
-is a **redo of the corpus, not a resume of the remainder**; that is the cost of having no repair
-checkpoint, accepted for the same no-extra-state reason as §6.4. Its completing transaction then
-rewrites the keys, having never served a mismatched vector or a misleading empty group.
+**What they are rewritten *to* is the identity of the artifact that actually filled the corpus, not
+the configured one**, and the two can differ: a configured `embed_dim` is a number in a file, and the
+model it names emits whatever width it emits. These keys exist to say which model produced the
+vectors in the table, so writing anything but the encoder's own identity would restate the very
+defect they are there to detect — and the drop has to declare `chunks_vec` at that same width for the
+inserts to succeed at all. The consequence is honest rather than hidden: where configuration
+disagrees with the model it names, the rebuilt corpus goes on reporting `reindex_required`, because
+it goes on being true, and the fix is to correct the configuration rather than the index.
 
-**The redo cost scopes the "costs nothing observable" clause above**, which is true of *served state* —
-the KB refuses throughout either way — and not of wall time.
+**Defining the repair by *state* rather than by verb is what makes every scan the repairing one.**
+If it were a mode of `full=true` alone, a plain `refresh` on a mismatched KB would no-op
+"successfully" while `reindex_required` persisted, with nothing naming the exit — and worse, a plain
+`refresh` after a crashed repair under a *reverted* configuration would never ask
+`rebuilt_identity` at all, so it would run as an ordinary scan and insert the reverted model's
+vectors into a corpus `meta` labels with the abandoned one. That is the invariant-7 violation the
+drop's identity write exists to prevent, reached through the verb rather than through the moment.
 
 **`add` and `refresh` return the same status shape as §8.5**, so an agent can poll with the result it
 already holds. `remove` returns a final snapshot of what was destroyed plus `removed: true`, since its
@@ -1778,7 +1867,7 @@ async def zikaron_knowledge_status(knowledge_base: str | None = None) -> object
 |---|---|
 | `ok` | built and serving; no scan running. **Built** means a scan has completed — `meta.last_scan_completed_at` is present — not that the corpus is non-empty: a root holding no indexable file completes a scan and is honestly `ok` with `files_indexed: 0` |
 | `indexing` | built and serving, **partial** — a scan is in flight (§6.3), so results are whatever has committed |
-| `reindex_required` | **not usable until built** — three causes (§8.4): no database file, no scan yet completed (`meta.last_scan_completed_at` absent), or an encoder mismatch. The first two serve as an **empty** corpus (§7.4) and the third **refuses to serve outright** (§11), which is why the state answers *can the corpus be trusted* rather than *will it answer*. A scan may be running; `files_remaining` says so |
+| `reindex_required` | **not usable until built** — four causes (§8.4): no database file, no scan yet completed (`meta.last_scan_completed_at` absent, which is also what a rebuild interrupted after its drop leaves), an encoder mismatch, or a vector table declared at a width `meta` does not name. **All four answer a search identically** — the group carries this state and no results — so the difference between them is what the emptiness *means*: the first two have no completed build's corpus to serve (§7.4), the last two have rows they cannot stand behind (§11). The fourth cannot arise from anything this system does — the drop declares the vector table and records the identity naming its width in one transaction — so it is a backstop against a `meta` and a table separated from outside. That is why the state answers *can the corpus be trusted* rather than *will it answer*. A scan may be running; `files_remaining` says so |
 | `root_missing` | the indexed directory is gone. The index is retained (§11) but **search answers an empty group** rather than serving chunks whose files cannot be read — §5.6's rule that a result pointing at an unreadable file is worse than no result |
 | `error` | the database file is present but cannot be opened — corrupt, or permissions. Distinct from `reindex_required`, because `refresh` does not obviously repair it and the operator needs to know the difference |
 
@@ -1804,14 +1893,19 @@ are otherwise **byte-identical states**: an empty `pending` table either way, wi
 unavailable precisely because the table is empty. The walk phase's wholesale-replacement transaction
 therefore also writes **`last_walk_completed_at`** (§3.2), and the rule is:
 
-> `files_remaining` = `COUNT(pending)` **iff** the lock is held **and**
+> `files_remaining` = `COUNT(pending)` **iff** a build is running **and**
 > `last_walk_completed_at ≥ last_scan_started_at`; otherwise `null`.
+
+*Running* is the test defined below under "A build is running" — not the presence of the lock rows,
+which a killed build leaves behind by design. Under presence the count would be whatever the dead
+scan had left, reported forever and never moving again, beside a `state` saying the same wrong
+thing.
 
 **What `list` omits** is the diagnostic half of `status`: `root_path`, the `include`/`exclude`/
 `git_mode` echo, `git_mode_effective`, `chunks`, `bytes_indexed`, `max_file_bytes`, `files_seen`,
-`files_skipped`, the four §12 counters, the nine-way `skipped` breakdown, `last_scan_started_at` and
-`last_scan_completed_at`. Those answer *why is this corpus the way it is*, which is a different question
-from *which corpus should I search*.
+`files_skipped`, the four §12 counters, the nine-way `skipped` breakdown, `last_scan_started_at`,
+`last_scan_completed_at`, and `lock`. Those answer *why is this corpus the way it is*, which is a
+different question from *which corpus should I search*.
 
 **The split is about response size, not about data access.** Both calls open every knowledge-base
 database — reading a handful of `meta` rows from a small SQLite file is single-digit milliseconds, noise
@@ -1852,18 +1946,48 @@ as such, not of files). And **`files_seen`** — the walk phase's progress, ~~re
 a scan is running~~ **reported always** (see the withdrawal below); it is the only signal available
 while a scan is in flight and `files_remaining` is still `null`.
 
+And **`lock`**: the recorded holder of the indexer lock (§6.2), or `null` when none is recorded. It
+carries `pid`, `host`, `started_at`, the lock's **`age_seconds`**, and **`live`** — whether a process
+on that host still answers to the recorded pid, which is `null` wherever even that cannot be
+established from the machine answering: a lock recorded by another host, or one whose pid is not a
+number. **`true` is not *the indexer is running***; see §6.2 on what a pid does and does not
+establish.
+
+**Why the holder is reported at all.** Lock rows can outlive the build that wrote them, in two ways
+`state` cannot tell a caller about. A **cross-host** lock is never reclaimed automatically, so it
+reports `indexing` and persists until a human clears it — the holder is what says which machine to
+look at, and the age whether it is plausibly still working. A **local** holder whose process is gone
+is not reported as `indexing` at all (see the rule below), which leaves *nothing* to say a detached
+build died: its output went nowhere, and every counter it left behind is indistinguishable from one
+still climbing. `live: false` is that signal, and it also says the state is self-correcting, since
+the next build reclaims.
+
+**"A build is running" is one test, and `state`, `files_remaining` and every refusal use it.** A
+lock is *running* unless this machine has watched its process disappear — so no lock at all and a
+lock whose local pid is gone both count as *not running*, and everything else, foreign locks
+included, counts as running. Neither simpler reading works for all three consumers. **Presence
+alone** calls a killed build live for as long as nobody starts another one, which contradicts this
+section's own definition of `indexing` (*a scan is in flight*), freezes `files_remaining` at
+whatever the dead scan had left, and refuses a `remove` that is perfectly safe. **Provable liveness**
+calls a foreign build dead, which is the reading §6.2 rules out because it lets two indexers write
+one database. The conservative half is kept exactly where §6.2 says it belongs — where liveness
+*cannot be refuted* — and nowhere it can be.
+
 **There is no separate `indexing` boolean.** `state == "indexing"` carries it, and a second field
 meaning the same thing at a different fidelity is the seam this section exists to avoid — a caller
 would otherwise have to reconcile `indexing: true` against `state: "reindex_required"` during a repair
-scan, where both are true of different questions. A cross-host lock (§6.2) therefore reports
-`state: "indexing"` with the lock's age.
+scan, where both are true of different questions. `lock` is not that field and does not reintroduce
+it: it says *who* rather than *whether*, and its own `live` is about a process rather than about the
+corpus. A cross-host lock (§6.2) therefore reports `state: "indexing"` with the lock's age.
 
 **The skip breakdown is reported always — but say what "always" returns, because the schema holds one
 set of keys, not two.** §6.3 writes progress and skip counters to the *same* `meta` keys after each file
 transaction, so there is no stored copy of a previous scan to fall back on. The honest statement is
 therefore: **while a scan is running these are its partials; otherwise they are the last
 scan's values — its totals if it completed, its partials if it crashed** (§6.4), the two being
-distinguishable by `last_scan_completed_at` predating `last_scan_started_at`. The crash window is not a
+distinguishable by `last_scan_completed_at` being absent or predating `last_scan_started_at`
+— absent where no scan had yet completed or where the crashed scan was a rebuild, whose drop clears
+that key (§8.4), and earlier than the start otherwise. The crash window is not a
 corner case to wave at: it is precisely the state §6.4 designs for, and "the last completed scan's
 totals" would name a source that does not exist in it.
 
@@ -1997,8 +2121,28 @@ python -m zikaron.knowledge status [<name>]
 `remove` deletes the registry row, then unlinks the database and its `-wal`/`-shm` siblings, after
 confirmation (§3.1a). `rename` changes the registry's `name` and touches no file. `refresh` scans and
 indexes changes; `--full` reindexes every candidate with change detection bypassed, **with the exact
-mechanics §8.4 states** — it is not a discard and rebuild. Both spawn a detached indexer and return
-immediately, printing how to follow progress.
+mechanics §8.4 states** — it is not a discard and rebuild.
+
+**`add` and `refresh` — with or without `--full` — spawn a detached indexer and return immediately,
+printing how to follow progress.** No other verb starts one. The list is spelled out because the
+surprising member is `add`: defining a corpus starts building it, which is what makes §8.4's account
+of a fresh knowledge base settling from `reindex_required` to `ok` true of the CLI as well as of the
+tool.
+
+**Every refusal a build can be given before it reads a file is given in the foreground**, by the
+command that was asked — an unknown name, a knowledge base whose database is gone, a database that is
+present and will not open (reported as a failure rather than a refusal, since nothing the caller can
+do fixes it), a root that has gone, and a lock that cannot be shown to be dead. The last two are the ones that would otherwise be
+worst: a missing root is refused *before* the lock is taken, so a detached build refusing it leaves
+not even the dead holder that says a build died.
+The build re-establishes each of them for itself, since it is a separate
+process and the two are not one transaction, but by then there is nobody to tell: a detached build's
+output is discarded. **What that costs, stated rather than left to be met**: a build that fails after
+detaching is visible as a fact and not as a reason. Its corpus goes on reporting that it has not been
+built, and `status`'s `lock` (§8.5) shows a holder whose process is gone. The reason is recovered by
+running the same command in the foreground, which both commands print for that purpose. The rejected
+alternative is a log file per knowledge base: several concurrent writers and a retention policy, for
+a diagnostic one re-run produces on demand.
 
 `--force-unlock` clears a stale indexer lock (§6.2) and **refuses when the lock is same-host with a live
 pid**. It is the only operation with **no MCP twin**, because an agent cannot distinguish a stale
@@ -2060,7 +2204,8 @@ reader assumes owns it.
 | `knowledge/*.db` with no registry row (orphan) | reported by `status` with the file's breadcrumb name and size; never opened for search, never auto-deleted. The residue of an interrupted **`remove`** — under §8.4's registry-first ordering an interrupted `add` leaves the absent-database case above instead |
 | `memory.db` unreadable | **no KB is discoverable**, though every corpus is intact — the coupling §3.1a names. `status` reports `registry_unavailable` rather than an empty list, which would be indistinguishable from "no KBs configured" |
 | embed model/dim in `meta` ≠ configured | that KB refuses to serve and reports `reindex_required`; it does **not** answer with mismatched vectors |
-| indexer holds the lock | search answers from committed state with `state: "indexing"` and `files_remaining` |
+| a rebuild interrupted after its drop | refuses to serve and reports `reindex_required`, and goes on doing so under a reverted configuration — the drop cleared `last_scan_completed_at`. `meta` names the model the dead run was writing, so the next build **resumes** it where configuration is unchanged and **redoes** it whole where the revert made that an encoder mismatch (§8.4). Either way one model's vectors, never two |
+| an indexer is running (§8.5) | search answers from committed state with `state: "indexing"` and `files_remaining` |
 | indexer died holding the lock | next scan reclaims after a liveness check on the pid — **same host only** (§6.2). A cross-host lock is never auto-reclaimed: it reports `state: "indexing"` with the lock's age, and the exit is `refresh --force-unlock` |
 | root path gone | `state: "root_missing"`; the index is **retained, not deleted**, ready for the root's return. Search answers that group **empty** rather than serving chunks whose files cannot be read (§5.6) |
 | no KBs configured | search returns `groups: []`, not an error |
@@ -2110,10 +2255,14 @@ or an actor — the same gap FINDINGS open question 1 records for the memory sid
 4. `files.chunk_count` equals the count of that path's chunks.
 5. A file's chunks are inserted and deleted in a single transaction — never partially visible.
 6. `start_line <= end_line`, both ≥ 1.
-7. `meta.embed_model` and `meta.embed_dim` match every vector in `chunks_vec` — **except during a §8.4
-   `reindex_required` repair**, where `meta` deliberately keeps the old identity, and the KB refuses to
-   serve (§11), until the completing transaction rewrites it. The exception is stated rather than the
-   invariant weakened, because the window is exactly the one in which nothing may be served.
+7. `meta.embed_model` and `meta.embed_dim` match every vector in `chunks_vec` — **without exception**,
+   including throughout a §8.4 rebuild and after one that was killed, because the transaction that
+   empties the derived tables records the identity about to refill them (§8.4). ~~Except during a §8.4
+   `reindex_required` repair, where `meta` deliberately keeps the old identity, and the KB refuses to
+   serve (§11), until the completing transaction rewrites it.~~ **Exception withdrawn**: it licensed a
+   window in which committed rows carried a model `meta` did not name, and a scan following a killed
+   rebuild cleared exactly those rows as current and completed over them. What keeps the KB from
+   serving during a rebuild is the cleared completion instant, not the stale identity.
 8. At most one live indexer per KB.
 9. A search result's `path` is relative and contains no `..` segment.
 10. Every KB named in the request appears in the response — as a populated, empty, errored, or
@@ -2144,7 +2293,8 @@ or an actor — the same gap FINDINGS open question 1 records for the memory sid
     collision to detect.
 15. **The registry row is the sole authority for a knowledge base's existence; its database file is
     derived state and may be absent.** A row without a file is an **empty KB needing reindex** (§11),
-    not a defect — search answers it as an empty group and `refresh` rebuilds it. A file without a row
+    not a defect — search answers it as an empty group, `refresh` refuses it (§8.4), and `remove`
+    then `add` recreates it, losing nothing that was ever indexed under that name. A file without a row
     is an orphan: reported, never opened, never auto-deleted. Neither direction is an invariant, and
     both are specified.
 16. **`chunks.text` is byte-identical to lines `start_line`–`end_line` of its file**, with no path
@@ -2177,6 +2327,18 @@ One line each; the reasoning is in the section named.
 
 ## 15. Rejected alternatives
 
+- **Recording the rebuilt identity at the scan's *completing* transaction** rather than at the drop
+  (§8.4). Its reason was that flipping at the drop would let §11's refusal lapse the moment the old
+  vectors were destroyed, so the KB would serve throughout the rebuild — empty groups filling in over
+  minutes, turning §7.4's "no matches is a real answer" into misinformation. That reason **stopped
+  holding** once the drop began clearing `meta.last_scan_completed_at`, which holds the corpus out of
+  service for the whole rebuild whatever identity `meta` names. And it cost correctness: a rebuild
+  commits file by file (§4.6), so one killed part-way left rows made by the new model under a `meta`
+  still naming the old one, with `files` rows whose hashes said they were current. Where the two
+  models shared a width, putting the configuration back left nothing compared disagreeing — so the
+  next scan was an ordinary one, cleared those rows as unchanged, indexed the remainder with the old
+  model, and completed `ok` over a mixture of two models' vectors, permanently and undetectably
+  (invariant 7).
 - **A registry-free design: KB metadata only inside each KB file, discovery by directory scan.** Keeps
   deletion at one `unlink` and adds no dependency on `memory.db` — both real, and both recorded as the
   registry's cost in §3.1a. Rejected because it cannot deliver free-form names: with no registry, the
@@ -2333,3 +2495,14 @@ One line each; the reasoning is in the section named.
     anybody searches for lives in the part that was not embedded. The cheap measurement is the first
     half, and it runs during any build: count the chunks a corpus produces whose stored text is longer
     than what was embedded. If that is a rounding error, the second half never needs asking.
+13. **A reused pid makes a knowledge base unmanageable, and `--force-unlock` is refused along with
+    everything else.** §6.2's liveness probe answers *some process on this host has that number*,
+    which after a crash an unrelated process can inherit. The lock then blocks a build, blocks a
+    removal, and blocks its own clearing; the documented exit is deleting three `meta` rows by hand.
+    The mechanism that would close it is narrowing the probe to *our* process — on Linux, reading
+    `/proc/<pid>/cmdline` and treating anything that is not the indexer's own module as gone. What
+    it costs is a platform-specific read, a second answer for platforms without `/proc`, and a
+    decision about which of the probe's three readings it applies to: a build deciding whether to
+    start wants the *conservative* answer and should keep the pid-only test, while the operator's
+    clearing wants the narrow one. Unmeasured, and the number that decides it is how often a pid is
+    actually recycled inside the window a stale lock survives.

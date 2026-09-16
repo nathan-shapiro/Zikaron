@@ -6,10 +6,13 @@ all of it: a corpus a caller named is never silently absent from the answer, bec
 found nothing" and "not searched" are different facts and only one of them is evidence of absence.
 """
 
+import os
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from typing import Final
 
+import aiosqlite
 import pytest
 
 from tests.fake_encoder import FakeEncoder, unit_at
@@ -23,14 +26,21 @@ from tests.knowledge_fixtures import (
     write_tree,
 )
 from zikaron.core.config.keys import CONFIG_KEYS_BY_NAME, IntBounds
-from zikaron.core.knowledge import groups, lifecycle, paths, registry
+from zikaron.core.config.resolution import EffectiveConfig
+from zikaron.core.knowledge import database as knowledge_database
+from zikaron.core.knowledge import groups, lifecycle, lock, paths, registry, reporting
+from zikaron.core.knowledge import pending as knowledge_pending
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.groups import Group, SearchRequest, SearchResponse, UnknownGroup
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.core.knowledge.search import Result
 from zikaron.core.knowledge.state import KnowledgeState
+from zikaron.core.store.transactions import in_one_transaction, propagate
 
 _QUERY: Final = "protobuf"
+_PROTOBUF: Final = b"the protobuf step fails silently\n"
+_STARTED_AT: Final = "2026-01-01T00:00:00+00:00"
+_WALKED_AT: Final = "2026-01-02T00:00:00+00:00"
 
 
 def _result(*, path: str = "a.md", score: float = 0.5, snippet: str = "alpha\n") -> Result:
@@ -458,9 +468,11 @@ class TestWhatAGroupSaysAboutItself:
     async def test_a_corpus_that_opens_and_then_cannot_answer_is_an_error_too(
         self, tmp_path: Path
     ) -> None:
-        """Opening reads `meta` and nothing else, so a corpus can pass that and still fail on the
-        first real query. Reported as this corpus's own state rather than as a failed call, which
-        is what keeps one damaged database from taking every other corpus's answer with it."""
+        """Opening reads `meta` and the vector table's own declaration, and nothing else — so a
+        corpus can pass that and still fail on the first real query. The full-text table is one it
+        never touches, which is why that is the one broken here. Reported as this corpus's own state
+        rather than as a failed call, which is what keeps one damaged database from taking every
+        other corpus's answer with it."""
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             root = write_tree(tmp_path / "docs", {"a.md": b"protobuf\n"})
@@ -473,8 +485,43 @@ class TestWhatAGroupSaysAboutItself:
             )
             registered = await registry.require(db, "docs")
             async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+                await opened.connection.execute("DROP TABLE chunks_fts")
+                await opened.connection.commit()
+            response = await groups.search_all(
+                store_dir,
+                db,
+                config,
+                SearchRequest(text=_QUERY, limit_per_kb=5),
+                encoder=encoder,
+            )
+        (group,) = response.groups
+        assert isinstance(group, Group)
+        assert group.state is KnowledgeState.ERROR
+
+    async def test_a_corpus_whose_vector_table_is_gone_fails_to_open_at_all(
+        self, tmp_path: Path
+    ) -> None:
+        """The width a corpus will accept is read at open, so a vector table that is not there is
+        caught before a query rather than by one — and reported as the same `error`, since what a
+        caller can do about it is the same."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            root = write_tree(tmp_path / "docs", {"a.md": _PROTOBUF})
+            await add_base(
+                store_dir, db, config, add_request(root, name="docs", git_mode=GitMode.OFF)
+            )
+            encoder = FakeEncoder()
+            await lifecycle.refresh(
+                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+            )
+            registered = await registry.require(db, "docs")
+            async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
                 await opened.connection.execute("DROP TABLE chunks_vec")
                 await opened.connection.commit()
+
+            with pytest.raises(aiosqlite.Error, match="no chunks_vec table"):
+                await KnowledgeDatabase.open(store_dir, registered.id)
+
             response = await groups.search_all(
                 store_dir,
                 db,
@@ -604,3 +651,149 @@ class TestTheOutputLimit:
         (group,) = response.groups
         assert isinstance(group, Group)
         assert len(group.results) == groups.LIMIT_PER_KB_CAP
+
+
+class TestACorpusBeingBuilt:
+    """A search during a build answers from what has committed and says so. Checked at the search
+    entry point rather than only through `status`, because the two read the same state through
+    different code: the group's own `state` and `files_remaining` are what an agent sees, and
+    nothing else asserts that a corpus mid-build is served at all rather than answered empty."""
+
+    async def test_it_serves_what_is_committed_and_reports_a_falling_count(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            encoder = FakeEncoder()
+            root = write_tree(tmp_path / "docs", {"a.md": _PROTOBUF, "b.md": b"beta prose\n"})
+            await add_base(
+                store_dir, db, config, add_request(root, name="docs", git_mode=GitMode.OFF)
+            )
+            await lifecycle.refresh(
+                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+            )
+            await _pretend_a_build_is_running(store_dir, db, pending_paths=["a.md", "b.md"])
+
+            mid = await _one_group(store_dir, db, config, encoder)
+            assert mid.state is KnowledgeState.INDEXING
+            assert mid.files_remaining == 2
+            assert mid.results, "committed files are served while a build runs"
+            assert all(result.stale for result in mid.results), "every pending path is stale"
+
+            await _dispose_one_pending(store_dir, db, "b.md")
+
+            later = await _one_group(store_dir, db, config, encoder)
+            assert later.files_remaining == 1
+
+
+async def _one_group(
+    store_dir: Path,
+    db: aiosqlite.Connection,
+    config: EffectiveConfig,
+    encoder: FakeEncoder,
+) -> Group:
+    response = await groups.search_all(store_dir, db, config, _asking(), encoder=encoder)
+    (group,) = response.groups
+    assert isinstance(group, Group)
+    return group
+
+
+async def _pretend_a_build_is_running(
+    store_dir: Path, db: aiosqlite.Connection, *, pending_paths: list[str]
+) -> None:
+    """Put the `docs` corpus into the state a live build leaves: this process holding its lock, a
+    walk phase that has finished, and paths still waiting to be disposed of.
+
+    Planted rather than produced by a real build, because what is under test is what a *reader* in
+    another process sees while one runs — and the build that would produce it runs to completion
+    before it returns.
+    """
+    registered = await registry.require(db, "docs")
+    async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+
+        async def _work(connection: aiosqlite.Connection) -> None:
+            await knowledge_pending.replace_all(connection, pending_paths, noticed_at=_WALKED_AT)
+            await knowledge_database.write_meta(
+                connection,
+                {
+                    "lock_pid": str(os.getpid()),
+                    "lock_host": lock.this_host(),
+                    "lock_started_at": _STARTED_AT,
+                    "last_scan_started_at": _STARTED_AT,
+                    "last_walk_completed_at": _WALKED_AT,
+                },
+            )
+
+        await in_one_transaction(opened.connection, _work, failure=propagate)
+
+
+async def _dispose_one_pending(store_dir: Path, db: aiosqlite.Connection, path: str) -> None:
+    registered = await registry.require(db, "docs")
+    async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+
+        async def _work(connection: aiosqlite.Connection) -> None:
+            await knowledge_pending.dispose(connection, path)
+
+        await in_one_transaction(opened.connection, _work, failure=propagate)
+
+
+class TestOneUnreadableCorpusAmongHealthyOnes:
+    """A corpus whose vector table cannot be interpreted is that corpus's own `error`, and nothing
+    more. The failure this pins is the other one: a second exception type escaping the handlers
+    every caller was written against, so that one damaged database ends a `search` or a `list` over
+    twenty healthy ones in a traceback."""
+
+    async def test_a_declaration_with_no_width_errors_that_corpus_alone(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            encoder = FakeEncoder()
+            for name in ("broken", "healthy"):
+                root = write_tree(tmp_path / name, {"a.md": _PROTOBUF})
+                await add_base(
+                    store_dir, db, config, add_request(root, name=name, git_mode=GitMode.OFF)
+                )
+                await lifecycle.refresh(
+                    store_dir, db, config, name=name, build=build_settings(config, encoder=encoder)
+                )
+            await _erase_the_declared_width(store_dir, db, "broken")
+
+            response = await groups.search_all(
+                store_dir, db, config, SearchRequest(text=_QUERY, limit_per_kb=5), encoder=encoder
+            )
+            listing = await reporting.list_bases(store_dir, db, config)
+
+        by_name = {group.knowledge_base: group for group in response.groups}
+        broken = by_name["broken"]
+        healthy = by_name["healthy"]
+        assert isinstance(broken, Group)
+        assert isinstance(healthy, Group)
+        assert broken.state is KnowledgeState.ERROR
+        assert healthy.results, "one damaged corpus must not take its neighbour's answer with it"
+
+        states = {report.summary.name: report.summary.state for report in listing.knowledge_bases}
+        assert states == {"broken": KnowledgeState.ERROR, "healthy": KnowledgeState.OK}
+
+
+async def _erase_the_declared_width(store_dir: Path, db: aiosqlite.Connection, name: str) -> None:
+    """Rewrite one corpus's `chunks_vec` declaration so it names no width at all.
+
+    Through `writable_schema`, because nothing else can produce this: the extension refuses such a
+    declaration at `CREATE`. What it stands in for is a database this build did not write — the
+    population every other validation on the open path exists for.
+    """
+    registered = await registry.require(db, name)
+    path = paths.knowledge_db_path(store_dir, registered.id)
+    broken = sqlite3.connect(path)
+    try:
+        broken.execute("PRAGMA writable_schema = ON")
+        broken.execute(
+            "UPDATE sqlite_master SET sql = "
+            "'CREATE VIRTUAL TABLE chunks_vec USING vec0 (chunk_id INTEGER PRIMARY KEY, embedding)'"
+            " WHERE name = 'chunks_vec'"
+        )
+        broken.commit()
+        broken.execute("PRAGMA writable_schema = OFF")
+    finally:
+        broken.close()

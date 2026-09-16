@@ -116,7 +116,9 @@ REQUIRED_KEYS: Final[tuple[str, ...]] = (
 
 #: The keys whose **absence is the normal state**, and which are therefore exempt from
 #: required-key validation. Nothing writes them until a scan starts or an indexer takes the lock,
-#: and `last_scan_completed_at`'s absence is precisely what "no build has ever completed" means.
+#: and `last_scan_completed_at`'s absence is precisely what *nothing a completed build made is
+#: stored* means — which covers a knowledge base that has never been built and one whose corpus a
+#: rebuild dropped, since the transaction that destroys the rows withdraws the instant with them.
 TRANSIENT_KEYS: Final[tuple[str, ...]] = (
     LAST_SCAN_STARTED_AT_KEY,
     LAST_WALK_COMPLETED_AT_KEY,
@@ -342,8 +344,8 @@ def defaults_at_creation(identity: KnowledgeMeta) -> Mapping[str, str]:
     The thirteen identity and configuration values, then every counter at zero. The four
     scan-outcome keys and the three lock keys are deliberately **absent**: a knowledge base that
     has not been scanned has no scan outcome, and writing a placeholder would make
-    `last_scan_completed_at`'s absence — which is how *no build has ever completed* is recorded —
-    unrepresentable.
+    `last_scan_completed_at`'s absence — which is how *nothing a completed build made is stored* is
+    recorded — unrepresentable.
 
     Args:
         identity: the values to seed, already validated by having been constructed.

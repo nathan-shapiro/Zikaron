@@ -10,7 +10,17 @@ where it would not be there.
 **A lock recorded by another host is never reclaimed automatically**, because a local process
 probe says nothing about a foreign one. The conservative reading is also the honest one — we
 cannot show the holder is dead — and it composes into a knowledge base nothing can manage until an
-operator clears the lock, which is why the age of the lock is reported for a human to judge.
+operator clears the lock, which is why the holder is reported for a human to judge and why
+`force_release` exists as the way out.
+
+**One probe, and three questions that are not the same question.** *May this process take the
+lock* admits only a holder that is provably gone. *Is a build running* admits everything except
+that, foreign locks included, and is what decides whether a corpus reports itself mid-scan and
+whether it may be removed. *May an operator clear this by hand* refuses only a holder that is
+answering to that pid. Each is a different reading of `probe`, and each is wrong in the other's
+place —
+which is why none of them is the mere presence of the rows: a killed build leaves those behind
+deliberately, and the signal they carry outlives the process that wrote them.
 """
 
 import os
@@ -51,12 +61,13 @@ class LockHolder:
 
 
 def is_held(raw: Mapping[str, str]) -> bool:
-    """Whether a lock is recorded at all, from a knowledge base's `meta` rows.
+    """Whether lock rows are recorded at all, from a knowledge base's `meta` rows.
 
-    Presence of the recorded pid, not liveness of the process it names. Whether a present lock is
-    still live is a question only its own host can answer, and the conservative half is the one
-    every reader of this wants: acting as though a lock were absent while a writer holds it is the
-    unrecoverable direction.
+    **Presence, and only presence** — which is a narrower question than any decision in this system
+    turns on, and is deliberately not the one to reach for. *May a build start*, *may this corpus be
+    removed*, *is a scan in flight* are all `running_holder`, because rows outlive the build that
+    wrote them and a killed build leaves these behind on purpose. This is the test `read` is built
+    on, and what a test asserts after a release.
     """
     return meta.LOCK_PID_KEY in raw
 
@@ -110,30 +121,92 @@ def _process_is_alive(pid: int) -> bool:
     return True
 
 
+def probe(holder: LockHolder, *, host: str) -> bool | None:
+    """Whether a process on this host answers to the recorded pid, or `None` where even that cannot
+    be established.
+
+    **Not whether the indexer is running**, which no pid can establish: after a crash the number is
+    free, and a reused one answers exactly as the process that recorded it did. `force_release` is
+    where that limit is acted on, because it is the only reading whose consequence is a refusal an
+    operator cannot get past.
+
+    The one liveness question in this module, asked in one place so that no reading of it can drift
+    from another. It is unanswerable in two cases, and both answer `None` rather than a guess: a
+    lock recorded on another host, where a local process probe means nothing, and one whose pid is
+    not a number at all, which only a hand edit produces.
+
+    The asymmetry matters more than the answer. *Provably running* and *provably gone* are both
+    strictly narrower than *not the other*, and a caller that treated `None` as either would either
+    let a second indexer write beside a live one or refuse a knowledge base forever.
+    """
+    if holder.host != host or holder.pid is None:
+        return None
+    return _process_is_alive(holder.pid)
+
+
 def is_reclaimable(holder: LockHolder, *, host: str) -> bool:
     """Whether this process may take a lock somebody else recorded.
 
-    Only on the same host, and only when the recorded process is provably gone. A foreign host's
-    lock is never reclaimable here whatever its age — pid liveness is meaningless across machines
-    — and neither is a lock whose pid cannot be read, because *reclaim it* is the reading that
-    lets two indexers write one database.
+    Only when the recorded process is provably gone. A foreign host's lock is never reclaimable
+    here whatever its age, and neither is a lock whose pid cannot be read, because *reclaim it* is
+    the reading that lets two indexers write one database.
     """
-    return holder.host == host and holder.pid is not None and not _process_is_alive(holder.pid)
+    return probe(holder, host=host) is False
+
+
+def is_provably_live(holder: LockHolder, *, host: str) -> bool:
+    """Whether something on this host answers to the recorded pid, for an operator clearing a lock.
+
+    *Provably* is as strong as a pid allows and no stronger — it proves a process exists, not that
+    it is the one that recorded the lock. `force_release` is what states that limit to whoever hits
+    it, since this is the only reading that produces a refusal.
+
+    Deliberately not the negation of `is_reclaimable`: a foreign lock is neither reclaimable nor
+    provably live, and the two questions differ in who is asking. An indexer deciding whether to
+    start may take a lock only whose holder is gone; an operator clearing one by hand is refused
+    only where a process on this host answers to that pid, because everything else is a judgement
+    they are
+    better placed to make than this process is.
+    """
+    return probe(holder, host=host) is True
+
+
+def running_holder(raw: Mapping[str, str], *, host: str) -> LockHolder | None:
+    """The holder of a build this machine cannot show has stopped, or `None` if none is.
+
+    **The single statement of *a build is running here*, and every consumer of that fact uses it**,
+    because the alternatives are each wrong somewhere. Reading the rows' mere presence calls a
+    killed build live for as long as nobody starts another one — which refuses a removal that is
+    safe, and reports a corpus as mid-scan when nothing is scanning it. Reading liveness as
+    *provably running* calls a foreign build dead, which is the reading that lets two indexers write
+    one database.
+
+    So `None` covers exactly two cases — no lock at all, and a lock whose process this host probed
+    and found gone — and everything else, foreign locks included, counts as running.
+    """
+    holder = read(raw)
+    if holder is None or is_reclaimable(holder, host=host):
+        return None
+    return holder
 
 
 async def acquire(db: aiosqlite.Connection, *, pid: int, host: str, started_at: str) -> None:
     """Take the lock, or refuse because somebody else holds it.
 
     Runs inside the caller's transaction, and must: reading the existing rows and writing the new
-    ones in two transactions leaves a window in which two processes both read *no holder*.
+    ones in *two* transactions would let a second acquisition slip between them and commit over the
+    first. What one transaction buys is that at most one of two racing acquisitions commits — it
+    does not stop both of them reading *no holder*, which a deferred `BEGIN` allows, and the loser's
+    failure is then the driver's rather than the refusal below. `scan._begin` records why that is
+    left as it is.
 
     Raises:
         IndexerBusyError: a live local indexer, or any indexer on another host, holds it. The same
             refusal anything else that must not run beside a build raises, so a caller branching
             on it does not have to know which of the two noticed.
     """
-    holder = read(await database.read_meta(db))
-    if holder is not None and not is_reclaimable(holder, host=host):
+    holder = running_holder(await database.read_meta(db), host=host)
+    if holder is not None:
         raise IndexerBusyError(
             f"an indexer is already running against this knowledge base ({holder.describe()})"
         )
@@ -156,3 +229,49 @@ async def release(db: aiosqlite.Connection) -> None:
     exchange for a check that protects nothing a same-host reclaim would not fix.
     """
     await database.clear_meta(db, LOCK_KEYS)
+
+
+async def force_release(db: aiosqlite.Connection, *, host: str) -> LockHolder | None:
+    """Clear a lock on an operator's judgement, refusing the one case the evidence contradicts.
+
+    The exit from the state automatic reclamation is designed not to touch. A lock recorded on
+    another machine is never reclaimed on its own, correctly — nothing here can show a foreign
+    process is gone — but the rules that follow from it compose into a knowledge base nothing can
+    manage: every build reports the corpus busy, removal refuses, and no clock runs out. One
+    crashed indexer inside a container is enough to reach it.
+
+    So the judgement moves to whoever knows what else is running, and this refuses only where their
+    judgement is contradicted by evidence: a process on this host answers to that pid. Everything
+    else
+    is cleared, including a lock whose pid is unreadable, which no other path can resolve either.
+
+    **The refusal rests on a pid, and a pid is not an identity.** All the probe establishes is that
+    *some* process answers to that number on this host. After a crash the number is free, and on a
+    machine that recycles them quickly an unrelated process can inherit it long before anybody
+    reaches for this — at which point the corpus is refused a build, refused a removal, and refused
+    the clearing that exists to break exactly that deadlock. So the refusal says what it actually
+    knows, and names the way out that no check can block: the three `lock_*` rows are ordinary rows
+    and an operator who is sure may delete them.
+
+    Runs inside the caller's transaction, so the holder that was read is the holder that is
+    cleared.
+
+    Returns:
+        The holder that was cleared, or `None` if no lock was recorded — which is the ordinary
+        answer for an operator who ran this on a knowledge base that had already recovered.
+
+    Raises:
+        IndexerBusyError: some process on this host answers to the recorded pid.
+    """
+    holder = read(await database.read_meta(db))
+    if holder is None:
+        return None
+    if is_provably_live(holder, host=host):
+        raise IndexerBusyError(
+            f"a process on this host still answers to the lock's pid ({holder.describe()}); "
+            f"wait for it to finish, or stop it first. If that pid has been reused and belongs to "
+            f"something else, delete the lock_pid, lock_host and lock_started_at rows from this "
+            f"knowledge base's meta table by hand — nothing else can tell the two apart"
+        )
+    await database.clear_meta(db, LOCK_KEYS)
+    return holder

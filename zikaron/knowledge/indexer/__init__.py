@@ -5,6 +5,8 @@ of work.** It is one to a few minutes of saturated CPU over a whole directory tr
 other knowledge-base verb is a small transaction; putting it in a process that also serves
 memories would reintroduce a latency race this project has already paid for once in production.
 
-Invoked synchronously today by the `refresh` verb, so the person who asked for a build waits for
-it. Nothing about running it detached needs a different module — only a different invocation.
+**Started detached by `add` and `refresh`**, which return as soon as it is running and never wait
+for it — and run in the foreground by an operator who wants to watch a build, or to see why one
+failed, since a detached build's output goes nowhere. Both reach the same command; only the
+invocation differs.
 """

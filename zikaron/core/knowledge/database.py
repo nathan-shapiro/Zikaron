@@ -140,6 +140,41 @@ async def clear_meta(db: aiosqlite.Connection, keys: Sequence[str]) -> None:
     await db.executemany("DELETE FROM meta WHERE key = ?", [(key,) for key in keys])
 
 
+async def stored_vector_width(db: aiosqlite.Connection) -> int:
+    """The width this knowledge base's vector table will actually accept.
+
+    Read off the table's own recorded declaration, because `vec0` will not answer for it any other
+    way. On this system's paths the declaration and `meta.embed_dim` are written in one transaction
+    and therefore agree — an interrupted rebuild leaves them agreeing too, since the drop writes
+    both. The read exists for a database whose `meta` and tables came from different builds: one
+    restored from a backup, or edited by hand, where every later build would otherwise die on its
+    first insert.
+
+    **Both ways this can fail are one answer to its caller, and are raised as one.** A vector table
+    that is absent and one whose declaration cannot be read are the same fact — this database cannot
+    be interpreted — and they reach the same readers: a status report and a search, each of which
+    turns a failed open into that corpus's own `error` so one bad database does not take every other
+    corpus's answer with it. A second exception type here would escape both, because each was
+    written against the ones `open` documents, and a `list` over twenty corpora would end in a
+    traceback over one of them.
+
+    Raises:
+        aiosqlite.Error: the vector table is not there, or its declaration names no width — which
+            means a database that is not the one it claims to be.
+    """
+    rows = await db.execute_fetchall(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chunks_vec'"
+    )
+    found = list(rows)
+    if not found:
+        raise aiosqlite.DatabaseError("this knowledge base has no chunks_vec table")
+    ((statement,),) = found
+    try:
+        return ddl.declared_vector_width(str(statement))
+    except ValueError as error:
+        raise aiosqlite.DatabaseError(str(error)) from error
+
+
 def encoder_matches_config(current: meta.KnowledgeMeta, config: EffectiveConfig) -> bool:
     """Whether this knowledge base's recorded encoder identity still agrees with configuration.
 
@@ -166,10 +201,19 @@ def _remove_quietly(db_path: Path) -> None:
 
 
 class KnowledgeDatabase:
-    """An open connection to one knowledge base, plus the `meta` it was opened with.
+    """An open connection to one knowledge base, the `meta` it was opened with, and the width its
+    vector table will actually accept.
 
     Construct only through `create` or `open`, never directly: both classmethods run the
     validation their path requires before an instance exists to hand back.
+
+    **`vector_width` is read from the table rather than from `meta`, and where the two disagree the
+    table decides what a build may insert.** Nothing this package does separates them — the drop
+    writes the declaration and the identity naming it in one transaction — so a disagreement means a
+    `meta` and a table that came from different builds, which `state` reports as `reindex_required`
+    and `repair.rebuilt_identity` declares back. Carried here so that every caller who has a
+    knowledge base open has the fact without a second query, and so that a database which cannot
+    report it fails to open rather than answering queries it will refuse every write to.
 
     Held with `async with`, or closed in a `finally`. That is a rule about process exit rather
     than tidiness — `aiosqlite` runs each connection on a dedicated **non-daemon** thread, so a
@@ -178,11 +222,16 @@ class KnowledgeDatabase:
     """
 
     def __init__(
-        self, db: aiosqlite.Connection, db_path: Path, current_meta: meta.KnowledgeMeta
+        self,
+        db: aiosqlite.Connection,
+        db_path: Path,
+        current_meta: meta.KnowledgeMeta,
+        vector_width: int,
     ) -> None:
         self._db: Final = db
         self.path: Final = db_path
         self.meta: Final = current_meta
+        self.vector_width: Final = vector_width
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -233,10 +282,10 @@ class KnowledgeDatabase:
         # of them share one failure handler. Connecting is itself a creating step: SQLite makes the
         # file before anything in this method can fail, and a failure afterwards would otherwise
         # leave a registered knowledge base pointing at an empty database with no `meta` — which
-        # reads back as *this index cannot be opened*, the one state that says a rebuild will not
-        # help, for a condition a rebuild fixes completely. Removing what this call made collapses
-        # every such failure into the absent-database state instead: an empty knowledge base the
-        # next build fills in with nobody's involvement.
+        # reads back as *this index cannot be opened*, the one state an operator is told to look at
+        # by hand, for a condition removing the name and adding it again fixes completely. Removing
+        # what this call made collapses every such failure into the absent-database state instead,
+        # which is the same remedy with nothing to diagnose first.
         #
         # Deleting is safe precisely because of the check above, which has just established the
         # path was empty — so anything there now was made by this call. `db` is bound before the
@@ -256,7 +305,7 @@ class KnowledgeDatabase:
             await asyncio.to_thread(_remove_quietly, db_path)
             raise
 
-        return cls(db, db_path, identity)
+        return cls(db, db_path, identity, identity.embed_dim)
 
     @staticmethod
     async def _create_tables_and_meta(
@@ -303,9 +352,11 @@ class KnowledgeDatabase:
         very fields it needs in order to say so.
 
         Raises:
-            aiosqlite.Error: the database is absent or cannot be opened. Absence is not an error
-                to this module's callers — it is an empty knowledge base — so telling the two
-                apart is left to them, who know which they are looking at.
+            aiosqlite.Error: the database is absent or cannot be opened — which includes a vector
+                table that is missing or declared in a way this build cannot read, since a database
+                whose accepted width is unknowable is one no write to it can be trusted. Absence is
+                not an error to this module's callers — it is an empty knowledge base — so telling
+                the two apart is left to them, who know which they are looking at.
             ZikaronError: `BAD_CONFIG` (`source='meta'`) if a required key is missing, unparseable
                 or out of range; `SCHEMA_INCOMPATIBLE` if `meta.schema_version` is newer than this
                 build supports.
@@ -313,17 +364,17 @@ class KnowledgeDatabase:
         db_path = paths.knowledge_db_path(store_dir, kb_id)
         db, _inode = await open_connection(db_path, pragmas=ddl.PRAGMAS, existing_only=True)
         try:
-            current_meta = await cls._validate_on_open(db)
+            current_meta, width = await cls._validate_on_open(db)
         except BaseException:
             await db.close()
             raise
-        return cls(db, db_path, current_meta)
+        return cls(db, db_path, current_meta, width)
 
     @staticmethod
-    async def _validate_on_open(db: aiosqlite.Connection) -> meta.KnowledgeMeta:
+    async def _validate_on_open(db: aiosqlite.Connection) -> tuple[meta.KnowledgeMeta, int]:
         """Every check `open` must run before handing back a database, in the required order."""
         raw = await read_meta(db)
         current_meta = meta.parse_and_validate(raw)
         if current_meta.schema_version > meta.SUPPORTED_SCHEMA_VERSION:
             raise _schema_too_new(current_meta.schema_version)
-        return current_meta
+        return current_meta, await stored_vector_width(db)

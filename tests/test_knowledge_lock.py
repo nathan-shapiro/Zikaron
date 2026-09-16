@@ -103,27 +103,85 @@ class TestWhoMayTakeItOver:
         assert not lock.is_reclaimable(holder, host=lock.this_host())
 
 
+class TestTheLivenessProbeAndItsTwoReadings:
+    """One probe, two questions. *May I take this over* and *can I show the holder is running* are
+    both strictly narrower than the negation of the other, and the gap between them is every lock
+    the probe cannot answer for — a foreign host, or a pid that is not a number. A caller that
+    collapsed the two would either start a second indexer beside a live one or refuse a knowledge
+    base for good."""
+
+    @pytest.mark.parametrize(
+        ("holder", "expected"),
+        [
+            (lock.LockHolder(pid=os.getpid(), host=lock.this_host(), started_at=_NOW), True),
+            (lock.LockHolder(pid=_DEAD_PID, host=lock.this_host(), started_at=_NOW), False),
+            (lock.LockHolder(pid=_DEAD_PID, host="another-machine", started_at=_NOW), None),
+            (lock.LockHolder(pid=None, host=lock.this_host(), started_at=_NOW), None),
+        ],
+        ids=["local and running", "local and gone", "foreign", "unreadable pid"],
+    )
+    def test_the_probe_answers_none_wherever_it_cannot_tell(
+        self, holder: lock.LockHolder, expected: bool | None
+    ) -> None:
+        assert lock.probe(holder, host=lock.this_host()) is expected
+
+    def test_a_foreign_lock_is_neither_reclaimable_nor_provably_live(self) -> None:
+        holder = lock.LockHolder(pid=_DEAD_PID, host="another-machine", started_at=_NOW)
+        assert not lock.is_reclaimable(holder, host=lock.this_host())
+        assert not lock.is_provably_live(holder, host=lock.this_host())
+
+    def test_only_a_local_running_process_is_provably_live(self) -> None:
+        here = lock.this_host()
+        assert lock.is_provably_live(
+            lock.LockHolder(pid=os.getpid(), host=here, started_at=_NOW), host=here
+        )
+        assert not lock.is_provably_live(
+            lock.LockHolder(pid=_DEAD_PID, host=here, started_at=_NOW), host=here
+        )
+
+    def test_nothing_blocks_a_build_when_no_lock_is_recorded(self) -> None:
+        assert lock.running_holder({}, host=lock.this_host()) is None
+
+    def test_a_lock_a_crashed_indexer_left_blocks_nothing(self) -> None:
+        """Those rows survive on purpose. Treating them as a live writer would make one dead
+        process enough to make a knowledge base unbuildable and unremovable at once."""
+        rows = _rows(pid=_DEAD_PID, host=lock.this_host())
+        assert lock.running_holder(rows, host=lock.this_host()) is None
+
+    @pytest.mark.parametrize(
+        "rows",
+        [
+            _rows(pid=os.getpid(), host=lock.this_host()),
+            _rows(pid=_DEAD_PID, host="another-machine"),
+            _rows(pid="not-a-pid", host=lock.this_host()),
+        ],
+        ids=["local and running", "foreign", "unreadable pid"],
+    )
+    def test_every_lock_that_cannot_be_shown_dead_blocks(self, rows: dict[str, str]) -> None:
+        assert lock.running_holder(rows, host=lock.this_host()) is not None
+
+
+@pytest.fixture
+async def knowledge_db(tmp_path: Path) -> AsyncIterator[aiosqlite.Connection]:
+    """One registered knowledge base's own connection, which is where a lock lives."""
+    async with open_store(tmp_path) as (store_dir, memory_db):
+        config = config_for(tmp_path)
+
+        async def _register(connection: aiosqlite.Connection) -> KnowledgeBase:
+            await ensure_table(connection)
+            return await insert(connection, name="docs", description="a corpus", created_at=_NOW)
+
+        registered = await in_one_transaction(memory_db, _register, failure=propagate)
+        spec = NewKnowledgeBase(
+            name=registered.name, root=corpus_root(tmp_path), description="a corpus"
+        )
+        async with await KnowledgeDatabase.create(
+            store_dir, seed_identity(registered.id, spec, config)
+        ) as opened:
+            yield opened.connection
+
+
 class TestTakingAndReleasing:
-    @pytest.fixture
-    async def knowledge_db(self, tmp_path: Path) -> AsyncIterator[aiosqlite.Connection]:
-        async with open_store(tmp_path) as (store_dir, memory_db):
-            config = config_for(tmp_path)
-
-            async def _register(connection: aiosqlite.Connection) -> KnowledgeBase:
-                await ensure_table(connection)
-                return await insert(
-                    connection, name="docs", description="a corpus", created_at=_NOW
-                )
-
-            registered = await in_one_transaction(memory_db, _register, failure=propagate)
-            spec = NewKnowledgeBase(
-                name=registered.name, root=corpus_root(tmp_path), description="a corpus"
-            )
-            async with await KnowledgeDatabase.create(
-                store_dir, seed_identity(registered.id, spec, config)
-            ) as opened:
-                yield opened.connection
-
     async def test_taking_a_free_lock_records_this_process(
         self, knowledge_db: aiosqlite.Connection
     ) -> None:
@@ -175,3 +233,49 @@ class TestTakingAndReleasing:
         to be safe on a knowledge base whose lock was never taken."""
         await lock.release(knowledge_db)
         assert not lock.is_held(await database.read_meta(knowledge_db))
+
+
+class TestClearingALockByHand:
+    """The exit from a lock nothing clears on its own. Automatic reclamation is same-host only, so
+    a crash on another machine leaves a knowledge base every verb refuses and no clock runs out on.
+    This moves that judgement to whoever can see what is running, and declines only where a process
+    on this host answers to the recorded pid."""
+
+    async def test_a_foreign_lock_is_cleared_and_reported(
+        self, knowledge_db: aiosqlite.Connection
+    ) -> None:
+        await database.write_meta(knowledge_db, _rows(pid=_DEAD_PID, host="another-machine"))
+        cleared = await lock.force_release(knowledge_db, host=lock.this_host())
+        assert cleared == lock.LockHolder(pid=_DEAD_PID, host="another-machine", started_at=_NOW)
+        assert not lock.is_held(await database.read_meta(knowledge_db))
+
+    async def test_a_lock_whose_pid_cannot_be_read_is_cleared(
+        self, knowledge_db: aiosqlite.Connection
+    ) -> None:
+        """No other path resolves it: it is never reclaimable, and nothing can probe a pid that is
+        not a number. Leaving it would make a hand-edited row permanent."""
+        await database.write_meta(knowledge_db, _rows(pid="not-a-pid", host=lock.this_host()))
+        assert await lock.force_release(knowledge_db, host=lock.this_host()) is not None
+        assert not lock.is_held(await database.read_meta(knowledge_db))
+
+    async def test_a_dead_local_lock_is_cleared_even_though_a_build_would_reclaim_it(
+        self, knowledge_db: aiosqlite.Connection
+    ) -> None:
+        await database.write_meta(knowledge_db, _rows(pid=_DEAD_PID, host=lock.this_host()))
+        assert await lock.force_release(knowledge_db, host=lock.this_host()) is not None
+        assert not lock.is_held(await database.read_meta(knowledge_db))
+
+    async def test_a_running_local_holder_is_refused_and_keeps_its_lock(
+        self, knowledge_db: aiosqlite.Connection
+    ) -> None:
+        await lock.acquire(knowledge_db, pid=os.getpid(), host=lock.this_host(), started_at=_NOW)
+        with pytest.raises(IndexerBusyError, match="still answers to the lock"):
+            await lock.force_release(knowledge_db, host=lock.this_host())
+        assert lock.is_held(await database.read_meta(knowledge_db))
+
+    async def test_no_lock_at_all_is_reported_rather_than_refused(
+        self, knowledge_db: aiosqlite.Connection
+    ) -> None:
+        """An operator reaching for this cannot see whether a lock is still there, which is the
+        whole reason they are reaching for it."""
+        assert await lock.force_release(knowledge_db, host=lock.this_host()) is None

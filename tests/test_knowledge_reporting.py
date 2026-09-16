@@ -7,17 +7,23 @@ a count only under a rule with a persisted discriminator in it, because "the wal
 nothing changed" and "the walk is still running" are otherwise byte-identical states.
 """
 
+import os
 import uuid
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from tests.knowledge_fixtures import add_base, config_for, corpus_root, open_store
+from zikaron.core.clock import timestamp
 from zikaron.core.knowledge import ddl as knowledge_ddl
-from zikaron.core.knowledge import lifecycle, meta, reporting
+from zikaron.core.knowledge import lifecycle, lock, meta, reporting
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.knowledge.state import KnowledgeState
 from zikaron.core.store.connection import open_connection
+
+#: A pid no process can have, so *not running* is a fact rather than a race with the scheduler.
+_DEAD_PID: Final = 2**22 + 7
 
 
 async def _write_meta(db_path: Path, **rows: str) -> None:
@@ -65,7 +71,7 @@ class TestADatabaseThatWillNotOpen:
             created = await _add(tmp_path, store_dir, db)
             created.database_path.write_bytes(b"this is not a SQLite database")
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.ERROR
             assert report.details is None
             assert report.summary.name == "docs"
@@ -85,7 +91,7 @@ class TestADatabaseThatWillNotOpen:
             finally:
                 await dropped.close()
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.ERROR
 
 
@@ -102,7 +108,7 @@ class TestAMissingRoot:
                 child.unlink()
             root.rmdir()
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.ROOT_MISSING
             assert created.database_path.is_file(), "the index is retained, not deleted"
 
@@ -118,7 +124,7 @@ class TestAnEncoderThatNoLongerAgrees:
             created = await _add(tmp_path, store_dir, db)
             await _write_meta(created.database_path, embed_model="some/other-model")
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
 
     async def test_a_changed_tuning_key_does_not(self, tmp_path: Path) -> None:
@@ -134,12 +140,12 @@ class TestAnEncoderThatNoLongerAgrees:
                 last_scan_completed_at="2026-01-01T00:00:00+00:00",
             )
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.OK
 
 
 class TestHowManyFilesAreLeft:
-    """A number only when the lock is held **and** the walk phase's own completion instant is at
+    """A number only when a build is running **and** the walk phase's own completion instant is at
     least as recent as the build's start. Every other case is `None`, because `0` would read as
     *nothing left to do* when the truth is *not yet counted*."""
 
@@ -191,7 +197,7 @@ class TestHowManyFilesAreLeft:
             if rows:
                 await _write_meta(created.database_path, **rows)
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.files_remaining == expected
 
 
@@ -205,12 +211,12 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
 
-            (before,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (before,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert before.details is not None
             assert before.details.git_mode_effective is None
 
             await _write_meta(created.database_path, last_scan_git_mode_effective="off")
-            (after,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (after,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert after.details is not None
             assert after.details.git_mode_effective is meta.GitMode.OFF
 
@@ -222,7 +228,7 @@ class TestTheDiagnosticFields:
             created = await _add(tmp_path, store_dir, db)
             await _write_meta(created.database_path, last_scan_git_mode_effective="sideways")
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.details is not None
             assert report.details.git_mode_effective is None
 
@@ -237,7 +243,7 @@ class TestTheDiagnosticFields:
             created = await _add(tmp_path, store_dir, db)
             await _write_meta(created.database_path, files_indexed="not a number")
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.files_indexed == 0
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
 
@@ -250,7 +256,7 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             await _add(tmp_path, store_dir, db)
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.details is not None
             assert set(report.details.skipped) == {
                 key.removeprefix("skipped_") for key in meta.SKIP_REASON_KEYS
@@ -266,9 +272,9 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             await _add(tmp_path, store_dir, db)
 
-            (listed,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (listed,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             (detailed,) = (
-                await lifecycle.status(store_dir, db, config, name="docs")
+                await reporting.status(store_dir, db, config, name="docs")
             ).knowledge_bases
             assert listed.summary == detailed.summary
 
@@ -282,3 +288,177 @@ def test_a_knowledge_base_with_no_database_reports_no_diagnostics_rather_than_ze
     assert report.details is None
     assert report.summary.files_indexed == 0
     assert report.summary.files_remaining is None
+
+
+class TestWhoIsBuildingThisCorpus:
+    """`state: indexing` says a build is running and nothing more, and two situations it covers are
+    ones it cannot explain on its own: a lock recorded on another machine, which nothing here ever
+    reclaims, and a local build whose process has died, which is the only trace a detached build
+    that failed leaves at all."""
+
+    async def test_no_lock_is_reported_as_no_lock(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            await _add(tmp_path, store_dir, db)
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is None
+
+    async def test_a_running_local_build_is_reported_as_live(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                lock_pid=str(os.getpid()),
+                lock_host=lock.this_host(),
+                lock_started_at=timestamp(),
+            )
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is not None
+            assert report.details.lock.live is True
+            assert report.details.lock.pid == os.getpid()
+            assert report.details.lock.age_seconds is not None
+
+    async def test_a_local_build_whose_process_is_gone_is_reported_as_dead(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                lock_pid=str(_DEAD_PID),
+                lock_host=lock.this_host(),
+                lock_started_at=timestamp(),
+            )
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is not None
+            assert report.details.lock.live is False
+
+    async def test_a_foreign_build_is_reported_without_a_verdict_on_it(
+        self, tmp_path: Path
+    ) -> None:
+        """A local process probe says nothing about a process on another machine, and a verdict
+        either way would be a guess — one of which starts a second writer."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                lock_pid=str(_DEAD_PID),
+                lock_host="another-machine",
+                lock_started_at=timestamp(),
+            )
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is not None
+            assert report.details.lock.live is None
+            assert report.details.lock.host == "another-machine"
+
+    async def test_a_lock_whose_instant_cannot_be_read_has_no_age(self, tmp_path: Path) -> None:
+        """Only a hand-edited row produces it, and the answer is to lose that one field rather than
+        the report a human is reading in order to work out what happened."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                lock_pid=str(_DEAD_PID),
+                lock_host=lock.this_host(),
+                lock_started_at="the other day",
+            )
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is not None
+            assert report.details.lock.age_seconds is None
+
+    async def test_a_lock_whose_pid_cannot_be_read_gets_no_verdict_either(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                lock_pid="not-a-pid",
+                lock_host=lock.this_host(),
+                lock_started_at=timestamp(),
+            )
+
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            assert report.details is not None
+            assert report.details.lock is not None
+            assert report.details.lock.pid is None
+            assert report.details.lock.live is None
+
+
+class TestWhatCountsAsABuildInFlight:
+    """`indexing` means *a scan is in flight*, and lock rows outlive the build that wrote them. So
+    the test is a liveness one rather than a presence one — but only where liveness can be answered
+    from here, which is the same line every other consumer of the lock draws. `state` and
+    `files_remaining` both key off it, because `null` is what tells a caller no build is running
+    and two answers to that would be one too many."""
+
+    async def _report(self, tmp_path: Path, **rows: str) -> reporting.Status:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            await _write_meta(
+                created.database_path,
+                last_scan_started_at="2026-01-01T00:00:00+00:00",
+                last_walk_completed_at="2026-01-02T00:00:00+00:00",
+                last_scan_completed_at="2026-01-03T00:00:00+00:00",
+                **rows,
+            )
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            return report
+
+    async def test_a_live_local_build_is_a_build_in_flight(self, tmp_path: Path) -> None:
+        report = await self._report(
+            tmp_path,
+            lock_pid=str(os.getpid()),
+            lock_host=lock.this_host(),
+            lock_started_at=timestamp(),
+        )
+        assert report.summary.state is KnowledgeState.INDEXING
+        assert report.summary.files_remaining == 0
+
+    async def test_a_build_on_another_machine_is_too(self, tmp_path: Path) -> None:
+        """Nothing here can show a foreign process has stopped, and the reading that assumes it has
+        is the one that lets two indexers write one database."""
+        report = await self._report(
+            tmp_path,
+            lock_pid=str(_DEAD_PID),
+            lock_host="another-machine",
+            lock_started_at=timestamp(),
+        )
+        assert report.summary.state is KnowledgeState.INDEXING
+        assert report.summary.files_remaining == 0
+
+    async def test_a_killed_local_build_is_not(self, tmp_path: Path) -> None:
+        """Its rows survive on purpose. Reported as a scan in flight, a corpus that is simply built
+        and idle would say so for as long as nobody started another build — with a count beside it
+        that could never move again."""
+        report = await self._report(
+            tmp_path,
+            lock_pid=str(_DEAD_PID),
+            lock_host=lock.this_host(),
+            lock_started_at=timestamp(),
+        )
+        assert report.summary.state is KnowledgeState.OK
+        assert report.summary.files_remaining is None
+        assert report.details is not None
+        assert report.details.lock is not None, "and the holder is what says a build died"
+
+    async def test_a_corpus_nobody_is_building_is_not_either(self, tmp_path: Path) -> None:
+        report = await self._report(tmp_path)
+        assert report.summary.state is KnowledgeState.OK
+        assert report.summary.files_remaining is None

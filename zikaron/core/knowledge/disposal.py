@@ -47,15 +47,17 @@ class BuildSettings:
 
     The corpus defines itself — its root, globs, size cap, chunk budget and encoder identity all
     come from its stored `meta`, so that changing a global default cannot silently re-shape an index
-    that is already built. These two are the exceptions, and both are exceptions for the same
-    reason: neither describes the index that results. `encoder` is the artifact this process
-    happened to load, checked against the identity the corpus recorded before anything is written;
-    `embed_batch` is how many chunks go into one forward pass, which a correct implementation's
-    vectors do not depend on at all.
+    that is already built. These three are the exceptions, and they are exceptions for one reason:
+    none of them describes the index that results. `encoder` is the artifact this process happened
+    to load; `embed_batch` is how many chunks go into one forward pass, which a correct
+    implementation's vectors do not depend on at all; and `full` decides which files are rewritten
+    rather than what any of them becomes, so a full build and an incremental one leave the same
+    rows behind.
     """
 
     encoder: Encoder
     embed_batch: int
+    full: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,23 +1,36 @@
-"""The five verbs, and the interrupted states the registry-first ordering is chosen to produce.
+"""The verbs that change a knowledge base, and the interrupted states their ordering produces.
 
 The whole point of mutating the registry before the file, in both directions, is that each
 interruption lands in the better of its two possible states — and both of those are asserted here
-rather than argued for in prose: an interrupted `add` leaves a corpus the next build repairs with
-nobody's involvement, and an interrupted `remove` leaves a file nothing opens.
+rather than argued for in prose: an interrupted `add` leaves a name one `remove` clears, and an
+interrupted `remove` leaves a file nothing opens.
 """
 
+import os
 import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Final
 
 import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import add_base, config_for, corpus_root, open_store
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.knowledge import database, ddl, lifecycle, meta, paths, registry
+from zikaron.core.knowledge import (
+    database,
+    ddl,
+    lifecycle,
+    lock,
+    meta,
+    paths,
+    registry,
+    reporting,
+)
 from zikaron.core.knowledge.errors import (
+    CorpusRootMissingError,
+    DanglingKnowledgeBaseError,
     DuplicateNameError,
     IndexerBusyError,
     InvalidNameError,
@@ -29,6 +42,9 @@ from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
 from zikaron.core.store.transactions import in_one_transaction
+
+#: A pid no process can have, so *not running* is a fact rather than a race with the scheduler.
+_DEAD_PID: Final = 2**22 + 7
 
 
 class TestTheWholeLifecycle:
@@ -57,7 +73,7 @@ class TestTheWholeLifecycle:
             assert renamed.summary.name == "design records"
             assert created.database_path.is_file(), "a rename must touch no file"
 
-            listing = await lifecycle.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config)
             (listed,) = listing.knowledge_bases
             assert listed.summary.name == "design records"
             assert listed.summary.description == "records"
@@ -65,7 +81,7 @@ class TestTheWholeLifecycle:
             removed = await lifecycle.remove(store_dir, db, config, name="design records")
             assert removed.knowledge_base.name == "design records"
             assert not created.database_path.exists()
-            assert (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
 
     async def test_remove_leaves_no_file_of_that_knowledge_base_behind(
         self, tmp_path: Path
@@ -141,22 +157,23 @@ class TestTheInterruptedStates:
                 await lifecycle.add(store_dir, db, config, request)
             monkeypatch.undo()
 
-            listing = await lifecycle.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config)
             (report,) = listing.knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
             assert report.summary.files_indexed == 0
             assert listing.orphans == (), "an interrupted add must not leave an orphan"
 
-    async def test_a_create_that_fails_after_making_the_file_still_leaves_the_healing_state(
+    async def test_a_create_that_fails_after_making_the_file_still_leaves_the_absent_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The third interrupted state, and why it is folded into the first.
 
         Connecting to a knowledge base's database *creates the file*, before any table is in it. So
         a failure between those two points leaves a registered name pointing at an empty database —
-        which reads back as *this index cannot be opened*, the one state that tells an operator a
-        rebuild will not help, for a condition a rebuild fixes entirely. Creation removes what it
-        made, and the result must be the absent-database state instead.
+        which reads back as *this index cannot be opened*, the one state an operator is told to
+        look at by hand, for a condition removing the name and adding it again fixes entirely.
+        Creation removes what it made, and the result must be the absent-database state instead:
+        the same remedy, with nothing to diagnose first.
         """
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
@@ -172,7 +189,7 @@ class TestTheInterruptedStates:
                 )
             monkeypatch.undo()
 
-            listing = await lifecycle.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config)
             (report,) = listing.knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED, (
                 "a failed create must not leave a knowledge base reporting an unreadable index"
@@ -199,7 +216,7 @@ class TestTheInterruptedStates:
 
             await in_one_transaction(db, _work, failure=lambda _error: None)
 
-            listing = await lifecycle.status(store_dir, db, config)
+            listing = await reporting.status(store_dir, db, config)
             assert listing.knowledge_bases == ()
             (orphan,) = listing.orphans
             assert orphan.path == created.database_path
@@ -213,9 +230,9 @@ class TestTheInterruptedStates:
 
         Forced by failing the unlink, which is the step after the commit. Under the order this
         module chose, that leaves a file nothing references — an orphan, reported and inert. Under
-        the reverse, the same interruption would leave a **name with no file**, which the next
-        build would read as an empty corpus and silently rebuild — recreating exactly what the
-        caller had asked to destroy.
+        the reverse, the same interruption would leave a **name with no file** — a knowledge base
+        that still answers for a corpus the caller had asked to destroy, which no build can rebuild
+        and only another `remove` can clear.
         """
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
@@ -239,7 +256,7 @@ class TestTheInterruptedStates:
             assert created.database_path.is_file(), "the file survives as an orphan"
 
             monkeypatch.undo()
-            listing = await lifecycle.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config)
             assert listing.knowledge_bases == ()
             assert [orphan.path for orphan in listing.orphans] == [created.database_path]
 
@@ -257,8 +274,8 @@ class TestTheInterruptedStates:
             stray = paths.knowledge_dir(store_dir) / f"{uuid.uuid4()}.db"
             stray.write_bytes(b"")
 
-            assert (await lifecycle.status(store_dir, db, config, name="docs")).orphans == ()
-            assert len((await lifecycle.status(store_dir, db, config)).orphans) == 1
+            assert (await reporting.status(store_dir, db, config, name="docs")).orphans == ()
+            assert len((await reporting.status(store_dir, db, config)).orphans) == 1
 
 
 class TestRefusals:
@@ -301,7 +318,7 @@ class TestRefusals:
                     ),
                 )
 
-            (report,) = (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.description == "first"
             assert report.details is not None
             assert report.details.root_path == str(corpus_root(tmp_path, "three").parent / "one")
@@ -335,7 +352,7 @@ class TestRefusals:
                         name="docs", root=tmp_path / "nothing-here", description="a"
                     ),
                 )
-            assert (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
 
     async def test_a_file_as_a_root_is_refused(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
@@ -369,7 +386,7 @@ class TestRefusals:
                     ),
                 )
             assert caught.value.code is ErrorCode.BAD_CONFIG
-            assert (await lifecycle.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
 
     async def test_rename_refuses_a_name_that_is_taken(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
@@ -395,7 +412,7 @@ class TestRefusals:
                 "rename": lambda: lifecycle.rename(
                     store_dir, db, config, name="absent", new_name="x"
                 ),
-                "status": lambda: lifecycle.status(store_dir, db, config, name="absent"),
+                "status": lambda: reporting.status(store_dir, db, config, name="absent"),
             }
             with pytest.raises(UnknownKnowledgeBaseError):
                 await calls[verb]()
@@ -419,8 +436,29 @@ class TestRefusals:
                 await lifecycle.remove(store_dir, db, config, name="docs")
 
             assert created.database_path.is_file()
-            listing = await lifecycle.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config)
             assert len(listing.knowledge_bases) == 1
+
+    async def test_remove_is_not_stopped_by_a_lock_a_crashed_build_left(
+        self, tmp_path: Path
+    ) -> None:
+        """Those rows survive a crash on purpose, and nothing but another build clears them. A
+        corpus that could never be removed again after one crash would be the worse failure, and
+        there is no writer to protect: the recorded process is gone."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            await _write_lock(created.database_path, pid=_DEAD_PID, host=lock.this_host())
+
+            await lifecycle.remove(store_dir, db, config, name="docs")
+
+            assert not created.database_path.exists()
+            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
 
 
 class TestTheMigrationIsAdditive:
@@ -442,7 +480,7 @@ class TestTheMigrationIsAdditive:
             with pytest.raises(sqlite3.OperationalError):
                 await reopened.connection.execute_fetchall("SELECT 1 FROM knowledge_bases")
 
-            listing = await lifecycle.list_bases(store_dir, reopened.connection, config)
+            listing = await reporting.list_bases(store_dir, reopened.connection, config)
             assert listing.knowledge_bases == ()
             created = await add_base(
                 store_dir,
@@ -458,7 +496,7 @@ class TestTheMigrationIsAdditive:
         """Stated as an assertion rather than as prose: bumping it would make every older build
         refuse the store, which is the outcome the additive-table rule exists to avoid."""
         async with open_store(tmp_path) as (_store_dir, db):
-            await lifecycle.ensure_registry(db)
+            await registry.ensure(db)
             rows = await db.execute_fetchall("SELECT value FROM meta WHERE key = 'schema_version'")
             ((version,),) = list(rows)
             assert int(version) == 1
@@ -466,31 +504,194 @@ class TestTheMigrationIsAdditive:
     async def test_ensuring_the_registry_twice_is_a_no_op(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
-            await lifecycle.ensure_registry(db)
+            await registry.ensure(db)
             await add_base(
                 store_dir,
                 db,
                 config,
                 lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
             )
-            await lifecycle.ensure_registry(db)
-            assert len((await lifecycle.list_bases(store_dir, db, config)).knowledge_bases) == 1
+            await registry.ensure(db)
+            assert len((await reporting.list_bases(store_dir, db, config)).knowledge_bases) == 1
 
 
-async def _write_lock(db_path: Path) -> None:
-    """Take the knowledge base's lock by writing the `meta` keys a build would write.
+class TestWhatHasToHoldBeforeABuildStarts:
+    """A build is spawned detached, with its output discarded and nobody to report a refusal to.
+    So every refusal that can be decided without reading a file is decided in front of whoever
+    asked — and the one refusal that must *not* fire is the lock a crashed indexer left, because
+    those rows survive on purpose and refusing on them would make one dead process permanent."""
 
-    Written directly because nothing takes the lock yet: what is under test is the refusal that
-    reads it, and stubbing the reader instead would assert this suite's belief back to itself.
+    async def test_a_registered_corpus_with_a_database_is_buildable(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="Docs", root=corpus_root(tmp_path), description="a"),
+            )
+
+            registered = await lifecycle.prepare_build(store_dir, db, name="DOCS")
+            assert registered.name == "docs"
+
+    async def test_an_unregistered_name_is_refused(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            with pytest.raises(UnknownKnowledgeBaseError):
+                await lifecycle.prepare_build(store_dir, db, name="absent")
+
+    async def test_a_corpus_with_no_database_is_refused(self, tmp_path: Path) -> None:
+        """Everything that says what a corpus indexes lives in that file, so a build has nothing to
+        walk and nothing to invent one from."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            created.database_path.unlink()
+
+            with pytest.raises(DanglingKnowledgeBaseError):
+                await lifecycle.prepare_build(store_dir, db, name="docs")
+
+    async def test_a_build_that_cannot_be_shown_dead_refuses_the_next_one(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            await _write_lock(created.database_path)
+
+            with pytest.raises(IndexerBusyError, match="docs"):
+                await lifecycle.prepare_build(store_dir, db, name="docs")
+
+    async def test_a_root_that_has_gone_is_refused(self, tmp_path: Path) -> None:
+        """The refusal that would otherwise leave nothing at all: a build declines a missing root
+        before taking the lock, so a detached one leaves not even the dead holder that says a build
+        died, while the command that asked reported that one had started."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            root = corpus_root(tmp_path, "vanishing")
+            await add_base(
+                store_dir, db, config, lifecycle.AddRequest(name="docs", root=root, description="a")
+            )
+            for path in root.iterdir():
+                path.unlink()
+            root.rmdir()
+
+            with pytest.raises(CorpusRootMissingError, match="kept as it is"):
+                await lifecycle.prepare_build(store_dir, db, name="docs")
+
+    async def test_a_lock_a_crashed_build_left_stops_nothing(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            await _write_lock(created.database_path, pid=_DEAD_PID, host=lock.this_host())
+
+            assert (await lifecycle.prepare_build(store_dir, db, name="docs")).name == "docs"
+
+
+class TestClearingALockByHand:
+    """The exit from the state nothing clears on its own: a lock recorded on another machine, which
+    is never reclaimed here, and which leaves a corpus every verb refuses with no clock running
+    out on it."""
+
+    async def test_a_foreign_lock_is_cleared_and_the_holder_reported(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            await _write_lock(created.database_path)
+
+            cleared = await lifecycle.unlock(store_dir, db, name="docs")
+
+            assert cleared is not None
+            assert cleared.host == "somehost"
+            assert (await lifecycle.prepare_build(store_dir, db, name="docs")).name == "docs"
+
+    async def test_a_running_local_build_is_refused(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            await _write_lock(created.database_path, pid=os.getpid(), host=lock.this_host())
+
+            with pytest.raises(IndexerBusyError, match="still answers to the lock"):
+                await lifecycle.unlock(store_dir, db, name="docs")
+
+    async def test_a_corpus_with_no_lock_answers_that_rather_than_refusing(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+
+            assert await lifecycle.unlock(store_dir, db, name="docs") is None
+
+    async def test_an_unregistered_name_is_refused(self, tmp_path: Path) -> None:
+        async with open_store(tmp_path) as (store_dir, db):
+            with pytest.raises(UnknownKnowledgeBaseError):
+                await lifecycle.unlock(store_dir, db, name="absent")
+
+    async def test_a_corpus_with_no_database_is_refused(self, tmp_path: Path) -> None:
+        """There is no lock to clear, and nothing that could have taken one."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await add_base(
+                store_dir,
+                db,
+                config,
+                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
+            )
+            created.database_path.unlink()
+
+            with pytest.raises(DanglingKnowledgeBaseError):
+                await lifecycle.unlock(store_dir, db, name="docs")
+
+
+async def _write_lock(db_path: Path, *, pid: int = 4242, host: str = "somehost") -> None:
+    """Record a build lock by writing the `meta` keys a build writes when it starts.
+
+    Written directly rather than by starting a build, because the interesting holders are the two
+    no build of this suite's own could produce: one on another machine, and one whose process has
+    died. The default is the first of those.
     """
     db, _inode = await open_connection(db_path, pragmas=ddl.PRAGMAS, existing_only=True)
     try:
         for key, value in (
-            (meta.LOCK_PID_KEY, "4242"),
-            (meta.LOCK_HOST_KEY, "somehost"),
+            (meta.LOCK_PID_KEY, str(pid)),
+            (meta.LOCK_HOST_KEY, host),
             (meta.LOCK_STARTED_AT_KEY, "2026-01-01T00:00:00+00:00"),
         ):
-            await db.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, value))
+            await db.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
         await db.commit()
     finally:
         await db.close()

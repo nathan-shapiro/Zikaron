@@ -46,6 +46,16 @@ def validate_root(path: Path, *, home: Path) -> Path:
     return resolved
 
 
+def missing_root_message(root: Path) -> str:
+    """What a caller is told when the directory a corpus indexes has gone.
+
+    One wording for the two places that refuse it — the command that was asked for a build, and the
+    build itself — because they refuse the same condition and a reader who met both should not have
+    to work out whether they mean the same thing.
+    """
+    return f"{root} is gone, so there is nothing to index; the existing index is kept as it is"
+
+
 async def effective_git_mode(root: Path, requested: GitMode) -> GitMode:
     """The `git_mode` that will actually apply at `root`, which may be weaker than the one asked
     for.

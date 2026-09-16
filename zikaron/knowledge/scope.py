@@ -27,7 +27,7 @@ from zikaron.core.config.resolution import (
     resolve,
 )
 from zikaron.core.errors import ZikaronError
-from zikaron.core.knowledge.errors import KnowledgeError
+from zikaron.core.knowledge.errors import KnowledgeError, RegistryUnavailableError
 from zikaron.core.store.store import Store
 from zikaron.harness import detect
 from zikaron.service import paths as service_paths
@@ -41,22 +41,26 @@ class OpenStore:
     — the registry lives in the connection, and each knowledge base's own file lives under the
     directory — and a verb given one without the other could address a knowledge base belonging to
     a different store.
+
+    `project` is the directory the store was derived *from*, kept because a command that starts a
+    build has to tell the child which project to act on, and the child takes a project rather than
+    a store. Passing the resolved value is what stops the two processes resolving differently.
     """
 
+    project: Path
     directory: Path
     connection: aiosqlite.Connection
     config: EffectiveConfig
 
 
-def store_directory(project: Path | None) -> Path:
-    """Which project's store to act on.
+def project_scope(project: Path | None) -> Path:
+    """Which project a command acts on.
 
     Resolved through the same harness seam both thin clients use, so a command and the agent's own
     tools address one store rather than two. An explicit project wins over the harness, since
     naming one is the caller saying they mean a different project from the one they are sitting in.
     """
-    scope = project if project is not None else detect.current_spec().store_scope_dir(Path.cwd())
-    return service_paths.store_dir(scope)
+    return project if project is not None else detect.current_spec().store_scope_dir(Path.cwd())
 
 
 def configuration(store_dir: Path) -> EffectiveConfig:
@@ -74,11 +78,30 @@ async def open_store(project: Path | None) -> AsyncIterator[OpenStore]:
     Opened through the store's own open path rather than by connecting to the file, so a command
     inherits every check that path runs — permissions, the symlink refusal, `meta` validation — and
     refuses a store this build cannot read instead of writing into it.
+
+    **A store that will not open is reported as the registry being unavailable**, because that is
+    what it means here: the list of knowledge bases lives in `memory.db`, so none of them is
+    discoverable while it cannot be read, however intact each corpus's own database is. Saying so
+    is the point — the failure this rules out is a command that answers *no knowledge bases*, which
+    is a real answer for a project that has none and indistinguishable from this one.
+
+    Raises:
+        RegistryUnavailableError: the store's own database could not be opened or read.
     """
-    directory = store_directory(project)
+    scope = project_scope(project)
+    directory = service_paths.store_dir(scope)
     config = configuration(directory)
-    async with await Store.open(directory, config) as store:
-        yield OpenStore(directory=directory, connection=store.connection, config=config)
+    try:
+        store = await Store.open(directory, config)
+    except (aiosqlite.Error, OSError) as error:
+        raise RegistryUnavailableError(
+            f"the store at {directory} could not be read, so no knowledge base in this project "
+            f"can be found: {error}"
+        ) from error
+    async with store:
+        yield OpenStore(
+            project=scope, directory=directory, connection=store.connection, config=config
+        )
 
 
 def execute(

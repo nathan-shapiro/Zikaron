@@ -4,11 +4,15 @@ Flow, argument parsing and printing live here; every decision lives in `zikaron.
 which the agent-facing tools will call through the same functions. This module deliberately holds
 no rule of its own, so the two surfaces cannot diverge on what a verb means.
 
-`refresh` is the one verb whose work lives elsewhere: building an index is its own command with
-its own entry point, and this verb calls it rather than repeating it.
+**Nothing here waits for a build.** `add` and `refresh` start one and return, because a build is
+minutes of work over a whole directory tree and holding a shell for it would make the two verbs that
+create a corpus the two slowest things this command does. The build is its own command with its own
+entry point, which is both what gets spawned and what an operator runs by hand when they want to
+watch one.
 """
 
 import argparse
+import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -16,9 +20,9 @@ from pathlib import Path
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.knowledge import lifecycle, meta, reporting
+from zikaron.core.knowledge import lifecycle, lock, meta, reporting
 from zikaron.knowledge import scope
-from zikaron.knowledge.indexer import main as indexer
+from zikaron.knowledge.indexer import detach
 
 _UNSET = "—"
 
@@ -95,6 +99,20 @@ def _parser() -> argparse.ArgumentParser:
 
     refreshing = verbs.add_parser("refresh", help="build a knowledge base's index")
     refreshing.add_argument("name")
+    refreshing.add_argument(
+        "--full",
+        action="store_true",
+        help="reindex every file rather than only what changed. For when the thing that moved is "
+        "not the files: a changed chunk budget, or content the index was handed through a filter "
+        "that has changed since.",
+    )
+    refreshing.add_argument(
+        "--force-unlock",
+        action="store_true",
+        help="clear a build lock nothing will clear on its own — one recorded by another machine, "
+        "which this one cannot probe. Refuses while a process on this host still answers to the "
+        "recorded pid.",
+    )
 
     return parser
 
@@ -112,23 +130,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 async def _run(args: argparse.Namespace) -> int:
     """Open the store once, run the verb, and close it however it ends."""
     async with scope.open_store(args.project) as store:
-        return await _dispatch(args, store.directory, store.connection, store.config)
+        return await _dispatch(args, store)
 
 
-async def _dispatch(
-    args: argparse.Namespace,
-    store_dir: Path,
-    db: aiosqlite.Connection,
-    config: EffectiveConfig,
-) -> int:
+async def _dispatch(args: argparse.Namespace, store: scope.OpenStore) -> int:
+    store_dir, db, config = store.directory, store.connection, store.config
     if args.verb == "list":
-        _print_listing(await lifecycle.list_bases(store_dir, db, config), detailed=False)
+        _print_listing(await reporting.list_bases(store_dir, db, config), detailed=False)
         return 0
     if args.verb == "status":
-        _print_listing(await lifecycle.status(store_dir, db, config, name=args.name), detailed=True)
+        _print_listing(await reporting.status(store_dir, db, config, name=args.name), detailed=True)
         return 0
     if args.verb == "add":
-        return await _add(args, store_dir, db, config)
+        return await _add(args, store)
     if args.verb == "rename":
         renamed = await lifecycle.rename(
             store_dir, db, config, name=args.name, new_name=args.new_name
@@ -138,23 +152,18 @@ async def _dispatch(
     if args.verb == "remove":
         return await _remove(args, store_dir, db, config)
     if args.verb == "refresh":
-        return await indexer.build(store_dir, db, config, name=args.name)
+        return await _refresh(args, store)
     # Unreachable through the command, which refuses an unknown verb before dispatch. Loud rather
     # than a trailing `return`, because the branch a fall-through would land in is the destructive
     # one — a verb added to the parser and forgotten here must fail, not remove a knowledge base.
     raise NotImplementedError(f"no handler for the verb {args.verb!r}")
 
 
-async def _add(
-    args: argparse.Namespace,
-    store_dir: Path,
-    db: aiosqlite.Connection,
-    config: EffectiveConfig,
-) -> int:
+async def _add(args: argparse.Namespace, store: scope.OpenStore) -> int:
     created = await lifecycle.add(
-        store_dir,
-        db,
-        config,
+        store.directory,
+        store.connection,
+        store.config,
         lifecycle.AddRequest(
             name=args.name,
             root=args.path,
@@ -167,6 +176,9 @@ async def _add(
     )
     print(f"added     {created.knowledge_base.name!r}")
     print(f"database  {created.database_path}")
+    # The state a corpus is created in, before its first build has committed anything. It is the
+    # honest answer rather than a placeholder: the database exists and its settings are sound, and
+    # nothing has been indexed into it yet.
     print(f"state     {created.status.summary.state.value}")
     if created.git_mode_effective is not created.git_mode:
         print(
@@ -174,8 +186,44 @@ async def _add(
             f"inside a git work tree, so this corpus is built as "
             f"{created.git_mode_effective.value!r}."
         )
-    print("\nNothing is indexed yet. Run `refresh` to build it.")
+    _start_build(created.knowledge_base.name, store, full=False)
     return 0
+
+
+async def _refresh(args: argparse.Namespace, store: scope.OpenStore) -> int:
+    """Clear a lock if asked to, check what can be checked, and start a build in the background."""
+    if args.force_unlock:
+        _report_unlock(await lifecycle.unlock(store.directory, store.connection, name=args.name))
+    # Everything decidable without reading a file is decided here, in front of whoever ran this:
+    # the build itself detaches, and a refusal it raised would go to a discarded stream.
+    registered = await lifecycle.prepare_build(store.directory, store.connection, name=args.name)
+    _start_build(registered.name, store, full=args.full)
+    return 0
+
+
+def _report_unlock(cleared: lock.LockHolder | None) -> None:
+    if cleared is None:
+        print("unlocked  no lock was recorded; nothing to clear")
+        return
+    print(f"unlocked  cleared the lock held by {cleared.describe()}")
+
+
+def _start_build(name: str, store: scope.OpenStore, *, full: bool) -> None:
+    """Spawn the build and say how to follow it, and how to see it fail.
+
+    The foreground command is printed in full rather than described, because it is the only way to
+    recover the *reason* a detached build failed: its own output goes nowhere, so what is left is
+    to run the identical command where its output can be seen. It is the argv the spawn reports
+    rather than a second construction of it, so the two cannot differ.
+    """
+    argv = detach.spawn(name, project=store.project, full=full)
+    print(f"building  {name!r} in the background")
+    # Quoted, because a name is free-form and two-word ones are ordinary — an unquoted one pasted
+    # back is a command that fails to parse, which is worse than useless in a line offered as the
+    # way to follow a build.
+    print(f"follow    python -m zikaron.knowledge status {shlex.quote(name)}")
+    print("\nThat build's output is discarded. To watch one, or to see why one failed:")
+    print(f"  {shlex.join(argv)}")
 
 
 async def _remove(
@@ -185,7 +233,7 @@ async def _remove(
     config: EffectiveConfig,
 ) -> int:
     if not args.yes:
-        listing = await lifecycle.status(store_dir, db, config, name=args.name)
+        listing = await reporting.status(store_dir, db, config, name=args.name)
         (found,) = listing.knowledge_bases
         indexed = found.details.chunks if found.details is not None else 0
         print(
@@ -201,7 +249,7 @@ async def _remove(
     return 0
 
 
-def _print_listing(listing: lifecycle.Listing, *, detailed: bool) -> None:
+def _print_listing(listing: reporting.Listing, *, detailed: bool) -> None:
     if not listing.knowledge_bases:
         print("no knowledge bases in this project")
     for report in listing.knowledge_bases:
@@ -256,6 +304,42 @@ def _print_details(details: reporting.Details | None) -> None:
         f"  last scan {details.last_scan_started_at or _UNSET} .. "
         f"{details.last_scan_completed_at or _UNSET}"
     )
+    if details.lock is not None:
+        print(f"  build     {_lock_line(details.lock)}")
+
+
+def _age(seconds: float) -> str:
+    """A duration a person can read at a glance, coarse on purpose.
+
+    The question a lock's age answers is *has this been sitting here* — minutes or days — so a
+    second-exact figure would be precision nobody acts on, over a number large enough to have to be
+    counted digit by digit.
+    """
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit}"
+    return f"{int(seconds)}s"
+
+
+def _lock_line(report: reporting.LockReport) -> str:
+    """Who is building this corpus, and what this machine can say about whether they still are.
+
+    The live case says *a process answers to that pid* rather than *the build is running*, because
+    that is all a pid probe establishes: after a crash the number is free, and a reused one looks
+    exactly like the indexer that recorded it.
+    """
+    who = "an unreadable pid" if report.pid is None else f"pid {report.pid}"
+    age = _UNSET if report.age_seconds is None else _age(report.age_seconds)
+    if report.live is True:
+        standing = "a process on this host still answers to that pid"
+    elif report.live is False:
+        standing = "no longer running; the next build takes the lock over"
+    else:
+        standing = (
+            "not something this machine can check; if you are sure it is gone, clear it with "
+            "`refresh --force-unlock`"
+        )
+    return f"held {age} by {who} on {report.host or _UNSET} — {standing}"
 
 
 def _print_orphans(orphans: Sequence[reporting.Orphan]) -> None:

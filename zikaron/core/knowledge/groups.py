@@ -28,7 +28,7 @@ import aiosqlite
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ZikaronError
 from zikaron.core.indexing.encoder import Encoder
-from zikaron.core.knowledge import arms, database, lifecycle, paths, registry, reporting, search
+from zikaron.core.knowledge import arms, database, paths, registry, reporting, search
 from zikaron.core.knowledge import state as corpus_state
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.errors import InvalidNameError
@@ -57,9 +57,11 @@ UNKNOWN_KNOWLEDGE_BASE: Final = "unknown_knowledge_base"
 #: same list.
 _NO_KEY: Final = float("-inf")
 
-#: The states whose corpus can be searched at all. A corpus that has never been built, or whose
-#: vectors were made by a different model, answers as an empty group rather than with results it
-#: cannot stand behind.
+#: The states whose corpus can be searched at all. Every other state answers as an empty group
+#: rather than with results it cannot stand behind: `reindex_required`, on any of its causes, means
+#: the vectors in the table are not the ones this corpus's recorded identity describes, are not a
+#: completed build's, or are not there at all; `root_missing` means a result would point at a file
+#: nobody can read; and `error` means the index itself could not be opened.
 _SERVING: Final = frozenset({KnowledgeState.OK, KnowledgeState.INDEXING})
 
 
@@ -281,8 +283,9 @@ async def _open_group(
 
     Every failure to read a corpus is that corpus's own answer rather than the call's: a database
     that will not open reports `error` while its neighbours answer normally. The two are kept apart
-    deliberately — an absent database is an empty corpus that a build fills, and a corrupt one is
-    not obviously repaired by a build at all.
+    deliberately — an absent database is a corpus whose definition went with it, repaired by
+    removing the name and adding it again, and a corrupt one is not obviously repaired at all.
+    Neither is searchable; a caller reading only emptiness could not tell them apart.
     """
     db_path = paths.knowledge_db_path(store_dir, registered.id)
     if not db_path.is_file():
@@ -311,7 +314,7 @@ async def _serve(
 ) -> Group:
     """Read one open corpus's state and search it if that state allows."""
     raw = await database.read_meta(opened.connection)
-    state = corpus_state.resolve(corpus_state.inputs_for_open(opened.meta, raw, config))
+    state = corpus_state.resolve(corpus_state.inputs_for_open(opened, raw, config))
     remaining = await reporting.files_remaining(opened.connection, raw)
     results: tuple[search.Result, ...] = ()
     if state in _SERVING:
@@ -400,7 +403,7 @@ async def search_all(
     Returns:
         A response with one group per named corpus, ordered by best cosine, within the byte cap.
     """
-    await lifecycle.ensure_registry(db)
+    await registry.ensure(db)
     registered = await registry.list_all(db)
     wanted, unknown = _requested(registered, request.names)
     groups: list[AnyGroup] = [UnknownGroup(knowledge_base=name) for name in unknown]

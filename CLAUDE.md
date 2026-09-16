@@ -92,6 +92,25 @@ The formatter's output is authoritative: a `format --check` failure means runnin
   all of its phrasings**, not the one you just edited; re-read each changed passage together with
   its neighbours; mutation-verify every guard added since the last round; and when a defect turns up
   in one caller of a shared helper, audit its **other** callers for the same class.
+  **Grep locates candidates. It does not decide coverage, and treating it as though it does is the
+  single most expensive habit this project has recorded.** Measured on M23: six review rounds, three
+  of them spent on *one* hole, against an operator budget of 53% of a week's reviewer capacity in a
+  day. Every one of those sweeps was run honestly and every one missed, because a string search can
+  only find sentences that resemble the sentence you edited — and the sentences that go stale are
+  the ones that *followed from* what you edited, which share none of its words. The check that works
+  is reasoning, and it is cheap: **state the change as a before/after pair of propositions, write
+  down what the old proposition licensed you to conclude, and decide for each conclusion whether it
+  still holds.** Then go read the passages about those subjects — by meaning, not by match. On M23
+  the change was "the identity is written by the drop, not at completion"; the conclusion that
+  silently died was "a revert restores agreement, so nothing compared disagrees", which shares no
+  phrase with the change and survived two sweeps in seven places.
+  **For recovery, lifecycle or state-machine work, do this before the first review round, not after
+  the first blocker: build the perturbation table and walk every cell.** The axes are the ones the
+  feature already names — where the process can be interrupted × what a human may change underneath
+  it × which values move and which do not. M23's table is eight cells (killed before/after the drop
+  and before/after the first commit × configuration reverted or seen through × same width or
+  different), and three separate review blockers all lived in cells nobody had walked. Walking them
+  costs an hour of reading; each one cost a round.
   **The tell that you have skipped this is in the brief you are writing**: if it asks the reviewer
   to check something you have the means to check, check it first and tell the reviewer what you
   found. **Counted on M22** — 14 of rounds 3–5's 17 findings were self-findable, nearly all of them

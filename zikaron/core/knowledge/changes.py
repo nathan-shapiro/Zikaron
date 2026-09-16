@@ -13,6 +13,11 @@ phase is what discovered that, the walk phase is what deletes it.
 Modification times are never consulted, at all: they are unreliable under checkout, under `touch`
 and under clock skew, and a change detector that trusts one silently serves stale text.
 
+**Comparison can be bypassed entirely**, for the caller whose reason to reindex is not that the
+files moved — a chunk budget that changed, or content the index was handed through a filter that
+has since changed under it. Every candidate is then changed by decree, and nothing else about the
+scan differs.
+
 **This is synchronous, and deliberately runs as one unit off the event loop.** It reads every
 candidate git could not clear, and a thread hop per file would cost more in scheduling than the
 reads themselves cost on a corpus of ordinary size.
@@ -72,21 +77,26 @@ class Comparison:
 
 
 @dataclass(frozen=True, slots=True)
-class _Constants:
+class Criteria:
     """What every candidate in one comparison is judged against.
 
     Held together so that the per-candidate step takes the comparison, the candidate, its row and
     *the scan* — rather than a parameter list long enough that one call site could pass a
     different size cap from the one the walk admitted files under.
 
-    `git_answered` is derived once, here, for the same reason: both places that keep a file need
-    it, and two independent derivations of one boolean are how one of them keeps a stale
-    expression after the other moves.
+    `bypass` treats every admitted candidate as changed, asking neither git nor the stored hash.
+    What a caller wants when the thing that moved is not the files: a chunk budget that changed, or
+    a file whose stored text was rewritten by a clean filter the index never saw.
+
+    `git_answered` is derived once, here, for the same reason the rest is held together: both
+    places that keep a file need it, and two independent derivations of one boolean are how one of
+    them keeps a stale expression after the other moves.
     """
 
     answers: GitAnswers
     counters: ScanCounters
     max_file_bytes: int
+    bypass: bool = False
 
     @property
     def git_answered(self) -> bool:
@@ -97,39 +107,38 @@ class _Constants:
 def compare(
     admitted: Sequence[walk.Candidate],
     indexed: Mapping[str, files.IndexedFile],
-    answers: GitAnswers,
-    counters: ScanCounters,
-    max_file_bytes: int,
+    criteria: Criteria,
 ) -> Comparison:
     """Sort the admitted candidates into changed, unchanged, and no longer indexable.
 
     A candidate with no indexed row is changed by definition — there is no stored hash to compare
     it against — so it is not read here at all, and the index phase is its first and only read.
-    Every other candidate that git could not clear is read and hashed.
+    Every other candidate that git could not clear is read and hashed, unless the comparison is
+    bypassed, in which case none of them is read here at all.
 
     Args:
         admitted: the candidates that survived every filter, in walk order.
         indexed: every existing row, keyed by path.
-        answers: what git said, which decides which candidates can be cleared without a read.
-        counters: updated in place for each file that stops being indexable.
-        max_file_bytes: this corpus's size cap, which bounds each read.
+        criteria: what this scan judges its candidates against, including whether to skip the
+            comparison entirely. Its counters are updated in place for each file that stops being
+            indexable.
     """
-    constants = _Constants(answers=answers, counters=counters, max_file_bytes=max_file_bytes)
+    answers = criteria.answers
     comparison = Comparison()
     for candidate in admitted:
         row = indexed.get(candidate.path)
-        if row is None:
-            comparison.reindex(candidate.path, was_indexed=False)
+        if row is None or criteria.bypass:
+            comparison.reindex(candidate.path, was_indexed=row is not None)
         elif files.unchanged_by_git(
             candidate.path, row, listed=answers.listed, reported_changed=answers.reported_changed
         ):
             comparison.keep(
                 row,
                 answers.listed.get(candidate.path),
-                git_answered=constants.git_answered,
+                git_answered=criteria.git_answered,
             )
         else:
-            _classify(comparison, candidate, row, constants)
+            _classify(comparison, candidate, row, criteria)
     return comparison
 
 
@@ -137,10 +146,10 @@ def _classify(
     comparison: Comparison,
     candidate: walk.Candidate,
     row: files.IndexedFile,
-    constants: _Constants,
+    criteria: Criteria,
 ) -> None:
     """Read one already-indexed candidate git could not clear, and decide what became of it."""
-    raw = files.read_bounded(candidate.absolute, constants.max_file_bytes)
+    raw = files.read_bounded(candidate.absolute, criteria.max_file_bytes)
     if raw is SkipReason.UNREADABLE:
         # Neither question this read answers can be answered, so the file is treated as changed
         # and the index phase's own read is left to decide — and to count — what became of it.
@@ -148,19 +157,19 @@ def _classify(
         comparison.reindex(candidate.path, was_indexed=True)
         return
     if isinstance(raw, SkipReason):
-        constants.counters.skip(raw)
+        criteria.counters.skip(raw)
         comparison.no_longer_admitted.add(candidate.path)
         return
     detection = text.sniff(raw)
     if isinstance(detection, text.NotText):
-        constants.counters.skip(detection.reason)
+        criteria.counters.skip(detection.reason)
         comparison.no_longer_admitted.add(candidate.path)
         return
     if files.content_hash(raw) == row.content_hash:
         comparison.keep(
             row,
-            constants.answers.listed.get(candidate.path),
-            git_answered=constants.git_answered,
+            criteria.answers.listed.get(candidate.path),
+            git_answered=criteria.git_answered,
         )
     else:
         comparison.reindex(candidate.path, was_indexed=True)

@@ -1664,7 +1664,7 @@ before this milestone would keep every one of those rows and never gain a chunk.
 encoder-identity check nor any invariant can see it: the encoder matches, `chunk_count` agrees with
 the zero chunks present, and `state` reports `ok`. **The lever is the per-KB `meta.schema_version`,
 bumped here and given a rule this build does not yet have**: today's open path refuses only a
-version *newer* than it supports, so a fourth `reindex_required` cause — a recorded version older
+version *newer* than it supports, so a further `reindex_required` cause — a recorded version older
 than the supported one — is what converts the bump into a rebuild. Both halves are this
 milestone's, and neither is optional: the bump without the rule changes nothing, and the rule
 without the bump fires on nobody.
@@ -1696,7 +1696,7 @@ and sets `groups_dropped`; the consolidator mode cannot name the search tool.
 
 ---
 
-## M23 — The detached indexer, progress, and the repair paths
+## M23 — The detached indexer, progress, and the repair paths — **COMPLETE**
 
 Normative: §6.1–§6.4, §8.4's repair rules, §8.5's state machinery, §11 in full, §9's `--force-unlock`;
 invariants 8, 12.
@@ -1708,7 +1708,8 @@ recovery with `pending` surviving deliberately.
 
 **The encoder-mismatch repair belongs here rather than with the dense arm**, because it is a recovery
 path and shares this milestone's machinery: the state-based trigger, the one-transaction drop and
-recreate at the new dimension, the rewrite of `meta` at the completing transaction, and the
+recreate at the new dimension — which records the identity about to fill the corpus as it goes, so
+`meta` never describes vectors other than the ones stored — and the
 `refresh full=true` semantics that are an ordinary scan with change detection bypassed rather than a
 discard and rebuild.
 
@@ -1740,17 +1741,22 @@ The four §12 counters, written best-effort and abandoned on `SQLITE_BUSY`.
 deferred under Claude Code. Confirm the tool list is delivered whole and the descriptions are not
 truncated, before writing six more.
 
-**Two things this milestone inherits, both deliberately deferred rather than forgotten.** The search
+**Three things this milestone inherits, all deliberately deferred rather than forgotten.** The search
 tool's description was shipped *without* §8.3's sentence pointing at `zikaron_knowledge_list`, because
 a description that names a tool the server does not register is the defect §8.4 records in a
 comparable product; restoring that sentence belongs to the change that makes it true, which is this
-one. And the README still documents no way to create a corpus, which is why it does not mention one —
+one. The README still documents no way to create a corpus, which is why it does not mention one —
 the management tools and the `knowledge/` directory they produce are documented here, in the
-milestone that makes a corpus reachable without leaving the harness.
+milestone that makes a corpus reachable without leaving the harness. And **`refresh` still requires a
+name, in both surfaces**: §8.4's `refresh(name=None)` — every knowledge base, each one's lock checked
+on its own and `already_indexing` reported per corpus rather than failing the call — belongs to §8.4,
+which is normative here and was not in M23. §9's CLI block already spells the optional form, so this
+milestone makes the CLI match it as well as adding the tool.
 
 **Invariants:** none new. **Done when:** an agent creates, fills, searches, renames and removes a KB
 without leaving the harness; `remove` without `confirm` fails and says what would be destroyed; `refresh`
-under a held lock reports `already_indexing` rather than queueing; the consolidator mode registers none of
+under a held lock reports `already_indexing` rather than queueing; `refresh` with no name reaches every
+knowledge base and reports per corpus; the consolidator mode registers none of
 the twelve; counters advance, and a `SQLITE_BUSY` during a counter write does not delay a query.
 
 **Fence:** `--force-unlock` stays CLI-only, per §8.2's stated exception.

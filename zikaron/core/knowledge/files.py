@@ -141,6 +141,16 @@ async def forget(db: aiosqlite.Connection, path: str) -> None:
     await db.execute("DELETE FROM files WHERE path = ?", (path,))
 
 
+async def forget_all(db: aiosqlite.Connection) -> None:
+    """Remove every row, leaving a corpus that has to be read again from the beginning.
+
+    For the one case where nothing stored about a file is worth keeping: the chunks and vectors
+    these rows account for have been dropped, so a row claiming a hash and a chunk count would
+    clear a file this scan must reindex.
+    """
+    await db.execute("DELETE FROM files")
+
+
 async def count(db: aiosqlite.Connection) -> int:
     """How many files the index holds."""
     rows = await db.execute_fetchall("SELECT count(*) FROM files")

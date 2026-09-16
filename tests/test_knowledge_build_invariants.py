@@ -9,9 +9,13 @@
 - **`chunks.part_index` counts from 0, and a chunk's line range is `1 <= start <= end`.** These
   are row constraints, because a writer that got one wrong would otherwise produce a row that
   reads back plausibly and points at nothing.
-- **Every vector was made by the encoder `meta` records.** The width is checkable against what is
-  stored; the model is not, so a build refuses an encoder that disagrees rather than leaving a
-  corpus nothing can later detect the inconsistency in.
+- **Every vector was made by the encoder `meta` records**, without exception: a build by a different
+  encoder rebuilds the corpus, and the transaction that empties the tables is the one that records
+  what is about to refill them. An interrupted rebuild therefore names the model whose vectors it
+  committed, which is what lets the next scan keep them instead of mixing two models' vectors into
+  a corpus nothing could later detect the inconsistency in.
+- **At most one live indexer per knowledge base**, and a refused build leaves the holder's lock
+  exactly as it found it.
 - **A chunk's text is its file's bytes** for the range it names, and a file's chunks partition it.
 - **A file's rows move in a single transaction, never partially visible.**
 - **A path in `pending` names a file whose row, if any, predates the current walk.** The table is
@@ -26,6 +30,7 @@ hold. A planted row uses a part index no build can have produced, so that it is 
 invariant can see rather than a collision the table itself refuses.
 """
 
+import os
 from pathlib import Path
 
 import aiosqlite
@@ -42,9 +47,12 @@ from tests.knowledge_fixtures import (
     write_tree,
 )
 from tests.test_knowledge_search import read_lines
+from zikaron.core.clock import timestamp
 from zikaron.core.errors import ZikaronError
-from zikaron.core.knowledge import disposal, files, lexical, lifecycle, pending
+from zikaron.core.knowledge import database, disposal, files, lexical, lifecycle, lock, pending
+from zikaron.core.knowledge.errors import IndexerBusyError
 from zikaron.core.knowledge.meta import GitMode
+from zikaron.core.store.transactions import in_one_transaction, propagate
 
 _CHUNK = "INSERT INTO chunks (path, part_index, start_line, end_line, text) VALUES (?, ?, ?, ?, ?)"
 
@@ -55,6 +63,11 @@ _FTS_INTEGRITY = "INSERT INTO chunks_fts (chunks_fts, rank) VALUES ('integrity-c
 
 #: Bytes per stored coordinate, which is what turns a vector's blob length into its width.
 _FLOAT32_BYTES = 4
+
+#: A width no corpus here is created at, so a rebuild to it is observable in the stored blobs rather
+#: than only in `meta`. Deliberately not the default: a rebuild that changed the model and kept the
+#: width would leave the vector table's declaration untouched and prove nothing about it.
+_OTHER_DIM = 16
 
 #: A corpus whose files are shaped to make a chunker produce something other than one tidy chunk
 #: each: blank runs, trailing whitespace, a missing final newline, CRLF endings, and a line long
@@ -93,6 +106,12 @@ async def _orphaned_chunk_paths(db: aiosqlite.Connection) -> list[str]:
         "WHERE files.path IS NULL"
     )
     return [str(path) for (path,) in rows]
+
+
+async def _chunk_count(db: aiosqlite.Connection) -> int:
+    rows = await db.execute_fetchall("SELECT count(*) FROM chunks")
+    ((found,),) = list(rows)
+    return int(found)
 
 
 async def _disagreeing_chunk_counts(db: aiosqlite.Connection) -> list[str]:
@@ -369,9 +388,12 @@ class TestEveryChunksLineRangeIsReal:
 
 
 class TestEveryVectorMatchesTheRecordedEncoder:
-    """`meta.embed_model` and `meta.embed_dim` describe every vector in the corpus. The width is
-    checkable directly; the model is not, which is why a build refuses an encoder that disagrees
-    rather than discovering it later."""
+    """`meta.embed_model` and `meta.embed_dim` describe every vector in the corpus, with no
+    exception, including while a rebuild is running and after one that was killed: the transaction
+    that empties the derived tables is the one that records what is about to refill them. This used
+    to carry an exception for the rebuild window, and withdrawing it is what stops a killed
+    rebuild's committed rows from being labelled by a model that did not make them — so the identity
+    is checked both after a rebuild that finished and after one that did not."""
 
     async def test_every_stored_vector_has_the_recorded_width(self, tmp_path: Path) -> None:
         root = write_tree(tmp_path / "corpus", AWKWARD_LAYOUT)
@@ -382,17 +404,62 @@ class TestEveryVectorMatchesTheRecordedEncoder:
                 widths = {len(bytes(blob)) // _FLOAT32_BYTES for (blob,) in rows}
                 assert widths == {opened.meta.embed_dim}
 
-    async def test_a_build_with_another_model_is_refused_before_it_writes(
+    async def test_a_build_by_another_model_leaves_no_vector_from_the_old_one(
         self, tmp_path: Path
     ) -> None:
+        root = write_tree(tmp_path / "corpus", AWKWARD_LAYOUT)
+        async with open_corpus(tmp_path, add_request(root, git_mode=GitMode.OFF)) as corpus:
+            await _build(corpus)
+            async with open_index(corpus) as opened:
+                before = await _chunk_count(opened.connection)
+            assert before > 0
+
+            await build_index(
+                corpus, encoder=FakeEncoder(model_name="something-else", dim=_OTHER_DIM)
+            )
+
+            async with open_index(corpus) as opened:
+                assert opened.meta.embed_model == "something-else"
+                assert opened.meta.embed_dim == _OTHER_DIM
+                rows = await opened.connection.execute_fetchall("SELECT embedding FROM chunks_vec")
+                widths = {len(bytes(blob)) // _FLOAT32_BYTES for (blob,) in rows}
+                assert widths == {_OTHER_DIM}
+                assert await _chunk_count(opened.connection) == before
+
+    async def test_an_unfinished_rebuild_already_names_what_was_filling_it(
+        self, tmp_path: Path
+    ) -> None:
+        """The invariant used to carry an exception for exactly this window, and the exception is
+        withdrawn: `meta` names the model whose vectors are in the table at every instant, so there
+        is no state in which a committed vector is labelled by a model that did not make it."""
         root = write_tree(tmp_path / "corpus", {"a.md": b"alpha\n"})
         async with open_corpus(tmp_path, add_request(root, git_mode=GitMode.OFF)) as corpus:
-            with pytest.raises(ZikaronError):
-                await build_index(corpus, encoder=FakeEncoder(model_name="something-else"))
+            await _build(corpus)
             async with open_index(corpus) as opened:
-                rows = await opened.connection.execute_fetchall("SELECT count(*) FROM chunks")
-                ((chunks,),) = list(rows)
-            assert int(chunks) == 0
+                recorded = (opened.meta.embed_model, opened.meta.embed_dim)
+
+            with pytest.raises(ZikaronError):
+                await build_index(
+                    corpus,
+                    encoder=FakeEncoder(
+                        model_name="something-else",
+                        dim=_OTHER_DIM,
+                        embed_error=RuntimeError("the model is unavailable"),
+                    ),
+                )
+
+            async with open_index(corpus) as opened:
+                # No exception, and this is where one used to be: the drop recorded the identity it
+                # was rebuilding to, so an unfinished rebuild names the model that was filling the
+                # corpus rather than the one that no longer is. It holds no vector at all here, and
+                # every vector it goes on to hold comes from that model.
+                assert (opened.meta.embed_model, opened.meta.embed_dim) == (
+                    "something-else",
+                    _OTHER_DIM,
+                )
+                assert recorded != (opened.meta.embed_model, opened.meta.embed_dim)
+                assert await _chunk_count(opened.connection) == 0
+                assert opened.vector_width == _OTHER_DIM, "declared in the same transaction"
 
 
 class TestAChunksTextIsItsFilesBytes:
@@ -431,3 +498,59 @@ class TestAChunksTextIsItsFilesBytes:
             assert rebuilt
             for path, text in rebuilt.items():
                 assert text == (corpus.root / path).read_bytes().decode("utf-8")
+
+
+class TestAtMostOneLiveIndexerPerKnowledgeBase:
+    """Two builds writing one database is the one thing the lock exists to prevent, and the shape
+    of the guarantee matters as much as the guarantee: the second build must leave the first one's
+    lock exactly as it found it, because releasing on the way out would hand the database to
+    whoever asked next while the first is still writing."""
+
+    async def test_a_second_build_is_refused_while_the_first_holds_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refused from inside a real build rather than against planted rows, so what is checked is
+        the lock a build actually takes and the moment it takes it."""
+        root = write_tree(tmp_path / "corpus", {"a.md": b"alpha\n", "b.md": b"beta\n"})
+        async with open_corpus(tmp_path, add_request(root, git_mode=GitMode.OFF)) as corpus:
+            refusals: list[Exception] = []
+            real = disposal.dispose
+
+            async def _build_again_midway(
+                db: aiosqlite.Connection, path: str, context: disposal.Disposals, **rest: bool
+            ) -> bool:
+                try:
+                    await build_index(corpus)
+                except IndexerBusyError as error:
+                    refusals.append(error)
+                return await real(db, path, context, **rest)
+
+            monkeypatch.setattr(disposal, "dispose", _build_again_midway)
+            await _build(corpus)
+
+            assert refusals, "a build running inside another one was not refused"
+
+    async def test_the_refused_build_leaves_the_holders_lock_alone(self, tmp_path: Path) -> None:
+        """The release path unwinds a failed build as well as a successful one, so it has to be
+        outside whatever refuses — a refusal that released would take the lock from its owner."""
+        root = write_tree(tmp_path / "corpus", {"a.md": b"alpha\n"})
+        async with open_corpus(tmp_path, add_request(root, git_mode=GitMode.OFF)) as corpus:
+            async with open_index(corpus) as opened:
+
+                async def _take(connection: aiosqlite.Connection) -> None:
+                    await lock.acquire(
+                        connection,
+                        pid=os.getpid(),
+                        host=lock.this_host(),
+                        started_at=timestamp(),
+                    )
+
+                await in_one_transaction(opened.connection, _take, failure=propagate)
+
+            with pytest.raises(IndexerBusyError):
+                await build_index(corpus)
+
+            async with open_index(corpus) as opened:
+                holder = lock.read(await database.read_meta(opened.connection))
+            assert holder is not None
+            assert holder.pid == os.getpid()

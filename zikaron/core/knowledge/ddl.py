@@ -9,6 +9,7 @@ test time and compares, so drift between the design and this module fails a test
 surfacing as a table that silently does not match its own specification.
 """
 
+import re
 from typing import Final
 
 #: The pragmas every connection to a knowledge base is opened with — two of the memory store's
@@ -83,14 +84,19 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5 (
 
 _META: Final = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
 
+#: Everything a build *derives* from the files it read, as opposed to `files`, `pending` and
+#: `meta`, which say what the corpus is and how far a build got. Named as a group because they are
+#: dropped and created again as a group when a knowledge base has to be rebuilt at a new embedding
+#: width, and one definition used by both paths is what keeps a rebuilt table identical to a
+#: created one.
+DERIVED_STATEMENTS: Final[tuple[str, ...]] = (_CHUNKS, _CHUNKS_INDEX, _CHUNKS_FTS)
+
 #: Every statement that creates something with **no** dependency on the configured `embed_dim`,
 #: in the design's own order.
 FIXED_STATEMENTS: Final[tuple[str, ...]] = (
     _FILES,
     _PENDING,
-    _CHUNKS,
-    _CHUNKS_INDEX,
-    _CHUNKS_FTS,
+    *DERIVED_STATEMENTS,
     _META,
 )
 
@@ -119,4 +125,66 @@ def chunks_vec_statement(embed_dim: int) -> str:
         "  chunk_id  INTEGER PRIMARY KEY,\n"
         f"  embedding float[{embed_dim}]\n"
         ")"
+    )
+
+
+#: The width out of a `chunks_vec` declaration. It sits beside the statement that writes one so the
+#: two cannot drift.
+#:
+#: **As tolerant as `vec0` itself, which is wider than what this module writes.** Measured: the
+#: extension accepts `FLOAT[16]` and `float [16]` as readily as `float[16]`, and `sqlite_master`
+#: stores whichever spelling was used, verbatim. A pattern matching only our own spelling would
+#: therefore report a perfectly working table as unreadable — and what this is for is knowing what
+#: the table will *accept*, which is the extension's question rather than this module's.
+_DECLARED_WIDTH = re.compile(r"float\s*\[\s*(\d+)\s*\]", re.IGNORECASE)
+
+
+def declared_vector_width(statement: str) -> int:
+    """The width a stored `chunks_vec` declaration fixes, read back out of that declaration.
+
+    **The only place this width can be read from, and it has to be readable.** `vec0` fixes the
+    column at `CREATE` time and reports nothing about it afterwards — measured: `PRAGMA table_info`
+    gives the column an empty type — so the declaration in `sqlite_master` is the sole record of
+    what the table will actually accept. Without it, a corpus whose table was recreated at one width
+    while its `meta` names another looks perfectly healthy until the first insert of a vector is
+    rejected, one file at a time, in a process whose output nobody reads.
+
+    Raises:
+        ValueError: the declaration names no width. The statement is one this module wrote, so this
+            means a database that is not the one it claims to be — which is why it is fatal here
+            rather than absorbed into a default.
+    """
+    found = _DECLARED_WIDTH.search(statement)
+    if found is None:
+        raise ValueError(f"no vector width in the recorded declaration: {statement!r}")
+    return int(found.group(1))
+
+
+def rebuild_derived_statements(embed_dim: int) -> tuple[str, ...]:
+    """Drop everything a build derived from this corpus's files, and create it again empty.
+
+    The one operation that has to exist because `vec0` fixes a column's width at `CREATE` time: a
+    vector of a new width cannot be inserted into a table declared for the old one, so an embedding
+    model that changes under an existing index leaves nothing to migrate and the derived tables are
+    made again at the new width.
+
+    The creates are the same statements a fresh knowledge base is built from, so a rebuilt table
+    cannot drift from a created one — which matters here more than usual, since the two would
+    otherwise be compared only by a reader who happened to look at both.
+
+    Dropping runs in the reverse of creation order, and the full-text table goes first for a
+    reason: it is external-content over `chunks`, so it is the one that has an opinion about
+    another table existing. Dropping `chunks` takes its index with it, which is why no statement
+    names that index.
+
+    Args:
+        embed_dim: the width the recreated vector table is declared at — the one the encoder that
+            is about to fill it actually emits.
+    """
+    return (
+        "DROP TABLE chunks_fts",
+        "DROP TABLE chunks_vec",
+        "DROP TABLE chunks",
+        *DERIVED_STATEMENTS,
+        chunks_vec_statement(embed_dim),
     )

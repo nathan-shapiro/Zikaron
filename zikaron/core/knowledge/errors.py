@@ -69,6 +69,16 @@ class DanglingKnowledgeBaseError(KnowledgeError):
     """
 
 
+class RegistryUnavailableError(KnowledgeError):
+    """The store that holds the list of knowledge bases could not be read.
+
+    Distinguished from *this project has no knowledge bases*, which is the answer it would
+    otherwise be indistinguishable from: the registry lives in the memory store, so a store that
+    will not open makes every corpus undiscoverable while leaving each one's own database intact.
+    A caller told the list is empty would conclude the corpora are gone.
+    """
+
+
 class CorpusRootMissingError(KnowledgeError):
     """The directory this knowledge base indexes is gone.
 

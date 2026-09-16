@@ -95,7 +95,7 @@ class Corpus:
 
 
 def build_settings(
-    config: EffectiveConfig, *, encoder: Encoder | None = None
+    config: EffectiveConfig, *, encoder: Encoder | None = None, full: bool = False
 ) -> disposal.BuildSettings:
     """What a build needs beyond the corpus itself, with the deterministic encoder by default.
 
@@ -105,17 +105,20 @@ def build_settings(
     return disposal.BuildSettings(
         encoder=encoder if encoder is not None else FakeEncoder(),
         embed_batch=config.get_int("knowledge_embed_batch"),
+        full=full,
     )
 
 
-async def build_index(corpus: "Corpus", *, encoder: Encoder | None = None) -> lifecycle.Refreshed:
+async def build_index(
+    corpus: "Corpus", *, encoder: Encoder | None = None, full: bool = False
+) -> lifecycle.Refreshed:
     """Build one corpus's index the way every command does, and report what the build did."""
     return await lifecycle.refresh(
         corpus.store_dir,
         corpus.db,
         corpus.config,
         name=corpus.name,
-        build=build_settings(corpus.config, encoder=encoder),
+        build=build_settings(corpus.config, encoder=encoder, full=full),
     )
 
 

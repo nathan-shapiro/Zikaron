@@ -1,4 +1,7 @@
-"""The five knowledge-base verbs: add, list, remove, rename, status.
+"""The verbs that change a knowledge base: add, rename, refresh, unlock, remove.
+
+Looking at one without changing it is `reporting.py`'s half, and the two are separated on exactly
+that line: everything here either writes, or decides whether a write may proceed.
 
 **The registry is always mutated first**, for both `add` and `remove` — the same ordering, not
 mirrored ones. The rule is to leave the recoverable state where one exists and the lesser harm
@@ -15,8 +18,8 @@ where none does, and the two interruptions are not symmetric, so one ordering sa
 The reverse ordering is worse in both directions. An `add` writing its row last would leave an
 orphan on interruption, and because a retried `add` mints a fresh id that orphan is *permanent*,
 where the dangling name it avoids costs one `remove`. A `remove` unlinking first would leave a
-name for a corpus the caller had just asked to destroy, still answering as a knowledge base that
-merely needs a build.
+name still answering for a corpus the caller had just asked to destroy — one no build can rebuild,
+since its definition went with the file, and which only another `remove` could clear.
 
 **Those two are the states this code produces, not the only two physically reachable, and the
 difference is worth stating because an exhaustive-sounding list is how the third one gets
@@ -31,47 +34,25 @@ here rather than left for somebody to meet without warning.
 """
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 import aiosqlite
 
 from zikaron.core.clock import timestamp
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.errors import ZikaronError
-from zikaron.core.knowledge import (
-    database,
-    lock,
-    meta,
-    paths,
-    registry,
-    reporting,
-    roots,
-    scan,
-    state,
-)
+from zikaron.core.knowledge import database, lock, meta, paths, registry, reporting, roots, scan
 from zikaron.core.knowledge.disposal import BuildSettings
-from zikaron.core.knowledge.errors import DanglingKnowledgeBaseError, IndexerBusyError
+from zikaron.core.knowledge.errors import (
+    CorpusRootMissingError,
+    DanglingKnowledgeBaseError,
+    IndexerBusyError,
+)
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.store import permissions
 from zikaron.core.store.transactions import in_one_transaction, propagate
-
-
-@dataclass(frozen=True, slots=True)
-class Observed:
-    """One corpus's report, plus the fact its report deliberately hides.
-
-    `state` answers *can I trust results from this corpus*, and under its precedence a knowledge
-    base that is both unbuilt and being built reports `reindex_required` — correctly, because the
-    corpus still cannot be trusted. That makes the reported state the wrong thing to ask *is a
-    writer holding this database*, which is a different question with a different consequence, so
-    the answer travels alongside rather than being read back out of the state.
-    """
-
-    status: reporting.Status
-    lock_held: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +99,10 @@ class Refreshed:
     """What one build did, and where it left the corpus.
 
     Both halves, because they answer different questions: the result says what this build changed,
-    and the status says whether the corpus can now be trusted — which a build can leave unchanged,
-    for instance when the encoder it was configured with has moved on since the index was made.
+    and the status says whether the corpus can now be trusted — which a build can leave unchanged.
+    The case that produces it: configuration names a model whose vectors are not the width
+    configuration also states, so the corpus is rebuilt at the width the model actually emits and
+    goes on reporting that it needs rebuilding, because it does.
     """
 
     knowledge_base: KnowledgeBase
@@ -136,102 +119,30 @@ class Removed:
     files_unlinked: tuple[Path, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class Listing:
-    """Every corpus a call was asked about, plus every database no registry row points at."""
+@asynccontextmanager
+async def _open_registered(
+    store_dir: Path, registered: KnowledgeBase
+) -> AsyncIterator[database.KnowledgeDatabase]:
+    """This corpus's own database, open, for a verb that cannot proceed without one.
 
-    knowledge_bases: tuple[reporting.Status, ...]
-    orphans: tuple[reporting.Orphan, ...]
+    The absence check is explicit rather than inferred from a failed open, because the two mean
+    different things: a missing file is a corpus whose whole definition is missing, and a present
+    one that will not open is a corpus that exists and cannot be read.
 
-
-async def ensure_registry(db: aiosqlite.Connection) -> None:
-    """Make sure `memory.db` carries the registry table, creating it on first use.
-
-    The only creation site, and idempotent, which is what lets a store predating the table open
-    and answer normally with nothing about the memory path changed. Wrapped in an explicit
-    transaction because a bare `CREATE` with none open runs in autocommit, which would leave the
-    table behind after a later statement in the same logical operation failed and rolled back.
-    """
-    await in_one_transaction(db, registry.ensure_table, failure=propagate)
-
-
-async def _observe(store_dir: Path, registered: KnowledgeBase, config: EffectiveConfig) -> Observed:
-    """One corpus's whole report, including the case where there is no corpus to read.
-
-    Absence is checked before opening rather than inferred from a failed open, because the two
-    outcomes are genuinely different answers: an absent database reads as an empty knowledge base,
-    and a present one that will not open is an `error` a build does not obviously repair.
+    Raises:
+        DanglingKnowledgeBaseError: the registry names this corpus and its database is gone. With
+            it goes everything that said what to index — the root, the globs, the size cap and the
+            encoder identity all live there rather than in the registry — so there is nothing to
+            rebuild from and nothing to guess.
     """
     db_path = paths.knowledge_db_path(store_dir, registered.id)
     if not db_path.is_file():
-        absent = reporting.without_details(registered, state.KnowledgeState.REINDEX_REQUIRED)
-        return Observed(status=absent, lock_held=False)
-    try:
-        opened = await database.KnowledgeDatabase.open(store_dir, registered.id)
-    except (aiosqlite.Error, ZikaronError, OSError):
-        broken = reporting.without_details(registered, state.KnowledgeState.ERROR)
-        return Observed(status=broken, lock_held=False)
-    async with opened:
-        raw = await database.read_meta(opened.connection)
-        lock_held = lock.is_held(raw)
-        resolved = state.resolve(state.inputs_for_open(opened.meta, raw, config))
-        gathered = await reporting.gather(
-            registered, opened.connection, opened.meta, raw, corpus_state=resolved
+        raise DanglingKnowledgeBaseError(
+            f"{registered.name!r} has no database, so nothing records what it indexes; "
+            f"remove it and add it again"
         )
-    return Observed(status=gathered, lock_held=lock_held)
-
-
-async def _breadcrumb(db_path: Path) -> str | None:
-    """An orphan's own record of what it was called, or `None` if it will not give one up.
-
-    This is the one place an unreferenced database is opened at all, and it is for a human's
-    benefit rather than for a query's: the alternative is reporting a uuid and leaving somebody to
-    open the file by hand to find out what they lost.
-
-    **Deliberately not through the shared opener, because that opener's job is the opposite of what
-    is wanted here.** It establishes a *working* connection to a database we own, which means
-    applying `journal_mode = WAL` — a persistent header write. Measured: run against a database in
-    the default rollback journal, it converts the file to WAL. Every orphan this project made is
-    already in WAL so nothing would usually be observed, but the promise made about an orphan is
-    that it is reported and otherwise left alone, and a file that is *not* ours is exactly the one
-    that might not be in WAL.
-
-    Two things keep that promise, and it is worth saying which does the work. **Applying no pragmas
-    is what makes the read harmless today** — a plain connect writes nothing, whatever mode it asks
-    for. **`mode=ro` is the tripwire for tomorrow**: measured, a `journal_mode = WAL` issued on a
-    read-only connection raises `attempt to write a readonly database` and leaves the file alone,
-    so an edit that later adds a pragma loop here fails loudly instead of quietly converting
-    somebody else's database. Reading `meta` needs neither, since it is an ordinary table and the
-    vector extension is not loaded.
-    """
-    uri = f"file:{quote(str(db_path))}?mode=ro"
-    try:
-        db = await aiosqlite.connect(uri, uri=True)
-    except (aiosqlite.Error, OSError):
-        return None
-    try:
-        raw = await database.read_meta(db)
-    finally:
-        await db.close()
-    return raw.get(meta.NAME_BREADCRUMB_KEY)
-
-
-async def _orphans(
-    store_dir: Path, registered: Sequence[KnowledgeBase]
-) -> tuple[reporting.Orphan, ...]:
-    """Every database file in the knowledge directory that no registry row points at."""
-    known = {paths.knowledge_db_path(store_dir, base.id) for base in registered}
-    found: list[reporting.Orphan] = []
-    for candidate in paths.orphan_candidates(store_dir):
-        if candidate in known:
-            continue
-        size = candidate.stat().st_size if candidate.is_file() else 0
-        found.append(
-            reporting.Orphan(
-                path=candidate, breadcrumb_name=await _breadcrumb(candidate), size_bytes=size
-            )
-        )
-    return tuple(found)
+    async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
+        yield opened
 
 
 async def add(
@@ -296,7 +207,7 @@ async def add(
     ):
         pass
 
-    observed = await _observe(store_dir, registered, config)
+    observed = await reporting.observe(store_dir, registered, config)
     return Created(
         knowledge_base=registered,
         database_path=paths.knowledge_db_path(store_dir, registered.id),
@@ -325,7 +236,7 @@ async def rename(
         return await registry.rename(connection, name=name, new_name=new_name)
 
     renamed = await in_one_transaction(db, _work, failure=propagate)
-    observed = await _observe(store_dir, renamed, config)
+    observed = await reporting.observe(store_dir, renamed, config)
     return observed.status
 
 
@@ -350,12 +261,12 @@ async def refresh(
             encoder identity still agrees with it. The corpus itself is defined entirely by its
             own stored `meta`.
         name: which corpus to build.
-        build: the encoder to index with and how many chunks to embed per pass. Supplied by the
-            caller rather than loaded here, because loading a model is the expensive part of
-            starting a build and a caller building several corpora loads it once.
+        build: the encoder to index with, how many chunks to embed per pass, and whether to
+            reindex everything rather than only what changed. Supplied by the caller rather than
+            loaded here, because loading a model is the expensive part of starting a build and a
+            caller building several corpora loads it once.
 
     Raises:
-        ZikaronError: `BAD_CONFIG` if `build`'s encoder disagrees with what the corpus recorded.
         InvalidNameError: `name` is empty or blank.
         UnknownKnowledgeBaseError: nothing is registered under `name`.
         DanglingKnowledgeBaseError: the corpus is registered but its database is gone, and with it
@@ -363,18 +274,80 @@ async def refresh(
         CorpusRootMissingError: the indexed directory is gone. The index is left as it is.
         IndexerBusyError: another build holds this corpus's lock.
     """
-    await ensure_registry(db)
-    registered = await registry.require(db, name)
-    db_path = paths.knowledge_db_path(store_dir, registered.id)
-    if not db_path.is_file():
-        raise DanglingKnowledgeBaseError(
-            f"{registered.name!r} has no database, so nothing records what it indexes; "
-            f"remove it and add it again"
-        )
+    registered = await prepare_build(store_dir, db, name=name)
     async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
         result = await scan.run(opened, build)
-    observed = await _observe(store_dir, registered, config)
+    observed = await reporting.observe(store_dir, registered, config)
     return Refreshed(knowledge_base=registered, result=result, status=observed.status)
+
+
+async def prepare_build(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> KnowledgeBase:
+    """Everything that must hold before a build is worth starting, and the corpus it would build.
+
+    Separated from the build itself because a build is usually **not** run by the process that
+    asked for one: it is spawned detached, with its output discarded and nowhere to report a
+    refusal to. So every refusal that can be decided without reading a file is decided here, in
+    front of whoever asked. The build that follows re-establishes each of them for itself, because
+    this and the build are not one transaction and the second is the one whose answer is acted on.
+
+    **A missing root is the one that would otherwise vanish entirely.** A build refuses it before
+    taking the lock, so it leaves not even the dead holder that says a detached build died — the
+    corpus simply goes on reporting `root_missing` while the command that asked said a build had
+    started.
+
+    Raises:
+        InvalidNameError: `name` is empty or blank.
+        UnknownKnowledgeBaseError: nothing is registered under `name`.
+        DanglingKnowledgeBaseError: the corpus is registered but its database is gone, and with it
+            everything that said what to index.
+        CorpusRootMissingError: the directory this corpus indexes is gone. The index is kept.
+        IndexerBusyError: a build that cannot be shown to be dead already holds this corpus's lock.
+    """
+    await registry.ensure(db)
+    registered = await registry.require(db, name)
+    async with _open_registered(store_dir, registered) as opened:
+        root = Path(opened.meta.root_path)
+        blocker = lock.running_holder(
+            await database.read_meta(opened.connection), host=lock.this_host()
+        )
+    if not root.is_dir():
+        raise CorpusRootMissingError(roots.missing_root_message(root))
+    if blocker is not None:
+        raise IndexerBusyError(
+            f"a build is already running against {registered.name!r} ({blocker.describe()})"
+        )
+    return registered
+
+
+async def unlock(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> lock.LockHolder | None:
+    """Clear a build lock an operator has judged dead, refusing the one case evidence contradicts.
+
+    The way out of the state nothing clears on its own. A lock recorded on another machine is never
+    reclaimed automatically — a local process probe says nothing about a foreign process — and the
+    rules that follow compose into a knowledge base nothing can manage: every build reports it
+    busy, removal refuses, and no timeout runs out. This puts that judgement where the evidence is,
+    with whoever knows what else is running, and declines only where the holder answers a signal
+    from this machine.
+
+    Returns:
+        The holder that was cleared, or `None` if no lock was recorded at all.
+
+    Raises:
+        InvalidNameError: `name` is empty or blank.
+        UnknownKnowledgeBaseError: nothing is registered under `name`.
+        DanglingKnowledgeBaseError: the corpus is registered but its database is gone, so there is
+            no lock to clear and nothing that could have taken one.
+        IndexerBusyError: a process on this host answers to the recorded pid — which is not proof
+            it is the indexer, and `lock.force_release` says so and names the manual exit.
+    """
+    await registry.ensure(db)
+    registered = await registry.require(db, name)
+    async with _open_registered(store_dir, registered) as opened:
+
+        async def _work(connection: aiosqlite.Connection) -> lock.LockHolder | None:
+            return await lock.force_release(connection, host=lock.this_host())
+
+        return await in_one_transaction(opened.connection, _work, failure=propagate)
 
 
 async def remove(
@@ -382,10 +355,12 @@ async def remove(
 ) -> Removed:
     """Destroy a corpus: delete its registry row, commit, then unlink its three files.
 
-    Refuses while the knowledge base's lock keys are present. Whether a present lock is *live* is
-    a question the lock's owner answers; refusing on presence is deliberately the conservative
-    half, because refusing to unlink a database a writer may hold is recoverable and unlinking one
-    it does hold is not.
+    Refuses whenever the corpus's build lock is held by somebody who cannot be shown to be gone —
+    the same test a build's own acquisition uses, and the conservative half of it: refusing to
+    unlink a database a writer may hold is recoverable, and unlinking one it does hold is not. What
+    that test deliberately does **not** refuse is a lock left behind by a crashed indexer on this
+    host, because those rows survive on purpose and a knowledge base that could never be removed
+    again after one crash would be the worse failure.
 
     **That refusal is a check followed by an act, not one atomic step, and the window is accepted
     rather than overlooked.** The lock lives in the knowledge base's own database and the registry
@@ -405,14 +380,15 @@ async def remove(
     Raises:
         InvalidNameError: `name` is empty or blank.
         UnknownKnowledgeBaseError: nothing is registered under `name`.
-        IndexerBusyError: a build holds this knowledge base's lock.
+        IndexerBusyError: a build that cannot be shown to be dead holds this corpus's lock.
     """
-    await ensure_registry(db)
+    await registry.ensure(db)
     registered = await registry.require(db, name)
-    observed = await _observe(store_dir, registered, config)
-    if observed.lock_held:
+    observed = await reporting.observe(store_dir, registered, config)
+    if observed.blocker is not None:
         raise IndexerBusyError(
-            f"a build is running against {registered.name!r}; retry once it has finished"
+            f"a build is running against {registered.name!r} ({observed.blocker.describe()}); "
+            f"retry once it has finished"
         )
 
     async def _work(connection: aiosqlite.Connection) -> KnowledgeBase:
@@ -442,34 +418,3 @@ def _unlink_if_present(path: Path) -> bool:
     except FileNotFoundError:
         return False
     return True
-
-
-async def list_bases(store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig) -> Listing:
-    """Every registered corpus with its state, plus every database no registry row points at."""
-    await ensure_registry(db)
-    registered = await registry.list_all(db)
-    reports = [(await _observe(store_dir, base, config)).status for base in registered]
-    return Listing(knowledge_bases=tuple(reports), orphans=await _orphans(store_dir, registered))
-
-
-async def status(
-    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str | None = None
-) -> Listing:
-    """One corpus's full report, or every corpus's.
-
-    The same gathering as `list_bases` — `list` is this projected down, never a second query — so
-    naming one knowledge base narrows the result rather than changing what is read.
-
-    Orphans are reported only when no name was given: an orphan belongs to no knowledge base, so
-    attaching it to a report about one would be attaching it arbitrarily.
-
-    Raises:
-        InvalidNameError: `name` is empty or blank.
-        UnknownKnowledgeBaseError: `name` names nothing.
-    """
-    if name is None:
-        return await list_bases(store_dir, db, config)
-    await ensure_registry(db)
-    registered = await registry.require(db, name)
-    observed = await _observe(store_dir, registered, config)
-    return Listing(knowledge_bases=(observed.status,), orphans=())

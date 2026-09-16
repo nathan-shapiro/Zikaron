@@ -38,6 +38,29 @@ file forever.
 **Nothing here is a checkpoint.** A build that dies leaves its committed files intact and its
 pending rows naming what it never got to; the next build walks again, compares hashes, and does
 whatever still does not match.
+
+**Two things can make a build reindex a file the comparison would have cleared, and they are not
+the same thing.** A caller may ask for change detection to be *bypassed*, which is the whole of
+what a full build is — every other mechanic is unchanged, so the corpus is replaced a file at a
+time rather than emptied first. And a build **rebuilds** a corpus whose stored vectors cannot be
+what its own record says they are: `repair.py` drops the derived tables up front, because a new
+vector width cannot be added to a table declared for the old one, which leaves every file changed
+by definition without anybody declaring it so.
+
+**What a rebuild answers to is `repair.rebuilt_identity`, asked on state read under this build's own
+lock** — the encoder in hand against the recorded identity, and the table's declared width against
+that same identity. Read before acquiring, the answer would be a snapshot a concurrent build could
+have overtaken; `_begin` returns both so the decision and the work belong to one lock hold.
+
+**Neither question reports an interrupted rebuild, and neither is meant to.** The drop records the
+identity it is rebuilding to in the transaction that empties the tables, so a dead rebuild leaves
+`meta` naming exactly what is stored and both comparisons quiet. What says a build is owed is the
+completion instant the same transaction cleared. That separation is what lets the next scan be an
+ordinary one **where the encoder in hand is still the one `meta` names**: the rows the dead run
+committed came from that model, so clearing them as current is correct, and the remainder is indexed
+with the same model — a resume, not a redo. A reverted configuration makes the recorded identity a
+mismatch instead, and the first question fires, which redoes the corpus — correct for the same
+reason, since those rows came from the model being abandoned.
 """
 
 import asyncio
@@ -50,7 +73,6 @@ from typing import Final
 import aiosqlite
 
 from zikaron.core.clock import timestamp
-from zikaron.core.indexing.encoder import Encoder, index_identity_disagrees
 from zikaron.core.knowledge import (
     candidates,
     changes,
@@ -60,6 +82,7 @@ from zikaron.core.knowledge import (
     lock,
     meta,
     pending,
+    repair,
     roots,
     walk,
     writes,
@@ -88,6 +111,11 @@ class ScanResult:
     `files_remaining` is what the index phase could not dispose of — files it could not read — and
     is normally zero. Those rows are left deliberately: they are what keeps a search honest about
     results whose files this scan never confirmed.
+
+    `rebuilt_identity` is the model and width this build wrote over the recorded ones, or `None`
+    for the ordinary build that found them already agreeing. It is reported because a rebuild is
+    otherwise invisible in the numbers: every file is reindexed and none is deleted, which is what
+    an ordinary first build looks like too.
     """
 
     git_mode: GitMode
@@ -96,6 +124,7 @@ class ScanResult:
     files_deleted: int
     files_remaining: int
     counters: ScanCounters
+    rebuilt_identity: KnowledgeMeta | None
 
 
 def _take(walker: Iterator[walk.Candidate], count: int) -> list[walk.Candidate]:
@@ -123,12 +152,35 @@ async def _write_counters(
     await in_one_transaction(db, _work, failure=propagate)
 
 
-async def _begin(db: aiosqlite.Connection, counters: ScanCounters, *, effective: GitMode) -> None:
-    """Take the lock and open the scan, in one transaction.
+async def _begin(
+    db: aiosqlite.Connection, counters: ScanCounters, *, effective: GitMode
+) -> tuple[KnowledgeMeta, int]:
+    """Take the lock, open the scan, and read back the state the rebuild decision is taken on.
 
-    The lock is read and written together, because doing it in two transactions leaves a window in
-    which two processes both read *no holder*. The counters are zeroed here so that what a report
-    shows always describes the scan in front of you rather than an accumulation.
+    The lock is read and written in one transaction, because in two of them both of two racing
+    acquisitions could commit; one transaction lets at most one. The counters are zeroed here so
+    that what a report shows always describes the scan in front of you rather than an accumulation.
+
+    **The identity and the vector table's width are read here rather than at open, because the
+    build that decides what to do with them must be the one holding the lock.** They are the only
+    inputs a *concurrent* build can change — the root and the git mode are fixed at creation — and
+    a build that read them before acquiring would be deciding on a snapshot another build could
+    have overtaken: two spawns that overlap by the width of a directory check and a git subprocess
+    are ordinary, and the loser would then index with its own encoder into a corpus the winner had
+    just relabelled. Nothing would raise, because at equal widths every insert fits.
+
+    **Two builds that begin at the very same moment can both read *no holder*, and only one of them
+    commits** — which is the right outcome, reached the wrong way: the loser gets the driver's
+    `database is locked` rather than the refusal this documents. It is reachable in ordinary use,
+    since two spawns inside one model-load window both pass the check the command runs first.
+    Closing it would mean a `BEGIN IMMEDIATE` variant of the shared transaction primitive, verified
+    by a test that holds one acquisition's transaction open while the other attempts its own —
+    bought for a better sentence in an outcome that is already correct, on a path whose output is
+    discarded.
+
+    Returns:
+        The recorded identity and the width the vector table is declared at, both as of the moment
+        the lock was taken.
 
     Raises:
         IndexerBusyError: another indexer holds the lock and cannot be shown to be dead. Nothing
@@ -137,7 +189,7 @@ async def _begin(db: aiosqlite.Connection, counters: ScanCounters, *, effective:
     """
     started_at = timestamp()
 
-    async def _work(connection: aiosqlite.Connection) -> None:
+    async def _work(connection: aiosqlite.Connection) -> tuple[KnowledgeMeta, int]:
         await lock.acquire(
             connection, pid=os.getpid(), host=lock.this_host(), started_at=started_at
         )
@@ -149,8 +201,11 @@ async def _begin(db: aiosqlite.Connection, counters: ScanCounters, *, effective:
                 **counters.as_meta_rows(),
             },
         )
+        return meta.parse_and_validate(await database.read_meta(connection)), (
+            await database.stored_vector_width(connection)
+        )
 
-    await in_one_transaction(db, _work, failure=propagate)
+    return await in_one_transaction(db, _work, failure=propagate)
 
 
 async def _walk_tree(
@@ -214,20 +269,36 @@ async def _close_walk_phase(
     await in_one_transaction(db, _work, failure=propagate)
 
 
+@dataclass(frozen=True, slots=True)
+class _WalkInputs:
+    """What the walk phase works from and none of its steps varies.
+
+    One value rather than five parameters threaded through the phase, for the reason the index
+    phase's equivalent gives: they are settled once by `run` and read by every step, and passing
+    them separately would let one step judge candidates by a different corpus from the next.
+
+    `corpus` is the identity this build is working **to**, which for a rebuild is the new encoder's
+    rather than the one still recorded in `meta`.
+    """
+
+    root: Path
+    corpus: KnowledgeMeta
+    counters: ScanCounters
+    probed: GitMode
+    bypass: bool
+
+
 async def _walk_phase(
-    db: aiosqlite.Connection,
-    root: Path,
-    corpus: KnowledgeMeta,
-    counters: ScanCounters,
-    probed: GitMode,
+    db: aiosqlite.Connection, inputs: _WalkInputs
 ) -> tuple[candidates.GitAnswers, changes.Comparison, int]:
     """Decide what the corpus contains, delete what it no longer does, and list what is left to do.
 
     Returns git's answers, the comparison the index phase works from, and how many files were
     deleted.
     """
+    root, corpus, counters = inputs.root, inputs.corpus, inputs.counters
     found = await _walk_tree(db, root, counters)
-    answers = await candidates.gather(root, probed, found)
+    answers = await candidates.gather(root, inputs.probed, found)
     rules = walk.WalkRules(
         include_globs=corpus.include_globs,
         exclude_globs=corpus.exclude_globs,
@@ -237,7 +308,15 @@ async def _walk_phase(
     admitted = await candidates.narrow(root, admitted, answers, counters)
     indexed = await files.load_all(db)
     comparison = await asyncio.to_thread(
-        changes.compare, admitted, indexed, answers, counters, corpus.max_file_bytes
+        changes.compare,
+        admitted,
+        indexed,
+        changes.Criteria(
+            answers=answers,
+            counters=counters,
+            max_file_bytes=corpus.max_file_bytes,
+            bypass=inputs.bypass,
+        ),
     )
     still_admitted = {candidate.path for candidate in admitted} - comparison.no_longer_admitted
     deletions = sorted(set(indexed) - still_admitted)
@@ -253,6 +332,16 @@ async def _complete(db: aiosqlite.Connection) -> None:
     Written only on success, because its absence — or an instant older than the scan's start — is
     how a crashed build is told from a completed one, and a build that claimed a completion it did
     not reach would report a corpus as trustworthy on the strength of a partial index.
+
+    **This is the only key a rebuild leaves for the end**, and it is the one that has to be: the
+    encoder identity is recorded by the drop, in the transaction that empties the tables, so `meta`
+    describes what is stored throughout. This key describes something else — whether a *completed*
+    build's corpus is what is stored — and only a scan that reached here can say yes. Between the
+    two, an interrupted rebuild leaves a knowledge base that refuses to serve while naming, exactly,
+    the model whose vectors are in it.
+
+    Args:
+        db: the knowledge base's own connection, outside a transaction.
     """
 
     async def _work(connection: aiosqlite.Connection) -> None:
@@ -268,25 +357,6 @@ async def _release(db: aiosqlite.Connection) -> None:
     await in_one_transaction(db, _work, failure=propagate)
 
 
-def _require_matching_encoder(corpus: KnowledgeMeta, encoder: Encoder) -> None:
-    """Refuse a build whose encoder is not the one this corpus's vectors were made with.
-
-    Checked before the lock is taken and before a single file is read, because the alternative is a
-    corpus half-filled with vectors labelled with a model that did not produce them — the one
-    inconsistency this store will not serve around, and one no later reader can detect from the
-    rows alone. A knowledge base in this state already reports that it needs rebuilding; refusing
-    here is what stops a build from quietly making the disagreement worse instead.
-    """
-    if encoder.model_name == corpus.embed_model and encoder.dim == corpus.embed_dim:
-        return
-    raise index_identity_disagrees(
-        reported_model=encoder.model_name,
-        reported_dim=encoder.dim,
-        recorded_model=corpus.embed_model,
-        recorded_dim=corpus.embed_dim,
-    )
-
-
 async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
     """Build this knowledge base's index, holding its lock for as long as it takes.
 
@@ -295,11 +365,13 @@ async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
             the root, the globs, the size cap, the chunk budget, the encoder identity and the git
             mode all come from there rather than from configuration, so that changing a global
             default cannot silently re-shape an index that is already built.
-        build: the artifact this process loaded and how many chunks to embed per pass.
+        build: the artifact this process loaded, how many chunks to embed per pass, and whether
+            every admitted file is to be reindexed rather than only what changed. A rebuild forced
+            by a changed encoder asks for none of that — dropping the derived tables leaves every
+            file changed on its own terms — so the two compose without either knowing about the
+            other.
 
     Raises:
-        ZikaronError: `BAD_CONFIG` if `build`'s encoder disagrees with the identity this corpus
-            recorded. Nothing is written and the lock is never taken.
         CorpusRootMissingError: the indexed directory is gone. The index is left exactly as it is;
             an empty walk would read as *every file was deleted*.
         IndexerBusyError: another indexer holds this knowledge base's lock and cannot be shown to
@@ -307,20 +379,36 @@ async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
             to whoever holds it.
     """
     db = opened.connection
-    corpus = opened.meta
-    _require_matching_encoder(corpus, build.encoder)
-    root = Path(corpus.root_path)
+    # The root and the git mode are settled when a knowledge base is created and nothing rewrites
+    # them, so the two checks that need a subprocess or a filesystem call are made here, before the
+    # lock, where a refusal costs nobody the lock.
+    root = Path(opened.meta.root_path)
     if not root.is_dir():
-        raise CorpusRootMissingError(
-            f"{root} is gone, so there is nothing to index; the existing index is kept as it is"
-        )
+        raise CorpusRootMissingError(roots.missing_root_message(root))
     counters = ScanCounters()
-    probed = await roots.effective_git_mode(root, corpus.git_mode)
+    probed = await roots.effective_git_mode(root, opened.meta.git_mode)
     # Outside the block below, and it must be: a refused acquisition means somebody else holds the
     # lock, and releasing on the way out would take it away from them.
-    await _begin(db, counters, effective=probed)
+    recorded, stored_width = await _begin(db, counters, effective=probed)
     try:
-        answers, comparison, deleted = await _walk_phase(db, root, corpus, counters, probed)
+        # The identity `meta` records, and the one this build rebuilds it to. They differ only when
+        # the encoder in hand is not the one the stored vectors were made with, and everything
+        # downstream — the width a vector is checked against, the width the table is declared at —
+        # has to be the second, since that is what will be in the table.
+        rebuilt = repair.rebuilt_identity(recorded, build.encoder, stored_width=stored_width)
+        corpus = rebuilt if rebuilt is not None else recorded
+        if rebuilt is not None:
+            await repair.drop_derived(db, identity=rebuilt)
+        answers, comparison, deleted = await _walk_phase(
+            db,
+            _WalkInputs(
+                root=root,
+                corpus=corpus,
+                counters=counters,
+                probed=probed,
+                bypass=build.full,
+            ),
+        )
         deleted += await disposal.run(
             db,
             comparison,
@@ -337,4 +425,5 @@ async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
         files_deleted=deleted,
         files_remaining=remaining,
         counters=counters,
+        rebuilt_identity=rebuilt,
     )

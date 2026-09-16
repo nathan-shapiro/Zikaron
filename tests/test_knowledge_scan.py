@@ -16,8 +16,14 @@ from pathlib import Path
 import pytest
 
 from tests.fake_encoder import FakeEncoder
-from tests.knowledge_fixtures import Corpus, add_request, build_index, open_corpus, open_index
-from zikaron.core.errors import ErrorCode, ZikaronError
+from tests.knowledge_fixtures import (
+    Corpus,
+    add_request,
+    build_index,
+    build_settings,
+    open_corpus,
+    open_index,
+)
 from zikaron.core.knowledge import disposal, files, lifecycle, lock, pending, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.database import read_meta
@@ -428,34 +434,39 @@ class TestWhenABuildRefuses:
             async with open_index(corpus) as opened:
                 assert lock.is_held(await read_meta(opened.connection))
 
+
+class TestWhenABuildRebuildsInstead:
+    """The one disagreement a build does not refuse. Every other refusal here is about something
+    the caller can put right — a name, a directory, another build — and an encoder that no longer
+    matches the stored vectors is not: the corpus cannot serve until it is rebuilt, so refusing
+    would leave it with no way back at all."""
+
     @pytest.mark.parametrize(
         "encoder",
         [FakeEncoder(model_name="some-other-model"), FakeEncoder(dim=7)],
         ids=["a different model", "a different width"],
     )
-    async def test_an_encoder_that_is_not_the_corpuss_own_is_refused(
+    async def test_an_encoder_that_is_not_the_corpuss_own_rebuilds_rather_than_refusing(
         self, tmp_path: Path, encoder: FakeEncoder
     ) -> None:
         """Vectors labelled with a model that did not produce them are the one inconsistency this
-        store cannot serve around, and nothing reading the rows afterwards could detect it."""
+        store cannot serve around, and the build records what actually filled the corpus."""
         async with _corpus_over(tmp_path, {"a.md": b"alpha\n"}) as corpus:
-            with pytest.raises(ZikaronError) as excinfo:
-                await build_index(corpus, encoder=encoder)
-            assert excinfo.value.code is ErrorCode.BAD_CONFIG
+            refreshed = await build_index(corpus, encoder=encoder)
 
-    async def test_a_refused_encoder_leaves_the_lock_untaken_and_the_index_untouched(
-        self, tmp_path: Path
-    ) -> None:
-        """Refused before the lock and before a single file is read, so a corpus is never left
-        half-filled with vectors two models produced."""
+            assert refreshed.result.rebuilt_identity is not None
+            async with open_index(corpus) as opened:
+                assert opened.meta.embed_model == encoder.model_name
+                assert opened.meta.embed_dim == encoder.dim
+
+    async def test_a_rebuild_gives_the_lock_back_like_any_other_build(self, tmp_path: Path) -> None:
         async with _corpus_over(tmp_path, {"a.md": b"alpha\n"}) as corpus:
             await _build(corpus)
-            before = await _indexed(corpus)
-            with pytest.raises(ZikaronError):
-                await build_index(corpus, encoder=FakeEncoder(dim=7))
+
+            await build_index(corpus, encoder=FakeEncoder(dim=7))
+
             async with open_index(corpus) as opened:
                 assert not lock.is_held(await read_meta(opened.connection))
-            assert await _indexed(corpus) == before
 
 
 class TestCrashAndResume:
@@ -496,3 +507,21 @@ class TestCrashAndResume:
             await _hold_the_lock(corpus, pid=_DEAD_PID)
             refreshed = await _build(corpus)
         assert refreshed.status.summary.state is KnowledgeState.OK
+
+
+class TestTheBuildRefusesOnItsOwnTerms:
+    """The refusals a build raises for itself, checked against `scan.run` rather than through the
+    command — which decides the same things first, so a guard here would otherwise never run."""
+
+    async def test_a_missing_root_is_refused_before_the_lock_is_taken(self, tmp_path: Path) -> None:
+        """Before, so nothing is written at all: not the lock, not the scan's start instant. A
+        build that took the lock and then refused would leave a holder saying a build had begun."""
+        async with _corpus_over(tmp_path, {"a.md": b"alpha\n"}) as corpus:
+            await _build(corpus)
+            (corpus.root / "a.md").unlink()
+            corpus.root.rmdir()
+
+            async with open_index(corpus) as opened:
+                with pytest.raises(CorpusRootMissingError, match="kept as it is"):
+                    await scan.run(opened, build_settings(corpus.config))
+                assert not lock.is_held(await read_meta(opened.connection))

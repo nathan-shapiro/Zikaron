@@ -22,9 +22,11 @@ queries take lexicographic minima over `event.at` and call the result the earlie
 is true only because of it. That second kind cannot be rewritten to parse: there is no `datetime`
 inside a SQLite aggregate, so the ordering is not a convenience there but the mechanism.
 
-Arithmetic is the exception, and it parses: a consolidation lease is a start plus a duration, and a
-signal horizon is an event's instant plus a number of days. Adding to a string is not something
-ordering can do for you.
+Arithmetic is the exception, and it parses: a consolidation lease is a start plus a duration, a
+signal horizon is an event's instant plus a number of days, and the age of an indexer's lock is now
+minus the instant it was taken. Adding to or subtracting from a string is not something ordering can
+do for you, which is why the last of those lives here as `seconds_since` rather than beside its
+caller.
 
 **One of those results is itself stored** — the lease's `expires_at` — so the contract has to cover
 it, and it does: parsing an aware UTC instant, adding a whole number of seconds and re-formatting
@@ -53,3 +55,24 @@ def timestamp() -> str:
     a property of the format rather than luck, and for the arithmetic callers that parse instead.
     """
     return datetime.now(UTC).isoformat()
+
+
+def seconds_since(instant: str) -> float | None:
+    """How long ago a stored instant was, or `None` if it cannot be read as one of these.
+
+    Arithmetic, so it parses: the ordering contract above answers *which came first* and says
+    nothing about how far apart two instants are.
+
+    `None` rather than a refusal, because what this serves is a report. A value that is not one of
+    these instants can only have been written by hand, and losing one field of a diagnostic is a
+    better outcome there than losing the diagnostic. A naive value is refused with the rest: it
+    names no point in time without a zone, and guessing one would make the answer depend on where
+    the reader is.
+    """
+    try:
+        parsed = datetime.fromisoformat(instant)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return (datetime.now(UTC) - parsed).total_seconds()

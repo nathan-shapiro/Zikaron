@@ -1,8 +1,9 @@
 """Build one knowledge base's index, and say what the build did.
 
 The whole of the command is here; `__main__` only turns its status into an exit. The management
-command's `refresh` verb calls `build` directly rather than reimplementing it, so a build means
-one thing however it was asked for.
+command **spawns this module** rather than calling `build`, so a build means one thing however it
+was asked for — and `detach.command` is the argv it spawns, which is also what it prints for
+anybody who has to run the same build where its output can be seen.
 """
 
 import argparse
@@ -23,7 +24,9 @@ from zikaron.knowledge import scope
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m zikaron.knowledge.indexer",
+        # Derived rather than written out, so the usage text stays true through a rename — this is
+        # the same module path the spawn builds its argv from, and two spellings of it would drift.
+        prog=f"python -m {__package__}",
         description="Build one knowledge base's index: walk its root, detect what changed, and "
         "record it.",
     )
@@ -37,6 +40,11 @@ def _parser() -> argparse.ArgumentParser:
         help="the project whose store to act on. The default is the harness's own project "
         "directory where it names one, else the current directory.",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="reindex every file rather than only what changed.",
+    )
     return parser
 
 
@@ -48,13 +56,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 async def _run(args: argparse.Namespace) -> int:
     async with scope.open_store(args.project) as store:
-        return await build(store.directory, store.connection, store.config, name=args.name)
+        return await build(
+            store.directory, store.connection, store.config, name=args.name, full=args.full
+        )
 
 
 async def build(
-    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str
+    store_dir: Path,
+    db: aiosqlite.Connection,
+    config: EffectiveConfig,
+    *,
+    name: str,
+    full: bool = False,
 ) -> int:
     """Run one build and print an account of it. Returns a process exit status.
+
+    **The refusals are decided before the model is loaded**, which is a second of CPU and the most
+    expensive thing this command does. It is wasted either way when a build is refused — in the
+    foreground it is the operator's second, and detached it is spent on a refusal nobody will ever
+    see. The build itself re-establishes each refusal, since the check and the build are not one
+    transaction.
 
     Args:
         store_dir: the `.zikaron` directory this store lives in.
@@ -62,26 +83,29 @@ async def build(
         config: the effective configuration: which encoder to load, how many chunks to embed per
             pass, and what to compare the built corpus's identity against afterwards.
         name: which knowledge base to build.
+        full: reindex every admitted file rather than only what changed.
     """
+    await lifecycle.prepare_build(store_dir, db, name=name)
     refreshed = await lifecycle.refresh(
-        store_dir, db, config, name=name, build=await build_settings(config)
+        store_dir, db, config, name=name, build=await build_settings(config, full=full)
     )
     _print_report(refreshed)
     return 0
 
 
-async def build_settings(config: EffectiveConfig) -> disposal.BuildSettings:
+async def build_settings(config: EffectiveConfig, *, full: bool = False) -> disposal.BuildSettings:
     """Load the configured encoder and read the batch size, for one build.
 
     The load costs roughly a second and runs on a worker thread, which keeps it off the event loop
     rather than making it cheaper — a build is a batch job with no interactive path to protect, so
     paying it up front and once is the right trade. A corpus whose recorded identity disagrees with
-    what this loads is refused by the build itself rather than here, where the corpus has not been
-    opened yet and there is nothing to compare against.
+    what this loads is not refused: it is rebuilt at the new identity, which is the only repair
+    available once the width of a stored vector has stopped matching what the model emits.
     """
     return disposal.BuildSettings(
         encoder=await asyncio.to_thread(FastEmbedEncoder.load, config.get_str("embed_model")),
         embed_batch=config.get_int("knowledge_embed_batch"),
+        full=full,
     )
 
 
@@ -101,6 +125,27 @@ def _print_report(refreshed: lifecycle.Refreshed) -> None:
     print(f"pruned    {counters.pruned_directories} directories")
     print(f"state     {refreshed.status.summary.state.value}")
     _print_caveats(result)
+    _print_rebuild(result)
+
+
+def _print_rebuild(result: scan.ScanResult) -> None:
+    """Say when a build was a rebuild, because nothing in its numbers would show it.
+
+    A rebuild reindexes every file and deletes none, which is what a corpus's first build looks
+    like too — and what changed is not in the corpus at all but in what embedded it.
+
+    The wording names the outcome rather than the cause, because there are two and the numbers
+    distinguish neither: the model may have moved under the index, or the vector table may have
+    been found declared at a width the corpus's own record does not name, which nothing this
+    program does can produce and a restored or hand-edited database can.
+    """
+    rebuilt = result.rebuilt_identity
+    if rebuilt is None:
+        return
+    print(
+        f"\nThis corpus's stored vectors did not match the model it records, so its index was "
+        f"discarded and made again with {rebuilt.embed_model!r} at {rebuilt.embed_dim} dimensions."
+    )
 
 
 def _by_reason(counts: dict[SkipReason, int]) -> str:

@@ -6,8 +6,9 @@ store creation; `knowledge-index.md` for what it means.
 **Authority is split deliberately.** This table owns `name` and `description` — the two fields a
 caller needs in order to *choose* a corpus without opening it. Everything else about a knowledge
 base lives in that knowledge base's own database. The registry is also the sole authority on
-*existence*: a row without a file is an empty knowledge base needing a build, and a file without a
-row is an orphan nothing will open.
+*existence*: a row without a file is a knowledge base whose definition is gone, reported as empty
+and rebuilt by removing the name and adding it again, and a file without a row is an orphan nothing
+will open.
 """
 
 import sqlite3
@@ -24,6 +25,7 @@ from zikaron.core.knowledge.errors import (
     InvalidNameError,
     UnknownKnowledgeBaseError,
 )
+from zikaron.core.store.transactions import in_one_transaction, propagate
 
 #: Transcribed from `schema.md`, which is the contract for it; a test compares the two.
 #:
@@ -115,6 +117,17 @@ async def ensure_table(db: aiosqlite.Connection) -> None:
     await db.execute(CREATE_TABLE)
 
 
+async def ensure(db: aiosqlite.Connection) -> None:
+    """`ensure_table` for a caller that has no transaction of its own to run it in.
+
+    The two exist because the table has exactly one creation site and two kinds of caller: a verb
+    already inside a transaction, which must not open a second one, and every read that merely
+    needs the table to be there. Both reach the same statement, which is what keeps a store created
+    before this table existed opening and answering normally by construction rather than by a test.
+    """
+    await in_one_transaction(db, ensure_table, failure=propagate)
+
+
 async def insert(
     db: aiosqlite.Connection, *, name: str, description: str, created_at: str
 ) -> KnowledgeBase:
@@ -181,7 +194,8 @@ async def delete(db: aiosqlite.Connection, *, name: str) -> KnowledgeBase:
 
     Deleting the row is only the first half of destroying a knowledge base. The caller unlinks the
     file afterwards, in that order, so an interruption leaves an unreferenced file rather than a
-    name whose corpus the next build would silently recreate.
+    name that still answers for a corpus somebody asked to destroy — which nothing could rebuild
+    and only another `remove` could clear.
 
     Raises:
         InvalidNameError: `name` is empty or blank.
