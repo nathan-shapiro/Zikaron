@@ -17,8 +17,8 @@ import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import add_base, config_for, corpus_root, open_store
-from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import (
+    builds,
     database,
     ddl,
     lifecycle,
@@ -29,12 +29,12 @@ from zikaron.core.knowledge import (
     reporting,
 )
 from zikaron.core.knowledge.errors import (
-    CorpusRootMissingError,
     DanglingKnowledgeBaseError,
     DuplicateNameError,
     IndexerBusyError,
     InvalidNameError,
     InvalidRootError,
+    InvalidSettingError,
     UnknownKnowledgeBaseError,
 )
 from zikaron.core.knowledge.state import KnowledgeState
@@ -370,10 +370,17 @@ class TestRefusals:
         self, tmp_path: Path
     ) -> None:
         """A per-corpus override and the global default are the same quantity, so they are held to
-        one range — and the check runs before the registry write, like every other refusal."""
+        one range — and the check runs before the registry write, like every other refusal.
+
+        **Refused as a rejection of the caller's own value, not as a complaint about
+        configuration.** The range is read from the configuration schema, which is what keeps a
+        corpus created this way reproducible by writing a configuration file; the *refusal* must
+        not be, because a caller that typed a number would then go looking in a file for a typo
+        that is in its own request. The exception carries the key, the value and the range so
+        whoever is answering a caller can say all three without re-deriving them."""
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
-            with pytest.raises(ZikaronError) as caught:
+            with pytest.raises(InvalidSettingError) as caught:
                 await add_base(
                     store_dir,
                     db,
@@ -385,7 +392,12 @@ class TestRefusals:
                         max_file_bytes=0,
                     ),
                 )
-            assert caught.value.code is ErrorCode.BAD_CONFIG
+            _bounds, expected = meta.bounds_for(meta.MAX_FILE_BYTES_KEY)
+            assert caught.value.bounds.key == meta.MAX_FILE_BYTES_KEY
+            assert caught.value.bounds.value == 0
+            assert caught.value.bounds.expected == expected, (
+                "one phrasing of the range, shared with the stored-value path"
+            )
             assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
 
     async def test_rename_refuses_a_name_that_is_taken(self, tmp_path: Path) -> None:
@@ -515,93 +527,6 @@ class TestTheMigrationIsAdditive:
             assert len((await reporting.list_bases(store_dir, db, config)).knowledge_bases) == 1
 
 
-class TestWhatHasToHoldBeforeABuildStarts:
-    """A build is spawned detached, with its output discarded and nobody to report a refusal to.
-    So every refusal that can be decided without reading a file is decided in front of whoever
-    asked — and the one refusal that must *not* fire is the lock a crashed indexer left, because
-    those rows survive on purpose and refusing on them would make one dead process permanent."""
-
-    async def test_a_registered_corpus_with_a_database_is_buildable(self, tmp_path: Path) -> None:
-        async with open_store(tmp_path) as (store_dir, db):
-            config = config_for(tmp_path)
-            await add_base(
-                store_dir,
-                db,
-                config,
-                lifecycle.AddRequest(name="Docs", root=corpus_root(tmp_path), description="a"),
-            )
-
-            registered = await lifecycle.prepare_build(store_dir, db, name="DOCS")
-            assert registered.name == "docs"
-
-    async def test_an_unregistered_name_is_refused(self, tmp_path: Path) -> None:
-        async with open_store(tmp_path) as (store_dir, db):
-            with pytest.raises(UnknownKnowledgeBaseError):
-                await lifecycle.prepare_build(store_dir, db, name="absent")
-
-    async def test_a_corpus_with_no_database_is_refused(self, tmp_path: Path) -> None:
-        """Everything that says what a corpus indexes lives in that file, so a build has nothing to
-        walk and nothing to invent one from."""
-        async with open_store(tmp_path) as (store_dir, db):
-            config = config_for(tmp_path)
-            created = await add_base(
-                store_dir,
-                db,
-                config,
-                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
-            )
-            created.database_path.unlink()
-
-            with pytest.raises(DanglingKnowledgeBaseError):
-                await lifecycle.prepare_build(store_dir, db, name="docs")
-
-    async def test_a_build_that_cannot_be_shown_dead_refuses_the_next_one(
-        self, tmp_path: Path
-    ) -> None:
-        async with open_store(tmp_path) as (store_dir, db):
-            config = config_for(tmp_path)
-            created = await add_base(
-                store_dir,
-                db,
-                config,
-                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
-            )
-            await _write_lock(created.database_path)
-
-            with pytest.raises(IndexerBusyError, match="docs"):
-                await lifecycle.prepare_build(store_dir, db, name="docs")
-
-    async def test_a_root_that_has_gone_is_refused(self, tmp_path: Path) -> None:
-        """The refusal that would otherwise leave nothing at all: a build declines a missing root
-        before taking the lock, so a detached one leaves not even the dead holder that says a build
-        died, while the command that asked reported that one had started."""
-        async with open_store(tmp_path) as (store_dir, db):
-            config = config_for(tmp_path)
-            root = corpus_root(tmp_path, "vanishing")
-            await add_base(
-                store_dir, db, config, lifecycle.AddRequest(name="docs", root=root, description="a")
-            )
-            for path in root.iterdir():
-                path.unlink()
-            root.rmdir()
-
-            with pytest.raises(CorpusRootMissingError, match="kept as it is"):
-                await lifecycle.prepare_build(store_dir, db, name="docs")
-
-    async def test_a_lock_a_crashed_build_left_stops_nothing(self, tmp_path: Path) -> None:
-        async with open_store(tmp_path) as (store_dir, db):
-            config = config_for(tmp_path)
-            created = await add_base(
-                store_dir,
-                db,
-                config,
-                lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
-            )
-            await _write_lock(created.database_path, pid=_DEAD_PID, host=lock.this_host())
-
-            assert (await lifecycle.prepare_build(store_dir, db, name="docs")).name == "docs"
-
-
 class TestClearingALockByHand:
     """The exit from the state nothing clears on its own: a lock recorded on another machine, which
     is never reclaimed here, and which leaves a corpus every verb refuses with no clock running
@@ -622,7 +547,7 @@ class TestClearingALockByHand:
 
             assert cleared is not None
             assert cleared.host == "somehost"
-            assert (await lifecycle.prepare_build(store_dir, db, name="docs")).name == "docs"
+            assert (await builds.prepare(store_dir, db, config, name="docs")).name == "docs"
 
     async def test_a_running_local_build_is_refused(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):

@@ -19,7 +19,8 @@ class ServiceRejectionError(ToolError):
 
     Carries the wire `code` and `data` verbatim rather than only the message, so a model that
     receives this can see *why* — `store_busy` invites a retry, `no_read_receipt` says which uuids
-    need `zikaron_fetch` first — the same information the RPC error payload already states, just
+    need `zikaron_memory_fetch` first — the same information the RPC error payload already states,
+    just
     surfaced through the one channel FastMCP guarantees reaches the model
     (`ToolError`'s own contract: its message is shown "regardless of `mask_error_details`").
     """

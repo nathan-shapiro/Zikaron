@@ -18,7 +18,7 @@ sequence, whose length stays derivable from the two; and `part_index` is 0-based
 consolidation's deliberately 1-based shard index, because chunk parts are shown to nobody and their
 only consumer is code.
 
-This is deliberately **not** the tool surface. `zikaron_remember`'s dedup hand-back and the
+This is deliberately **not** the tool surface. `zikaron_memory_remember`'s dedup hand-back and the
 envelope's own bounds belong to the tool-facing write path, which composes
 `writes.remember_within_transaction` into its own transaction — D15's dedup search has to run in the
 same transaction as the write it reports on, since it queries the vectors that write just

@@ -19,6 +19,7 @@ import pytest
 
 from tests.knowledge_fixtures import config_for, corpus_root
 from zikaron.core.knowledge import lock, registry, reporting
+from zikaron.core.knowledge import paths as knowledge_paths
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.errors import RegistryUnavailableError
 from zikaron.core.store.embedder import FakeEmbedder
@@ -81,6 +82,42 @@ def started(monkeypatch: pytest.MonkeyPatch) -> list[_Started]:
 
 def _run(project_dir: Path, *argv: str) -> int:
     return main(["--project", str(project_dir), *argv])
+
+
+def _unlink_database(project_dir: Path, name: str) -> None:
+    """Delete one named corpus's own database, leaving its registry row behind.
+
+    Resolved through the registry rather than by emptying the `knowledge/` directory: the filename
+    is a generated id, so clearing the directory takes every corpus with it and is wrong the moment
+    a test has two.
+    """
+
+    async def _go() -> None:
+        store_dir = project_dir / ".zikaron"
+        async with await Store.open(store_dir, config_for(project_dir)) as store:
+            registered = await registry.require(store.connection, name)
+        knowledge_paths.knowledge_db_path(store_dir, registered.id).unlink()
+
+    asyncio.run(_go())
+
+
+def _corrupt_database(project_dir: Path, name: str) -> None:
+    """Leave one named corpus's database in place and make it unopenable.
+
+    The distinction this exists for: a database that is **gone** holds nothing, and a database that
+    is **present and will not open** may hold a fully built corpus refused for a permission or a
+    schema reason. Reported identically, those two would tell somebody about to delete a corpus
+    that there is nothing to lose when nobody can say.
+    """
+
+    async def _go() -> None:
+        store_dir = project_dir / ".zikaron"
+        async with await Store.open(store_dir, config_for(project_dir)) as store:
+            registered = await registry.require(store.connection, name)
+        path = knowledge_paths.knowledge_db_path(store_dir, registered.id)
+        path.write_bytes(b"this is not a SQLite database")
+
+    asyncio.run(_go())
 
 
 def _hold_the_lock(project_dir: Path, *, pid: int, host: str) -> None:
@@ -164,6 +201,33 @@ class TestTheVerbs:
         assert _run(project, "list") == 0
         assert "docs" in capsys.readouterr().out
 
+    def test_the_preview_counts_a_corpus_that_can_be_read(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A corpus that opens is counted, and a never-built one honestly holds nothing — so the
+        zero here is a measurement rather than a placeholder. It is the pair to the case below,
+        which is the one where zero would be a lie."""
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+
+        assert _run(project, "remove", "docs") == 1
+        assert "0 files, 0 chunks" in capsys.readouterr().out
+
+    def test_the_preview_refuses_to_count_a_corpus_that_will_not_open(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Its database may hold a fully built index and be refused for a permission or a schema
+        reason, so a count of zero would read as *nothing to lose* about something nobody can
+        measure — on the one verb nothing undoes."""
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        _corrupt_database(project, "docs")
+        capsys.readouterr()
+
+        assert _run(project, "remove", "docs") == 1
+        printed = capsys.readouterr().out
+        assert "an unknown amount" in printed
+        assert "chunks" not in printed
+
     def test_status_without_a_name_reports_every_knowledge_base(
         self, project: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -236,6 +300,22 @@ class TestRefusalsReachTheExitStatus:
             _run(project, "add", "docs", "--path", str(project / "nope"), "--description", "d") == 1
         )
         assert "does not exist" in capsys.readouterr().err
+
+    def test_a_tilde_naming_no_known_user_is_refused_rather_than_traced(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A shell leaves `~someone` alone when it knows no such user, so the command receives it
+        literally — and expansion then fails. This is a person's typo, and it has to read as one:
+        a traceback tells whoever ran it nothing they can act on."""
+        assert (
+            _run(
+                project, "add", "docs", "--path", "~no-such-user-zikaron/docs", "--description", "d"
+            )
+            == 1
+        )
+        printed = capsys.readouterr().err
+        assert "refused" in printed
+        assert "does not exist" in printed
 
     def test_an_out_of_range_size_cap_exits_non_zero(
         self, project: Path, capsys: pytest.CaptureFixture[str]
@@ -383,14 +463,29 @@ class TestWhereTheCommandActs:
         """A corpus that has never been built has no diagnostics to show, and printing zeroes for
         them would read as measurements of an empty corpus rather than as their absence."""
         _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
-        for path in (project / ".zikaron" / "knowledge").iterdir():
-            path.unlink()
+        _unlink_database(project, "docs")
         capsys.readouterr()
 
         assert _run(project, "status", "docs") == 0
         printed = capsys.readouterr().out
         assert "no database to read" in printed
         assert "reindex_required" in printed
+
+    def test_a_knowledge_base_whose_database_will_not_open_says_so_instead(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The pair to the case above, and the reason the two are not one line: this corpus's file
+        may hold a fully built index and be refused for a permission or a schema reason, so
+        *nothing has been built here yet* would be a confident claim about what nobody measured."""
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        _corrupt_database(project, "docs")
+        capsys.readouterr()
+
+        assert _run(project, "status", "docs") == 0
+        printed = capsys.readouterr().out
+        assert "cannot be read" in printed
+        assert "nothing has been built" not in printed
+        assert "state error" in printed
 
     def test_a_failure_that_is_not_a_refusal_is_reported_rather_than_traced(
         self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -464,14 +559,31 @@ class TestStartingABuild:
         assert started == []
         assert "refused" in capsys.readouterr().err
 
+    def test_a_database_that_will_not_open_is_a_failure_rather_than_a_refusal(
+        self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The two prefixes mean different things. A refusal is this system declining something it
+        understood and naming what to do instead; a failure is the driver's own error travelling
+        out unrenamed, because nothing invented here would describe it better. Printing the second
+        as the first tells a reader there is a remedy to look for."""
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        _corrupt_database(project, "docs")
+        started.clear()
+        capsys.readouterr()
+
+        assert _run(project, "refresh", "docs") == 1
+        assert started == []
+        printed = capsys.readouterr().err
+        assert "failed" in printed
+        assert "refused" not in printed
+
     def test_a_knowledge_base_with_no_database_refuses_rather_than_starting_a_build(
         self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Everything that says what a corpus indexes lives in the file that is missing, so there
         is nothing for a walk to walk."""
         _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
-        for path in (project / ".zikaron" / "knowledge").iterdir():
-            path.unlink()
+        _unlink_database(project, "docs")
         started.clear()
         capsys.readouterr()
 
@@ -495,17 +607,23 @@ class TestStartingABuild:
         assert started == []
         assert "kept as it is" in capsys.readouterr().err
 
-    def test_a_build_that_cannot_be_shown_dead_refuses_the_next_one(
+    def test_a_build_that_cannot_be_shown_dead_starts_no_second_one(
         self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """Reported rather than refused, and the command succeeds: a refresh that met a running
+        build got what it asked for — the corpus is being built. Making this a failure would turn a
+        loop of refreshes against a long build into a loop of failures, and the whole point of the
+        verb being idempotent is that a caller may run it whenever it likes."""
         _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
         _hold_the_lock(project, pid=os.getpid(), host=lock.this_host())
         started.clear()
         capsys.readouterr()
 
-        assert _run(project, "refresh", "docs") == 1
-        assert started == []
-        assert "already running" in capsys.readouterr().err
+        assert _run(project, "refresh", "docs") == 0
+        assert started == [], "nothing was queued and no second build began"
+        printed = capsys.readouterr()
+        assert "already being built" in printed.out
+        assert printed.err == "", "this is not a refusal, so nothing goes to standard error"
 
     def test_a_lock_a_crashed_build_left_stops_nothing(
         self, project: Path, started: list[_Started]
@@ -660,6 +778,73 @@ class TestHowALocksAgeIsPrinted:
     )
     def test_each_unit_takes_over_at_its_own_boundary(self, seconds: float, printed: str) -> None:
         assert _age(seconds) == printed
+
+
+class TestRefreshingEveryKnowledgeBase:
+    """`refresh` with no name reaches every corpus, each checked on its own — so one that cannot be
+    built never denies the others a build they could have had."""
+
+    @staticmethod
+    def _two(project: Path) -> None:
+        (project / "runbooks").mkdir()
+        (project / "runbooks" / "a.md").write_text("a line\n", encoding="utf-8")
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        _run(project, "add", "runbooks", "--path", str(project / "runbooks"), "--description", "d")
+
+    def test_it_starts_a_build_for_each_one(
+        self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._two(project)
+        started.clear()
+        capsys.readouterr()
+
+        assert _run(project, "refresh") == 0
+        assert {one.name for one in started} == {"docs", "runbooks"}
+
+    def test_full_reaches_every_one(self, project: Path, started: list[_Started]) -> None:
+        self._two(project)
+        started.clear()
+
+        assert _run(project, "refresh", "--full") == 0
+        assert all(one.full for one in started)
+
+    def test_one_corpus_that_cannot_be_built_does_not_stop_the_rest(
+        self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """And the command still reports a failure, because something the caller asked for did not
+        happen — the sweep completing is not the same as the sweep succeeding."""
+        self._two(project)
+        _unlink_database(project, "docs")
+        started.clear()
+        capsys.readouterr()
+
+        assert _run(project, "refresh") == 1
+        assert [one.name for one in started] == ["runbooks"]
+        printed = capsys.readouterr()
+        assert "remove it and add it again" in printed.err
+        assert "runbooks" in printed.out
+
+    def test_an_empty_store_says_so_and_succeeds(
+        self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Nothing was asked for that could not be done: a project with no knowledge bases is not
+        a failed refresh."""
+        assert _run(project, "refresh") == 0
+        assert started == []
+        assert "no knowledge bases" in capsys.readouterr().out
+
+    def test_force_unlock_with_no_name_is_refused(
+        self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """It clears one corpus's lock, and clearing every one on a bare `--force-unlock` is a
+        destructive reading of an omitted argument rather than a convenience."""
+        self._two(project)
+        started.clear()
+        capsys.readouterr()
+
+        assert _run(project, "refresh", "--force-unlock") == 1
+        assert started == [], "nothing is built by a call that was refused"
+        assert "name one" in capsys.readouterr().err
 
 
 class TestWhatTheFollowLineSays:

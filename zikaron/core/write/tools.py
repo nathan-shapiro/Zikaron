@@ -10,7 +10,8 @@ none of those layers has: D15's dedup search for `remember`, and a typed `Confli
 **Why a conflict is a return value here and not a caught exception re-raised.** `ZikaronError`
 stays the row-level layers' own signal — `records.memory` and `indexing.writes` raise it, and
 `architecture.md`'s ladder is what decides which code — but the tool surface states
-`zikaron_amend`/`zikaron_retire`'s response as a **two-shape return** (`{uuid, version}` or
+`zikaron_memory_amend`/`zikaron_memory_retire`'s response as a **two-shape return**
+(`{uuid, version}` or
 `{conflict: true, current: ...}`), not as a side-channel error a transport has to catch
 specifically to keep responding 200. So this layer catches exactly `VERSION_CONFLICT` at its own
 boundary and returns the typed `Conflict` value instead; every other `ZikaronError` —
@@ -96,7 +97,7 @@ class WriteCall:
 
 @dataclass(frozen=True, slots=True)
 class Remembered:
-    """`zikaron_remember`'s success shape: `architecture.md`'s `{uuid, version,
+    """`zikaron_memory_remember`'s success shape: `architecture.md`'s `{uuid, version,
     near_duplicates}` exactly. There is no conflict shape — a row that did not exist a moment
     ago cannot lose a race to overwrite itself."""
 
@@ -105,7 +106,8 @@ class Remembered:
     near_duplicates: tuple[NearDuplicate, ...]
 
 
-#: `zikaron_remember` always succeeds once past `bounds`/`index_failed`/`store_busy` — a fresh row
+#: `zikaron_memory_remember` always succeeds once past `bounds`/`index_failed`/`store_busy` — a
+#: fresh row
 #: has no version to conflict on — so this alias exists only for symmetry with the other two verbs'
 #: outcome names, and to give a transport one family of return types to pattern-match across all
 #: three tools rather than a special case for the one verb with no second shape.
@@ -114,7 +116,7 @@ type RememberOutcome = Remembered
 
 @dataclass(frozen=True, slots=True)
 class Amended:
-    """`zikaron_amend`'s success shape: `{uuid, version}`."""
+    """`zikaron_memory_amend`'s success shape: `{uuid, version}`."""
 
     uuid: str
     version: int
@@ -122,7 +124,7 @@ class Amended:
 
 @dataclass(frozen=True, slots=True)
 class Conflict:
-    """The shared failure shape both `zikaron_amend` and `zikaron_retire` can return:
+    """The shared failure shape both `zikaron_memory_amend` and `zikaron_memory_retire` can return:
     `{conflict: true, current: CONFLICT_RECORD}`. One row, never a list — the tool surface's own
     statement that the primary-agent verbs' conflict shape is singular, unlike the four
     consolidator verbs, which can name several rows in one call and so return a list.
@@ -131,7 +133,7 @@ class Conflict:
     current: ConflictRecord
 
 
-#: `Amended | Conflict`: `zikaron_amend`'s two response shapes, as one return type a caller
+#: `Amended | Conflict`: `zikaron_memory_amend`'s two response shapes, as one return type a caller
 #: pattern-matches rather than a boolean flag plus an optional field either shape would leave
 #: sometimes-meaningless.
 type AmendOutcome = Amended | Conflict
@@ -139,7 +141,8 @@ type AmendOutcome = Amended | Conflict
 
 @dataclass(frozen=True, slots=True)
 class Retired:
-    """`zikaron_retire`'s success shape: `{uuid, version}` — identical in shape to `Amended`, and
+    """`zikaron_memory_retire`'s success shape: `{uuid, version}` — identical in shape to
+    `Amended`, and
     a separate type anyway, because the two verbs are not interchangeable at any call site that
     matches on the outcome's own type rather than its fields."""
 
@@ -147,7 +150,8 @@ class Retired:
     version: int
 
 
-#: `Retired | Conflict`: `zikaron_retire`'s two response shapes, sharing `Conflict` with `amend`
+#: `Retired | Conflict`: `zikaron_memory_retire`'s two response shapes, sharing `Conflict` with
+#: `amend`
 #: because `architecture.md` states one payload shape for both verbs' rejection.
 type RetireOutcome = Retired | Conflict
 

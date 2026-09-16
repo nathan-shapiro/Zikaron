@@ -300,7 +300,7 @@ async def test_a_successful_call_echoes_the_resolved_session_id(tmp_path: Path) 
     `result` is a bare list (`search`) with no key to add one to."""
     async with open_context(tmp_path) as ctx:
         parsed = await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client("s1")})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})
         )
         client = parsed["client"]
         assert isinstance(client, dict)
@@ -313,7 +313,7 @@ async def test_a_successful_call_echoes_the_resolved_session_id(tmp_path: Path) 
 async def test_a_bootstrap_call_gets_a_minted_session_id_back(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
         parsed = await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client(None)})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client(None)})
         )
         client = parsed["client"]
         assert isinstance(client, dict)
@@ -323,15 +323,17 @@ async def test_a_bootstrap_call_gets_a_minted_session_id_back(tmp_path: Path) ->
 
 
 async def test_search_returns_a_bare_list_with_the_label_still_attached(tmp_path: Path) -> None:
-    """`zikaron_search`'s documented shape is a bare list — `[{uuid, gist, ...}, ...]`, no
+    """`memory_search`'s documented shape is a bare list — `[{uuid, gist, ...}, ...]`, no
     wrapping key — which is exactly why `session_id` cannot be merged into `result`: a list has
     no key to add one to, and this is the one method in this test file whose `result` is not an
     object at all."""
     async with open_context(tmp_path) as ctx:
         await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client("s1")})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})
         )
-        parsed = await _response_json(ctx, _line("search", {"query": "g", "client": _client("s1")}))
+        parsed = await _response_json(
+            ctx, _line("memory_search", {"query": "g", "client": _client("s1")})
+        )
         assert isinstance(parsed["result"], list)
         client = parsed["client"]
         assert isinstance(client, dict)
@@ -352,7 +354,7 @@ async def test_a_zikaron_error_echoes_the_resolved_session_id_too(tmp_path: Path
         parsed = await _response_json(
             ctx,
             _line(
-                "amend",
+                "memory_amend",
                 {
                     "uuid": "no-such-uuid",
                     "version": 1,
@@ -380,7 +382,7 @@ async def test_a_malformed_envelope_gets_no_session_id_since_none_was_resolved(
 ) -> None:
     async with open_context(tmp_path) as ctx:
         parsed = await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": {"kind": "mcp"}})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": {"kind": "mcp"}})
         )
         assert "client" not in parsed
         error = parsed["error"]
@@ -410,10 +412,10 @@ async def test_an_unhandled_handler_exception_still_echoes_the_resolved_label(
         ) -> object:
             raise RuntimeError("a genuine bug in a handler, deliberately, for this test")
 
-        monkeypatch.setitem(server._METHODS, "remember", _handler_raises_unexpectedly)
+        monkeypatch.setitem(server._METHODS, "memory_remember", _handler_raises_unexpectedly)
 
         parsed = await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client("s1")})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})
         )
         client = parsed["client"]
         assert isinstance(client, dict)
@@ -434,20 +436,21 @@ async def test_fetch_returns_the_documented_record_shape_and_reports_missing_uui
     client sending the real method name, invisible to a test that calls a Python handler function
     directly instead.
 
-    Asserts the exact twelve-field record shape `architecture.md` §`zikaron_fetch` states, as a set
+    Asserts the exact twelve-field record shape `architecture.md` §`zikaron_memory_fetch` states,
+    as a set
     rather than by spot-checking a few keys, so a field silently added or dropped fails here; and
     asserts an unknown uuid is reported in `missing` rather than failing the batch, which the same
     section states explicitly ("a partial answer is more useful than none")."""
     async with open_context(tmp_path) as ctx:
         written = await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client("s1")})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})
         )
         result = written["result"]
         assert isinstance(result, dict)
         uuid = result["uuid"]
 
         parsed = await _response_json(
-            ctx, _line("fetch", {"uuids": [uuid, "no-such-uuid"], "client": _client("s1")})
+            ctx, _line("memory_fetch", {"uuids": [uuid, "no-such-uuid"], "client": _client("s1")})
         )
         fetched = parsed["result"]
         assert isinstance(fetched, dict)
@@ -526,7 +529,7 @@ async def test_a_notification_gets_no_response_line_at_all(tmp_path: Path) -> No
             json.dumps(
                 {
                     "jsonrpc": "2.0",
-                    "method": "remember",
+                    "method": "memory_remember",
                     "params": {"gist": "g", "content": "c", "client": _client("s1")},
                 }
             ).encode("utf-8")
@@ -550,9 +553,9 @@ async def test_a_notification_whose_params_fail_shape_validation_still_gets_no_r
     suppressed exactly as a later, method-level rejection of the same notification would be."""
     async with open_context(tmp_path) as ctx:
         malformed_notification = (
-            json.dumps({"jsonrpc": "2.0", "method": "remember", "params": "not-an-object"}).encode(
-                "utf-8"
-            )
+            json.dumps(
+                {"jsonrpc": "2.0", "method": "memory_remember", "params": "not-an-object"}
+            ).encode("utf-8")
             + b"\n"
         )
         response_line = await server._handle_line(ctx, malformed_notification)
@@ -571,7 +574,7 @@ async def test_an_ordinary_request_with_an_explicit_null_id_still_gets_a_respons
                 {
                     "jsonrpc": "2.0",
                     "id": None,
-                    "method": "remember",
+                    "method": "memory_remember",
                     "params": {"gist": "g", "content": "c", "client": _client("s1")},
                 }
             ).encode("utf-8")
@@ -588,7 +591,7 @@ async def test_activity_tracker_brackets_a_successful_dispatch(tmp_path: Path) -
     async with open_context(tmp_path) as ctx:
         assert ctx.activity.in_flight == 0
         await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": _client("s1")})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})
         )
         assert ctx.activity.in_flight == 0
 
@@ -600,7 +603,7 @@ async def test_activity_tracker_brackets_a_rejected_dispatch_too(tmp_path: Path)
         await _response_json(
             ctx,
             _line(
-                "amend",
+                "memory_amend",
                 {
                     "uuid": "no-such-uuid",
                     "version": 1,
@@ -640,7 +643,7 @@ async def test_a_malformed_envelope_still_refreshes_last_activity(tmp_path: Path
         stale = ctx.activity.last_activity - 1000
         ctx.activity.last_activity = stale
         await _response_json(
-            ctx, _line("remember", {"gist": "g", "content": "c", "client": {"kind": "mcp"}})
+            ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": {"kind": "mcp"}})
         )
         assert ctx.activity.last_activity > stale
         assert ctx.activity.in_flight == 0
@@ -657,7 +660,9 @@ async def test_invalid_json_produces_a_parse_error_with_no_id(tmp_path: Path) ->
 
 async def test_apply_discard_is_reachable_by_its_documented_wire_name(tmp_path: Path) -> None:
     """`architecture.md` §"Service RPC surface" names the three consolidator write methods
-    `apply_merge`/`apply_promote`/`apply_discard` on the wire — **not** the bare
+    `memory_apply_merge`/`memory_apply_promote`/`memory_apply_discard` on the wire — **not** the
+    `memory_merge`/`memory_promote`/`memory_discard` that dropping each tool's `zikaron_` prefix
+    would give, which is how every other wire method is spelled, and not the bare
     `merge`/`promote`/`discard` the design's own prose uses elsewhere for the underlying
     verb/concept. Every other consolidator test in this repository calls the Python handler
     functions directly (`dispatch_consolidation.consolidator_discard(...)`), which cannot detect a
@@ -670,14 +675,14 @@ async def test_apply_discard_is_reachable_by_its_documented_wire_name(tmp_path: 
         first, second = await _write_orphan_pair(ctx)
         consolidator = _client("agent-session", pid=4242, kind=ClientKind.CONSOLIDATOR.value)
 
-        served = await _response_json(ctx, _line("next_group", {"client": consolidator}))
+        served = await _response_json(ctx, _line("memory_next_group", {"client": consolidator}))
         group_id = served["result"]["group_id"]  # type: ignore[index]
         assert isinstance(group_id, str)
 
         discarded = await _response_json(
             ctx,
             _line(
-                "apply_discard",
+                "memory_apply_discard",
                 {
                     "group_id": group_id,
                     "absorb": [
@@ -701,14 +706,14 @@ async def test_apply_promote_is_reachable_by_its_documented_wire_name(tmp_path: 
         first, second = await _write_orphan_pair(ctx)
         consolidator = _client("agent-session", pid=4242, kind=ClientKind.CONSOLIDATOR.value)
 
-        served = await _response_json(ctx, _line("next_group", {"client": consolidator}))
+        served = await _response_json(ctx, _line("memory_next_group", {"client": consolidator}))
         group_id = served["result"]["group_id"]  # type: ignore[index]
         assert isinstance(group_id, str)
 
         promoted = await _response_json(
             ctx,
             _line(
-                "apply_promote",
+                "memory_apply_promote",
                 {
                     "group_id": group_id,
                     "gist": "promoted gist",
@@ -733,14 +738,14 @@ async def test_apply_merge_is_reachable_by_its_documented_wire_name(tmp_path: Pa
         anchor, member = await _write_anchored_pair(ctx)
         consolidator = _client("agent-session", pid=4242, kind=ClientKind.CONSOLIDATOR.value)
 
-        served = await _response_json(ctx, _line("next_group", {"client": consolidator}))
+        served = await _response_json(ctx, _line("memory_next_group", {"client": consolidator}))
         group_id = served["result"]["group_id"]  # type: ignore[index]
         assert isinstance(group_id, str)
 
         merged = await _response_json(
             ctx,
             _line(
-                "apply_merge",
+                "memory_apply_merge",
                 {
                     "group_id": group_id,
                     "target": {"uuid": anchor, "expected_version": 1},
@@ -766,7 +771,7 @@ async def test_plan_groups_is_reachable_by_its_documented_wire_name(tmp_path: Pa
         await _write_orphan_pair(ctx)
         consolidator = _client("agent-session", pid=4242, kind=ClientKind.CONSOLIDATOR.value)
 
-        parsed = await _response_json(ctx, _line("plan_groups", {"client": consolidator}))
+        parsed = await _response_json(ctx, _line("memory_plan_groups", {"client": consolidator}))
         result = parsed["result"]
         assert isinstance(result, dict)
         assert "run_id" in result
@@ -794,7 +799,7 @@ async def _write_orphan_pair(ctx: ServiceContext) -> tuple[str, str]:
         embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
         ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
         response = await _response_json(
-            ctx, _line("remember", {"gist": gist, "content": content, "client": agent})
+            ctx, _line("memory_remember", {"gist": gist, "content": content, "client": agent})
         )
         result = response["result"]
         assert isinstance(result, dict)
@@ -813,7 +818,7 @@ async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
     embedded_anchor = f"{_ANCHOR[0]}{PREFIX_SEPARATOR}{_ANCHOR[1]}"
     ctx.encoder.planned[embedded_anchor] = unit_at(0.0, ctx.encoder.dim)
     anchor_response = await _response_json(
-        ctx, _line("remember", {"gist": _ANCHOR[0], "content": _ANCHOR[1], "client": agent})
+        ctx, _line("memory_remember", {"gist": _ANCHOR[0], "content": _ANCHOR[1], "client": agent})
     )
     anchor_result = anchor_response["result"]
     assert isinstance(anchor_result, dict)
@@ -827,7 +832,7 @@ async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
     embedded_member = f"{_MEMBER[0]}{PREFIX_SEPARATOR}{_MEMBER[1]}"
     ctx.encoder.planned[embedded_member] = unit_at(10.0, ctx.encoder.dim)
     member_response = await _response_json(
-        ctx, _line("remember", {"gist": _MEMBER[0], "content": _MEMBER[1], "client": agent})
+        ctx, _line("memory_remember", {"gist": _MEMBER[0], "content": _MEMBER[1], "client": agent})
     )
     member_result = member_response["result"]
     assert isinstance(member_result, dict)

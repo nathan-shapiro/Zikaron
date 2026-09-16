@@ -155,10 +155,35 @@ class Observed:
     lock* and *a lock whose process this host can see has died*. The second is why it is not a
     plain presence flag: a crashed indexer leaves its rows behind by design, and treating those as
     a live writer would make one dead process enough to make a knowledge base unremovable forever.
+
+    `unreadable_because` is the exception a database that would not open raised, kept rather than
+    discarded so that a caller which must *refuse* over it — rather than merely report it — can
+    say what actually went wrong instead of inventing a message for it. It is `None` whenever the
+    state is anything but `error`, and it is the one piece of this report that is not for a
+    reader: `status` already says the corpus cannot be opened, in the vocabulary a reader uses.
     """
 
     status: Status
     blocker: lock.LockHolder | None
+    unreadable_because: Exception | None = None
+
+    def __post_init__(self) -> None:
+        """Hold the two halves of *unreadable* together, so a reader may use either.
+
+        `state is error` and `unreadable_because is not None` are one fact recorded twice, and a
+        caller that needs the exception — one that must raise rather than report — would otherwise
+        have to guard against a combination this module never produces, which is a branch nothing
+        can reach and no test can exercise. Stated as a constructor check instead: it is reachable,
+        it is testable, and it makes the guarantee the thing callers rely on rather than a habit.
+        """
+        errored = self.status.summary.state is state.KnowledgeState.ERROR
+        if errored != (self.unreadable_because is not None):
+            message = (
+                f"state {self.status.summary.state.value!r} and "
+                f"unreadable_because={self.unreadable_because!r} disagree about whether this "
+                f"knowledge base could be read"
+            )
+            raise ValueError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,11 +334,11 @@ async def observe(store_dir: Path, registered: KnowledgeBase, config: EffectiveC
         return Observed(status=absent, blocker=None)
     try:
         opened = await database.KnowledgeDatabase.open(store_dir, registered.id)
-    except (aiosqlite.Error, ZikaronError, OSError):
+    except (aiosqlite.Error, ZikaronError, OSError) as error:
         broken = without_details(registered, state.KnowledgeState.ERROR)
         # No lock can be read out of a database that will not open, and reporting one anyway would
         # be a guess in the direction that stops a caller repairing it.
-        return Observed(status=broken, blocker=None)
+        return Observed(status=broken, blocker=None, unreadable_because=error)
     async with opened:
         raw = await database.read_meta(opened.connection)
         blocker = lock.running_holder(raw, host=lock.this_host())

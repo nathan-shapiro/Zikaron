@@ -101,7 +101,7 @@ def test_a_notification_whose_params_fail_shape_validation_still_carries_has_id_
     not only `RpcRequest`'s own success path — since `has_id` is knowable by the time the
     `params` check runs and a notification's shape failure must be suppressible exactly as a
     later, method-level rejection of the same notification would be."""
-    line = json.dumps({"jsonrpc": "2.0", "method": "remember", "params": "not-an-object"})
+    line = json.dumps({"jsonrpc": "2.0", "method": "memory_remember", "params": "not-an-object"})
     with pytest.raises(RequestParseError) as excinfo:
         parse_request(line)
     assert excinfo.value.code is ProtocolErrorCode.INVALID_PARAMS
@@ -144,7 +144,7 @@ def test_encode_result_with_a_session_id_attaches_it_as_a_sibling_of_result() ->
 
 
 def test_encode_result_with_a_bare_list_result_still_attaches_the_session_id() -> None:
-    """The case a merged-into-`result` approach could never represent: `zikaron_search`'s own
+    """The case a merged-into-`result` approach could never represent: `memory_search`'s own
     documented shape is a bare list, which has no key to add `session_id` to."""
     line = encode_result(7, [{"uuid": "u1"}], session_id="s1")
     parsed = json.loads(line)

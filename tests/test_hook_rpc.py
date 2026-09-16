@@ -1,4 +1,4 @@
-"""`zikaron.hook.rpc.surface_once`: frame one `surface` request, parse its one response line.
+"""`zikaron.hook.rpc.surface_once`: frame one `memory_surface` request, parse its one response line.
 
 Uses `socket.socketpair()` as a fake service: a real, connected pair of sockets, so `surface_once`
 exercises real `sendall`/`recv` against real file descriptors rather than a mock of the socket API
@@ -30,7 +30,7 @@ def test_sends_a_well_formed_surface_request() -> None:
         sent = server.recv(65536).decode("utf-8")
         request = json.loads(sent)
         assert request["jsonrpc"] == "2.0"
-        assert request["method"] == "surface"
+        assert request["method"] == "memory_surface"
         assert request["params"]["prompt"] == "what failed"
         assert request["params"]["limit"] == 5
         assert request["params"]["client"] == {

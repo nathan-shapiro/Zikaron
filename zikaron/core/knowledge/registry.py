@@ -98,7 +98,7 @@ def normalize_name(name: str) -> str:
         InvalidNameError: the name is empty or is entirely whitespace.
     """
     if name.strip() == "":
-        raise InvalidNameError("a knowledge base's name cannot be empty or blank")
+        raise InvalidNameError("a knowledge base's name cannot be empty or blank", value=name)
     return name.lower()
 
 

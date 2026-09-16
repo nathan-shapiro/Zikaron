@@ -60,7 +60,7 @@ async def test_cancelling_during_send_closes_the_socket_so_a_later_call_gets_a_f
     monkeypatch.setattr("zikaron.mcp.connection._send_request", blocking_send_request)
 
     envelope = connection.envelope(kind="mcp")
-    task = asyncio.create_task(connection.request("remember", {}, envelope=envelope))
+    task = asyncio.create_task(connection.request("memory_remember", {}, envelope=envelope))
     # Give the task a real chance to reach the `await asyncio.to_thread(...)` line and actually
     # start the worker thread before cancelling — cancelling before the thread even starts would
     # not exercise the orphaned-worker case this test is for.
@@ -107,7 +107,7 @@ async def test_cancelling_during_read_closes_the_socket_so_a_later_call_gets_a_f
     monkeypatch.setattr("zikaron.mcp.connection._read_response", blocking_read_response)
 
     envelope = connection.envelope(kind="mcp")
-    task = asyncio.create_task(connection.request("search", {}, envelope=envelope))
+    task = asyncio.create_task(connection.request("memory_search", {}, envelope=envelope))
     await asyncio.sleep(0.05)
 
     task.cancel()
@@ -156,7 +156,7 @@ async def test_a_later_call_after_a_cancelled_one_gets_a_genuinely_different_soc
     monkeypatch.setattr("zikaron.mcp.connection._read_response", instant_read_response)
 
     first_task = asyncio.create_task(
-        connection.request("remember", {}, envelope=connection.envelope(kind="mcp"))
+        connection.request("memory_remember", {}, envelope=connection.envelope(kind="mcp"))
     )
     await asyncio.sleep(0.05)
     first_task.cancel()
@@ -164,7 +164,9 @@ async def test_a_later_call_after_a_cancelled_one_gets_a_genuinely_different_soc
         await first_task
     assert first_socket.closed
 
-    response = await connection.request("search", {}, envelope=connection.envelope(kind="mcp"))
+    response = await connection.request(
+        "memory_search", {}, envelope=connection.envelope(kind="mcp")
+    )
     assert response["result"] == {"ok": True}
     current_socket: object = connection._sock
     assert current_socket is second_socket, "the later call must be using the fresh socket"

@@ -49,7 +49,7 @@ from zikaron.install.targets import KiroTarget
 from zikaron.install.writer import Plan
 from zikaron.mcp.tool_names import ALL_TOOLS, CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
-_GOLDEN = Path(__file__).parent / "fixtures" / "kiro_artefacts_m12.json"
+_GOLDEN = Path(__file__).parent / "fixtures" / "kiro_artefacts.json"
 
 _FIXTURE_COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
@@ -122,7 +122,7 @@ def _claude_paths(project: Path) -> dict[str, Path]:
 
 @pytest.fixture(scope="module")
 def golden() -> dict[str, object]:
-    """What the pre-M15 commit's own code produced, captured by running it.
+    """Kiro's artefacts as they stand, captured by running the code that produces them.
 
     Module-scoped and free-standing rather than a class-scoped method, which pytest deprecates.
     """
@@ -141,14 +141,22 @@ def _frontmatter(path: Path) -> dict[str, object]:
     return parsed
 
 
-class TestKiroArtefactsAreUnchangedFromM12:
-    """Byte-for-byte, against output captured from the pre-M15 commit.
+class TestKiroArtefactsChangeOnlyWhenSomebodyMeansThemTo:
+    """Byte-for-byte, against a captured snapshot of what this code produces.
 
-    The one guard this milestone could not do without. Everything kiro ships now travels through a
-    `HarnessTarget` and a prose renderer that did not exist before, and both were written while
-    looking at the Claude Code case — which is exactly the condition under which a working harness's
-    output drifts by a character nobody notices. It caught one during the build: the kiro spawn
-    instruction gained a line break purely from how the new constant was wrapped in the source.
+    **What it catches is drift nobody intended**, and the failure it was written for is real:
+    everything kiro ships travels through a `HarnessTarget` and a prose renderer, both written
+    while looking at the Claude Code case — which is exactly the condition under which a working
+    harness's output shifts by a character nobody notices. It caught one: the kiro spawn
+    instruction gained a line break purely from how a constant was wrapped in the source.
+
+    **What it cannot catch is a change made on purpose**, because the remedy for a deliberate one
+    is to re-capture the snapshot, and a re-captured snapshot agrees with the code by
+    construction. The snapshot was first taken from a commit that predated the renderer, which made
+    it independent evidence; renaming every tool to carry its subsystem changed three of its six
+    entries deliberately, and re-taking it spent that independence. It is worth saying which guard
+    remains: this pins that kiro's shipped prose does not move *by accident*, and nothing here
+    pins that a deliberate move was correct.
     """
 
     def test_the_consolidator_config_is_identical(self, golden: dict[str, object]) -> None:
@@ -360,8 +368,8 @@ class TestACleanClaudeCodeInstall:
         """**Two different keys, and a review caught the install conflating them.**
         `enabledMcpjsonServers` decides whether a project-scoped server *loads*;
         `permissions.allow` decides whether each *call* goes through without a prompt. Writing only
-        the first left every `zikaron_remember` behind an approval prompt — the per-write friction
-        the design calls worse than not asking at all."""
+        the first left every `zikaron_memory_remember` behind an approval prompt — the per-write
+        friction the design calls worse than not asking at all."""
         project = _project(tmp_path, dotdirs=(".claude",))
         assert main(["--project", str(project)]) == 0
         document = json.loads(_claude_paths(project)["settings"].read_text(encoding="utf-8"))
@@ -462,10 +470,10 @@ class TestToolNamesInShippedProse:
                 assert not bare, f"{key} names {name} unqualified: {bare}"
 
     def test_kiro_prose_keeps_the_bare_names(self) -> None:
-        """The identity vocabulary is what keeps kiro's artefacts unchanged rather than merely
-        equivalent."""
+        """The identity vocabulary is what makes kiro's artefacts carry the shipped constants
+        exactly as written, rather than a rendering of them."""
         skill = skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)
-        assert "zikaron_next_group" in skill
+        assert "zikaron_memory_next_group" in skill
         assert "mcp__" not in skill
 
     def test_a_tool_the_vocabulary_does_not_know_raises_at_build_time(self) -> None:

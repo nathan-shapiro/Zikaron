@@ -61,15 +61,13 @@ async def test_a_consolidator_config_provably_cannot_reach_any_reading_tool(
     mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tool_names = {tool.name for tool in await client.list_tools()}
-        assert "zikaron_search" not in tool_names
-        assert "zikaron_fetch" not in tool_names
-        assert "zikaron_knowledge_search" not in tool_names
-        with pytest.raises(ToolError, match="Unknown tool"):
-            await client.call_tool("zikaron_search", {"query": "anything"})
-        with pytest.raises(ToolError, match="Unknown tool"):
-            await client.call_tool("zikaron_fetch", {"uuids": ["x"]})
-        with pytest.raises(ToolError, match="Unknown tool"):
-            await client.call_tool("zikaron_knowledge_search", {"query": "anything"})
+        # Every primary tool, not the two or three that happened to be at risk when this was
+        # written: the set has grown twice, and a test that enumerates members by hand stops
+        # covering whichever one was added last without ever going red.
+        assert tool_names.isdisjoint(_PRIMARY_TOOL_NAMES)
+        for name in sorted(_PRIMARY_TOOL_NAMES):
+            with pytest.raises(ToolError, match="Unknown tool"):
+                await client.call_tool(name, {})
 
 
 async def test_a_primary_config_has_no_consolidator_tools_either(tmp_path: Path) -> None:
@@ -230,6 +228,6 @@ class TestTheSpillCleanupIsActuallyWired:
         monkeypatch.setattr(ServiceConnection, "request", _no_service)
         async with Client(mcp) as client:
             with pytest.raises(ToolError):
-                await client.call_tool("zikaron_next_group", {})
+                await client.call_tool("zikaron_memory_next_group", {})
 
         assert not stale.exists(), "the previous group's spill must go when the next is requested"

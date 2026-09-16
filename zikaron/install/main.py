@@ -317,7 +317,8 @@ def _refuse_agent_aliasing_a_shipped_target(
     directory, and picking it used to produce a working-looking install that had broken
     consolidation: the merge turned the consolidator's own config into a *primary* agent —
     `--mode primary`, primary hooks — while keeping its identity and prompt, so the very first
-    `zikaron_next_group` the prompt instructs has no tool behind it. Exit 0, and consolidation
+    `zikaron_memory_next_group` the prompt instructs has no tool behind it. Exit 0, and
+    consolidation
     silently gone.
 
     Compared by resolved path rather than by string, because the two can be the same file under

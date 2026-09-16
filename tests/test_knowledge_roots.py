@@ -35,6 +35,20 @@ class TestValidatingARoot:
         with pytest.raises(InvalidRootError, match="does not exist"):
             validate_root(tmp_path / "nothing", home=tmp_path / "home")
 
+    def test_a_tilde_naming_no_known_user_is_refused_rather_than_raising(
+        self, tmp_path: Path
+    ) -> None:
+        """`~someone` for a user this machine has no record of. Expansion hands the string back
+        unchanged and `Path` then refuses to say what it means — a `RuntimeError`, which is the
+        wrong shape for what is a caller's mistake: it carries no field a surface can report and
+        reaches a caller that typed a path as an internal failure. Refused in the same terms as
+        any other root naming nothing, and `path` is the value as supplied, since expansion is
+        where it stopped and there is no resolved form to report."""
+        supplied = Path("~no-such-user-zikaron/docs")
+        with pytest.raises(InvalidRootError, match="does not exist") as caught:
+            validate_root(supplied, home=tmp_path / "home")
+        assert caught.value.path == supplied
+
     def test_a_file_is_refused(self, tmp_path: Path) -> None:
         target = tmp_path / "a.md"
         target.write_text("x", encoding="utf-8")

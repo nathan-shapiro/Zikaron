@@ -136,8 +136,8 @@ async def test_remember_respects_dedup_max_and_dedup_threshold(tmp_path: Path) -
 
 
 async def test_remember_rejects_a_gist_over_the_bound_before_any_write(tmp_path: Path) -> None:
-    """`gist_max_tokens` is the one bound `zikaron_remember` rejects an agent write for, and the
-    rejection happens before anything is written — `FakeEncoder` counts whitespace-delimited
+    """`gist_max_tokens` is the one bound `zikaron_memory_remember` rejects an agent write for, and
+    the rejection happens before anything is written — `FakeEncoder` counts whitespace-delimited
     tokens, so a gist of 65 space-separated words is unambiguously over the default 64."""
     async with harness(tmp_path) as h:
         over_budget_gist = " ".join(f"word{i}" for i in range(65))

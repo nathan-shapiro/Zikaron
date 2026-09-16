@@ -6,7 +6,8 @@ so the ratio reads as retire-per-write. Single-client (`retire` is only ever emi
 `records.memory.retire`, the primary-agent verb), so no linkage restriction applies.
 
 **Consolidator retirements are already excluded, and not by a filter this module adds.** The
-`retire` event kind is emitted by exactly one write path — the agent's own `zikaron_retire` — while
+`retire` event kind is emitted by exactly one write path — the agent's own `zikaron_memory_retire`
+— while
 consolidation's own row-removing dispositions are `merge` (absorbing a member) and `discard`
 (dropping one as noise), which are different `EventKind`s entirely. "The agent chose to retire"
 and "consolidation absorbed a row" were already distinguishable at the kind level before this

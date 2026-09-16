@@ -74,7 +74,9 @@ async def test_a_zero_progress_send_failure_is_retried_once_through_a_fresh_conn
     monkeypatch.setattr("zikaron.mcp.connection._send_request", fake_send_request)
     monkeypatch.setattr("zikaron.mcp.connection._read_response", fake_read_response)
 
-    response = await connection.request("search", {}, envelope=connection.envelope(kind="mcp"))
+    response = await connection.request(
+        "memory_search", {}, envelope=connection.envelope(kind="mcp")
+    )
     assert response["result"] == {"ok": True}
     assert calls == ["send", "send"], "the second attempt must actually re-send"
 
@@ -105,18 +107,18 @@ async def test_a_send_failure_with_positive_progress_is_ambiguous_and_not_retrie
     monkeypatch.setattr("zikaron.mcp.connection._send_request", fake_send_request)
 
     with pytest.raises(AmbiguousMutationError) as excinfo:
-        await connection.request("remember", {}, envelope=connection.envelope(kind="mcp"))
+        await connection.request("memory_remember", {}, envelope=connection.envelope(kind="mcp"))
 
-    assert excinfo.value.method == "remember"
+    assert excinfo.value.method == "memory_remember"
     assert send_calls == 1, "a send failure with positive progress must never be retried"
 
 
 async def test_a_failure_reading_the_response_raises_ambiguous_mutation_error_and_is_not_retried(
     connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The exact case this fix exists for: `remember` may have already committed on the service,
-    with only its response lost — silently retrying would risk creating a second row, so this
-    must raise rather than resend.
+    """The exact case this fix exists for: `memory_remember` may have already committed on the
+    service, with only its response lost — silently retrying would risk creating a second row, so
+    this must raise rather than resend.
     """
     _stub_connected_socket(monkeypatch, [_FakeSocket("only")])
 
@@ -139,9 +141,9 @@ async def test_a_failure_reading_the_response_raises_ambiguous_mutation_error_an
     monkeypatch.setattr("zikaron.mcp.connection._read_response", fake_read_response)
 
     with pytest.raises(AmbiguousMutationError) as excinfo:
-        await connection.request("remember", {}, envelope=connection.envelope(kind="mcp"))
+        await connection.request("memory_remember", {}, envelope=connection.envelope(kind="mcp"))
 
-    assert excinfo.value.method == "remember"
+    assert excinfo.value.method == "memory_remember"
     assert send_calls == 1, "the request must be sent exactly once — never resent after this"
     assert read_calls == 1
 
@@ -175,14 +177,16 @@ async def test_the_socket_is_discarded_after_an_ambiguous_failure_so_a_later_cal
     monkeypatch.setattr("zikaron.mcp.connection._read_response", fake_read_response)
 
     with pytest.raises(AmbiguousMutationError):
-        await connection.request("remember", {}, envelope=connection.envelope(kind="mcp"))
+        await connection.request("memory_remember", {}, envelope=connection.envelope(kind="mcp"))
     assert first_socket.closed
     assert connection._sock is None
 
     # A later, separate tool call reconnects and succeeds normally — this is not the same
     # `request()` call retrying; it is the model calling a tool again, which is the caller's own
     # decision this module has no opinion about.
-    response = await connection.request("search", {}, envelope=connection.envelope(kind="mcp"))
+    response = await connection.request(
+        "memory_search", {}, envelope=connection.envelope(kind="mcp")
+    )
     assert response["result"] == {"ok": True}
     assert read_attempts == 2
 

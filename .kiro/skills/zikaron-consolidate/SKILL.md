@@ -12,7 +12,8 @@ schedule.
 
 ## You do not do this yourself
 
-You have `zikaron_search`, `zikaron_fetch`, `zikaron_remember`, `zikaron_amend` and `zikaron_retire`.
+You have `zikaron_memory_search`, `zikaron_memory_fetch`, `zikaron_memory_remember`,
+`zikaron_memory_amend` and `zikaron_memory_retire`.
 The merge, promote and discard verbs are not yours and never will be: consolidation runs as a
 separate agent with its own tool surface, on a fresh context, so that nothing from this session's
 reasoning leaks into judgments that will outlive it.
@@ -24,7 +25,7 @@ Spawn the **zikaron-consolidator** subagent with the `subagent` tool:
 ```
 role: zikaron-consolidator
 prompt: Consolidate this project's memory journal. Work through every group until
-        zikaron_next_group answers {"done": true}, then report what you did.
+        zikaron_memory_next_group answers {"done": true}, then report what you did.
 ```
 
 That is the whole invocation. The consolidator's own tooling claims the store's consolidation lock

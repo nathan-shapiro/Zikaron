@@ -140,8 +140,8 @@ class FetchedMemory:
 @dataclass(frozen=True, slots=True)
 class Rewrite:
     """The two fields a full rewrite supplies together — `create`'s and `amend`'s `gist`/
-    `content`, and the identically-named parameters of the `zikaron_remember` and `zikaron_amend`
-    tools.
+    `content`, and the identically-named parameters of the `zikaron_memory_remember` and
+    `zikaron_memory_amend` tools.
     """
 
     gist: str
@@ -373,7 +373,8 @@ async def commit_or_roll_back(db: aiosqlite.Connection, error: BaseException | N
 async def create(db: aiosqlite.Connection, *, gist: str, content: str, session_id: str) -> Memory:
     """Insert a new `memory` row at `version=1`, `tier='journal'`, `active=1`.
 
-    This is the row primitive `zikaron_remember` writes through, after the chunking preflight's
+    This is the row primitive `zikaron_memory_remember` writes through, after the chunking
+    preflight's
     `gist_max_tokens` bound and its own dedup search have already run — this function enforces
     neither, since both need the tokenizer or the indexes this layer does not touch. `content`
     and `gist` non-emptiness is enforced by the table's own `CHECK` constraints, which SQLite
@@ -456,7 +457,7 @@ async def fetch(
     """Resolve every uuid in `uuids`, minting a `fetch` receipt for each one found.
 
     Duplicate uuids are collapsed to one record, in first-occurrence order, per
-    `architecture.md`'s `zikaron_fetch` contract. An unknown uuid is reported in the returned
+    `architecture.md`'s `zikaron_memory_fetch` contract. An unknown uuid is reported in the returned
     `missing` list rather than failing the whole call — `schema.md` §Bounds: "a dead handle is
     something the agent needs told rather than a reason to fail the batch."
 
@@ -572,7 +573,8 @@ async def _reject_version_conflict(
 
     Raises `current` as a bare `ConflictRecord`, not a list: this function backs only
     `_authorize_mutation`, which every primary-agent verb (`amend`, `retire`) calls for exactly
-    one named row, and `architecture.md`'s tool surface states `zikaron_amend`/`zikaron_retire`'s
+    one named row, and `architecture.md`'s tool surface states
+    `zikaron_memory_amend`/`zikaron_memory_retire`'s
     conflict shape as `{conflict: true, current: CONFLICT_RECORD}` — one object, never a list.
     The list form (`current: [CONFLICT_RECORD, ...]`) belongs to the four consolidator verbs,
     which can name several rows in one call and whose own ladder therefore composes

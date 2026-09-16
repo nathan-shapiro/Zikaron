@@ -895,7 +895,8 @@ async def test_invariant_9_conflict_mints_a_receipt_the_caller_can_retry_with(
 async def test_invariant_9_a_version_conflicts_current_is_one_conflict_record_never_a_list(
     tmp_path: Path,
 ) -> None:
-    """`architecture.md`'s tool surface states `zikaron_amend`/`zikaron_retire`'s conflict shape
+    """`architecture.md`'s tool surface states
+    `zikaron_memory_amend`/`zikaron_memory_retire`'s conflict shape
     as `{conflict: true, current: CONFLICT_RECORD}` — one object. The list form
     (`current: [CONFLICT_RECORD, ...]`) belongs only to the four consolidator verbs, which this
     milestone does not implement, so `amend`'s own conflict payload must never wrap in a list."""

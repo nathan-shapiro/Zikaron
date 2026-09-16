@@ -173,8 +173,8 @@ CREATE TABLE read_receipt (
   version      INTEGER NOT NULL,
   at           TEXT    NOT NULL,
   source       TEXT    NOT NULL CHECK (source IN (
-                 'fetch',           -- zikaron_fetch delivered full content
-                 'group',           -- zikaron_next_group delivered full content
+                 'fetch',           -- zikaron_memory_fetch delivered full content
+                 'group',           -- zikaron_memory_next_group delivered full content
                  'conflict',        -- a rejected write returned the current full record
                  'own_write'        -- the caller authored this exact prose (remember/amend/merge/promote)
                )),
@@ -220,7 +220,7 @@ CREATE TABLE consolidation_group (
 CREATE INDEX idx_group_run_order ON consolidation_group(run_id, status, order_key, shard_index);
 
 -- SHARD IDENTITY IS PERSISTED, NOT RECOMPUTED, and both halves of it are. `consolidation.md` step 4
--- requires the payload to carry `shard: {index, of}` and `architecture.md` §`zikaron_next_group` exposes
+-- requires the payload to carry `shard: {index, of}` and `architecture.md` §`zikaron_memory_next_group` exposes
 -- it, so `of` has to survive a service restart like everything else the lifecycle promises to recover
 -- from state. Storing only `shard_index` would have left `of` derivable in exactly one way — replanning
 -- the cohesive subgroup from the current store — which is illegal twice over: membership is frozen at
@@ -1008,7 +1008,7 @@ named here and nowhere else.** A filter that is not in this table does not exist
 | **orphan adjacency (D29 step 2)** | **`tier='journal' AND active = 1`**, and exclude the querying row itself | this is exactly the definition of an unconsolidated journal row, i.e. of a group *member*. A superseded journal row cannot become a member, so letting it hold a top-`mutual_k` rank displaces a row that could |
 
 Each filter is restated at its own site — `design/consolidation.md` steps 1 and 2,
-`design/architecture.md` `zikaron_remember` — because an undocumented divergence between read paths is
+`design/architecture.md` `zikaron_memory_remember` — because an undocumented divergence between read paths is
 exactly the defect a shared predicate exists to prevent, and because the round-1 review found precisely that
 defect. Note what the three filters have in common: each one is the *legality* condition of the action the
 rows are being retrieved *for*. Retrieval for reading has no filter; retrieval for mutation is filtered to
@@ -1025,7 +1025,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 | `gist.characters` | ≤ **1024** code units, a fixed constant | Tokens bound neither characters nor bytes — the deployed WordPiece tokenizer maps an unbroken 4,000-character run to a single `[UNK]` — so the token bound above cannot make the injected block's size provable, and without a second bound the block can overrun any harness's injection budget. `harness.md` §"Injection budgets" carries the derivation; the number is chosen so a five-row block is **6,087 units, 61%** of the smallest budget any supported harness states, and at UTF-8's 3-bytes-per-UTF-16-unit ceiling **18,261 bytes, 28%** of the largest byte-denominated one. **The unit is UTF-16 code units, not code points**, matching the injection budget's own conservative count — the two halves of one argument must measure the same thing, or five astral-heavy gists satisfy the bound and overrun the budget it exists to prove. **Fixed, not configurable**: an output cap cannot be proven against a limit an operator can raise. **The trade it makes, stated because it is observable**: measured at 3.89–6.55 characters per token across prose styles, this binds above ~156 tokens of plain English, so it is *not* reachable at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding constraint in the top of that key's 8–256 range. Admitting prose at the 256-token ceiling would need ≥1584, putting the five-row block at 89% of budget — a loud rejection naming the character count is the better failure than a block that fits by luck. |
 | `content` | non-empty, **no upper limit** | D4 stores content untruncated. Length is handled by chunking, never by refusal. |
 | `limit` on `search`/`surface` | 1–50, default 5 | The **output** budget: how many memories come back. It does *not* set retrieval depth. |
-| `uuids` on `fetch` | 1–50 per call | The **bound** is all-or-nothing — a call naming 0 or >50 uuids is rejected whole and returns nothing. The **contents** are not: a well-formed call answers partially, returning every known record and reporting unknown uuids in `missing`, because a dead handle is something the agent needs told rather than a reason to fail the batch (`architecture.md` §`zikaron_fetch`). All-or-nothing in the error table means *mutating* batches. |
+| `uuids` on `fetch` | 1–50 per call | The **bound** is all-or-nothing — a call naming 0 or >50 uuids is rejected whole and returns nothing. The **contents** are not: a well-formed call answers partially, returning every known record and reporting unknown uuids in `missing`, because a dead handle is something the agent needs told rather than a reason to fail the batch (`architecture.md` §`zikaron_memory_fetch`). All-or-nothing in the error table means *mutating* batches. |
 | `absorb` on consolidator verbs | 1 row minimum, ≤ the group's member count | An empty list cannot complete a group, and a verb may never touch a row outside the group it was handed. |
 | FTS5 query terms | ≤ `fts_query_max_terms` (**64**) quoted terms, deduplicated, longest-first | Bounds worst-case lexical cost on a pathological prompt or a long memory. A "term" is one maximal run of Unicode alphanumerics, quoted as an FTS5 string literal and handed to FTS5's **own** tokenizer — see `retrieval.md` §"Query construction". The tie-break for "longest-first" is `(−length, first occurrence)`, so the cap is deterministic |
 | Internal lexical query | the querying memory's `gist + content`, through the same constructor and the same 64-term cap | An internal query (dedup, anchor, orphan edge) has no user text; its lexical side is the memory itself. The cap keeps the longest tokens, which for technical prose is where the identifiers are — `retrieval.md` §"Two kinds of query" |
@@ -1063,7 +1063,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
    in-degree unbounded, acyclic.** Each connected component is an in-tree whose root is the one row with
    `superseded_by IS NULL`, and whose other nodes are everything it replaced, transitively. A **chain** is only
    the special case where every in-degree happens to be 1. Convergence is deliberate and common:
-   `zikaron_merge` absorbing rows `A` and `B` into `C` writes `A→C` *and* `B→C`, so two rows share one
+   `zikaron_memory_merge` absorbing rows `A` and `B` into `C` writes `A→C` *and* `B→C`, so two rows share one
    replacement. Calling this "a forest of chains" was wrong, and it is what produced the impossible ranking
    rule the corpus review caught — see `retrieval.md` §"Supersession". Table CHECKs cover no-self-edge and
    `superseded_by IS NOT NULL ⇒ active = 0`.
@@ -1071,7 +1071,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
    **A root is live or terminal, and both are legal.** A `active=1` root is the current record. A root that is
    `active=0 AND superseded_by IS NULL` is a **terminal component**: the whole lineage has been declared no
    longer true with nothing replacing it. That state is reachable by an ordinary legal write — `A→B` exists and
-   the agent then calls `zikaron_retire(B)` with no replacement — so the schema must define it rather than
+   the agent then calls `zikaron_memory_retire(B)` with no replacement — so the schema must define it rather than
    forbid it. Forbidding it was considered and **rejected**: it would force an agent to either leave a
    known-false row active or invent a replacement it does not have, and "this whole lineage is dead" is a
    thing tribal knowledge genuinely needs to be able to say. Invariant 7 defines what retrieval and `fetch`
@@ -1172,7 +1172,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 14. **`uuid` is the only handle ever exposed *to the primary agent*.** `rowid`, `chunk_id` and `event.id`
     are internal to every client. `group_id` and `run_id` are exposed to the **consolidator** only, and
     naming `run_id` internal here without that carve-out contradicted `architecture.md`
-    §`zikaron_next_group`, whose payload has stated `{group_id, run_id, …}` since the lifecycle was written.
+    §`zikaron_memory_next_group`, whose payload has stated `{group_id, run_id, …}` since the lifecycle was written.
     The carve-out is safe because neither id is a *handle*: `group_id` is the only one any verb accepts, and
     **no verb accepts `run_id` at all** — it is a correlation id, so that a consolidator's own log line, and
     the `merge`/`promote`/`discard`/`group_served`/`consolidate_run` events it caused, can be joined to the

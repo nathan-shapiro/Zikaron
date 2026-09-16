@@ -962,7 +962,7 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
 0. **Subagent check** — if `KIRO_SESSION_ID` is present and differs from the payload's `session_id`, **print
    nothing, stop** (§"Subagent sessions"). No RPC, no log line. This is unrelated to the failure path below;
    it is not a failure at all.
-1. RPC `surface(prompt, limit=5)`. On success, print what the service returned.
+1. RPC `memory_surface(prompt, limit=5)`. On success, print what the service returned.
 2. **On any failure — transport, startup, contention, identity, or a store error** — `ENOENT`, `ECONNREFUSED`,
    spawn failure, `health()` never ready, the internal deadline, a `store_identity` mismatch, `−32020
    store_busy`, `−32023 bad_config`, `−32022 reindexing`, or anything unexpected: **append one line to its own
@@ -1077,21 +1077,34 @@ Evidence: `research/claude-code-mcp-result-truncation.md`.
 Tool *descriptions* carry the mechanics — the version precondition, the dedup payload, retire semantics —
 because per D30 they sit in context at the point of decision, while D18's `agentSpawn` prose carries policy.
 
+**Every tool name is `zikaron_<subsystem>_<verb>`, and the subsystem segment is load-bearing rather
+than decorative.** One `--mode primary` process serves two stores that answer different questions —
+agent-authored memories, and fragments of files nobody here authored — and a model choosing between
+them reads the name before it reads the description. A bare `zikaron_search` beside
+`zikaron_knowledge_search` reads as the general case of the other rather than as a different store,
+and the call that follows costs a round trip to return a confidently empty answer about the wrong
+corpus. The four consolidator tools carry `memory_` too: the store a tool rewrites is part of its
+name, and the *mode* it runs in is not, since nothing a model reads tells it which mode it is in.
+
 **The primary server registers more than these five, and this section is normative only for the
-memory verbs.** Knowledge search rides on the same `--mode primary` process and is specified in
-`design/knowledge-index.md` §8.3 — signature, result shape and description alike. It is named here
-so that a reader counting the tools on that server does not conclude one of them is undocumented,
-and it is not duplicated here because two statements of one tool surface is the drift this document
-spends its length avoiding elsewhere.
+memory verbs.** The knowledge index's seven tools ride on the same `--mode primary` process and are
+specified in `design/knowledge-index.md` §§8.3–8.5 — signatures, result shapes and descriptions
+alike. They are named here so that a reader counting the tools on that server does not conclude one
+of them is undocumented, and they are not duplicated here because two statements of one tool
+surface is the drift this document spends its length avoiding elsewhere.
 
 ```
-zikaron_search(query: str, limit: int = 5, include_retired: bool = false)
+zikaron_memory_search(query: str, limit: int = 5, include_retired: bool = false)
   -> [{uuid, gist, tier, state, created_at, updated_at, superseded_by}]
      `state` ∈ live | superseded | retired, so triage can see a demoted row for what it is.
      Ordered by the total order in retrieval.md; the order is stated to the agent, best first.
      No version field, and therefore no licence to write. Empty store returns [].
+     The description names zikaron_knowledge_search as where the other store is searched:
+     this one holds what agents recorded, that one what the project itself wrote down.
+     The pairing is stated on both tools (knowledge-index.md §8.3 carries the other half),
+     because a model that knows only one of them searches the wrong store and finds nothing.
 
-zikaron_fetch(uuids: list[str])       # 1–50 uuids
+zikaron_memory_fetch(uuids: list[str])       # 1–50 uuids
   -> {records: [{uuid, gist, content, version, tier, active, state,
                  superseded_by, superseded_by_latest, superseded_by_latest_state,
                  created_at, updated_at}],
@@ -1107,7 +1120,7 @@ zikaron_fetch(uuids: list[str])       # 1–50 uuids
      licenses a later write. It is the only way to license a write to a row this session did
      not itself just write, or just receive back in a conflict payload.
 
-zikaron_remember(gist: str, content: str)
+zikaron_memory_remember(gist: str, content: str)
   -> {uuid, version, near_duplicates: [{uuid, gist, cosine, rank}]}
      Writes unconditionally, then reports near-duplicates (D15, D32). The dedup search runs
      after insertion, in the same transaction, and **excludes the row just created** — it is its
@@ -1131,11 +1144,12 @@ zikaron_remember(gist: str, content: str)
      false in both directions. So the tool asserts nothing and the agent reading both gists is the
      thing that can tell them apart.
      The new row is live regardless. Resolving a duplicate the agent agrees with takes two further
-     calls and the tool description says so — `zikaron_amend` the older row, then `zikaron_retire`
-     the new one with `superseded_by` = the older uuid. Until then both are live and consolidation
+     calls and the tool description says so — `zikaron_memory_amend` the older row, then
+     `zikaron_memory_retire` the new one with `superseded_by` = the older uuid.
+     Until then both are live and consolidation
      will group them. Mints an `own_write` receipt for the new row.
 
-zikaron_amend(uuid: str, version: int, gist: str, content: str)
+zikaron_memory_amend(uuid: str, version: int, gist: str, content: str)
   -> {uuid, version}
    | {conflict: true, current: CONFLICT_RECORD}
      Full rewrite (D6). Requires a read receipt at `version` (D26). A version mismatch rejects and
@@ -1144,7 +1158,7 @@ zikaron_amend(uuid: str, version: int, gist: str, content: str)
      one round trip.
      Mints an `own_write` receipt at the new version.
 
-zikaron_retire(uuid: str, version: int, superseded_by: str | None = None)
+zikaron_memory_retire(uuid: str, version: int, superseded_by: str | None = None)
   -> {uuid, version} | {conflict: true, current: CONFLICT_RECORD}
      Soft only (D16). `superseded_by` set = superseded, and stays retrievable-but-demoted;
      omitted = retired outright, and drops out of default retrieval (schema.md §eligibility).
@@ -1195,7 +1209,7 @@ allowlist never includes them.
 before either set of tools exists.** Each `zikaron-mcp` process is told which mode to run as at startup
 (`--mode primary` or `--mode consolidator`, one per shipped agent config), and decorates only that mode's
 own tools onto its one `FastMCP` instance — never both sets, and never every tool with one set hidden. A
-consolidator process's `tools/list` cannot name `search`/`fetch`, because they were never registered as
+consolidator process's `tools/list` cannot name `zikaron_memory_search`/`zikaron_memory_fetch`, because they were never registered as
 callables on that process at all; a `tools/call` naming either has no handler to dispatch to. This is
 different from an allowlist filtering every registered tool down to four: there is no allowlist, and no
 moment at which the primary's tools exist in that process to be filtered out of.
@@ -1210,7 +1224,7 @@ Two rules run through all four signatures, and the first draft of this document 
   promote B, discard C — takes three calls, and the group closes only when its last member is dispositioned.
 
 ```
-zikaron_next_group()
+zikaron_memory_next_group()
   -> {group_id, run_id,
       anchor:          {uuid, expected_version, gist, content, created_at} | null,
       anchor_vacated:  bool,          # true when a planned anchor was no longer targetable at serve
@@ -1256,8 +1270,8 @@ zikaron_next_group()
      `fetch`. Anchor and candidates are also persisted as this group's authorization set
      (`schema.md` `consolidation_group_candidate`), which is what `merge` checks its target against.
 
-zikaron_merge(group_id, target: {uuid, expected_version}, gist, content,
-              absorb: [{uuid, expected_version}, ...])
+zikaron_memory_merge(group_id, target: {uuid, expected_version}, gist, content,
+                     absorb: [{uuid, expected_version}, ...])
   -> {uuid, version, remaining_uuids: [...], group_complete: bool}
    | {conflict: true, current: [CONFLICT_RECORD, ...], remaining_uuids: [...]}
      Rewrite an existing long-term record to absorb part or all of a group. `absorb` rows are
@@ -1273,7 +1287,7 @@ zikaron_merge(group_id, target: {uuid, expected_version}, gist, content,
      `version_conflict`, since retiring bumps the version. `absorb` rows must all be members, i.e.
      journal entries delivered in this group and not yet dispositioned.
 
-zikaron_promote(group_id, gist, content, absorb: [{uuid, expected_version}, ...])
+zikaron_memory_promote(group_id, gist, content, absorb: [{uuid, expected_version}, ...])
   -> {uuid, version, remaining_uuids: [...], group_complete: bool}
    | {conflict: true, current: [CONFLICT_RECORD, ...], remaining_uuids: [...]}
      Create a long-term record from part or all of a group. Two forms, and which one runs is
@@ -1299,7 +1313,7 @@ zikaron_promote(group_id, gist, content, absorb: [{uuid, expected_version}, ...]
      promote that row in place until the consolidator authors a shorter gist, which is the `new_row`
      form; that is the same rule §Bounds already states for `amend` and not a second one.
 
-zikaron_discard(group_id, absorb: [{uuid, expected_version}, ...], reason: str)
+zikaron_memory_discard(group_id, absorb: [{uuid, expected_version}, ...], reason: str)
   -> {retired: int, remaining_uuids: [...], group_complete: bool}
    | {conflict: true, current: [CONFLICT_RECORD, ...], remaining_uuids: [...]}
      Retire journal rows judged not worth keeping: active=0, superseded_by NULL (D16). `reason` is
@@ -1677,7 +1691,7 @@ requires elsewhere. The precise rule, in three parts:
 - **All-or-nothing is a rule about mutations, not about reads, and stating it unqualified contradicted
   `fetch`.** `fetch` is deliberately **partial**: a call naming a known and an unknown uuid returns the known
   record and reports the unknown one in `missing`, because the agent needs to be told a handle is dead rather
-  than have its whole batch fail (§`zikaron_fetch`, `schema.md` §Bounds). What *is* all-or-nothing about a read
+  than have its whole batch fail (§`zikaron_memory_fetch`, `schema.md` §Bounds). What *is* all-or-nothing about a read
   is its **bounds check** — 0 or >50 uuids is rejected whole, returns nothing, and mints no receipt. So: a read
   either rejects as a unit at the boundary or answers per uuid; a mutation is atomic across every row it names.
 - **It may commit audit events.** `version_conflict` and `no_receipt` are `event` kinds that D30's
@@ -1806,7 +1820,7 @@ could not both hold.
 | −32002 | `no_read_receipt` | no receipt for `(session_id, client_kind, memory_uuid, version)` (invariant 9) | `{uuids, hint:'fetch it first'}` — **logs an event per uuid** |
 | −32003 | `inactive_row` | `amend` or `retire` of a row that is already `active=0` | `{uuid, state}` with `state ∈ superseded \| retired` — the two `active=0` members of the tool surface's `live \| superseded \| retired` vocabulary (§"MCP tool surface"). Never `live`: this code fires only on a row already `active=0`, and `live` means `active=1`, so a raise site that produced it would itself be the bug this payload exists to catch |
 | −32004 | `bad_supersession` | self-edge, cycle, target retired-outright, edge already set, or depth cap hit | `{uuid, target, reason}` |
-| −32005 | `bounds` | gist over `gist_max_tokens`, empty gist or content, `limit` or list size out of range | `{field, limit, actual}` |
+| −32005 | `bounds` | gist over `gist_max_tokens`, empty gist or content, `limit` or list size out of range — and, on the `knowledge_*` methods, a blank knowledge-base name, a `knowledge_add` `path` that is absent, is not a directory, or is degenerate (`knowledge-index.md` §8.6), or a `knowledge_add` `max_file_bytes` outside the range configuration declares. Those three reuse this code rather than minting their own because this is the rejection of a *parameter value*, decided with no store state consulted: the root check reads the filesystem, but nothing about its answer depends on what any corpus holds, and the remedy for all three is the same call with a different value for the field `data` names. **The size cap is the one worth naming explicitly**, since its range comes from the configuration schema and `bad_config` is therefore the easy mistake — that code means a *stored or configured* value is unusable and points at a file to fix, which is the wrong place to send a caller that typed a number | `{field, limit, actual}` |
 | −32010 | `group_unknown` | `group_id` not in the store | `{group_id}` |
 | −32011 | `group_expired` | its run is `expired`/`abandoned`/`taken_over`, belongs to a different `(session_id, pid)` owner, or is `active` with `expires_at < now` | `{group_id, run_status, expires_at, effective_status}` — `run_status` is the **stored** status and `effective_status` is `'expired'` whenever the lease has passed. The call writes no status; only `plan_groups` does. Recovery is `next_group`, which replans an effectively-expired run for **any** caller including its owner — and which answers `{busy: true}` when another worker has taken the store over, since a displaced worker must stop rather than replan against a live holder |
 | −32012 | `group_complete` | every member already dispositioned | `{group_id}` |
@@ -1819,6 +1833,10 @@ could not both hold.
 | −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook never reads the store on this, like every other failure |
 | −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
+| −32040 | `knowledge_base_unknown` | a `knowledge_*` method named a corpus the registry has no row for | `{name}` — the **normalized** spelling, since that is what the registry stores and what `list` reports |
+| −32041 | `knowledge_base_exists` | `knowledge_add` with a name already taken, or `knowledge_rename` to one. Never an upsert: silently reconfiguring a corpus underneath whoever created it is worse than a failed call (`knowledge-index.md` §8.4) | `{name}` |
+| −32042 | `knowledge_base_busy` | `knowledge_remove` against a corpus whose build lock is held by a process this host cannot show is gone. **Not raised by `knowledge_refresh`**, which reports `already_indexing` as a per-corpus outcome instead, because a refresh meeting a live build has done what was asked (`knowledge-index.md` §8.2) | `{name, holder}` — `holder` describes the recorded lock holder, for an operator deciding whether to wait |
+| −32043 | `knowledge_confirm_required` | `knowledge_remove` without `confirm=true` | `{name, state, files_indexed, chunks}` — what would be destroyed, which is the only preview of an irreversible unlink there is. **`chunks` is `null` where the corpus cannot be read**, never `0`: a present database refused for a permission or schema reason may hold a fully built corpus, and a confident zero on the one verb nothing undoes is the worst available answer. `state` is carried for the same reason — at `error` it is what says `files_indexed: 0` describes availability rather than content (`knowledge-index.md` §8.5) |
 
 **A read has no `index_failed`, and that is deliberate rather than an omission.** The table's store-level codes
 cover the two failures a read can have an opinion about: contention is `store_busy` (retryable, and it covers
@@ -1840,9 +1858,25 @@ Non-errors worth naming: a near-duplicate is not an error; a group with no candi
 
 ## Service RPC surface
 
-The five verbs above, plus:
+**A wire method is its tool's name without the leading `zikaron_`**, so the subsystem segment
+survives into it: `zikaron_memory_search` is `memory_search`, `zikaron_knowledge_search` is
+`knowledge_search`. Five methods depart from that, for two reasons, and each says why below —
+`memory_surface` and `memory_plan_groups` have no tool, the first being called by the hook and the
+second by the consolidator's own client; and the three consolidator write
+verbs carry an extra `apply_` because the RPC applies a decision the tool merely names. `health` is
+the one method with no subsystem segment at all, since it speaks for the service rather than for
+either store.
 
-- `surface(prompt, limit, client)` — the push path. Returns **formatted, ready-to-print text** so the hook
+**Everywhere else in this corpus a bare verb name — `merge`, `promote`, `discard`, `next_group`,
+`surface` — denotes the *operation*, not the wire method.** This section is the one place the wire
+name is stated, and it is the only place a client implementer should read a method name off. The
+same split already runs through `event.kind` and the `{verb}` field of `store_busy`, which name
+operations in that same vocabulary and are unaffected by what a method is called on the wire.
+
+The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `memory_amend` and
+`memory_retire`, plus:
+
+- `memory_surface(prompt, limit, client)` — the push path. Returns **formatted, ready-to-print text** so the hook
   stays dumb: the untrusted-reference-data preamble, the stated best-first order, and the `[superseded]`
   labels all come from the service. Format spec: `design/retrieval.md` §"Push output format". Distinct from
   `search` because it applies D12's budget and, per D23, no reranker. `limit` is the **output** budget only;
@@ -1853,7 +1887,8 @@ The five verbs above, plus:
   belongs to its store; resolving there would let a client adopt a foreign service's label (§"`label_source` is
   derived, not stored"). It is the **only** method without an envelope; `register_session` was the other, and it
   is deleted along with the ladder rung it fed (§"Both clients resolve the same label").
-- `plan_groups()`, `next_group()`, `apply_merge(...)`, `apply_promote(...)`, `apply_discard(...)` — D29's
+- `memory_plan_groups()`, `memory_next_group()`, `memory_apply_merge(...)`,
+  `memory_apply_promote(...)`, `memory_apply_discard(...)` — D29's
   deterministic grouping plus the writes behind the four consolidator tools. `plan_groups` is called implicitly
   by `next_group` when the store has **no effectively-active run** — `status='active' AND expires_at ≥ now` —
   whoever owns it, so an owner whose own lease lapsed recovers by
@@ -1870,16 +1905,20 @@ The five verbs above, plus:
   pair rather than the session, because two consolidators launched from one kiro session now share a
   `session_id`; `holder_pid` is returned so same-session contention is diagnosable rather than silent.
 
-- `knowledge_search(query, knowledge_bases, limit_per_kb)` — the knowledge index's read path, specified
-  in full by `design/knowledge-index.md` §8.3. Named here because it is served by this socket and
-  belongs on any list of what this service answers; not described here, because one tool surface
-  described in two documents is the drift this one spends its length avoiding. It reads the
-  knowledge-base registry in `memory.db` and each corpus's own database, and touches no other table.
+- `knowledge_search(query, knowledge_bases, limit_per_kb)`, `knowledge_list()`,
+  `knowledge_status(knowledge_base)`, `knowledge_add(...)`, `knowledge_remove(name, confirm)`,
+  `knowledge_rename(name, new_name)` and `knowledge_refresh(name, full)` — the knowledge index's
+  read path and its management verbs, specified in full by `design/knowledge-index.md` §§8.3–8.5.
+  Named here because they are served by this socket and
+  belong on any list of what this service answers; not described here, because one tool surface
+  described in two documents is the drift this one spends its length avoiding. They read the
+  knowledge-base registry in `memory.db` and each corpus's own database, and touch no other table.
 
 Every method takes the `client` envelope described under §RPC **except `health()`**, the one unlabelled
-primitive named above — `knowledge_search` included, though it writes no event against the label it is
-given: the knowledge index's own counters live in each corpus's `meta` rather than in the memory
-store's `event` log, and nothing about a search is attributed to a session.
+primitive named above — the `knowledge_*` methods included, though none of them writes an event
+against the label it is given: the knowledge index's own counters live in each corpus's `meta`
+rather than in the memory store's `event` log, and nothing about a search or a corpus's lifecycle
+is attributed to a session.
 
 ## Distribution artefacts
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose

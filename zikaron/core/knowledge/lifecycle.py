@@ -43,12 +43,23 @@ import aiosqlite
 
 from zikaron.core.clock import timestamp
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.knowledge import database, lock, meta, paths, registry, reporting, roots, scan
+from zikaron.core.knowledge import (
+    builds,
+    database,
+    lock,
+    meta,
+    paths,
+    registry,
+    reporting,
+    roots,
+    scan,
+)
 from zikaron.core.knowledge.disposal import BuildSettings
 from zikaron.core.knowledge.errors import (
-    CorpusRootMissingError,
     DanglingKnowledgeBaseError,
     IndexerBusyError,
+    InvalidSettingError,
+    SettingBounds,
 )
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.store import permissions
@@ -173,13 +184,13 @@ async def add(
         InvalidRootError: the root is absent, is not a directory, or is degenerate.
         DuplicateNameError: the name is taken. Never an upsert — silently reconfiguring a corpus
             underneath whoever created it is worse than a failed call.
-        ZikaronError: `BAD_CONFIG` if `max_file_bytes` is out of range.
+        InvalidSettingError: `max_file_bytes` is outside the range configuration declares for it.
     """
     home = request.home if request.home is not None else Path.home()
     resolved_root = roots.validate_root(request.root, home=home)
     stored_name = registry.normalize_name(request.name)
     if request.max_file_bytes is not None:
-        meta.check_bounded(meta.MAX_FILE_BYTES_KEY, request.max_file_bytes)
+        _check_supplied_size_cap(request.max_file_bytes)
     effective = await roots.effective_git_mode(resolved_root, request.git_mode)
 
     async def _register(connection: aiosqlite.Connection) -> KnowledgeBase:
@@ -214,6 +225,26 @@ async def add(
         git_mode=request.git_mode,
         git_mode_effective=effective,
         status=observed.status,
+    )
+
+
+def _check_supplied_size_cap(value: int) -> None:
+    """Refuse a size cap a caller chose, in the caller's own terms rather than the store's.
+
+    The range comes from the configuration schema, which is what keeps a corpus created this way
+    reproducible by writing a configuration file — but the *refusal* must not: a caller that typed
+    a number is not being told its configuration is unusable, and pointing it at a file to fix
+    would send it looking for a typo that is in its own request.
+
+    Raises:
+        InvalidSettingError: the value is outside the declared range.
+    """
+    bounds, expected = meta.bounds_for(meta.MAX_FILE_BYTES_KEY)
+    if bounds.permits(value):
+        return
+    raise InvalidSettingError(
+        f"{meta.MAX_FILE_BYTES_KEY} must be {expected}, not {value}",
+        bounds=SettingBounds(key=meta.MAX_FILE_BYTES_KEY, value=value, expected=expected),
     )
 
 
@@ -273,50 +304,15 @@ async def refresh(
             everything that said what to index.
         CorpusRootMissingError: the indexed directory is gone. The index is left as it is.
         IndexerBusyError: another build holds this corpus's lock.
+        aiosqlite.Error | ZikaronError | OSError: the database is present and will not open. The
+            driver's own failure, propagated rather than renamed, since nothing the caller can do
+            fixes it.
     """
-    registered = await prepare_build(store_dir, db, name=name)
+    registered = await builds.prepare(store_dir, db, config, name=name)
     async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
         result = await scan.run(opened, build)
     observed = await reporting.observe(store_dir, registered, config)
     return Refreshed(knowledge_base=registered, result=result, status=observed.status)
-
-
-async def prepare_build(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> KnowledgeBase:
-    """Everything that must hold before a build is worth starting, and the corpus it would build.
-
-    Separated from the build itself because a build is usually **not** run by the process that
-    asked for one: it is spawned detached, with its output discarded and nowhere to report a
-    refusal to. So every refusal that can be decided without reading a file is decided here, in
-    front of whoever asked. The build that follows re-establishes each of them for itself, because
-    this and the build are not one transaction and the second is the one whose answer is acted on.
-
-    **A missing root is the one that would otherwise vanish entirely.** A build refuses it before
-    taking the lock, so it leaves not even the dead holder that says a detached build died — the
-    corpus simply goes on reporting `root_missing` while the command that asked said a build had
-    started.
-
-    Raises:
-        InvalidNameError: `name` is empty or blank.
-        UnknownKnowledgeBaseError: nothing is registered under `name`.
-        DanglingKnowledgeBaseError: the corpus is registered but its database is gone, and with it
-            everything that said what to index.
-        CorpusRootMissingError: the directory this corpus indexes is gone. The index is kept.
-        IndexerBusyError: a build that cannot be shown to be dead already holds this corpus's lock.
-    """
-    await registry.ensure(db)
-    registered = await registry.require(db, name)
-    async with _open_registered(store_dir, registered) as opened:
-        root = Path(opened.meta.root_path)
-        blocker = lock.running_holder(
-            await database.read_meta(opened.connection), host=lock.this_host()
-        )
-    if not root.is_dir():
-        raise CorpusRootMissingError(roots.missing_root_message(root))
-    if blocker is not None:
-        raise IndexerBusyError(
-            f"a build is already running against {registered.name!r} ({blocker.describe()})"
-        )
-    return registered
 
 
 async def unlock(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> lock.LockHolder | None:
@@ -388,7 +384,8 @@ async def remove(
     if observed.blocker is not None:
         raise IndexerBusyError(
             f"a build is running against {registered.name!r} ({observed.blocker.describe()}); "
-            f"retry once it has finished"
+            f"retry once it has finished",
+            holder=observed.blocker,
         )
 
     async def _work(connection: aiosqlite.Connection) -> KnowledgeBase:

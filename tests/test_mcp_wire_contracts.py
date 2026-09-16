@@ -51,6 +51,10 @@ async def _client_for(
 
 _SUCCESS: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
 
+#: Any corpus root, for a case that is about what a tool *sends* rather than about what is on disk:
+#: the service is faked out here, so nothing ever resolves this.
+_A_PATH = "/corpus/docs"
+
 
 class _ToolCase(NamedTuple):
     tool_name: str
@@ -63,28 +67,33 @@ class _ToolCase(NamedTuple):
     "case",
     [
         _ToolCase(
-            "zikaron_search",
+            "zikaron_memory_search",
             {"query": "q", "limit": 3, "include_retired": True},
-            "search",
+            "memory_search",
             {"query": "q", "limit": 3, "include_retired": True},
         ),
-        _ToolCase("zikaron_fetch", {"uuids": ["a", "b"]}, "fetch", {"uuids": ["a", "b"]}),
         _ToolCase(
-            "zikaron_remember",
+            "zikaron_memory_fetch",
+            {"uuids": ["a", "b"]},
+            "memory_fetch",
+            {"uuids": ["a", "b"]},
+        ),
+        _ToolCase(
+            "zikaron_memory_remember",
             {"gist": "g", "content": "c"},
-            "remember",
+            "memory_remember",
             {"gist": "g", "content": "c"},
         ),
         _ToolCase(
-            "zikaron_amend",
+            "zikaron_memory_amend",
             {"uuid": "u1", "version": 2, "gist": "g", "content": "c"},
-            "amend",
+            "memory_amend",
             {"uuid": "u1", "version": 2, "gist": "g", "content": "c"},
         ),
         _ToolCase(
-            "zikaron_retire",
+            "zikaron_memory_retire",
             {"uuid": "u1", "version": 2, "superseded_by": "u2"},
-            "retire",
+            "memory_retire",
             {"uuid": "u1", "version": 2, "superseded_by": "u2"},
         ),
         _ToolCase(
@@ -98,6 +107,74 @@ class _ToolCase(NamedTuple):
             {"query": "q"},
             "knowledge_search",
             {"query": "q", "knowledge_bases": None, "limit_per_kb": 5},
+        ),
+        _ToolCase("zikaron_knowledge_list", {}, "knowledge_list", {}),
+        _ToolCase(
+            "zikaron_knowledge_status",
+            {"knowledge_base": "docs"},
+            "knowledge_status",
+            {"knowledge_base": "docs"},
+        ),
+        _ToolCase("zikaron_knowledge_status", {}, "knowledge_status", {"knowledge_base": None}),
+        _ToolCase(
+            "zikaron_knowledge_add",
+            {
+                "name": "docs",
+                "path": _A_PATH,
+                "description": "a corpus",
+                "include": ["*.md"],
+                "exclude": ["draft/*"],
+                "git_mode": "all",
+                "max_file_bytes": 4096,
+            },
+            "knowledge_add",
+            {
+                "name": "docs",
+                "path": _A_PATH,
+                "description": "a corpus",
+                "include": ["*.md"],
+                "exclude": ["draft/*"],
+                "git_mode": "all",
+                "max_file_bytes": 4096,
+            },
+        ),
+        _ToolCase(
+            "zikaron_knowledge_add",
+            {"name": "docs", "path": _A_PATH, "description": "a corpus"},
+            "knowledge_add",
+            {
+                "name": "docs",
+                "path": _A_PATH,
+                "description": "a corpus",
+                "include": None,
+                "exclude": None,
+                "git_mode": "tracked",
+                "max_file_bytes": None,
+            },
+        ),
+        _ToolCase(
+            "zikaron_knowledge_remove",
+            {"name": "docs", "confirm": True},
+            "knowledge_remove",
+            {"name": "docs", "confirm": True},
+        ),
+        _ToolCase(
+            "zikaron_knowledge_rename",
+            {"name": "docs", "new_name": "design"},
+            "knowledge_rename",
+            {"name": "docs", "new_name": "design"},
+        ),
+        _ToolCase(
+            "zikaron_knowledge_refresh",
+            {"name": "docs", "full": True},
+            "knowledge_refresh",
+            {"name": "docs", "full": True},
+        ),
+        _ToolCase(
+            "zikaron_knowledge_refresh",
+            {},
+            "knowledge_refresh",
+            {"name": None, "full": False},
         ),
     ],
 )
@@ -118,7 +195,7 @@ async def test_each_primary_tool_sends_its_exact_wire_method_and_params(
     "case",
     [
         _ToolCase(
-            "zikaron_merge",
+            "zikaron_memory_merge",
             {
                 "group_id": "g1",
                 "target": {"uuid": "t1", "expected_version": 1},
@@ -126,7 +203,7 @@ async def test_each_primary_tool_sends_its_exact_wire_method_and_params(
                 "content": "c",
                 "absorb": [{"uuid": "a1", "expected_version": 1}],
             },
-            "apply_merge",
+            "memory_apply_merge",
             {
                 "group_id": "g1",
                 "target": {"uuid": "t1", "expected_version": 1},
@@ -136,15 +213,15 @@ async def test_each_primary_tool_sends_its_exact_wire_method_and_params(
             },
         ),
         _ToolCase(
-            "zikaron_promote",
+            "zikaron_memory_promote",
             {"group_id": "g1", "gist": "g", "content": "c", "absorb": []},
-            "apply_promote",
+            "memory_apply_promote",
             {"group_id": "g1", "gist": "g", "content": "c", "absorb": []},
         ),
         _ToolCase(
-            "zikaron_discard",
+            "zikaron_memory_discard",
             {"group_id": "g1", "absorb": [], "reason": "not useful"},
-            "apply_discard",
+            "memory_apply_discard",
             {"group_id": "g1", "absorb": [], "reason": "not useful"},
         ),
     ],
@@ -153,8 +230,9 @@ async def test_each_consolidator_write_tool_sends_its_exact_apply_prefixed_wire_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: _ToolCase
 ) -> None:
     """`dispatch_consolidation.py`'s own docstring names the exact defect this test rules out: a
-    client sending bare `merge`/`promote`/`discard` (the verb name used elsewhere in the design's
-    own prose) rather than the actual wire method `apply_merge`/`apply_promote`/`apply_discard`
+    client sending `memory_merge`/`memory_promote`/`memory_discard` — the tool's own name minus its
+    `zikaron_` prefix, which is how every other wire method is spelled — rather than the actual
+    `memory_apply_merge`/`memory_apply_promote`/`memory_apply_discard`
     would receive `METHOD_NOT_FOUND` from a real service, invisible to any test that only calls
     this module's Python functions directly rather than going through the wire params it builds.
     """
@@ -169,7 +247,7 @@ async def test_each_consolidator_write_tool_sends_its_exact_apply_prefixed_wire_
         # of which the bridge gates, but starting from a clean, known state keeps this
         # parametrized test's own call count assertion exact regardless of tool ordering.
         await client.call_tool(case.tool_name, case.tool_args)
-    write_calls = [call for call in calls if call[0] != "plan_groups"]
+    write_calls = [call for call in calls if call[0] != "memory_plan_groups"]
     assert len(write_calls) == 1
     method, params, kind = write_calls[0]
     assert method == case.expected_method
@@ -240,7 +318,7 @@ async def test_the_knowledge_response_cap_is_denominated_as_the_transport_delive
 @pytest.mark.parametrize(
     ("tool_name", "tool_args"),
     [
-        ("zikaron_search", {"query": "anything"}),
+        ("zikaron_memory_search", {"query": "anything"}),
         ("zikaron_knowledge_search", {"query": "anything"}),
     ],
 )

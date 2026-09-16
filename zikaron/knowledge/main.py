@@ -20,7 +20,7 @@ from pathlib import Path
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.knowledge import lifecycle, lock, meta, reporting
+from zikaron.core.knowledge import builds, lifecycle, lock, meta, reporting, state
 from zikaron.knowledge import scope
 from zikaron.knowledge.indexer import detach
 
@@ -45,7 +45,14 @@ def _parser() -> argparse.ArgumentParser:
 
     adding = verbs.add_parser("add", help="register a corpus and create its database")
     adding.add_argument("name", help="what to call it. Free-form; lower-cased when stored")
-    adding.add_argument("--path", type=Path, required=True, help="the directory to index")
+    adding.add_argument(
+        "--path",
+        type=Path,
+        required=True,
+        help="the directory to index. A relative path is taken from this shell's working "
+        "directory, as any other command's would be — the agent-facing tool takes one from the "
+        "project root instead, since it has no shell to be relative to.",
+    )
     adding.add_argument(
         "--description",
         required=True,
@@ -98,7 +105,12 @@ def _parser() -> argparse.ArgumentParser:
     reporting_parser.add_argument("name", nargs="?", default=None)
 
     refreshing = verbs.add_parser("refresh", help="build a knowledge base's index")
-    refreshing.add_argument("name")
+    refreshing.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="which knowledge base to build. Omit it to reach every one, each checked on its own.",
+    )
     refreshing.add_argument(
         "--full",
         action="store_true",
@@ -187,18 +199,76 @@ async def _add(args: argparse.Namespace, store: scope.OpenStore) -> int:
             f"{created.git_mode_effective.value!r}."
         )
     _start_build(created.knowledge_base.name, store, full=False)
+    _explain_detachment()
     return 0
 
 
 async def _refresh(args: argparse.Namespace, store: scope.OpenStore) -> int:
-    """Clear a lock if asked to, check what can be checked, and start a build in the background."""
+    """Clear a lock if asked to, check what can be checked, and start a build in the background.
+
+    Returns non-zero when any named corpus could not be built, so a shell sees a refusal as a
+    failure — but never for `already_indexing`, which is the idempotent case: a refresh that met a
+    running build got what it asked for, and a loop of them must not read as a loop of failures.
+    """
     if args.force_unlock:
+        if args.name is None:
+            _refuse("--force-unlock clears one knowledge base's lock, so name one")
+            return 1
         _report_unlock(await lifecycle.unlock(store.directory, store.connection, name=args.name))
     # Everything decidable without reading a file is decided here, in front of whoever ran this:
     # the build itself detaches, and a refusal it raised would go to a discarded stream.
-    registered = await lifecycle.prepare_build(store.directory, store.connection, name=args.name)
-    _start_build(registered.name, store, full=args.full)
-    return 0
+    names = None if args.name is None else [args.name]
+    planned = await builds.plan(store.directory, store.connection, store.config, names=names)
+    if not planned:
+        print("no knowledge bases in this project")
+    started = False
+    refused = False
+    for entry in planned:
+        if entry.may_start:
+            _start_build(entry.knowledge_base.name, store, full=args.full)
+            started = True
+        else:
+            refused = _report_obstacle(entry) or refused
+    if started:
+        _explain_detachment()
+    return 1 if refused else 0
+
+
+def _refuse(message: str) -> None:
+    """Report a refusal where every other refusal from this command goes.
+
+    Standard error, so that redirecting a sweep's report leaves the reasons it could not build
+    something visible — and so a refusal reads the same whether it came from here or from the one
+    handler that turns a raised one into a line.
+    """
+    print(f"refused   {message}", file=sys.stderr)
+
+
+def _report_obstacle(entry: builds.PlannedBuild) -> bool:
+    """Say why one corpus was not built, and whether that counts as a failed command.
+
+    Three outcomes rather than two, because this command's two prefixes mean different things and
+    one of these is neither.
+
+    `already_indexing` is not a refusal at all: the corpus is being built, which is what was asked
+    for. It is ordinary output and it does not fail the command, so a loop of refreshes against a
+    running build does not read as a loop of failures.
+
+    An unreadable database is a *failure* rather than a refusal, and takes the prefix this command
+    gives a failure everywhere else. A refusal is this system declining something it understood —
+    the name is unknown, the root is gone, a build holds the lock — and names what to do instead.
+    A database that will not open is the driver's own error travelling out unrenamed, because
+    nothing invented here would say what went wrong better and nothing the caller can do fixes it.
+    """
+    name = entry.knowledge_base.name
+    if entry.obstacle is builds.BuildObstacle.ALREADY_INDEXING:
+        print(f"building  {name!r} is already being built; nothing was queued")
+        return False
+    if entry.obstacle is builds.BuildObstacle.UNREADABLE:
+        print(f"failed    {name}: {entry.refusal}", file=sys.stderr)
+        return True
+    _refuse(f"{name}: {entry.refusal}")
+    return True
 
 
 def _report_unlock(cleared: lock.LockHolder | None) -> None:
@@ -209,12 +279,16 @@ def _report_unlock(cleared: lock.LockHolder | None) -> None:
 
 
 def _start_build(name: str, store: scope.OpenStore, *, full: bool) -> None:
-    """Spawn the build and say how to follow it, and how to see it fail.
+    """Spawn one build and print the command that reproduces it in the foreground.
 
     The foreground command is printed in full rather than described, because it is the only way to
     recover the *reason* a detached build failed: its own output goes nowhere, so what is left is
     to run the identical command where its output can be seen. It is the argv the spawn reports
     rather than a second construction of it, so the two cannot differ.
+
+    Printed per build rather than once, because a sweep starts several and each has its own argv;
+    a single example would leave whoever met a failure in the second corpus to reconstruct the
+    command for it.
     """
     argv = detach.spawn(name, project=store.project, full=full)
     print(f"building  {name!r} in the background")
@@ -222,8 +296,27 @@ def _start_build(name: str, store: scope.OpenStore, *, full: bool) -> None:
     # back is a command that fails to parse, which is worse than useless in a line offered as the
     # way to follow a build.
     print(f"follow    python -m zikaron.knowledge status {shlex.quote(name)}")
-    print("\nThat build's output is discarded. To watch one, or to see why one failed:")
-    print(f"  {shlex.join(argv)}")
+    print(f"foreground {shlex.join(argv)}")
+
+
+def _explain_detachment() -> None:
+    """The one note every started build shares, printed after them rather than once per build."""
+    print("\nA detached build's output is discarded. To watch one, or to see why one failed, run")
+    print("the foreground command printed beside it.")
+
+
+def _what_goes(found: reporting.Status) -> str:
+    """How much a removal would destroy, or that nobody can say.
+
+    A corpus whose database is present and will not open may hold a fully built index — refused for
+    a permission reason, or for a `schema_version` this build does not know — so counting it as
+    empty is a confident number nothing backs, on the one verb nothing undoes. Its own counts say
+    what can be *served*, which is not what somebody about to delete it is asking.
+    """
+    if found.details is None and found.summary.state is state.KnowledgeState.ERROR:
+        return "an unknown amount — its database cannot be read"
+    chunks = 0 if found.details is None else found.details.chunks
+    return f"{found.summary.files_indexed} files, {chunks} chunks"
 
 
 async def _remove(
@@ -235,11 +328,7 @@ async def _remove(
     if not args.yes:
         listing = await reporting.status(store_dir, db, config, name=args.name)
         (found,) = listing.knowledge_bases
-        indexed = found.details.chunks if found.details is not None else 0
-        print(
-            f"would destroy {found.summary.name!r}: "
-            f"{found.summary.files_indexed} files, {indexed} chunks, and its database."
-        )
+        print(f"would destroy {found.summary.name!r}: {_what_goes(found)}, and its database.")
         print("Pass --yes to actually do it.")
         return 1
     removed = await lifecycle.remove(store_dir, db, config, name=args.name)
@@ -255,7 +344,7 @@ def _print_listing(listing: reporting.Listing, *, detailed: bool) -> None:
     for report in listing.knowledge_bases:
         _print_summary(report.summary)
         if detailed:
-            _print_details(report.details)
+            _print_details(report)
     _print_orphans(listing.orphans)
 
 
@@ -283,9 +372,23 @@ def _by_reason(counts: Mapping[str, int]) -> str:
     return ", ".join(fired) if fired else "none"
 
 
-def _print_details(details: reporting.Details | None) -> None:
+def _print_details(report: reporting.Status) -> None:
+    """The diagnostic half, or why there is none.
+
+    A corpus with nothing to report is in one of two conditions, and they call for opposite
+    reassurances. A database that is **absent** has genuinely never been built, and saying so is
+    the whole answer. A database that is **present and will not open** — refused for a permission
+    reason, or for a schema this build does not know — may hold a completely built corpus, so
+    telling a reader nothing has been built here is a confident claim about something nobody can
+    measure. The state line above already names which of the two it is — `reindex_required` or
+    `error`; this line is what a reader takes the meaning from.
+    """
+    details = report.details
     if details is None:
-        print("  (no database to read — nothing has been built here yet)")
+        if report.summary.state is state.KnowledgeState.ERROR:
+            print("  (its database is present and cannot be read — what it holds is unknown)")
+        else:
+            print("  (no database to read — nothing has been built here yet)")
         return
     effective = _UNSET if details.git_mode_effective is None else details.git_mode_effective.value
     print(f"  root      {details.root_path}")

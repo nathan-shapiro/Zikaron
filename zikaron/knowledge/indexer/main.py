@@ -16,7 +16,7 @@ import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.indexing.encoder import FastEmbedEncoder
-from zikaron.core.knowledge import disposal, lifecycle, scan
+from zikaron.core.knowledge import builds, disposal, lifecycle, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.knowledge import scope
@@ -85,7 +85,7 @@ async def build(
         name: which knowledge base to build.
         full: reindex every admitted file rather than only what changed.
     """
-    await lifecycle.prepare_build(store_dir, db, name=name)
+    await builds.prepare(store_dir, db, config, name=name)
     refreshed = await lifecycle.refresh(
         store_dir, db, config, name=name, build=await build_settings(config, full=full)
     )

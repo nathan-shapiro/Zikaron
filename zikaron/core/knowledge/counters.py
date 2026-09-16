@@ -29,6 +29,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
+import aiosqlite
+
+from zikaron.core.knowledge import ddl
+from zikaron.core.store.transactions import in_one_transaction, is_contention, propagate
+
 #: What a skip-reason key is called in `meta`, and what a reported field name drops to get there.
 SKIP_PREFIX: Final = "skipped_"
 
@@ -40,6 +45,21 @@ FILES_SEEN_KEY: Final = "files_seen"
 FILES_INDEXED_KEY: Final = "files_indexed"
 FILES_SKIPPED_KEY: Final = "files_skipped"
 BYTES_INDEXED_KEY: Final = "bytes_indexed"
+
+SEARCHES_KEY: Final = "searches"
+SEARCHES_EMPTY_KEY: Final = "searches_empty"
+RESULTS_RETURNED_KEY: Final = "results_returned"
+RESULTS_STALE_KEY: Final = "results_stale"
+
+#: The four a search raises, in the order they are reported: is this corpus used at all, how often
+#: it is searched and has nothing, the mean yield of a search against it, and how often what it
+#: returns is flagged as possibly out of date.
+SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = (
+    SEARCHES_KEY,
+    SEARCHES_EMPTY_KEY,
+    RESULTS_RETURNED_KEY,
+    RESULTS_STALE_KEY,
+)
 
 
 class SkipReason(StrEnum):
@@ -130,3 +150,79 @@ class ScanCounters:
         }
         rows.update({reason.meta_key: str(self.skipped.get(reason, 0)) for reason in SkipReason})
         return rows
+
+
+#: Wait no time at all for the writer lock. A search's counter write asks for the lock and takes
+#: whatever answer comes back immediately, which is the whole of how it stays off the latency path.
+_NO_WAIT_MS: Final = 0
+
+#: Add to a counter in SQL rather than reading it, adding one and writing it back, so two searches
+#: finishing together cannot lose a count between them. `CAST` because the column is text: a
+#: counter nothing can read as a number contributes zero, which is the same reading a report gives
+#: it.
+_INCREMENT: Final = "UPDATE meta SET value = CAST(value AS INTEGER) + ? WHERE key = ?"
+
+
+@dataclass(frozen=True, slots=True)
+class SearchTally:
+    """What one corpus's search contributed to the four counters it keeps.
+
+    A value rather than four arguments, because the four move together and are written in one
+    transaction: a caller holding three of them has not finished describing a search.
+    """
+
+    results: int
+    stale: int
+
+    def as_increments(self) -> Mapping[str, int]:
+        """How much each counter goes up. Every key every time, including the zeroes, so the write
+        is one statement shape regardless of what the search found."""
+        return {
+            SEARCHES_KEY: 1,
+            SEARCHES_EMPTY_KEY: 1 if self.results == 0 else 0,
+            RESULTS_RETURNED_KEY: self.results,
+            RESULTS_STALE_KEY: self.stale,
+        }
+
+
+async def record_search(db: aiosqlite.Connection, tally: SearchTally) -> bool:
+    """Add one search to this knowledge base's counters, abandoning the write rather than waiting.
+
+    **A counter write is a write transaction on the path a query's latency lives on**, and it
+    contends for the writer lock with the indexer during exactly the builds a search is promised to
+    stay available through. So it asks for the lock with the timeout set to nothing and takes the
+    refusal: losing a count is acceptable, and delaying a query to record one is not. The timeout is
+    put back whatever happens, because the connection is the caller's and every other statement on
+    it expects to wait.
+
+    **Contention is swallowed and nothing else is.** A knowledge base that refuses a four-row
+    `UPDATE` for any other reason is one this process should stop claiming to serve, and its
+    caller already reports such a failure as that corpus's own `error` rather than as a failed
+    call — so the failure reaches a reader instead of being dropped with the count.
+
+    **A dropped count is recorded nowhere**, so what these counters hold is a lower bound rather
+    than a tally, and by how much is unmeasured. That matters to whoever reads them: the drops
+    happen while a build holds the writer lock, so a corpus searched during a long rebuild reports
+    less use than the same corpus searched at the same rate while idle. Ratios between the four
+    survive it — one abandoned transaction drops all four together — and absolute counts do not.
+
+    Returns:
+        Whether the counters were actually written. `False` means the lock was busy.
+    """
+    increments = tally.as_increments()
+
+    async def _work(connection: aiosqlite.Connection) -> None:
+        await connection.executemany(
+            _INCREMENT, [(amount, key) for key, amount in increments.items()]
+        )
+
+    await db.execute(f"PRAGMA busy_timeout = {_NO_WAIT_MS}")
+    try:
+        await in_one_transaction(db, _work, failure=propagate)
+    except aiosqlite.Error as error:
+        if not is_contention(error):
+            raise
+        return False
+    finally:
+        await db.execute(f"PRAGMA busy_timeout = {ddl.BUSY_TIMEOUT_MS}")
+    return True

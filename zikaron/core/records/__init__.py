@@ -18,8 +18,9 @@ follow, stated once here rather than at each place they bite:
   nor rolls back — a composing caller calls the neutral form directly, inside its own wider `BEGIN`
   that also covers the chunking writes and the composed event, rather than calling the wrapper,
   which would raise on a nested `BEGIN`.
-- `create`/`amend`/`retire` here are row primitives, not the wire-facing `zikaron_remember` /
-  `zikaron_amend` / `zikaron_retire` tools. The tool-facing write path owns those three verbs —
+- `create`/`amend`/`retire` here are row primitives, not the wire-facing
+  `zikaron_memory_remember` / `zikaron_memory_amend` / `zikaron_memory_retire` tools. The
+  tool-facing write path owns those three verbs —
   D15's dedup hand-back is its own — and composes them from what this package and the indexing
   layer provide.
 

@@ -81,11 +81,11 @@ _MODEL_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]*")
 #: does this install trust its own tools, or make the user approve them one at a time.
 _ENABLED_SERVERS_KEY: Final = "enabledMcpjsonServers"
 
-#: Claude Code's permission key. **Distinct from `_ENABLED_SERVERS_KEY`, and a review caught the
-#: install conflating them**: that key governs whether a project-scoped server *loads*, while this
-#: one governs whether each tool *call* is approved. Writing only the first left every
-#: `zikaron_remember` behind an approval prompt — the per-write friction `writer._selecting` calls
-#: worse than not asking at all, installed silently on the harness we are migrating to.
+#: Claude Code's permission key. **Distinct from `_ENABLED_SERVERS_KEY`, and the two are easy to
+#: conflate**: that key governs whether a project-scoped server *loads*, while this one governs
+#: whether each tool *call* is approved. Writing only the first leaves every
+#: `zikaron_memory_remember` behind an approval prompt — the per-write friction `writer._selecting`
+#: calls worse than not asking at all, installed silently and with nothing saying so.
 _PERMISSIONS_KEY: Final = "permissions"
 _ALLOW_KEY: Final = "allow"
 

@@ -23,13 +23,13 @@ records, merging what belongs together and retiring what does not.
 
 **Reading happens two ways.** Before every message you send, a hook injects the few most relevant
 gists into the agent's context, so recall costs no tool call and no decision. When the agent wants
-more, it calls `zikaron_search` for a wider look or `zikaron_fetch` for a full record. Retrieval is
+more, it calls `zikaron_memory_search` for a wider look or `zikaron_memory_fetch` for a full record. Retrieval is
 hybrid: a vector search over a local embedding model and a full-text search over the same corpus,
 their rankings fused, so an exact identifier and a vague description both find their record.
 
 **Writing is the agent's own judgment.** Nothing summarizes your session behind your back and no extra
 model runs on the write path. A policy injected when the agent starts tells it what is worth recording;
-it then calls `zikaron_remember`, `zikaron_amend` or `zikaron_retire` itself. Near-duplicates are
+it then calls `zikaron_memory_remember`, `zikaron_memory_amend` or `zikaron_memory_retire` itself. Near-duplicates are
 detected at write time and handed back to the agent to resolve rather than silently dropped, and
 nothing is ever hard-deleted — a retired record stops surfacing but stays auditable.
 
@@ -169,7 +169,7 @@ agent can record without interrupting you. That is deliberate rather than lax �
 on the agent writing freely, and a permission prompt per write both suppresses that and trains you to
 click through prompts. What it trusts is narrow: tools reading and writing rows in a local
 database, with no network and no effect outside the project. A mistaken write is *recoverable* rather
-than undoable — `zikaron_retire` withdraws a record from ordinary retrieval and leaves it auditable,
+than undoable — `zikaron_memory_retire` withdraws a record from ordinary retrieval and leaves it auditable,
 while an amend overwrites prose that nothing restores. Pass `--no-trust-tools` if you would rather
 approve each one.
 
@@ -261,6 +261,40 @@ when it wants the detail, and can search when the injected few are not enough.
 stretch of real work, or at the end of a task. It loads the shipped skill and spawns the consolidator.
 If a run ever seems stuck, ask again: a second invocation takes the abandoned run over and replans.
 
+### Knowledge bases: searching what the project wrote down
+
+Memory holds what agents learned by working here. A **knowledge base** is the other half: a named,
+indexed corpus of text files the project already has — a docs tree, a directory of run books, a
+vendored dependency's documentation. The agent searches it and gets back fragments with line ranges,
+quoted verbatim, so it can read further or quote them as they stand.
+
+Ask the agent to create one and it will, without leaving the session: *"index the docs directory as
+a knowledge base called design docs"*. It has tools to list, create, rename, refresh, inspect and
+remove them. The same verbs are available at a shell, for when no agent is running:
+
+```bash
+.venv/bin/python -m zikaron.knowledge list
+.venv/bin/python -m zikaron.knowledge add "design docs" --path ./design \
+    --description "Architecture and design records"
+.venv/bin/python -m zikaron.knowledge refresh            # every corpus; name one to narrow it
+.venv/bin/python -m zikaron.knowledge status "design docs"
+```
+
+Three things are worth knowing before you point one at a directory.
+
+**Building takes minutes and runs in the background.** `add` and `refresh` start a build and return;
+the corpus reports `reindex_required` until the first one finishes, and answers searches from
+whatever has committed while one runs. `status` says how far it has got.
+
+**Nothing updates an index on its own.** There is no watcher and no schedule: a corpus drifts from
+its files until somebody refreshes it. A search says so when it can — a result whose file has
+changed since it was indexed comes back marked `stale`.
+
+**An index holds the text of every file in it.** Do not point one at a directory holding
+credentials. The databases are `0600`, the same as `memory.db`, and they are under `.zikaron/`, so
+the `.gitignore` line above already covers them — but what is *in* one is searchable by every agent
+working in this project.
+
 ---
 
 ## Configuration
@@ -335,6 +369,8 @@ Everything Zikaron writes for a project lives in one directory, and all of it is
   memory.db          the store itself — never commit this
   memory.db-wal      SQLite's write-ahead log; part of the store
   memory.db-shm      SQLite's shared-memory index; part of the store
+  knowledge/         one database per knowledge base, named by a generated id.
+                     Absent until you create one
   config.toml        your per-project overrides, if you wrote any
   service.log        the background service: startup, resolved config, errors
   hook.log           one line per hook failure. Absent means nothing has failed
@@ -378,7 +414,7 @@ gist over 1,024 characters is rejected outright, which keeps a five-row block co
 supported harness's budget. (Emoji and other characters outside the common range count as two each, so
 a gist made mostly of them is capped nearer 512 — the stricter count is deliberate, because the
 harness's own budget may count them that way too.) What remains is history — a record written before that bound existed can
-still be over-long. If you see a truncated-looking block, look for such a gist with `zikaron_search`
+still be over-long. If you see a truncated-looking block, look for such a gist with `zikaron_memory_search`
 and amend it; the amend will be rejected until the gist is shortened, which is the intended nudge.
 
 ### Secrets

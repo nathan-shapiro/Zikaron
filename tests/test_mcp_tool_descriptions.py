@@ -4,7 +4,9 @@ description text rather than only against the source docstring — a description
 model actually sees, and the two can diverge if a future edit changes one without the other.
 """
 
+import re
 from pathlib import Path
+from typing import Final
 
 import pytest
 from fastmcp import Client
@@ -14,6 +16,11 @@ from zikaron.mcp.server import build_server
 
 DOCUMENT = "knowledge-index.md"
 HEADING = "## 8. The MCP interface"
+
+#: A tool name as it appears in prose. Splitting on whitespace is not enough: a description writes
+#: `zikaron_memory_amend`/`zikaron_memory_retire` as one whitespace token, and stripping
+#: punctuation off the ends of that leaves a string that is neither name.
+_TOOL_TOKEN: Final = re.compile(r"\bzikaron_[a-z_]+\b")
 
 
 async def _description_of(mode: str, tool_name: str, tmp_path: Path) -> str:
@@ -34,15 +41,35 @@ async def _description_of(mode: str, tool_name: str, tmp_path: Path) -> str:
         "may not already be retired outright",
     ],
 )
-async def test_zikaron_retire_describes_the_supersession_graph_rules(
+async def test_zikaron_memory_retire_describes_the_supersession_graph_rules(
     tmp_path: Path, required_phrase: str
 ) -> None:
-    """`architecture.md` §"zikaron_retire": `superseded_by` must satisfy schema.md invariant 6 —
+    """`architecture.md` §"zikaron_memory_retire": `superseded_by` must satisfy schema.md
+    invariant 6 —
     "no self-edge, no cycle, target not already retired-outright" — and a model that does not know
     these rules in advance would only discover them by trying an illegal edge and reading the
     rejection; stating them in the tool's own description lets it avoid an avoidable one."""
-    description = await _description_of("primary", "zikaron_retire", tmp_path)
+    description = await _description_of("primary", "zikaron_memory_retire", tmp_path)
     assert required_phrase in description
+
+
+@pytest.mark.parametrize(
+    ("tool", "other"),
+    [
+        ("zikaron_memory_search", "zikaron_knowledge_search"),
+        ("zikaron_knowledge_search", "zikaron_memory_search"),
+    ],
+)
+async def test_each_search_tool_names_the_other_store_s_search(
+    tmp_path: Path, tool: str, other: str
+) -> None:
+    """One server carries two searches over two stores — what agents recorded here, and what the
+    project itself wrote down — and nothing in either name says which is which. A model that knows
+    only the one it was given searches the wrong store and reads the empty answer as *there is
+    nothing*, which is the failure both halves of this pairing exist to prevent. Stated on both,
+    because whichever one the model reaches for first has to be the one that redirects it."""
+    description = await _description_of("primary", tool, tmp_path)
+    assert other in description
 
 
 @pytest.mark.parametrize(
@@ -53,15 +80,16 @@ async def test_zikaron_retire_describes_the_supersession_graph_rules(
         "excludes",
     ],
 )
-async def test_zikaron_next_group_describes_shard_serve_count_and_remaining_groups(
+async def test_zikaron_memory_next_group_describes_shard_serve_count_and_remaining_groups(
     tmp_path: Path, required_phrase: str
 ) -> None:
-    """`architecture.md` §"zikaron_next_group": `shard` is 1-based, `serve_count` includes the
+    """`architecture.md` §"zikaron_memory_next_group": `shard` is 1-based, `serve_count` includes
+    the
     current delivery, and `remaining_groups` excludes the group just delivered — each of the
     three is easy to get backwards without being told, and a consolidator that assumed 0-based
     sharding or an inclusive `remaining_groups` would misjudge whether it is looking at a re-serve
     or the last group of a run."""
-    description = await _description_of("consolidator", "zikaron_next_group", tmp_path)
+    description = await _description_of("consolidator", "zikaron_memory_next_group", tmp_path)
     assert required_phrase in description
 
 
@@ -102,82 +130,67 @@ def _paragraphs(text: str) -> list[str]:
     return [" ".join(block.split()) for block in text.split("\n\n") if block.strip()]
 
 
-#: The one paragraph the shipped description is licensed to state differently from the design's
-#: quote of it: the design tells a caller to list the corpora first, and the tool that would do
-#: that is not built yet, so the shipped text says how to search all of them instead.
-_LICENSED_SUBSTITUTION = 1
+#: Every knowledge tool whose description the design quotes in full, by the words its quote opens
+#: with. Data rather than one test per tool, so a tool added to the design without a shipped
+#: description — or shipped without one in the design — is a missing row here rather than a check
+#: nobody wrote.
+_QUOTED_DESCRIPTIONS = {
+    "zikaron_knowledge_search": "Search indexed project documents by relevance.",
+    "zikaron_knowledge_list": "List the knowledge bases in this project:",
+    "zikaron_knowledge_status": "The detail behind one knowledge base's state,",
+    "zikaron_knowledge_add": "Create a knowledge base over a directory of text files",
+    "zikaron_knowledge_remove": "Destroy a knowledge base:",
+    "zikaron_knowledge_rename": "Change a knowledge base's name.",
+    "zikaron_knowledge_refresh": "Bring knowledge bases up to date",
+}
 
 
-async def test_zikaron_knowledge_search_matches_the_design_document(tmp_path: Path) -> None:
-    """The shipped description and the design's quote of it agree paragraph by paragraph, except
-    for the one paragraph the design itself licenses a substitution in.
+@pytest.mark.parametrize(("tool_name", "opening"), sorted(_QUOTED_DESCRIPTIONS.items()))
+async def test_every_knowledge_description_matches_the_design_document(
+    tmp_path: Path, tool_name: str, opening: str
+) -> None:
+    """The shipped description and the design's quote of it agree paragraph by paragraph.
 
     Parsed from the document at test time rather than compared against a second hand-typed copy,
     because the two have already drifted once: the shipped text was corrected in three places and
     the quote kept asserting the pre-fix wording. A description is prose about a live artifact, and
     prose asserting what the adjacent code contradicts is the defect class this repository catches
     most often — so the check is mechanical rather than a reading.
+
+    **There is no longer an exempted paragraph.** One existed while the shipped search description
+    had to avoid naming a listing tool that was not registered; that tool exists, so the shipped
+    text is the design's own, in full, and an exemption kept past its reason would be a place the
+    next real divergence could land unnoticed.
     """
-    shipped = _paragraphs(await _description_of("primary", "zikaron_knowledge_search", tmp_path))
-    designed = _paragraphs(
-        block_quote(DOCUMENT, HEADING, "Search indexed project documents by relevance.")
-    )
-    assert len(shipped) == len(designed)
-    for index, (one, other) in enumerate(zip(shipped, designed, strict=True)):
-        if index == _LICENSED_SUBSTITUTION:
-            continue
-        assert one == other
+    shipped = _paragraphs(await _description_of("primary", tool_name, tmp_path))
+    designed = _paragraphs(block_quote(DOCUMENT, HEADING, opening))
+    assert shipped == designed
 
 
-@pytest.mark.parametrize(
-    "required_phrase",
-    [
-        "Omit `knowledge_bases` to search every corpus",
-        "clamped rather than refused",
-    ],
-)
-async def test_the_substituted_paragraph_still_carries_what_it_substitutes_for(
-    tmp_path: Path, required_phrase: str
-) -> None:
-    """The exempted paragraph is the one place nothing else would notice an edit.
-
-    Two things live only here, and each is load-bearing somewhere else. Telling a caller to omit the
-    names is what replaces the instruction to list the corpora first — the tool that would do the
-    listing does not exist, so without this sentence a caller has no stated way to discover what it
-    can search. And the clamp sentence is the whole justification for not reporting the effective
-    limit back on the response: that decision rests on the number being stated where a caller reads
-    it before choosing one. Both would otherwise be droppable with nothing going red.
-    """
-    description = await _description_of("primary", "zikaron_knowledge_search", tmp_path)
-    assert required_phrase in _paragraphs(description)[_LICENSED_SUBSTITUTION]
-
-
-async def test_the_licensed_substitution_is_the_only_paragraph_that_differs(
-    tmp_path: Path,
-) -> None:
-    """The exemption above is narrow, so it is pinned from the other side as well.
-
-    Without this, a substitution paragraph that came to match the document would leave the guard
-    exempting a paragraph that needs no exemption — and the next real divergence could land there
-    unnoticed. The design's version names the listing tool; the shipped one must not.
-    """
-    shipped = _paragraphs(await _description_of("primary", "zikaron_knowledge_search", tmp_path))
-    designed = _paragraphs(
-        block_quote(DOCUMENT, HEADING, "Search indexed project documents by relevance.")
-    )
-    assert shipped[_LICENSED_SUBSTITUTION] != designed[_LICENSED_SUBSTITUTION]
-    assert "zikaron_knowledge_list" in designed[_LICENSED_SUBSTITUTION]
-
-
-async def test_zikaron_knowledge_search_names_no_tool_this_build_does_not_have(
-    tmp_path: Path,
-) -> None:
-    """A description that points a model at a tool it cannot call is a measured defect in the
-    nearest comparable product — a success message naming a command that no longer exists — and
-    the management tools this one would naturally refer to do not exist yet."""
-    description = await _description_of("primary", "zikaron_knowledge_search", tmp_path)
+async def test_every_quoted_description_belongs_to_a_registered_tool(tmp_path: Path) -> None:
+    """The table above is only a guard while it names what the server actually serves: a row for a
+    tool nobody registers would silently stop checking anything."""
     mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         registered = {tool.name for tool in await client.list_tools()}
-    named = {word.strip("`.,:") for word in description.split() if "zikaron_" in word}
-    assert named <= registered
+    assert set(_QUOTED_DESCRIPTIONS) <= registered
+
+
+async def test_no_description_names_a_tool_its_own_server_does_not_have(tmp_path: Path) -> None:
+    """A description that points a model at a tool it cannot call is a measured defect in the
+    nearest comparable product — a success message naming a command that no longer exists and that
+    the model could not have invoked anyway.
+
+    Checked over **every** tool on both servers rather than over the one that happened to be at
+    risk: these descriptions now refer to one another freely, so a renamed or withdrawn tool would
+    leave a dangling pointer in whichever neighbour mentioned it, and which neighbour that is is
+    not something a test should have to be told.
+    """
+    for mode in ("primary", "consolidator"):
+        mcp = build_server(mode, scope_dir=tmp_path)
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+        registered = {tool.name for tool in tools}
+        for tool in tools:
+            named = set(_TOOL_TOKEN.findall(tool.description or ""))
+            assert named <= registered, f"{tool.name} on {mode} names {named - registered}"

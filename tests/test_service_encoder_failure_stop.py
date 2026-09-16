@@ -179,7 +179,7 @@ async def test_a_request_needing_the_model_is_answered_with_the_wire_error(
         request = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "search",
+            "method": "memory_search",
             "params": {
                 "query": "anything at all",
                 "client": {"session_id": "s1", "kind": "mcp", "pid": 100},

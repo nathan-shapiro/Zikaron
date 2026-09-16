@@ -89,7 +89,7 @@ async def test_with_no_harness_session_id_the_first_response_label_is_adopted_fo
 
     first_envelope = connection.envelope(kind="mcp")
     assert first_envelope.session_id is None, "the very first call has nothing to adopt yet"
-    await connection.request("fetch", {}, envelope=first_envelope)
+    await connection.request("memory_fetch", {}, envelope=first_envelope)
 
     second_envelope = connection.envelope(kind="mcp")
     assert second_envelope.session_id == "zk-first-minted-label"
@@ -116,7 +116,7 @@ async def test_a_label_is_adopted_from_an_application_error_response_too(
     )
 
     envelope = connection.envelope(kind="consolidator")
-    response = await connection.request("plan_groups", {}, envelope=envelope)
+    response = await connection.request("memory_plan_groups", {}, envelope=envelope)
     assert "error" in response
 
     next_envelope = connection.envelope(kind="consolidator")
@@ -167,7 +167,7 @@ async def test_an_already_adopted_label_is_not_overwritten_by_a_later_harness_re
             },
         ],
     )
-    await connection.request("search", {}, envelope=connection.envelope(kind="mcp"))
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
 
     # Simulate the environment changing mid-process — this must have no effect on what the
     # connection has already adopted, unlike a design that re-read `os.environ` per call.

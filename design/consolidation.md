@@ -207,7 +207,7 @@ different long-term records from identical inputs and neither would be reproduci
    allowed several readings.
 
 ### What `candidates` actually is
-`zikaron_next_group` delivers, at most, one anchor plus four candidates — the "5 candidate memories" the
+`zikaron_memory_next_group` delivers, at most, one anchor plus four candidates — the "5 candidate memories" the
 consolidator prompt promises:
 
 - **`anchor`** is the long-term record from step 1, named separately from the list so the model knows which
@@ -476,7 +476,7 @@ that does not depend on a measurement:
   fifth of the separation a plainly distinct token does, direction right in 14/14 blocks but margin thin. A
   `WidgetV1` memory and a `WidgetV2` memory are exactly the case where the dense score has the least to work
   with — and merging them is the worst mistake this system can make. So the hand-back can never be an assertion
-  of duplication. It is a pair of gists for the agent to compare, which `architecture.md`'s `zikaron_remember`
+  of duplication. It is a pair of gists for the agent to compare, which `architecture.md`'s `zikaron_memory_remember`
   description says explicitly, and `dedup_max = 3` bounds what a loose floor can cost.
 
   **Where the *value* 0.80 comes from is nowhere, and round 4 tightened how that is said.** Round 3 replaced the

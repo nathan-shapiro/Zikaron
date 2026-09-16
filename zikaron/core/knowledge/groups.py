@@ -28,7 +28,7 @@ import aiosqlite
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ZikaronError
 from zikaron.core.indexing.encoder import Encoder
-from zikaron.core.knowledge import arms, database, paths, registry, reporting, search
+from zikaron.core.knowledge import arms, counters, database, paths, registry, reporting, search
 from zikaron.core.knowledge import state as corpus_state
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.errors import InvalidNameError
@@ -312,7 +312,14 @@ async def _serve(
     query: PreparedQuery,
     settings: search.SearchSettings,
 ) -> Group:
-    """Read one open corpus's state and search it if that state allows."""
+    """Read one open corpus's state and search it if that state allows.
+
+    **A corpus that did not serve raises no counter**, which is what keeps `searches_empty` an
+    abstention rate rather than a mixture of two things. An unbuilt corpus and a built one that
+    genuinely held nothing both answer with an empty group, and counting the first as a search that
+    found nothing would bury the signal those counters exist to expose — the second is the answer
+    §7.4 calls real, and the first is a corpus that was never asked.
+    """
     raw = await database.read_meta(opened.connection)
     state = corpus_state.resolve(corpus_state.inputs_for_open(opened, raw, config))
     remaining = await reporting.files_remaining(opened.connection, raw)
@@ -320,6 +327,13 @@ async def _serve(
     if state in _SERVING:
         results = await search.search_one(
             opened.connection, query=query, corpus=opened.meta, settings=settings
+        )
+        await counters.record_search(
+            opened.connection,
+            counters.SearchTally(
+                results=len(results),
+                stale=sum(1 for result in results if result.stale),
+            ),
         )
     return Group(
         knowledge_base=registered.name,

@@ -90,7 +90,8 @@ async def test_an_empty_store_prints_nothing_but_still_records_the_call(tmp_path
 async def test_the_block_carries_the_frame_the_order_and_whole_uuids(tmp_path: Path) -> None:
     """Three load-bearing properties in one output: the untrusted-reference-data frame at the top,
     the stated best-first order, and **whole** uuids — the `…` in the design's sample is elision in
-    that document, and a four-character prefix is not something `zikaron_fetch` can resolve."""
+    that document, and a four-character prefix is not something `zikaron_memory_fetch` can
+    resolve."""
     async with fx.harness(tmp_path) as harness:
         uuid = await harness.write(gist=f"integration tests need {_TERM}", content="set it in CI")
         await harness.clear_events()

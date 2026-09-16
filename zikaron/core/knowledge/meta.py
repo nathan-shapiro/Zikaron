@@ -83,12 +83,10 @@ class GitMode(StrEnum):
 PROGRESS_KEYS: Final[tuple[str, ...]] = counters.PROGRESS_KEYS
 SKIP_REASON_KEYS: Final[tuple[str, ...]] = counters.SKIP_REASON_KEYS
 
-SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = (
-    "searches",
-    "searches_empty",
-    "results_returned",
-    "results_stale",
-)
+#: The four a search raises, defined where a search defines them, for the reason the scan's own
+#: counters are: a second list of these names here could disagree with the one a search writes
+#: through, and the symptom would be a count nothing reports.
+SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = counters.SEARCH_COUNTER_KEYS
 
 #: Every counter seeded to zero at creation, in the order `defaults_at_creation` writes them.
 COUNTER_KEYS: Final[tuple[str, ...]] = (
@@ -191,11 +189,16 @@ def _describe(bounds: IntBounds) -> str:
 
 
 def check_bounded(key: str, value: int) -> None:
-    """Range-check a value a caller chose for a seeded key, against the configuration's own bounds.
+    """Range-check a value **read back from a store**, against the configuration's own bounds.
 
     Exists so a per-corpus override and the global default it replaces are held to one range. A
     value one accepts and the other rejects would be a corpus nobody could reproduce by writing a
     configuration file.
+
+    **For a value a *caller* just supplied, use `bounds_for` and refuse it as that caller's
+    mistake.** `BAD_CONFIG` says a stored or configured value is unusable and points at a file to
+    fix; saying that to an agent that typed a number would send it looking for a typo in the
+    store's configuration.
 
     Raises:
         ZikaronError: `BAD_CONFIG` naming the key and the range it missed.
@@ -203,6 +206,18 @@ def check_bounded(key: str, value: int) -> None:
     bounds = _config_bounds(key)
     if not bounds.permits(value):
         raise _bad_meta(key, str(value), _describe(bounds))
+
+
+def bounds_for(key: str) -> tuple[IntBounds, str]:
+    """One seeded key's declared range, and the phrasing every refusal of it uses.
+
+    Returned rather than checked here, so a caller that must refuse in its *own* vocabulary — a
+    supplied parameter rather than a stored value — still answers with the same range and the same
+    words as the stored-value path. Two hand-written descriptions of one range is how a tool and a
+    configuration file come to disagree about what they accept.
+    """
+    bounds = _config_bounds(key)
+    return bounds, _describe(bounds)
 
 
 def _require_string(raw: Mapping[str, str], key: str, expected: str) -> str:

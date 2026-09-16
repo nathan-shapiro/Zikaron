@@ -26,9 +26,15 @@ from typing import Final
 #: to nothing is what the first version of this module shipped, and the document-comparison test
 #: passed the whole time, because comparing two texts cannot see whether either reaches the running
 #: system.
+#: How long a connection to a knowledge base waits for the writer lock before giving up. Named
+#: rather than written into the pragma below alone, because one caller has to *lower* it for a
+#: single statement and then put it back — and restoring a hand-written duplicate of this number is
+#: how a connection comes to keep a timeout nobody chose.
+BUSY_TIMEOUT_MS: Final = 5000
+
 PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode = WAL",
-    "PRAGMA busy_timeout = 5000",
+    f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}",
 )
 
 _FILES: Final = """

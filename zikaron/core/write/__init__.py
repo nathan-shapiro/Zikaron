@@ -1,4 +1,5 @@
-"""The tool-facing write path: `zikaron_remember`, `zikaron_amend`, `zikaron_retire`.
+"""The tool-facing write path: `zikaron_memory_remember`, `zikaron_memory_amend`,
+`zikaron_memory_retire`.
 
 `design/architecture.md` §"MCP tool surface" and §"Validation precedence" (primary-agent ladder)
 are normative; `design/schema.md` §Bounds is normative for `gist_max_tokens`, the one bound this
@@ -17,7 +18,7 @@ transport concern: whichever client serializes `Conflict` is what writes the lit
 `isinstance(outcome, Conflict)` already *is* that fact at the Python level and a redundant boolean
 field on the type would carry no information `isinstance` does not.
 
-`zikaron_search` and `zikaron_fetch` are not here: they mutate nothing, so they stay
+`zikaron_memory_search` and `zikaron_memory_fetch` are not here: they mutate nothing, so they stay
 `retrieval.reads` and `records.memory.fetch` respectively, called directly by whichever transport
 layer exposes them.
 """

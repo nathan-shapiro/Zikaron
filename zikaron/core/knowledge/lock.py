@@ -208,7 +208,8 @@ async def acquire(db: aiosqlite.Connection, *, pid: int, host: str, started_at: 
     holder = running_holder(await database.read_meta(db), host=host)
     if holder is not None:
         raise IndexerBusyError(
-            f"an indexer is already running against this knowledge base ({holder.describe()})"
+            f"an indexer is already running against this knowledge base ({holder.describe()})",
+            holder=holder,
         )
     await database.write_meta(
         db,
@@ -271,7 +272,8 @@ async def force_release(db: aiosqlite.Connection, *, host: str) -> LockHolder | 
             f"a process on this host still answers to the lock's pid ({holder.describe()}); "
             f"wait for it to finish, or stop it first. If that pid has been reused and belongs to "
             f"something else, delete the lock_pid, lock_host and lock_started_at rows from this "
-            f"knowledge base's meta table by hand — nothing else can tell the two apart"
+            f"knowledge base's meta table by hand — nothing else can tell the two apart",
+            holder=holder,
         )
     await database.clear_meta(db, LOCK_KEYS)
     return holder

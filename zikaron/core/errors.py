@@ -44,6 +44,10 @@ class ErrorCode(IntEnum):
     BAD_CONFIG = -32023
     SCHEMA_INCOMPATIBLE = -32024
     STORE_IDENTITY = -32030
+    KNOWLEDGE_BASE_UNKNOWN = -32040
+    KNOWLEDGE_BASE_EXISTS = -32041
+    KNOWLEDGE_BASE_BUSY = -32042
+    KNOWLEDGE_CONFIRM_REQUIRED = -32043
 
     @property
     def wire_name(self) -> str:
@@ -250,6 +254,27 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
         ErrorCode.STORE_IDENTITY: ErrorSpec(
             "that service belongs to a different store",
             (PayloadField("expected"), PayloadField("actual")),
+        ),
+        ErrorCode.KNOWLEDGE_BASE_UNKNOWN: ErrorSpec(
+            "no knowledge base with that name",
+            (PayloadField("name"),),
+        ),
+        ErrorCode.KNOWLEDGE_BASE_EXISTS: ErrorSpec(
+            "a knowledge base with that name already exists",
+            (PayloadField("name"),),
+        ),
+        ErrorCode.KNOWLEDGE_BASE_BUSY: ErrorSpec(
+            "a build is running against that knowledge base",
+            (PayloadField("name"), PayloadField("holder")),
+        ),
+        ErrorCode.KNOWLEDGE_CONFIRM_REQUIRED: ErrorSpec(
+            "destroying a knowledge base requires confirm=true",
+            (
+                PayloadField("name"),
+                PayloadField("state"),
+                PayloadField("files_indexed"),
+                PayloadField("chunks"),
+            ),
         ),
     }
 )

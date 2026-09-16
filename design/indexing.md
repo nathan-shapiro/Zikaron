@@ -70,7 +70,7 @@ discovers a future model whose separator does tokenize.
    tokenizes to ≤ 512 including specials. A failed assertion is a bug, not a truncation: it raises
    `index_failed` and rolls back.
 8. Empty or whitespace-only content is invalid at the tool boundary (`schema.md` §Bounds), so
-   `zikaron_remember` rejects it rather than producing a memory with zero vectors. If content ever became
+   `zikaron_memory_remember` rejects it rather than producing a memory with zero vectors. If content ever became
    admissible, the defined behaviour is exactly one gist-only chunk — invariant 12 requires every active
    memory to have at least one.
 

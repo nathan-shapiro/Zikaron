@@ -533,7 +533,8 @@ class TestPathShapesThatWouldOtherwiseLieOrCrash:
     ) -> None:
         """A plausible pick out of an agents directory, and it used to produce a working-looking
         install with consolidation silently broken: the consolidator's own config became a *primary*
-        agent while keeping its identity and prompt, so its first `zikaron_next_group` had no tool.
+        agent while keeping its identity and prompt, so its first `zikaron_memory_next_group` had
+        no tool.
         """
         project = tmp_path / "project"
         project.mkdir()

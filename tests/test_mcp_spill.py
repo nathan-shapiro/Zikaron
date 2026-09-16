@@ -63,7 +63,7 @@ def test_a_payload_that_fits_is_returned_unchanged(tmp_path: Path) -> None:
     """Identity, not merely equality: the spill path must not be reached at all for a small
     result, so the object a handler returns is the one the service sent."""
     small = {"done": True}
-    assert spill.apply(small, policy=_policy(tmp_path), tool="next_group") is small
+    assert spill.apply(small, policy=_policy(tmp_path), tool="memory_next_group") is small
     assert not (tmp_path / "runtime").exists()
 
 
@@ -72,12 +72,14 @@ def test_spilling_is_off_where_the_harness_cannot_read_a_file(tmp_path: Path) ->
     payload inline however large it is — a path it cannot open is the same stall this exists to
     end, reached by a different route."""
     big = _group(entries=20)
-    assert spill.apply(big, policy=_policy(tmp_path, enabled=False), tool="next_group") is big
+    assert (
+        spill.apply(big, policy=_policy(tmp_path, enabled=False), tool="memory_next_group") is big
+    )
     assert not (tmp_path / "runtime").exists()
 
 
 def test_an_over_threshold_payload_becomes_a_pointer_to_a_file_holding_it(tmp_path: Path) -> None:
-    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     assert pointer["spilled"] is True
@@ -90,7 +92,7 @@ def test_the_pointer_cannot_be_mistaken_for_a_served_group(tmp_path: Path) -> No
     """A consolidator that skimmed the pointer must not find the key it looks for in a group.
     Asserted because "unmistakable" is otherwise prose with nothing behind it — and the failure it
     guards is a merge decided from a filename."""
-    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     assert "journal_entries" not in pointer
@@ -104,7 +106,7 @@ def test_the_file_round_trips_to_exactly_the_payload_that_would_have_been_return
     given it. Compared as parsed objects rather than as text, so the formatting this module chose
     for readability cannot be mistaken for part of the contract."""
     payload = _group(entries=20)
-    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     written = Path(str(pointer["path"])).read_text(encoding="utf-8")
@@ -117,7 +119,7 @@ def test_no_line_in_the_file_exceeds_the_addressable_maximum(tmp_path: Path) -> 
     *count* would pass against a file of one enormous line, which is exactly the shape the harness
     writes and this module exists to avoid."""
     payload = _group(entries=40, content="y" * 2_000)
-    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     written = Path(str(pointer["path"])).read_text(encoding="utf-8")
@@ -133,7 +135,7 @@ def test_a_value_too_long_to_address_is_refused_rather_than_written(tmp_path: Pa
     payload = _group(content="z" * (spill.SPILL_MAX_LINE_BYTES + 1))
 
     with pytest.raises(PayloadLineTooLongError) as raised:
-        spill.apply(payload, policy=_policy(tmp_path), tool="next_group")
+        spill.apply(payload, policy=_policy(tmp_path), tool="memory_next_group")
 
     assert raised.value.uuid == "u0"
     assert raised.value.line_bytes > spill.SPILL_MAX_LINE_BYTES
@@ -150,7 +152,7 @@ def test_the_bound_is_bytes_so_multibyte_prose_is_measured_as_it_is_written(
     payload = _group(content="漢" * (spill.SPILL_MAX_LINE_BYTES // 3))
 
     with pytest.raises(PayloadLineTooLongError):
-        spill.apply(payload, policy=_policy(tmp_path), tool="next_group")
+        spill.apply(payload, policy=_policy(tmp_path), tool="memory_next_group")
 
 
 def test_multibyte_prose_within_the_bound_is_written_and_stays_readable(tmp_path: Path) -> None:
@@ -158,7 +160,7 @@ def test_multibyte_prose_within_the_bound_is_written_and_stays_readable(tmp_path
     non-Latin prose is refused, and the file must hold it as itself rather than as escapes — a
     consolidator reading `\\u6f22` is reading something it cannot judge."""
     payload = _group(content="漢字" * 200)
-    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(payload, policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     written = Path(str(pointer["path"])).read_text(encoding="utf-8")
@@ -168,7 +170,7 @@ def test_multibyte_prose_within_the_bound_is_written_and_stays_readable(tmp_path
 
 def test_the_file_is_private_to_this_user(tmp_path: Path) -> None:
     """It holds record prose verbatim, outside the store and outside the log rules."""
-    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="next_group")
+    pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
     assert Path(str(pointer["path"])).stat().st_mode & 0o777 == 0o600
@@ -177,8 +179,8 @@ def test_the_file_is_private_to_this_user(tmp_path: Path) -> None:
 def test_two_spills_never_share_a_filename(tmp_path: Path) -> None:
     """A re-serve of the same group must not overwrite a file a reader is partway through."""
     policy = _policy(tmp_path)
-    first = spill.apply(_group(entries=20), policy=policy, tool="next_group")
-    second = spill.apply(_group(entries=20), policy=policy, tool="next_group")
+    first = spill.apply(_group(entries=20), policy=policy, tool="memory_next_group")
+    second = spill.apply(_group(entries=20), policy=policy, tool="memory_next_group")
 
     assert isinstance(first, dict)
     assert isinstance(second, dict)
@@ -291,7 +293,7 @@ policy = SpillPolicy(
     enabled=True, threshold_bytes=100, directory=Path({str(runtime)!r}), store_key="k"
 )
 pointer = apply({{"journal_entries": [{{"uuid": "u", "content": "x" * 500}}]}},
-                policy=policy, tool="next_group")
+                policy=policy, tool="memory_next_group")
 assert Path(pointer["path"]).is_file(), "the spill must exist while the process lives"
 print(pointer["path"])
 """
@@ -300,7 +302,7 @@ print(pointer["path"])
     )
     written = Path(finished.stdout.strip())
 
-    assert written.name.startswith("k-next_group-"), "the store key must lead the filename"
+    assert written.name.startswith("k-memory_next_group-"), "the store key must lead the filename"
     assert not written.exists(), "the file must not outlive the process that wrote it"
 
 
@@ -329,8 +331,8 @@ class TestTheCleanupThatDoesNotDependOnExiting:
 
     def test_releasing_removes_what_was_written_before_it(self, tmp_path: Path) -> None:
         policy = _policy(tmp_path)
-        first = spill.apply(_group(entries=20), policy=policy, tool="next_group")
-        second = spill.apply(_group(entries=20), policy=policy, tool="apply_merge")
+        first = spill.apply(_group(entries=20), policy=policy, tool="memory_next_group")
+        second = spill.apply(_group(entries=20), policy=policy, tool="memory_apply_merge")
         assert isinstance(first, dict)
         assert isinstance(second, dict)
 
@@ -346,7 +348,7 @@ class TestTheCleanupThatDoesNotDependOnExiting:
         or asking for a group would destroy the group you were handed."""
         policy = _policy(tmp_path)
         spill.release_finished(policy)
-        current = spill.apply(_group(entries=20), policy=policy, tool="next_group")
+        current = spill.apply(_group(entries=20), policy=policy, tool="memory_next_group")
 
         assert isinstance(current, dict)
         assert Path(str(current["path"])).is_file()

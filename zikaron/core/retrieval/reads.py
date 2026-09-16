@@ -71,7 +71,7 @@ class ReadCall:
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
-    """`zikaron_search`'s per-row payload: exactly the seven fields the tool surface states.
+    """`zikaron_memory_search`'s per-row payload: exactly the seven fields the tool surface states.
 
     `state` is here so triage can see a demoted row for what it is. `version` is not, and that is
     the tool surface's own decision rather than an omission — see this module's docstring.

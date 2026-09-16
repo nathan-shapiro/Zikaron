@@ -79,6 +79,21 @@ def require_int(params: dict[str, object], name: str, *, default: int | None = N
     return value
 
 
+def optional_int(params: dict[str, object], name: str) -> int | None:
+    """`params[name]` if it is an integer, `None` if absent or explicitly `null`, else `bounds`.
+
+    Absence is a value here rather than a missing one: a per-knowledge-base override that is not
+    given means *seed this from configuration*, which is a different instruction from any number.
+    `bool` is excluded for the reason `require_int` gives — `true` must not silently become `1`.
+    """
+    value = params.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ZikaronError(ErrorCode.BOUNDS, field=name, limit="an integer or absent", actual=value)
+    return value
+
+
 def require_bool(params: dict[str, object], name: str, *, default: bool) -> bool:
     """`params[name]` if it is a boolean, `default` if absent, else `bounds`."""
     value = params.get(name, default)

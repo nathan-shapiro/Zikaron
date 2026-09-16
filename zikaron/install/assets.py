@@ -24,7 +24,8 @@ needs no assumption about which YAML features the harness's own frontmatter pars
 
 **Both texts are written once, in kiro's bare tool vocabulary, and *rendered* per harness.** Claude
 Code addresses an MCP tool as `mcp__<server>__<tool>` and the model sees that string verbatim
-(`research/claude-code-installer-probe.md` §6), so a bare `zikaron_next_group` there names a tool
+(`research/claude-code-installer-probe.md` §6), so a bare `zikaron_memory_next_group` there names a
+tool
 that does not exist — and a model told to call a tool it cannot find improvises rather than failing.
 Two copies of ~200 lines of prose is the alternative and it is worse: the three shared prohibitions
 would drift silently between them. So there is one constant and a mechanical rewrite, guarded by
@@ -69,7 +70,7 @@ search. Everything you are entitled to act on is in the payload in front of you.
 
 ## The loop
 
-1. Call `zikaron_next_group`.
+1. Call `zikaron_memory_next_group`.
 2. If it answers `{"done": true}`, the run is finished. Stop and report.
 3. If it answers `{"busy": true, ...}`, another consolidator holds this store's run. Stop and report
    that, naming `holder_session` and `holder_pid`. Do not retry.
@@ -91,17 +92,17 @@ you are being told about what is left.
 
 @@SPILL_GUIDANCE@@## The three verbs
 
-**`zikaron_merge(group_id, target, gist, content, absorb)`** — fold entries into an existing
+**`zikaron_memory_merge(group_id, target, gist, content, absorb)`** — fold entries into an existing
 long-term record, rewriting its prose to include what they add. `target` must be the group's `anchor`
 or one of its `candidates`; nothing else is reachable. The absorbed journal rows are retired and
 point at the target.
 
-**`zikaron_promote(group_id, gist, content, absorb)`** — make a long-term record out of entries with
+**`zikaron_memory_promote(group_id, gist, content, absorb)`** — make a long-term record out of entries with
 no good home. Pass exactly one entry to absorb and repeat its gist and content byte-for-byte, and
 that entry is promoted in place rather than copied; otherwise a new record is created and every
 absorbed entry retired against it.
 
-**`zikaron_discard(group_id, absorb, reason)`** — retire entries not worth keeping, with a short
+**`zikaron_memory_discard(group_id, absorb, reason)`** — retire entries not worth keeping, with a short
 reason for the log. Nothing replaces them.
 
 ## Judgment
@@ -233,7 +234,8 @@ schedule.
 
 ## You do not do this yourself
 
-You have `zikaron_search`, `zikaron_fetch`, `zikaron_remember`, `zikaron_amend` and `zikaron_retire`.
+You have `zikaron_memory_search`, `zikaron_memory_fetch`, `zikaron_memory_remember`,
+`zikaron_memory_amend` and `zikaron_memory_retire`.
 The merge, promote and discard verbs are not yours and never will be: consolidation runs as a
 separate agent with its own tool surface, on a fresh context, so that nothing from this session's
 reasoning leaks into judgments that will outlive it.
@@ -283,7 +285,7 @@ KIRO_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent w
 ```
 role: zikaron-consolidator
 prompt: Consolidate this project's memory journal. Work through every group until
-        zikaron_next_group answers {"done": true}, then report what you did.
+        zikaron_memory_next_group answers {"done": true}, then report what you did.
 ```"""
 
 #: Claude Code's invocation, and it deliberately **does not name the spawning tool**.
@@ -302,7 +304,7 @@ tool this harness gives you for delegating to a subagent, with `subagent_type: z
 
 ```
 Consolidate this project's memory journal. Work through every group until
-zikaron_next_group answers {"done": true}, then report what you did.
+zikaron_memory_next_group answers {"done": true}, then report what you did.
 ```"""
 
 
@@ -311,8 +313,8 @@ def _guard_known_tools(text: str, vocabulary: Mapping[str, str]) -> None:
 
     The whole point of rendering rather than duplicating is that a name cannot go stale in one copy
     and not the other. A rewrite that silently passes an unknown token through would give exactly
-    that back: prose naming `zikaron_nxet_group`, or a verb that was renamed in `mcp/` and not here,
-    shipped intact and failing only in front of a model that will improvise around it.
+    that back: prose naming `zikaron_memory_nxet_group`, or a verb that was renamed in `mcp/` and
+    not here, shipped intact and failing only in front of a model that will improvise around it.
 
     Raises:
         ValueError: at import/build time, naming every offending token.
@@ -330,8 +332,10 @@ def _guard_known_tools(text: str, vocabulary: Mapping[str, str]) -> None:
 def render(text: str, vocabulary: Mapping[str, str]) -> str:
     """`text` with every bare tool name replaced by this harness's own spelling.
 
-    `vocabulary` maps bare name to shipped name; kiro's is the identity map, which is what keeps
-    kiro's artefacts byte-identical to what M12 shipped rather than merely equivalent to it.
+    `vocabulary` maps bare name to shipped name; kiro's is the identity map, so kiro's artefacts
+    carry the constants above exactly as written rather than a rendering of them. That is what
+    makes a change to kiro's shipped prose a change to *this file* and never a side effect of
+    teaching the renderer something about the other harness.
     """
     _guard_known_tools(text, vocabulary)
     return _TOOL_TOKEN.sub(lambda match: vocabulary[match.group()], text)

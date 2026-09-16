@@ -133,7 +133,7 @@ def encode_result(request_id: object, result: object, *, session_id: str | None 
 
     `session_id`, when given, is attached as `client.session_id` — a **sibling** of `result`,
     never spliced into it: `architecture.md` states the label belongs "in the response envelope,"
-    and `zikaron_search`'s own documented `result` is a bare list (`[{...}, ...]`), which has no
+    and `memory_search`'s own documented `result` is a bare list (`[{...}, ...]`), which has no
     key to add one to. Mirroring the request's own `client: {session_id: ...}` shape is what
     keeps the two directions symmetric rather than inventing a second convention for the response
     side.

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -14,7 +14,12 @@ dependencies = [
     # `zikaron-mcp` only. Deliberately not stdlib-only, unlike `zikaron-hook` — see
     # coding-standards.md §6 for the cost-model reasoning (once per agent spawn, not once per
     # message) and architecture.md §Components for the measured import cost.
-    "fastmcp==3.4.5",
+    #
+    # Held on the 3.x line rather than tracking latest. 4.x makes an MCP server stateless, which
+    # changes how a client's connection — and therefore the session label this client adopts and
+    # reuses across calls — is carried. That is a transport change worth its own measurement, so
+    # the bump is deliberate rather than absorbed into an ordinary dependency refresh.
+    "fastmcp==3.4.7",
 ]
 
 # The two commands a shipped kiro config names, and the reason they are console scripts rather
@@ -35,14 +40,14 @@ zikaron-mcp = "zikaron.mcp.main:main"
 
 [project.optional-dependencies]
 dev = [
-    "ruff==0.16.1",
-    "mypy==2.3.0",
+    "ruff==0.16.7",
+    "mypy==2.3.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-asyncio==1.4.0",
     # Property-based tests, for the places the design states a property rather than a case:
     # chunking never loses content, and no chunk exceeds the budget it was cut to.
-    "hypothesis==6.140.2",
+    "hypothesis==6.168.0",
     # Tests only, and never imported by shipped code. Two of Claude Code's four installed
     # artefacts are YAML-frontmatter Markdown, and the installer emits that frontmatter by string
     # formatting — so the only way to assert it is *valid* is to parse it with something that did
@@ -53,7 +58,7 @@ dev = [
     "pyyaml==6.0.3",
     # `mypy --strict` covers the tests as well as the package (see `check.sh`), so the parser above
     # needs stubs or the gate fails on the import rather than on anything about the code.
-    "types-PyYAML==6.0.12.20250915",
+    "types-PyYAML==6.0.12.20260906",
 ]
 
 [tool.setuptools.packages.find]

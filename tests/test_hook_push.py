@@ -146,8 +146,10 @@ def test_a_subagent_session_is_suppressed_with_no_rpc_at_all(
 
 
 def _surface_envelope(service: _FakeSurfaceService) -> dict[str, object]:
-    """The `client` envelope of the one `surface` request the hook actually sent."""
-    surfaces = [request for request in service.requests if request.get("method") == "surface"]
+    """The `client` envelope of the one `memory_surface` request the hook actually sent."""
+    surfaces = [
+        request for request in service.requests if request.get("method") == "memory_surface"
+    ]
     assert len(surfaces) == 1, f"expected exactly one surface request, got {len(surfaces)}"
     params = surfaces[0]["params"]
     assert isinstance(params, dict)

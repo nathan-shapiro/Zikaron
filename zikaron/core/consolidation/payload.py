@@ -1,4 +1,4 @@
-"""The shapes `zikaron_next_group` returns, as three types a caller pattern-matches on.
+"""The shapes `zikaron_memory_next_group` returns, as three types a caller pattern-matches on.
 
 `architecture.md` §"Consolidator tool surface" is normative for every field here. These are `core`'s
 values, not wire objects: the literal `{done: true}` and `{busy: true}` booleans belong to whichever
@@ -61,7 +61,7 @@ class RankedRecord:
 
 @dataclass(frozen=True, slots=True)
 class ServedGroup:
-    """What one delivery hands the consolidator: `zikaron_next_group`'s success shape.
+    """What one delivery hands the consolidator: `zikaron_memory_next_group`'s success shape.
 
     `anchor` is `None` for an orphan group, and also `None` with `anchor_vacated=True` when a
     planned anchor stopped being targetable before the group was served — two different situations
@@ -200,7 +200,8 @@ class GroupConflict:
 
 @dataclass(frozen=True, slots=True)
 class Merged:
-    """`zikaron_merge`'s success shape: `{uuid, version, remaining_uuids, group_complete}`."""
+    """`zikaron_memory_merge`'s success shape:
+    `{uuid, version, remaining_uuids, group_complete}`."""
 
     uuid: str
     version: int
@@ -210,7 +211,8 @@ class Merged:
 
 @dataclass(frozen=True, slots=True)
 class Promoted:
-    """`zikaron_promote`'s success shape — identical in shape to `Merged`, and a separate type.
+    """`zikaron_memory_promote`'s success shape — identical in shape to `Merged`, and a separate
+    type.
 
     Separate for the reason `Amended` and `Retired` are: the two verbs are not interchangeable at
     any call site that matches on the outcome's own type, and a promotion's `uuid` may be a row
@@ -225,7 +227,7 @@ class Promoted:
 
 @dataclass(frozen=True, slots=True)
 class Discarded:
-    """`zikaron_discard`'s success shape: `{retired, remaining_uuids, group_complete}`.
+    """`zikaron_memory_discard`'s success shape: `{retired, remaining_uuids, group_complete}`.
 
     `retired` is how many member rows this call actually moved, read from the disposition write
     rather than from the length of the argument, so a number the store did not produce cannot be

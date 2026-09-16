@@ -662,7 +662,7 @@ three places, which is the useful thing to carry forward rather than the individ
   "discard my edits".
 - **`enabledMcpjsonServers` is not `permissions.allow`.** The install conflated "does the server
   load" with "is each call approved", so the default Claude Code install left every
-  `zikaron_remember` behind a prompt — the per-write friction the design calls worse than not asking.
+  `zikaron_memory_remember` behind a prompt — the per-write friction the design calls worse than not asking.
   Now both are written, with the consolidator's server allowed **unconditionally**: a subagent has
   nobody to answer a prompt, which is the same argument kiro's `allowedTools` already makes.
 - **Harness *values* were re-spelled outside the seam** — both kiro trigger names, all three Claude
@@ -1132,7 +1132,7 @@ Normative: `design/architecture.md` §Components and §"Filesystem security"; `d
 including what the rejected trimming alternative would have cost.
 
 **The defect, observed in production before it was understood.** A consolidation run against
-`~/Trading/LeibaTrader` stalled: `zikaron_next_group` returned a group the harness refused to
+`~/Trading/LeibaTrader` stalled: `zikaron_memory_next_group` returned a group the harness refused to
 deliver. Re-running appeared to fix it, which is the misleading part — the first run had merged
 part of the journal, so the second run's groups were smaller and fit. The fault is not
 intermittent; it is a function of how much prose a group happens to carry, and it returns whenever
@@ -1727,7 +1727,7 @@ lock is never auto-reclaimed and `--force-unlock` clears it while refusing a liv
 
 ---
 
-## M24 — The MCP management surface
+## M24 — The MCP management surface — **COMPLETE**
 
 Normative: §8.2, §8.4, §8.5, §12.
 
@@ -1784,12 +1784,48 @@ corpus is where the response cap begins dropping whole groups; one result serial
 An earlier figure putting that crossing at the third corpus was taken while the cap double-counted
 the transport's two copies, and is withdrawn in place in `FINDINGS.md` — do not tune against it.
 
+**The tool descriptions are in scope as a budget, and the measurement that decides it is the
+operator's.** The primary server's `tools/list` answer is **18,594 bytes over twelve tools** —
+14,971 of it descriptions, mean 1,248, and skewed: `zikaron_knowledge_search` 2,498,
+`zikaron_knowledge_status` 1,982, `zikaron_knowledge_add` 1,891, against 457 for the smallest.
+Harness, re-runnable in one command: `experiments/m24_tool_list_size.py`.
+**What that does not establish is the cost**, which is why the number above is a size and not a
+verdict: what a description costs is context-window occupancy on every turn of every session, and
+that is read with a context inspector against a real session rather than computed from bytes. The
+operator takes that reading; this milestone starts from it.
+
+**The seam to cut on, if the reading says cut: *when to call and what to pass* stays, *how to read
+what came back* goes.** Measured on the three largest, the second category is 1,210 of 2,498 bytes
+in `search` (empty-group semantics, the five `state` values, `snippet`/`truncated`/`stale`/
+`groups_dropped`), 1,252 of 1,982 in `status` (a field glossary — `files_seen` against
+`files_indexed` against `files_skipped`, partials-versus-totals, `lock.live`, `orphans`), and 365
+of 1,891 in `add`, whose bulk is *input* semantics and belongs where it is. That is ~2,827 bytes,
+roughly 15% of the whole tool list, describing fields the model cannot see yet — a permanent cost
+for information useful in exactly the turn after a call returns, when the result itself could carry
+it. A tool result delivers ~29,923 tokens before truncation
+(`research/claude-code-mcp-result-truncation.md`), so the transient channel is not the scarce one.
+
+**Two things are not to be cut on size alone, and this is the half a byte count gets wrong.** The
+*occasions* paragraphs are the one part of a description this corpus has evidence **for**:
+`research/amazon-q-knowledge-integration.md` found the nearest comparable product ships a 25-word
+description with no trigger guidance, and the consequence is that a human is the trigger — the
+agent never reaches for it unprompted — while the neighbouring `todo_list` spends 78 words on
+triggers. Our own recall moved 10 → 188 searches after a prose change, with that entry's stated
+attribution caveats. And `zikaron_knowledge_search`'s 188-byte untrusted-reference paragraph is the
+poisoning boundary. Cutting either is the change most likely to read as a clean win and quietly
+stop the tools being used.
+**Unmeasured, and named as such so it is not quoted as a finding:** whether a model choosing among
+twelve tools chooses *worse* when each carries 2,500 bytes. That is an attention argument, nothing
+in this corpus measures it, and it should not be used to justify the cut on its own.
+
 **Invariants:** none new. **Done when:** a research note reports search-per-session use on a real
 corpus, the empty-group rate from the §12 counters, and the swept parameters with the evidence for
-each; any parameter moved is moved in `meta` with a stated reason; and §16's open questions are each
-either closed with a measurement or restated with what is still missing.
+each; any parameter moved is moved in `meta` with a stated reason; §16's open questions are each
+either closed with a measurement or restated with what is still missing; and the description budget
+is either cut against a context reading, or left with the reading recorded as the reason.
 
-**Fence:** no new capability. Measurement and tuning only.
+**Fence:** no new capability. Measurement and tuning only — and a description cut is prose, so it
+moves in lockstep with the design's block quotes and the parity tests that compare them.
 
 ---
 

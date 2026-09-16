@@ -35,7 +35,7 @@ the safe spelling here is the absent key, and the drift test asserts the absence
 member.
 
 Granting everything also means the agent sees `mcp__zikaron-consolidator`'s four verbs alongside its
-own five tools. That is not a leak in this arrangement — it is the shipped condition, and the
+own. That is not a leak in this arrangement — it is the shipped condition, and the
 accepted exposure `design/harness.md` §"Tool gating" records: under Claude Code an MCP server must be
 registered session-wide to be reachable by any subagent, so the primary agent necessarily sees them.
 

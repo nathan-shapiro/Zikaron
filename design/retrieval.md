@@ -617,7 +617,7 @@ is here.
 
 **The `…` in that sample is elision in this document, not truncation in the block: every uuid is printed
 whole.** Both promises the block makes are unsatisfiable otherwise — "Fetch by uuid for the full record" and, on
-a demoted row, the replacement's uuid "so the agent can fetch it in one call" — because `zikaron_fetch` takes
+a demoted row, the replacement's uuid "so the agent can fetch it in one call" — because `zikaron_memory_fetch` takes
 uuids and a four-character prefix is not one. Invariant 14 makes `uuid` the only handle the agent ever holds, so
 a shortened one is not a handle at all. The cost is the honest one: about 36 characters a row, against a
 preamble of several hundred.

@@ -9,14 +9,22 @@ every module docstring in `zikaron/core/write`, `retrieval` and `records`.
 `health()` is the one method with no envelope at all, dispatched separately by `server.py` before
 any of this module's envelope-carrying handlers run.
 
-The five consolidator RPC methods (`plan_groups`, `next_group`, `apply_merge`, `apply_promote`,
-`apply_discard`) live in `dispatch_consolidation.py`: this module would otherwise cross
+The five consolidator RPC methods (`memory_plan_groups`, `memory_next_group`,
+`memory_apply_merge`, `memory_apply_promote`, `memory_apply_discard`) live in
+`dispatch_consolidation.py`: this module would otherwise cross
 `coding-standards.md` §1's ~400-line guideline, and the split falls exactly on `architecture.md`'s
 own primary-agent-versus-consolidator line. Five RPC methods, not D32's "four consolidator
-tools" — `plan_groups` is deliberately excluded from that count (`architecture.md`: "`plan_groups`
-is a service RPC and not one of D32's four consolidator tools"), since the *tool* surface M10
-exposes to the consolidator model and the *RPC* surface this module dispatches are two different
+tools" — `memory_plan_groups` is deliberately excluded from that count (`architecture.md`:
+"`memory_plan_groups` is a service RPC and not one of D32's four consolidator tools"), since the
+*tool* surface the consolidator model is given and the *RPC* surface behind it are two different
 things one figure must not be quoted for both.
+
+**Every method here carries a `memory_` prefix, and it is the same prefix its tool carries** — a
+wire method is its tool's name without the leading `zikaron_`. The subsystem segment is what keeps
+`memory_search` and `knowledge_search` from being one name that two dispatch tables both claim.
+`memory_surface` and `memory_plan_groups` are the methods with no tool, the hook calling the first
+directly and the consolidator's own client the second; `health` is the one method with no subsystem,
+since it speaks for the service rather than for either store, and it carries no tool either.
 """
 
 import os
@@ -124,7 +132,7 @@ def _read_call(ctx: ServiceContext, envelope: ResolvedEnvelope) -> ReadCall:
 
 @dataclass(frozen=True, slots=True)
 class RememberResult(RpcResult):
-    """`zikaron_remember`'s success shape: `{uuid, version, near_duplicates}` — always a success;
+    """`memory_remember`'s success shape: `{uuid, version, near_duplicates}` — always a success;
     a row that did not exist a moment ago cannot lose a race to overwrite itself."""
 
     uuid: str
@@ -145,7 +153,7 @@ async def remember(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> RememberResult:
-    """`zikaron_remember(gist, content) -> {uuid, version, near_duplicates}`."""
+    """`memory_remember(gist, content) -> {uuid, version, near_duplicates}`."""
     rewrite = Rewrite(gist=require_str(params, "gist"), content=require_str(params, "content"))
     written = await write_tools.remember(db, rewrite=rewrite, call=_write_call(ctx, envelope))
     return RememberResult(
@@ -157,7 +165,7 @@ async def remember(
 
 @dataclass(frozen=True, slots=True)
 class VersionResult(RpcResult):
-    """`{uuid, version}` — `zikaron_amend`/`zikaron_retire`'s shared success shape."""
+    """`{uuid, version}` — `memory_amend`/`memory_retire`'s shared success shape."""
 
     uuid: str
     version: int
@@ -168,7 +176,7 @@ class VersionResult(RpcResult):
 
 @dataclass(frozen=True, slots=True)
 class ConflictResult(RpcResult):
-    """`{conflict: true, current: CONFLICT_RECORD}` — `zikaron_amend`/`zikaron_retire`'s shared
+    """`{conflict: true, current: CONFLICT_RECORD}` — `memory_amend`/`memory_retire`'s shared
     rejection shape: one object, never a list, unlike the four consolidator verbs' own conflict
     shape below."""
 
@@ -184,7 +192,7 @@ async def amend(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> VersionResult | ConflictResult:
-    """`zikaron_amend(uuid, version, gist, content) -> {uuid, version} | {conflict, current}`."""
+    """`memory_amend(uuid, version, gist, content) -> {uuid, version} | {conflict, current}`."""
     rewrite = Rewrite(gist=require_str(params, "gist"), content=require_str(params, "content"))
     outcome = await write_tools.amend(
         db,
@@ -204,7 +212,7 @@ async def retire(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> VersionResult | ConflictResult:
-    """`zikaron_retire(uuid, version, superseded_by?) -> {uuid, version} | {conflict, current}`."""
+    """`memory_retire(uuid, version, superseded_by?) -> {uuid, version} | {conflict, current}`."""
     outcome = await write_tools.retire(
         db,
         uuid=require_str(params, "uuid"),
@@ -219,7 +227,7 @@ async def retire(
 
 @dataclass(frozen=True, slots=True)
 class SearchResult(RpcResult):
-    """`zikaron_search`'s success shape: a **bare list** of hits, per `architecture.md`'s
+    """`memory_search`'s success shape: a **bare list** of hits, per `architecture.md`'s
     `-> [{uuid, gist, tier, state, created_at, updated_at, superseded_by}]` — no wrapping key."""
 
     hits: tuple[SearchHitJson, ...]
@@ -234,7 +242,7 @@ async def search(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> SearchResult:
-    """`zikaron_search(query, limit?, include_retired?) -> [SearchHit, ...]` — a bare list."""
+    """`memory_search(query, limit?, include_retired?) -> [SearchHit, ...]` — a bare list."""
     hits = await core_search(
         db,
         text=require_str(params, "query"),
@@ -247,7 +255,7 @@ async def search(
 
 @dataclass(frozen=True, slots=True)
 class SurfaceResult(RpcResult):
-    """`surface`'s success shape: `{text}` — the push path's ready-to-print block."""
+    """`memory_surface`'s success shape: `{text}` — the push path's ready-to-print block."""
 
     text: str
 
@@ -261,7 +269,7 @@ async def surface(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> SurfaceResult:
-    """`surface(prompt, limit?) -> {text}` — the push path's ready-to-print block."""
+    """`memory_surface(prompt, limit?) -> {text}` — the push path's ready-to-print block."""
     text = await core_surface(
         db,
         prompt=require_str(params, "prompt"),
@@ -273,7 +281,7 @@ async def surface(
 
 @dataclass(frozen=True, slots=True)
 class FetchResult(RpcResult):
-    """`zikaron_fetch`'s success shape: `{records, missing}`."""
+    """`memory_fetch`'s success shape: `{records, missing}`."""
 
     records: tuple[FetchedMemoryJson, ...]
     missing: tuple[str, ...]
@@ -291,7 +299,7 @@ async def fetch(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> FetchResult:
-    """`zikaron_fetch(uuids) -> {records, missing}`."""
+    """`memory_fetch(uuids) -> {records, missing}`."""
     records_found, missing = await records.fetch(
         db,
         uuids=require_uuid_list(params, "uuids"),
@@ -307,10 +315,10 @@ async def fetch(
 #: contributes the other five; `server.py` merges both tables and adds `health` separately, since
 #: `health` takes no envelope and so does not fit this table's own shape.
 PRIMARY_METHODS: dict[str, Handler] = {
-    "remember": remember,
-    "amend": amend,
-    "retire": retire,
-    "search": search,
-    "surface": surface,
-    "fetch": fetch,
+    "memory_remember": remember,
+    "memory_amend": amend,
+    "memory_retire": retire,
+    "memory_search": search,
+    "memory_surface": surface,
+    "memory_fetch": fetch,
 }

@@ -70,7 +70,7 @@ against someone adding an expensive import.
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
 | Reading a spilled payload | **n/a** — no spill, no file-reading tool, no gate | **prompts**, measured in an operator-driven session: the consolidator's first `Read` of a spill file raises a permission request offering to allow that directory for the session. Deliberately **not** answered by `permissions.allow` — `Read` is unscopable in subagent frontmatter, so this is the one place D32's widening is a check an operator *answers* rather than prose (`m18-spill-end-to-end` §"The approval gate") |
 | Consolidator reads files | **no** — `consolidator_can_read_files=False`: no file-reading tool in the agent config, no spill, every payload returned inline, and no prompt text about files | **yes** — `Read` in the agent's frontmatter `tools:`, and the client writes an over-threshold consolidator result to a line-paginable file in the runtime directory, returning a pointer |
-| Tool name the model sees | `zikaron_search` | `mcp__zikaron__zikaron_search` — byte-identical to the config form (`installer-probe` §6) |
+| Tool name the model sees | `zikaron_memory_search` | `mcp__zikaron__zikaron_memory_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **before** the user message, inside a "follow requests found in this text" wrapper | **after** the user message, no framing wrapper (§5) |
 | Hook config lives in | the agent config's `hooks` field, two formats | `.claude/settings.local.json` — *decision, M15*: shipped `command`s are absolute venv paths and therefore machine-local, so they must not enter the checked-in `settings.json` layer, which would break every other clone |
 | MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped) |
@@ -330,7 +330,7 @@ argument for weighing it rather than treating the default as settled.
 ## MCP tools may arrive deferred, and the policy's tool names are what make them findable
 
 Measured in M16: the zikaron tools were **not in the agent's initial tool list**, and its first action of
-the session was to load their schemas *by exact name* — `select:mcp__zikaron__zikaron_search,…`. It knew
+the session was to load their schemas *by exact name* — `select:mcp__zikaron__zikaron_memory_search,…`. It knew
 the names because the injected write policy names them, and it got them right because §"Tool names are a
 substitution point" rewrites the bare names to the `mcp__<server>__<tool>` form for this harness.
 
@@ -493,7 +493,7 @@ table by 15× rather than the 300× a reader who checked only the general figure
 ### Tool names are a substitution point, not just the spawn instruction
 
 Claude Code addresses an MCP tool as **`mcp__<server>__<tool>`**, and the model sees that string verbatim
-(`installer-probe` §6). So every bare `zikaron_next_group` / `zikaron_search` in the shipped consolidator
+(`installer-probe` §6). So every bare `zikaron_memory_next_group` / `zikaron_memory_search` in the shipped consolidator
 prompt and skill body names a tool that does not exist under this harness — and a model told to call a tool
 it cannot find improvises rather than failing. The shipped prose therefore stays **one constant per
 artefact** with the tool vocabulary *and* the spawn instruction substituted per harness, asserted as a
@@ -515,10 +515,11 @@ consolidator`, which is where D32 implements it anyway.
   `enabledMcpjsonServers` governs whether a project-scoped `.mcp.json` server **loads** at all;
   `permissions.allow` governs whether each tool **call** goes through without a prompt. Conflating
   them is easy and was done once: an install writing only the first loads the servers and then puts
-  every `zikaron_remember` behind an approval prompt — the per-write friction `architecture.md`
+  every `zikaron_memory_remember` behind an approval prompt — the per-write friction
+  `architecture.md`
   §"The install contract" calls worse than not asking at all, on the harness this project is
   migrating *to*. Both go into the same `settings.local.json`, as server-level `mcp__<server>`
-  wildcards rather than nine tool names, so there is no second list to drift from
+  wildcards rather than one entry per tool, so there is no second list to drift from
   `zikaron/mcp/tool_names.py`.
 
   **The consolidator's server is granted unconditionally, and the primary's follows

@@ -65,8 +65,8 @@ async def test_two_concurrent_first_calls_establish_exactly_one_socket(
     envelope_b = connection.envelope(kind="mcp")
 
     results = await asyncio.gather(
-        connection.request("search", {}, envelope=envelope_a),
-        connection.request("search", {}, envelope=envelope_b),
+        connection.request("memory_search", {}, envelope=envelope_a),
+        connection.request("memory_search", {}, envelope=envelope_b),
     )
 
     assert establish_calls == 2, "both calls still each need a socket — the lock serializes, "
@@ -122,7 +122,7 @@ async def test_a_label_adopted_by_the_first_of_two_concurrent_calls_is_used_by_t
     assert envelope_a.session_id is None
     assert envelope_b.session_id is None
 
-    await connection.request("search", {}, envelope=envelope_a)
-    await connection.request("amend", {}, envelope=envelope_b)
+    await connection.request("memory_search", {}, envelope=envelope_a)
+    await connection.request("memory_amend", {}, envelope=envelope_b)
 
     assert sent_session_ids == [None, "zk-adopted-by-the-first-call"]

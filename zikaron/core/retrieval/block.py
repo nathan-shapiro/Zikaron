@@ -19,7 +19,8 @@ stated order and the demotion labels all come from here. Three properties are lo
 
 Uuids are printed **whole**. The `…` in the design's sample is elision in that document, not
 truncation here: the block tells the agent to fetch by uuid, and on a demoted row it names the
-replacement so the agent can fetch it in one call, and `zikaron_fetch` takes uuids rather than
+replacement so the agent can fetch it in one call, and `zikaron_memory_fetch` takes uuids rather
+than
 prefixes.
 """
 

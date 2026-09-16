@@ -39,6 +39,18 @@ def store_dir(scope_dir: Path) -> Path:
     return scope_dir / ".zikaron"
 
 
+def scope_of(store_directory: Path) -> Path:
+    """`store_dir`'s inverse: the directory a store directory was derived from.
+
+    Needed because a knowledge-base build is spawned as its own process and takes the **project**
+    rather than the store, so that the child acts on the store its parent already resolved instead
+    of resolving one for itself. Written as the stated inverse, in one place, rather than as a
+    `.parent` at the call site: the two are the same operation and a reader meeting only the second
+    has no way to tell whether the coupling is deliberate.
+    """
+    return store_directory.parent
+
+
 def store_db_path(store_directory: Path) -> Path:
     """Where `memory.db` lives inside a store directory."""
     return store_directory / _DB_FILENAME

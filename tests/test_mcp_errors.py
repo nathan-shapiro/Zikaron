@@ -15,8 +15,8 @@ def test_a_plain_success_result_is_returned_unchanged() -> None:
 
 
 def test_a_bare_list_result_is_returned_unchanged() -> None:
-    """`zikaron_search`'s own documented shape is a bare list, per `architecture.md` — this must
-    not be mistaken for a malformed response merely because it is not a `dict`."""
+    """`zikaron_memory_search`'s own documented shape is a bare list, per `architecture.md` — this
+    must not be mistaken for a malformed response merely because it is not a `dict`."""
     response: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "result": [{"uuid": "u1"}]}
     assert response_to_tool_result(response) == [{"uuid": "u1"}]
 

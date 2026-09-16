@@ -33,7 +33,7 @@ class SurfaceRejectionError(Exception):
 
 
 def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope) -> str:
-    """Send one `surface(prompt, limit)` request and return the text it answered with.
+    """Send one `memory_surface(prompt, limit)` request and return the text it answered with.
 
     A single `sendall`/`recv`-until-newline round trip — this client makes exactly one request per
     process, so there is no held connection for a partial-send ambiguity to matter against: unlike
@@ -52,7 +52,7 @@ def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: Hook
     request = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "surface",
+        "method": "memory_surface",
         "params": {
             "prompt": prompt,
             "limit": limit,

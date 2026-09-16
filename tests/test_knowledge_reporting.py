@@ -10,39 +10,23 @@ nothing changed" and "the walk is still running" are otherwise byte-identical st
 import os
 import uuid
 from pathlib import Path
-from typing import Final
 
 import pytest
 
-from tests.knowledge_fixtures import add_base, config_for, corpus_root, open_store
+from tests.knowledge_fixtures import (
+    DEAD_PID,
+    add_base,
+    config_for,
+    corpus_root,
+    open_store,
+    write_meta,
+)
 from zikaron.core.clock import timestamp
 from zikaron.core.knowledge import ddl as knowledge_ddl
 from zikaron.core.knowledge import lifecycle, lock, meta, reporting
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.knowledge.state import KnowledgeState
 from zikaron.core.store.connection import open_connection
-
-#: A pid no process can have, so *not running* is a fact rather than a race with the scheduler.
-_DEAD_PID: Final = 2**22 + 7
-
-
-async def _write_meta(db_path: Path, **rows: str) -> None:
-    """Write `meta` rows a build would write, directly.
-
-    Directly because no build exists to write them: what is under test is the reader, and stubbing
-    the reader instead would assert this suite's belief back to itself.
-    """
-    db, _inode = await open_connection(db_path, pragmas=knowledge_ddl.PRAGMAS, existing_only=True)
-    try:
-        for key, value in rows.items():
-            await db.execute(
-                "INSERT INTO meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, value),
-            )
-        await db.commit()
-    finally:
-        await db.close()
 
 
 async def _add(tmp_path: Path, store_dir: Path, db: object, **kwargs: object) -> lifecycle.Created:
@@ -94,6 +78,55 @@ class TestADatabaseThatWillNotOpen:
             (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.ERROR
 
+    async def test_the_reason_travels_with_the_state(self, tmp_path: Path) -> None:
+        """A caller that must *raise* rather than report needs the driver's own exception, and
+        nothing it could invent would say what went wrong better. So `observe` keeps it, and the
+        state and its presence are one fact rather than two that could drift apart."""
+        async with open_store(tmp_path) as (store_dir, db):
+            config = config_for(tmp_path)
+            created = await _add(tmp_path, store_dir, db)
+            created.database_path.write_bytes(b"this is not a SQLite database")
+
+            observed = await reporting.observe(store_dir, created.knowledge_base, config)
+            assert observed.status.summary.state is KnowledgeState.ERROR
+            assert observed.unreadable_because is not None
+
+
+class TestTheStateAndItsReasonAreOneFact:
+    """`Observed` refuses to hold a state and a reason that disagree.
+
+    Without the check a reader needing the exception has to guard against a combination this
+    module never produces — an unreachable branch, and one no test can exercise, which reads as
+    100% covered because a short-circuit fallback is not a branch to the coverage tool. Stated in
+    the constructor it is reachable, it is testable, and callers may rely on it.
+    """
+
+    def _status(self, corpus_state: KnowledgeState) -> reporting.Status:
+        registered = KnowledgeBase(
+            id=uuid.uuid4(), name="docs", description="a corpus", created_at=timestamp()
+        )
+        return reporting.without_details(registered, corpus_state)
+
+    def test_an_error_with_no_reason_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="disagree"):
+            reporting.Observed(status=self._status(KnowledgeState.ERROR), blocker=None)
+
+    def test_a_reason_on_any_other_state_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="disagree"):
+            reporting.Observed(
+                status=self._status(KnowledgeState.REINDEX_REQUIRED),
+                blocker=None,
+                unreadable_because=RuntimeError("nothing opened this"),
+            )
+
+    def test_the_two_agreeing_combinations_are_accepted(self) -> None:
+        reporting.Observed(status=self._status(KnowledgeState.REINDEX_REQUIRED), blocker=None)
+        reporting.Observed(
+            status=self._status(KnowledgeState.ERROR),
+            blocker=None,
+            unreadable_because=RuntimeError("this database will not open"),
+        )
+
 
 class TestAMissingRoot:
     async def test_a_corpus_whose_directory_is_gone_says_so(self, tmp_path: Path) -> None:
@@ -122,7 +155,7 @@ class TestAnEncoderThatNoLongerAgrees:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(created.database_path, embed_model="some/other-model")
+            await write_meta(created.database_path, embed_model="some/other-model")
 
             (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
@@ -133,7 +166,7 @@ class TestAnEncoderThatNoLongerAgrees:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
                 chunk_max_tokens="900",
                 rrf_k="30",
@@ -195,7 +228,7 @@ class TestHowManyFilesAreLeft:
             finally:
                 await pending.close()
             if rows:
-                await _write_meta(created.database_path, **rows)
+                await write_meta(created.database_path, **rows)
 
             (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.files_remaining == expected
@@ -215,7 +248,7 @@ class TestTheDiagnosticFields:
             assert before.details is not None
             assert before.details.git_mode_effective is None
 
-            await _write_meta(created.database_path, last_scan_git_mode_effective="off")
+            await write_meta(created.database_path, last_scan_git_mode_effective="off")
             (after,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert after.details is not None
             assert after.details.git_mode_effective is meta.GitMode.OFF
@@ -226,7 +259,7 @@ class TestTheDiagnosticFields:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(created.database_path, last_scan_git_mode_effective="sideways")
+            await write_meta(created.database_path, last_scan_git_mode_effective="sideways")
 
             (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.details is not None
@@ -241,7 +274,7 @@ class TestTheDiagnosticFields:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(created.database_path, files_indexed="not a number")
+            await write_meta(created.database_path, files_indexed="not a number")
 
             (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
             assert report.summary.files_indexed == 0
@@ -309,7 +342,7 @@ class TestWhoIsBuildingThisCorpus:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
                 lock_pid=str(os.getpid()),
                 lock_host=lock.this_host(),
@@ -329,9 +362,9 @@ class TestWhoIsBuildingThisCorpus:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
-                lock_pid=str(_DEAD_PID),
+                lock_pid=str(DEAD_PID),
                 lock_host=lock.this_host(),
                 lock_started_at=timestamp(),
             )
@@ -349,9 +382,9 @@ class TestWhoIsBuildingThisCorpus:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
-                lock_pid=str(_DEAD_PID),
+                lock_pid=str(DEAD_PID),
                 lock_host="another-machine",
                 lock_started_at=timestamp(),
             )
@@ -368,9 +401,9 @@ class TestWhoIsBuildingThisCorpus:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
-                lock_pid=str(_DEAD_PID),
+                lock_pid=str(DEAD_PID),
                 lock_host=lock.this_host(),
                 lock_started_at="the other day",
             )
@@ -386,7 +419,7 @@ class TestWhoIsBuildingThisCorpus:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
                 lock_pid="not-a-pid",
                 lock_host=lock.this_host(),
@@ -411,7 +444,7 @@ class TestWhatCountsAsABuildInFlight:
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
-            await _write_meta(
+            await write_meta(
                 created.database_path,
                 last_scan_started_at="2026-01-01T00:00:00+00:00",
                 last_walk_completed_at="2026-01-02T00:00:00+00:00",
@@ -436,7 +469,7 @@ class TestWhatCountsAsABuildInFlight:
         is the one that lets two indexers write one database."""
         report = await self._report(
             tmp_path,
-            lock_pid=str(_DEAD_PID),
+            lock_pid=str(DEAD_PID),
             lock_host="another-machine",
             lock_started_at=timestamp(),
         )
@@ -449,7 +482,7 @@ class TestWhatCountsAsABuildInFlight:
         that could never move again."""
         report = await self._report(
             tmp_path,
-            lock_pid=str(_DEAD_PID),
+            lock_pid=str(DEAD_PID),
             lock_host=lock.this_host(),
             lock_started_at=timestamp(),
         )

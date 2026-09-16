@@ -285,11 +285,13 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
         # tool improvises rather than failing.
         assert tools == set(PRIMARY_TOOLS)
         for gist, content in _MEMORIES:
-            remembered = await _call(client, "zikaron_remember", {"gist": gist, "content": content})
+            remembered = await _call(
+                client, "zikaron_memory_remember", {"gist": gist, "content": content}
+            )
             written.append(remembered["uuid"])
 
         # 3. Pull: the store answers a query with the memory that matches it.
-        found = await _call(client, "zikaron_search", {"query": "integration tests hang"})
+        found = await _call(client, "zikaron_memory_search", {"query": "integration tests hang"})
         assert any(row["uuid"] == written[0] for row in found)
 
     # 4. Push: the same store, reached by the hook, prints an injected block naming that memory.
@@ -313,13 +315,13 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
     promoted: list[str] = []
     async with Client(_stdio(mcp_command, "consolidator", project)) as client:
         assert {tool.name for tool in await client.list_tools()} == {
-            "zikaron_next_group",
-            "zikaron_merge",
-            "zikaron_promote",
-            "zikaron_discard",
+            "zikaron_memory_next_group",
+            "zikaron_memory_merge",
+            "zikaron_memory_promote",
+            "zikaron_memory_discard",
         }
         for _ in range(len(_MEMORIES) + 1):
-            group = await _call(client, "zikaron_next_group")
+            group = await _call(client, "zikaron_memory_next_group")
             if group.get("done"):
                 break
             assert not group.get("busy"), f"the takeover bridge did not claim the run: {group}"
@@ -329,7 +331,7 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
             ]
             outcome = await _call(
                 client,
-                "zikaron_promote",
+                "zikaron_memory_promote",
                 {
                     "group_id": group["group_id"],
                     "gist": group["journal_entries"][0]["gist"],
@@ -346,7 +348,7 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
 
     # 6. The journal is consolidated: every promoted record is long-term, and nothing was lost.
     async with Client(_stdio(mcp_command, "primary", project)) as client:
-        fetched = await _call(client, "zikaron_fetch", {"uuids": [*promoted, *written]})
+        fetched = await _call(client, "zikaron_memory_fetch", {"uuids": [*promoted, *written]})
         assert fetched["missing"] == [], "consolidation must never delete a row, only retire it"
         by_uuid = {record["uuid"]: record for record in fetched["records"]}
         assert {by_uuid[uuid]["tier"] for uuid in promoted} == {"long_term"}

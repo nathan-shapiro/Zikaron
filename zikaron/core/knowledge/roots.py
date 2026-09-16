@@ -30,19 +30,32 @@ def validate_root(path: Path, *, home: Path) -> Path:
             states the home it is checking instead of mutating the process's.
 
     Raises:
-        InvalidRootError: the path does not exist, is not a directory, or resolves to the
-            filesystem root or to the home directory itself — both of which would index a machine
-            rather than a corpus. A directory *inside* the home directory is fine, and common.
+        InvalidRootError: the path does not exist — which includes a `~` prefix naming no home
+            directory this machine can find — or is not a directory, or resolves to the filesystem
+            root or to the home directory itself, both of which would index a machine rather than a
+            corpus. A directory *inside* the home directory is fine, and common.
     """
-    resolved = path.expanduser().resolve()
+    try:
+        expanded = path.expanduser()
+    except RuntimeError as error:
+        # `~someone` for a user this machine has no record of. `expanduser` hands the string back
+        # unchanged and `Path` then refuses to say what it means, which is a caller's mistake
+        # rather than a defect — so it is refused in the same terms as any other root that names
+        # nothing, instead of travelling out as an internal error to a caller that typed a path.
+        raise InvalidRootError(f"{path} does not exist", path=path) from error
+    resolved = expanded.resolve()
     if not resolved.exists():
-        raise InvalidRootError(f"{path} does not exist")
+        raise InvalidRootError(f"{path} does not exist", path=resolved)
     if not resolved.is_dir():
-        raise InvalidRootError(f"{path} is not a directory")
+        raise InvalidRootError(f"{path} is not a directory", path=resolved)
     if resolved == Path(resolved.anchor):
-        raise InvalidRootError(f"{path} resolves to the filesystem root, which is not a corpus")
+        raise InvalidRootError(
+            f"{path} resolves to the filesystem root, which is not a corpus", path=resolved
+        )
     if resolved == home.expanduser().resolve():
-        raise InvalidRootError(f"{path} resolves to the home directory, which is not a corpus")
+        raise InvalidRootError(
+            f"{path} resolves to the home directory, which is not a corpus", path=resolved
+        )
     return resolved
 
 

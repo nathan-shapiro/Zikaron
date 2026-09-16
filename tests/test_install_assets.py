@@ -136,8 +136,8 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
     def test_the_prompt_never_names_a_tool_the_consolidator_cannot_reach(self) -> None:
         """`search` and `fetch` are not registered on a consolidator process at all, so naming
         either would instruct a call whose absence is structural."""
-        assert "zikaron_search" not in _flat(CONSOLIDATOR_PROMPT)
-        assert "zikaron_fetch" not in _flat(CONSOLIDATOR_PROMPT)
+        assert "zikaron_memory_search" not in _flat(CONSOLIDATOR_PROMPT)
+        assert "zikaron_memory_fetch" not in _flat(CONSOLIDATOR_PROMPT)
 
 
 class TestTheSharedRulesAreInBothTexts:

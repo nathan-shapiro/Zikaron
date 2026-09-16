@@ -174,7 +174,7 @@ class TestTheHarnessActsOnWhatWeInstalled:
 
         result = _turn(
             project,
-            "Call the tool mcp__zikaron__zikaron_remember exactly once, with gist "
+            "Call the tool mcp__zikaron__zikaron_memory_remember exactly once, with gist "
             f"{_GIST!r} and content 'Written by the Zikaron live install test.' "
             "Then reply with the single word: done. Do not do anything else.",
         )
@@ -204,7 +204,8 @@ class TestTheHarnessActsOnWhatWeInstalled:
 
         result = _turn(
             project,
-            "Call the tool mcp__zikaron__zikaron_search exactly once with the query 'anything', "
+            "Call the tool mcp__zikaron__zikaron_memory_search exactly once with the query "
+            "'anything', "
             "then reply with the single word: done.",
         )
 

@@ -140,7 +140,7 @@ async def test_recovery_preserves_the_store_across_the_respawn(
     """
     first_pid = await _health_pid(connection)
     first_response = await connection.request(
-        "remember",
+        "memory_remember",
         {"gist": "recovery test row", "content": "written before the kill"},
         envelope=connection.envelope(kind="mcp"),
     )
@@ -153,7 +153,7 @@ async def test_recovery_preserves_the_store_across_the_respawn(
     _wait_until_pid_gone(first_pid, deadline_seconds=5.0)
 
     fetch_response = await connection.request(
-        "fetch", {"uuids": [written_uuid]}, envelope=connection.envelope(kind="mcp")
+        "memory_fetch", {"uuids": [written_uuid]}, envelope=connection.envelope(kind="mcp")
     )
     result = fetch_response["result"]
     assert isinstance(result, dict)
@@ -206,7 +206,7 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
 
     started = time.monotonic()
     response = await connection.request(
-        "remember",
+        "memory_remember",
         {"gist": "written while another connection held the lock", "content": "content"},
         envelope=connection.envelope(kind="mcp"),
     )

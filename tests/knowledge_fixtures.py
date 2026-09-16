@@ -12,17 +12,23 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import aiosqlite
 
 from tests.fake_encoder import FakeEncoder
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.indexing.encoder import Encoder
-from zikaron.core.knowledge import disposal, lifecycle, registry
+from zikaron.core.knowledge import ddl, disposal, lifecycle, registry
 from zikaron.core.knowledge.database import KnowledgeDatabase
+from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
+
+#: A pid no process can have, so *not running* is a fact in a test rather than a race with the
+#: scheduler. Shared, because every suite that plants a dead build needs the same one and a second
+#: number chosen elsewhere could be a pid the machine running the suite has actually issued.
+DEAD_PID: Final = 2**22 + 7
 
 
 def config_for(tmp_path: Path) -> EffectiveConfig:
@@ -63,6 +69,27 @@ def write_tree(root: Path, layout: dict[str, bytes]) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return root
+
+
+async def write_meta(db_path: Path, **rows: str) -> None:
+    """Write `meta` rows a build would write, directly into one knowledge base's database.
+
+    Directly because in these tests no build exists to write them: what is under test is whatever
+    reads them, and stubbing the reader instead would assert the suite's belief back to itself.
+    Shared rather than repeated per file, so two tests cannot come to plant a lock or a completion
+    instant in subtly different ways and then disagree about what a reader should make of it.
+    """
+    db, _inode = await open_connection(db_path, pragmas=ddl.PRAGMAS, existing_only=True)
+    try:
+        for key, value in rows.items():
+            await db.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+        await db.commit()
+    finally:
+        await db.close()
 
 
 @asynccontextmanager

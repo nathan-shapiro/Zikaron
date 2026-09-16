@@ -10,7 +10,8 @@ safe rather than reckless: nothing inside the store can tell a stopped worker fr
 lease is a timer, and a pid check answers whether a process exists, not whether it will progress.
 The
 one piece of real liveness evidence is outside the store: a human invoking the skill again. So an
-explicit `plan_groups` takes the run over, and the displaced run is closed `taken_over` rather than
+explicit `memory_plan_groups` takes the run over, and the displaced run is closed `taken_over`
+rather than
 `abandoned`, because a user retrying in one kiro session presents the same `session_id` and only a
 different pid.
 """
@@ -136,7 +137,9 @@ async def _seed_journal(project: Path, mcp_command: str) -> list[str]:
     written: list[str] = []
     async with Client(_stdio(mcp_command, "primary", project)) as client:
         for gist, content in _JOURNAL:
-            result = await _call(client, "zikaron_remember", {"gist": gist, "content": content})
+            result = await _call(
+                client, "zikaron_memory_remember", {"gist": gist, "content": content}
+            )
             written.append(result["uuid"])
     return written
 
@@ -158,7 +161,7 @@ async def test_reinvoking_consolidation_takes_over_a_stranded_run(project: Path)
     # to 1800 s, so nothing about this run expires during the test: only a takeover can displace it.
     stranded = _result(
         project,
-        "plan_groups",
+        "memory_plan_groups",
         {
             "client": {
                 "session_id": "a-worker-that-stopped",
@@ -180,16 +183,16 @@ async def test_reinvoking_consolidation_takes_over_a_stranded_run(project: Path)
     # only path, and therefore what makes a human's second invocation the evidence it rests on.
     busy = _result(
         project,
-        "next_group",
+        "memory_next_group",
         {"client": {"session_id": "somebody-else", "kind": "consolidator", "pid": 999_998}},
     )
     assert busy["busy"] is True
     assert busy["holder_pid"] == _STRANDED_PID
 
-    # The skill's own path: a fresh consolidator client, whose bridge calls `plan_groups` lazily
-    # before the first `next_group` it forwards.
+    # The skill's own path: a fresh consolidator client, whose bridge calls `memory_plan_groups`
+    # lazily before the first `memory_next_group` it forwards.
     async with Client(_stdio(mcp_command, "consolidator", project)) as client:
-        group = await _call(client, "zikaron_next_group")
+        group = await _call(client, "zikaron_memory_next_group")
         assert not group.get("busy"), f"the takeover did not happen: {group}"
         assert not group.get("done"), "the replanned run served nothing, so the journal was lost"
         served = {entry["uuid"] for entry in group["journal_entries"]}
@@ -208,7 +211,7 @@ async def test_reinvoking_consolidation_takes_over_a_stranded_run(project: Path)
         # (-32011) — the displaced holder is told its own run is gone, which is exactly what it is.
         refused = _error(
             project,
-            "apply_discard",
+            "memory_apply_discard",
             {
                 "client": {
                     "session_id": "a-worker-that-stopped",

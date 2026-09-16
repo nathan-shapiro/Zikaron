@@ -1,13 +1,18 @@
 """`build_server(mode)`: one `FastMCP` instance, with exactly the tool set `mode` names.
 
 `architecture.md` §"a consolidator config provably cannot reach `search` or `fetch`" is the whole
-reason this module exists as a separate seam rather than one function that decorates all nine
-tools and hides five of them: `register_primary_tools`/`register_consolidator_tools` are only ever
+reason this module exists as a separate seam rather than one function that decorates every tool
+and hides the ones this mode does not own: `register_primary_tools`/`register_consolidator_tools`
+are only ever
 called one at a time, per process, so the tools the other mode owns are never decorated onto this
 process's `FastMCP` instance at all — not merely hidden from `tools/list`, absent from it, and
 absent from what `tools/call` can dispatch to, regardless of what a model asks for. This is
 Approach A from `research/fastmcp-api-shape.md` §3: read the mode before constructing any tool,
-decorate only the relevant functions, rather than registering all nine and filtering.
+decorate only the relevant functions, rather than registering both sets and filtering.
+
+**The counts are deliberately not written here.** `zikaron.mcp.tool_names` is where each mode's
+set is declared, and a number repeated in this docstring is one more thing to keep in step with a
+set that grows.
 
 Constructing a `ServiceConnection` here costs nothing beyond resolving paths — it opens no socket
 (`connection.py`'s own contract) — so building the server for either mode makes no RPC call, and
@@ -39,8 +44,9 @@ def build_server(mode: Mode, *, scope_dir: Path) -> FastMCP:
     connection opened, no RPC made.
 
     Args:
-        mode: `"primary"` registers the five primary-agent tools; `"consolidator"` registers the
-            four consolidator tools plus the `plan_groups` bridge in front of `next_group`.
+        mode: `"primary"` registers the primary agent's tools — the memory verbs and the whole
+            knowledge surface; `"consolidator"` registers the four consolidator tools plus the
+            `memory_plan_groups` bridge in front of `memory_next_group`.
         scope_dir: the **already-resolved** store-scope directory (D17, amended 2026-08-18) —
             `main.py` resolves it through `HarnessSpec.store_scope_dir` and this hands it to the
             one `ServiceConnection` this process holds for its whole lifetime.

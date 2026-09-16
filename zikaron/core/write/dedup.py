@@ -1,12 +1,14 @@
 """D15's write-time dedup: search after the write, hand back candidates, never block it.
 
-`architecture.md`'s `zikaron_remember` contract is normative. After a row is written, this module
+`architecture.md`'s `zikaron_memory_remember` contract is normative. After a row is written, this
+module
 runs the same hybrid search the read path runs — reusing the new row's own first-chunk embedding
 for the dense arm and its own `gist + content` for the lexical one, so the search costs no second
 embed call — and reports up to `dedup_max` near-duplicates at or above `dedup_threshold`, each a
 row the agent may choose to resolve by amending it and retiring the one just created. The search
 runs **inside the same transaction** as the write it reports on, because it queries the vectors
-that write just inserted, and it never rejects: `zikaron_remember` "writes unconditionally, then
+that write just inserted, and it never rejects: `zikaron_memory_remember` "writes unconditionally,
+then
 reports" is D32's never-lose guarantee, and refusing a write on a dedup match would be exactly the
 prevention D15 explicitly declines to do.
 
@@ -34,7 +36,8 @@ from zikaron.core.retrieval.similarity import directed_cosines
 
 @dataclass(frozen=True, slots=True)
 class NearDuplicate:
-    """One candidate `zikaron_remember` hands back: `architecture.md`'s per-row shape exactly.
+    """One candidate `zikaron_memory_remember` hands back: `architecture.md`'s per-row shape
+    exactly.
 
     Never an assertion of duplication: a cosine floor is advisory only, since the corpus's own
     measurement of the underlying signal shows a near-miss identifier pair buys only a fraction of

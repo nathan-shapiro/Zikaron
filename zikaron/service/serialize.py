@@ -32,7 +32,7 @@ class RpcResult(ABC):
 
     `as_json()` returns `object`, not `dict[str, object]`: most of `architecture.md`'s
     tool-surface tables give a method a bare object (`{uuid, version, ...}`), but
-    `zikaron_search` is documented as returning a bare **list** — `[{uuid, gist, ...}, ...]`
+    `zikaron_memory_search` is documented as returning a bare **list** — `[{uuid, gist, ...}, ...]`
     directly, no wrapping key — and forcing that shape through a `dict`-typed return would either
     misrepresent it or require inventing a key the design never states. `SearchResult` is
     therefore the one subclass whose `as_json()` returns a `list`, not a `dict`.
@@ -113,7 +113,7 @@ class ConflictRecordJson:
 
 @dataclass(frozen=True, slots=True)
 class FetchedMemoryJson:
-    """`zikaron_fetch`'s per-record shape: `CONFLICT_RECORD`'s fields plus `active` and both
+    """`zikaron_memory_fetch`'s per-record shape: `CONFLICT_RECORD`'s fields plus `active` and both
     timestamps."""
 
     record: FetchedMemory
@@ -128,7 +128,8 @@ class FetchedMemoryJson:
 
 @dataclass(frozen=True, slots=True)
 class SearchHitJson:
-    """`zikaron_search`'s per-row shape, exactly the seven fields the tool surface states."""
+    """`zikaron_memory_search`'s per-row shape, exactly the seven fields the tool surface
+    states."""
 
     hit: SearchHit
 
@@ -147,8 +148,8 @@ class SearchHitJson:
 
 @dataclass(frozen=True, slots=True)
 class NearDuplicateJson:
-    """One `near_duplicates` entry: `{uuid, gist, cosine, rank}`, exactly as `zikaron_remember`
-    states it."""
+    """One `near_duplicates` entry: `{uuid, gist, cosine, rank}`, exactly as
+    `zikaron_memory_remember` states it."""
 
     candidate: NearDuplicate
 
@@ -195,7 +196,7 @@ class RankedRecordJson:
 
 @dataclass(frozen=True, slots=True)
 class ShardJson:
-    """`{index, of}`, exactly as `zikaron_next_group`'s `shard` field states it."""
+    """`{index, of}`, exactly as `zikaron_memory_next_group`'s `shard` field states it."""
 
     shard: Shard
 
