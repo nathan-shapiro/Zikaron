@@ -20,7 +20,7 @@ from tests.fake_encoder import FakeEncoder, unit_at
 from tests.service_fixtures import open_context
 from zikaron.core.errors import ErrorCode
 from zikaron.core.events import ClientKind
-from zikaron.core.indexing.chunking import GIST_SEPARATOR
+from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.service import rpc, server
 from zikaron.service.context import ServiceContext
 
@@ -791,7 +791,7 @@ async def _write_orphan_pair(ctx: ServiceContext) -> tuple[str, str]:
     agent = _client("agent-session", pid=100, kind="mcp")
     uuids = []
     for gist, content, degrees in ((*_ORPHAN_A, 0.0), (*_ORPHAN_B, 10.0)):
-        embedded = f"{gist}{GIST_SEPARATOR}{content}"
+        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
         ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
         response = await _response_json(
             ctx, _line("remember", {"gist": gist, "content": content, "client": agent})
@@ -810,7 +810,7 @@ async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
     journal member, so an orphan pair with no long-term row has nothing legal to `merge` into."""
     assert isinstance(ctx.encoder, FakeEncoder)
     agent = _client("agent-session", pid=100, kind="mcp")
-    embedded_anchor = f"{_ANCHOR[0]}{GIST_SEPARATOR}{_ANCHOR[1]}"
+    embedded_anchor = f"{_ANCHOR[0]}{PREFIX_SEPARATOR}{_ANCHOR[1]}"
     ctx.encoder.planned[embedded_anchor] = unit_at(0.0, ctx.encoder.dim)
     anchor_response = await _response_json(
         ctx, _line("remember", {"gist": _ANCHOR[0], "content": _ANCHOR[1], "client": agent})
@@ -824,7 +824,7 @@ async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
     )
     await ctx.store.connection.commit()
 
-    embedded_member = f"{_MEMBER[0]}{GIST_SEPARATOR}{_MEMBER[1]}"
+    embedded_member = f"{_MEMBER[0]}{PREFIX_SEPARATOR}{_MEMBER[1]}"
     ctx.encoder.planned[embedded_member] = unit_at(10.0, ctx.encoder.dim)
     member_response = await _response_json(
         ctx, _line("remember", {"gist": _MEMBER[0], "content": _MEMBER[1], "client": agent})

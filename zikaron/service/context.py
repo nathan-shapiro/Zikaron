@@ -104,6 +104,16 @@ class ServiceContext:
         """This store's `memory.db` path, for `health()`'s handshake."""
         return self.store.path
 
+    @property
+    def store_directory(self) -> Path:
+        """The `.zikaron` directory this store lives in.
+
+        Where everything Zikaron owns besides `memory.db` sits — a knowledge base's own database
+        among them. Derived from the store's path rather than re-resolved, so a handler cannot
+        address a different directory from the one the open store is in.
+        """
+        return self.store.path.parent
+
     @classmethod
     async def assemble(cls, store_directory: Path, config: EffectiveConfig) -> Self:
         """Open the store — creating it first if this is the very first time — and build every

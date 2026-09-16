@@ -951,9 +951,9 @@ def _selecting(document: dict[str, object], key: str) -> list[object]:
     than
     not asking at all.
 
-    What is being trusted is narrow, and worth stating precisely rather than generously: five tools
-    that read and write rows in a SQLite file under the project, with no network and no effect
-    outside it. A mistaken write is **recoverable, not undoable** — `retire` withdraws a row from
+    What is being trusted is narrow, and worth stating precisely rather than generously: tools that
+    read and write rows in SQLite files under the project, with no network and no effect outside
+    it. A mistaken write is **recoverable, not undoable** — `retire` withdraws a row from
     ordinary retrieval and leaves it auditable, while an `amend` overwrites prose that nothing
     restores. That is a weaker guarantee than "reversible", which is the word this used first and
     which overstated it. `--no-trust-tools` leaves the entry out for anyone who wants the prompts,

@@ -231,6 +231,17 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
         unit=ConfigUnit.BYTES,
     ),
     ConfigKey(
+        ConfigSection.INDEXING,
+        "knowledge_embed_batch",
+        # 1 disables batching outright; the maximum is where one forward pass's memory stops being
+        # bounded by anything this project controls. Unlike its neighbour above it is not seeded
+        # into a knowledge base, because it describes how much work goes into one pass rather than
+        # anything about the index that results — a correct implementation's vectors do not depend
+        # on it at all.
+        IntBounds(1, 256),
+        32,
+    ),
+    ConfigKey(
         ConfigSection.RETRIEVAL,
         "chunk_overfetch",
         IntBounds(1, 64),
@@ -271,6 +282,27 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
         "fts_query_max_terms",
         IntBounds(1, 512),
         64,
+    ),
+    ConfigKey(
+        ConfigSection.RETRIEVAL,
+        "knowledge_max_chunks_per_file",
+        # The maximum is mechanical rather than a taste: a knowledge search returns at most 20
+        # results per corpus, so a per-file allowance above 20 could never bind on any call, and a
+        # range that admits values which cannot take effect is a range that misleads.
+        IntBounds(1, 20),
+        2,
+    ),
+    ConfigKey(
+        ConfigSection.RETRIEVAL,
+        "knowledge_snippet_max_chars",
+        # Counted in Unicode code points, which is also why the ceiling is a sanity bound rather
+        # than a derivation: the response cap is in *bytes*, and 24,000 code points can be four
+        # times that many bytes, so this number is the response cap's own borrowed as an
+        # order-of-magnitude limit. Anywhere near it a single snippet is undeliverable whatever the
+        # encoding, which is all the ceiling has to establish. The floor still shows a line or two
+        # of context.
+        IntBounds(80, 24_000),
+        1_200,
     ),
     ConfigKey(
         ConfigSection.DEDUP,

@@ -52,6 +52,7 @@ from zikaron.core.knowledge import (
     scan,
     state,
 )
+from zikaron.core.knowledge.disposal import BuildSettings
 from zikaron.core.knowledge.errors import DanglingKnowledgeBaseError, IndexerBusyError
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.store import permissions
@@ -173,16 +174,7 @@ async def _observe(store_dir: Path, registered: KnowledgeBase, config: Effective
     async with opened:
         raw = await database.read_meta(opened.connection)
         lock_held = lock.is_held(raw)
-        resolved = state.resolve(
-            state.StateInputs(
-                unreadable=False,
-                database_absent=False,
-                root_missing=not Path(opened.meta.root_path).is_dir(),
-                encoder_mismatch=not database.encoder_matches_config(opened.meta, config),
-                never_built=state.never_built(raw),
-                indexing=lock_held,
-            )
-        )
+        resolved = state.resolve(state.inputs_for_open(opened.meta, raw, config))
         gathered = await reporting.gather(
             registered, opened.connection, opened.meta, raw, corpus_state=resolved
         )
@@ -338,7 +330,12 @@ async def rename(
 
 
 async def refresh(
-    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str
+    store_dir: Path,
+    db: aiosqlite.Connection,
+    config: EffectiveConfig,
+    *,
+    name: str,
+    build: BuildSettings,
 ) -> Refreshed:
     """Build one corpus's index, and report what the build did and where it left the corpus.
 
@@ -353,8 +350,12 @@ async def refresh(
             encoder identity still agrees with it. The corpus itself is defined entirely by its
             own stored `meta`.
         name: which corpus to build.
+        build: the encoder to index with and how many chunks to embed per pass. Supplied by the
+            caller rather than loaded here, because loading a model is the expensive part of
+            starting a build and a caller building several corpora loads it once.
 
     Raises:
+        ZikaronError: `BAD_CONFIG` if `build`'s encoder disagrees with what the corpus recorded.
         InvalidNameError: `name` is empty or blank.
         UnknownKnowledgeBaseError: nothing is registered under `name`.
         DanglingKnowledgeBaseError: the corpus is registered but its database is gone, and with it
@@ -371,7 +372,7 @@ async def refresh(
             f"remove it and add it again"
         )
     async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
-        result = await scan.run(opened)
+        result = await scan.run(opened, build)
     observed = await _observe(store_dir, registered, config)
     return Refreshed(knowledge_base=registered, result=result, status=observed.status)
 

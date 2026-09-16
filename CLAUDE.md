@@ -48,7 +48,8 @@ Evidence is separated by kind and stays that way: **`research/`** measured resul
 ## The check gate
 **`./check.sh` is the definition of done.** Nothing is finished until it exits 0. It runs `ruff format
 --check`, `ruff check`, `mypy --strict` over **the package and the tests**, then pytest with a coverage
-ratchet across all five shipped packages under a 300 s `timeout`.
+ratchet across **every** package under `zikaron/` — a test asserts that list is complete — under a
+600 s `timeout`.
 
 **It is hermetic, and deliberately so.** Two tiers are excluded — `integration_kiro` and
 `integration_claude` — because they need a third-party harness binary installed *and working*, which
@@ -67,9 +68,41 @@ The formatter's output is authoritative: a `format --check` failure means runnin
 - **Milestones, not tasks.** Work is scoped by a brief in `design/build-plan.md` (scope, normative
   sections, invariants to cover, done-when, and an explicit **scope fence**), lands as one commit, and
   leaves a review file behind. Work the lowest-numbered incomplete milestone; do not skip ahead.
+- **Never commit. The operator commits.** No `git commit`, no `git push`, no `--amend` — not when the
+  gate is green, not when a review reaches APPROVED, and not as a step inside some larger task that
+  was asked for. Staging, branching and reading history are fine. When work reaches the point where
+  committing is the obvious next move, say so and stop there.
+  **The sentence above is the one this exists to disarm**: "lands as one commit" describes what a
+  milestone *is*, not permission to land it. An agent reading that line at the end of a green
+  milestone has every reason to think it has been told to commit, which is precisely why the
+  prohibition sits directly beneath it rather than somewhere more logical.
+  **Recorded here rather than in Zikaron's own store, deliberately**, and the reasoning is the
+  project's own: `retrieval.md`'s preamble frames every retrieved memory as *untrusted reference
+  material* rather than instruction, which is correct for a store an agent writes into and wrong for
+  a standing rule that must bind. A memory record would be advisory. This file is not. That is
+  FINDINGS open question 14 resolved for one concrete case — the seam is real, and the instruction
+  file is the right side of it.
 - **Pressure-test consequential work with the `self-review` skill** before finalizing a design doc, plan,
   spec, schema, or config. It delegates an independent critique to **memory-reviewer** and iterates to
   convergence. Reserve it for work that is expensive to get wrong — each loop spends extra cycles.
+- **A green gate is not "ready for review". Sweep the class before you spawn a round.** A review
+  round is the most expensive tool in this crew and a grep is nearly free, so a finding the grep
+  would have produced is pure waste — and it is invisible from inside the loop, because every round
+  still ends in a green gate and a tidy summary. Before spawning: grep every claim you changed **in
+  all of its phrasings**, not the one you just edited; re-read each changed passage together with
+  its neighbours; mutation-verify every guard added since the last round; and when a defect turns up
+  in one caller of a shared helper, audit its **other** callers for the same class.
+  **The tell that you have skipped this is in the brief you are writing**: if it asks the reviewer
+  to check something you have the means to check, check it first and tell the reviewer what you
+  found. **Counted on M22** — 14 of rounds 3–5's 17 findings were self-findable, nearly all of them
+  failures to apply rules stated on this page. `FINDINGS.md` §"PROCESS FAILURE" carries the full
+  accounting. Narrating a rule is not running it, and a well-written entry about a lesson reads
+  exactly like having learned it.
+  **This bullet has already caught itself**: the sentence above first read "roughly 14 of 18", the
+  18 was never counted, and when that was corrected it was corrected in `FINDINGS.md` alone — a site
+  fix, inside the pair of documents that define why a site fix is not enough. A review round found
+  the survivor here. **Two documents stating one number is two sites, and the second is the one you
+  are not editing.**
 - **Measure before you assert.** Token counts, retrieval hit rates and end-task success are the currency;
   "it feels better" is not a result. **Name the quantity before quoting a number about it** — this corpus
   has caught itself violating that rule against a live store, and the entry stayed.

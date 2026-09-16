@@ -1063,10 +1063,17 @@ client has no spill path at all; `register_primary_tools` takes no policy, so th
 
 Evidence: `research/claude-code-mcp-result-truncation.md`.
 
-## MCP tool surface (5 tools)
+## MCP tool surface (the five memory verbs)
 
 Tool *descriptions* carry the mechanics — the version precondition, the dedup payload, retire semantics —
 because per D30 they sit in context at the point of decision, while D18's `agentSpawn` prose carries policy.
+
+**The primary server registers more than these five, and this section is normative only for the
+memory verbs.** Knowledge search rides on the same `--mode primary` process and is specified in
+`design/knowledge-index.md` §8.3 — signature, result shape and description alike. It is named here
+so that a reader counting the tools on that server does not conclude one of them is undocumented,
+and it is not duplicated here because two statements of one tool surface is the drift this document
+spends its length avoiding elsewhere.
 
 ```
 zikaron_search(query: str, limit: int = 5, include_retired: bool = false)
@@ -1178,11 +1185,11 @@ allowlist never includes them.
 **"Provably cannot reach" is structural, not a filter, and the mechanism is where the tool set is decided:
 before either set of tools exists.** Each `zikaron-mcp` process is told which mode to run as at startup
 (`--mode primary` or `--mode consolidator`, one per shipped agent config), and decorates only that mode's
-own tools onto its one `FastMCP` instance — never both, and never all nine with the other five hidden. A
+own tools onto its one `FastMCP` instance — never both sets, and never every tool with one set hidden. A
 consolidator process's `tools/list` cannot name `search`/`fetch`, because they were never registered as
 callables on that process at all; a `tools/call` naming either has no handler to dispatch to. This is
-different from an allowlist filtering nine registered tools down to four: there is no allowlist, and no
-moment at which the other five exist in that process to be filtered out of.
+different from an allowlist filtering every registered tool down to four: there is no allowlist, and no
+moment at which the primary's tools exist in that process to be filtered out of.
 
 Two rules run through all four signatures, and the first draft of this document had neither:
 
@@ -1854,8 +1861,16 @@ The five verbs above, plus:
   pair rather than the session, because two consolidators launched from one kiro session now share a
   `session_id`; `holder_pid` is returned so same-session contention is diagnosable rather than silent.
 
+- `knowledge_search(query, knowledge_bases, limit_per_kb)` — the knowledge index's read path, specified
+  in full by `design/knowledge-index.md` §8.3. Named here because it is served by this socket and
+  belongs on any list of what this service answers; not described here, because one tool surface
+  described in two documents is the drift this one spends its length avoiding. It reads the
+  knowledge-base registry in `memory.db` and each corpus's own database, and touches no other table.
+
 Every method takes the `client` envelope described under §RPC **except `health()`**, the one unlabelled
-primitive named above.
+primitive named above — `knowledge_search` included, though it writes no event against the label it is
+given: the knowledge index's own counters live in each corpus's `meta` rather than in the memory
+store's `event` log, and nothing about a search is attributed to a session.
 
 ## Distribution artefacts
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose

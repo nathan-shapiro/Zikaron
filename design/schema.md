@@ -493,10 +493,11 @@ value moved on the strength of a level from that report would be moved on a misr
 
 ## Configuration keys
 
-**Twenty-three file keys: nineteen that moved out of `meta` outright, three dual-homed ones**
+**Twenty-six file keys: nineteen that moved out of `meta` outright, three dual-homed ones**
 (`embed_model`, `embed_dim`, `chunk_max_tokens`) that also persist in `meta` as the record of what the
-existing index was actually built with, and one belonging to the knowledge index rather than to the
-memory store (`knowledge_max_file_bytes`), which is why it carries that prefix inside a shared section.
+existing index was actually built with, and four belonging to the knowledge index rather than to the
+memory store (every `knowledge_`-prefixed key), which is why they carry that prefix inside a shared
+section.
 Resolved from the two TOML layers per `architecture.md` §"Configuration". Ranges and defaults are unchanged
 from when the nineteen lived in `meta`; only their home moved. The dual-homed three are the reason the file can be said to express *intent* while `meta` records
 *what was done* — without a file key there would be no way to state the intent at all, and the
@@ -526,6 +527,8 @@ chunk_max_tokens = 450       # also recorded in meta; see the dual-key note abov
 gist_max_tokens  = 64
 # the knowledge index's per-file cap, seeded into each knowledge base's own meta
 knowledge_max_file_bytes = 1048576
+# how many chunks the knowledge indexer embeds per forward pass
+knowledge_embed_batch    = 32
 
 [retrieval]
 chunk_overfetch        = 8
@@ -535,6 +538,10 @@ supersession_penalty   = 0.5
 retired_penalty        = 0.5
 supersession_max_depth = 32
 fts_query_max_terms    = 64
+# knowledge search only: how much of one file may fill a group, and how long a
+# returned fragment may be before it is cut at a line boundary
+knowledge_max_chunks_per_file = 2
+knowledge_snippet_max_chars   = 1200
 
 [dedup]
 dedup_threshold = 0.80
@@ -564,6 +571,7 @@ signal_horizon_days = 30
 | `indexing` | `chunk_max_tokens` | int | 64–8192 | `450` | governs **new** writes; `meta` records what existing chunks were cut at. `indexing.md` preflight |
 | `indexing` | `gist_max_tokens` | int | 8–256 | `64` | the one bound that can **reject** an agent's write. Lowering it below an existing gist's length does not revalidate stored rows, but that row's next `amend` will fail until the gist is shortened |
 | `indexing` | `knowledge_max_file_bytes` | bytes int | 1–67108864 | `1048576` | the knowledge index's per-file size cap (`knowledge-index.md` §10), seeded into each knowledge base's own `meta` as `max_file_bytes` at creation. Over-cap files are skipped and counted, never truncated. Its **maximum** bounds the peak memory one file costs, since text detection decodes a candidate whole; its `StoreCoupling` is `none` because nothing about it is recorded in `memory.db` — the per-KB seeding is that document's concern, not this one's |
+| `indexing` | `knowledge_embed_batch` | int | 1–256 | `32` | how many chunks the knowledge indexer embeds per forward pass (`knowledge-index.md` §4.5). It trades throughput against the peak memory one pass costs and changes no stored value, which is why it is not seeded per knowledge base like its neighbour above: **1** disables batching, and the maximum is the point past which a pass's memory stops being bounded by anything this project controls. A correct implementation's vectors do not depend on it — that is invariant 13 |
 | `retrieval` | `chunk_overfetch` | int | 1–64 | `8` | KNN multiplier, `retrieval.md` |
 | `retrieval` | `fusion_depth` | int | 1–500 | `50` | **per-arm** depth before fusion — the most memories one arm can contribute. 50 is the depth every quality figure in `retrieval.md` was measured at. Each arm probes `fusion_depth + 1` and discards the surplus; that row is a termination diagnostic only (invariant 20), never fused. Distinct from the output `limit` |
 | `retrieval` | `rrf_k` | int | ≥1 | `60` | inherited from `~/Memory`, unchanged through the benchmark |
@@ -571,6 +579,8 @@ signal_horizon_days = 30
 | `retrieval` | `retired_penalty` | float | (0, 1] | `0.5` | multiplier on an outright-retired row's fused score, reachable only under `include_retired` |
 | `retrieval` | `supersession_max_depth` | int | 1–1024 | `32` | chain-walk cap; hitting it is an error |
 | `retrieval` | `fts_query_max_terms` | int | 1–512 | `64` | cap on quoted terms per lexical query (§Bounds, `retrieval.md` §"Query construction") |
+| `retrieval` | `knowledge_max_chunks_per_file` | int | 1–20 | `2` | how many chunks of one file may appear in one knowledge-search group (`knowledge-index.md` §7.3), so a single large document cannot fill it. Its **maximum** is the cap on that call's own `limit_per_kb`: above 20 the key could never bind, and a range admitting values that cannot take effect is a range that misleads |
+| `retrieval` | `knowledge_snippet_max_chars` | int | 80–24000 | `1200` | how long a returned fragment may be before it is cut at a line boundary and flagged (`knowledge-index.md` §8.3), counted in Unicode code points — which is why the **ceiling** is a sanity bound rather than a derivation: the response cap is in *bytes*, and 24,000 code points can be four times that many bytes, so this borrows that number as an order-of-magnitude limit past which a single snippet is undeliverable whatever the encoding. The **floor** still shows a line or two of context |
 | `dedup` | `dedup_threshold` | float | [0, 1] | `0.80` | floor on `s(new row → candidate)` for D15's advisory near-duplicate list |
 | `dedup` | `dedup_max` | int | 0–20 | `3` | how many near-duplicates `remember` hands back |
 | `consolidation` | `mutual_k` | int | 2–50 | `5` | orphan-clustering top-K, both directions |

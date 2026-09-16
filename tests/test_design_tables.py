@@ -14,6 +14,7 @@ from tests.design_tables import (
     DesignTableError,
     literal,
     number,
+    parse_block_quote,
     parse_couplings,
     parse_field_values,
     parse_name_lists,
@@ -322,3 +323,73 @@ def test_a_table_is_found_by_its_columns_rather_than_its_position() -> None:
 def test_columns_that_match_no_table_are_an_error() -> None:
     with pytest.raises(DesignTableError, match="0 tables with columns"):
         table_with_columns("architecture.md", "## Errors", ("Code", "Name"))
+
+
+QUOTES = lines(
+    """
+## A
+
+> first quote
+> second line
+
+between
+
+> other quote
+> tail
+"""
+)
+
+
+def test_a_block_quote_is_found_by_the_words_it_opens_with() -> None:
+    assert parse_block_quote(QUOTES, "first quote") == "first quote\nsecond line"
+    assert parse_block_quote(QUOTES, "other quote") == "other quote\ntail"
+
+
+def test_a_quote_marker_with_no_space_after_it_is_still_a_quote() -> None:
+    """Markdown allows `>text`, and a parser that required `> ` would silently see a shorter
+    quote — which is the failure this module exists to prevent, since the guard would keep
+    passing against whatever fragment it did find."""
+    assert parse_block_quote(lines("## A\n>bare\n> spaced"), "bare") == "bare\nspaced"
+
+
+def test_a_quote_running_to_the_end_of_a_section_is_closed() -> None:
+    """A section whose last line is quoted has no following blank to close on, so the block is
+    collected on the way out rather than discarded."""
+    assert parse_block_quote(lines("## A\nprose\n> last thing"), "last thing") == "last thing"
+
+
+def test_a_quote_inside_a_fence_is_not_a_quote() -> None:
+    """This corpus keeps withdrawn text rather than deleting it, so a fenced historical copy of a
+    quote can sit beside the live one. Reading through the fence would let the copy satisfy the
+    exactly-one rule if the live quote were ever removed, leaving a guard comparing a shipped
+    artifact against an archive — and still passing."""
+    section = lines("## A\n```\n> same words\n```\n\n> same words live\n")
+    assert parse_block_quote(section, "same words") == "same words live"
+
+
+def test_two_quotes_inside_fences_leave_nothing_to_find() -> None:
+    """The other half of the same property: masking has to remove them, not merely deprioritize
+    them, or the error would report a count drawn from archived text."""
+    with pytest.raises(DesignTableError, match="0 block quotes"):
+        parse_block_quote(lines("## A\n```\n> gone\n```\n```\n> gone\n```\n"), "gone")
+
+
+def test_a_fence_between_two_quotes_does_not_join_them() -> None:
+    """A fence boundary ends a quote, so two runs separated only by an empty fence stay two.
+    Passing over fence lines without closing the open run would splice them into a block the
+    document does not contain, reported under an opening that it does."""
+    section = lines("## A\n> live quote\n```\n```\n> second run\n")
+    assert parse_block_quote(section, "live quote") == "live quote"
+    assert parse_block_quote(section, "second run") == "second run"
+
+
+def test_an_opening_that_matches_no_quote_is_an_error() -> None:
+    with pytest.raises(DesignTableError, match="0 block quotes"):
+        parse_block_quote(QUOTES, "third quote")
+
+
+def test_an_opening_that_matches_two_quotes_is_an_error() -> None:
+    """Ambiguity is refused rather than resolved by position: a second quote opening the same way
+    is exactly the case where taking the first would leave a guard pointed at the wrong block."""
+    with pytest.raises(DesignTableError, match="2 block quotes"):
+        parse_block_quote(lines("## A\n> same\n\ntext\n\n> same\n"), "same")

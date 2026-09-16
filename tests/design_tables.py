@@ -420,6 +420,50 @@ def parse_fenced_code(section: list[str], language: str) -> str:
     return "\n".join(blocks[0])
 
 
+def parse_block_quote(section: list[str], opening: str) -> str:
+    """The one block quote in a section whose first line starts with `opening`, unquoted.
+
+    Anchored on its opening words rather than assumed to be the section's only quote: a section
+    long enough to be worth guarding usually holds more than one, and a parser that silently took
+    the first would keep passing while pointed at the wrong block. Exactly one must match, so a
+    second quote opening the same way is an error rather than a coin toss.
+
+    Fenced content is masked, as every other reader here masks it, and for a reason this corpus
+    supplies: withdrawn text is kept rather than deleted, so a historical copy of a quote can
+    legitimately sit in a fence beside the live one. Reading through fences would let that copy
+    satisfy the exactly-one rule if the live quote were ever removed, and a guard would then compare
+    a shipped artifact against an archive while still passing.
+
+    Returns the quote with its `> ` markers stripped and its lines joined, which is the form a
+    prose block is compared in — the wrapping is the document's, not the text's.
+    """
+    blocks: list[list[str]] = []
+    collecting: list[str] | None = None
+    in_fence = False
+    for line in [*section, ""]:
+        fence = line.startswith(_FENCE)
+        if not fence and not in_fence and line.startswith(">"):
+            unquoted = line[1:].removeprefix(" ")
+            if collecting is None:
+                collecting = [unquoted]
+            else:
+                collecting.append(unquoted)
+            continue
+        # A fence boundary closes an open quote as any other non-quoted line does. Skipping it
+        # instead would let an *empty* fence between two quote runs join them into one block —
+        # nothing separates them once both fence lines are passed over — which is a quote this
+        # document does not contain, reported under an opening it does.
+        if fence:
+            in_fence = not in_fence
+        if collecting is not None:
+            if collecting[0].startswith(opening):
+                blocks.append(collecting)
+            collecting = None
+    if len(blocks) != 1:
+        raise DesignTableError(f"{len(blocks)} block quotes open with {opening!r}, expected one")
+    return "\n".join(blocks[0])
+
+
 def _strip_sql_comments(sql: str) -> str:
     """Remove every `--` line comment, respecting single-quoted strings a comment marker could
     sit inside — none of `schema.md`'s DDL does that, but a splitter that assumed it does is
@@ -675,6 +719,14 @@ def fenced_code(document: str, heading: str, language: str) -> str:
     printed verbatim rather than a language a syntax highlighter should format)."""
     try:
         return parse_fenced_code(section_lines(document, heading), language)
+    except DesignTableError as error:
+        raise _located(document, heading, error) from error
+
+
+def block_quote(document: str, heading: str, opening: str) -> str:
+    """The one block quote in one section of a design document that opens with `opening`."""
+    try:
+        return parse_block_quote(section_lines(document, heading), opening)
     except DesignTableError as error:
         raise _located(document, heading, error) from error
 

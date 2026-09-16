@@ -10,6 +10,7 @@ the model that was configured is the thing that is wrong, and `embedding.embed_m
 operator would change.
 """
 
+from dataclasses import dataclass
 from typing import Any, Final, cast
 
 import pytest
@@ -18,7 +19,7 @@ from tokenizers import Tokenizer, models
 
 from tests.fake_encoder import FakeEncoder
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.indexing.encoder import ArtifactFacts, Encoder, FastEmbedEncoder
+from zikaron.core.indexing.encoder import ArtifactFacts, Encoder, FastEmbedEncoder, token_head
 
 MODEL: Final = "BAAI/bge-small-en-v1.5"
 
@@ -147,3 +148,35 @@ def test_well_formed_offsets_pass_through_unchanged() -> None:
     assert encoder.count_tokens("a b") == 2
     assert (encoder.model_name, encoder.dim) == (MODEL, 384)
     assert (encoder.n_special_tokens, encoder.max_sequence_tokens) == (2, 512)
+
+
+def test_a_head_is_sliced_on_token_boundaries() -> None:
+    assert token_head("alpha beta gamma", tokens=2, encoder=FakeEncoder()) == "alpha beta"
+
+
+def test_a_head_of_a_text_with_no_tokens_is_empty_rather_than_an_error() -> None:
+    """Total rather than precondition-guarded: both callers only ask for a head of text they have
+    already counted tokens in, so this answers a question nothing in the store asks — and answering
+    it with the empty string, which is what a head of nothing is, is cheaper than a precondition
+    every later caller has to remember."""
+    assert token_head("   ", tokens=5, encoder=FakeEncoder()) == ""
+
+
+@dataclass
+class _ShortSpanEncoder(FakeEncoder):
+    """An encoder whose spans cover fewer tokens than it says the text has.
+
+    Well-formed but short is the dangerous shape: every span is ordered and in range, so the guards
+    that check *those* properties pass, and the head that results silently keeps less text than the
+    count it was derived from promised.
+    """
+
+    def token_char_spans(self, text: str) -> tuple[tuple[int, int], ...]:
+        return super().token_char_spans(text)[:1]
+
+
+def test_a_head_is_refused_when_the_artifacts_count_and_spans_disagree() -> None:
+    with pytest.raises(ZikaronError) as excinfo:
+        token_head("alpha beta gamma", tokens=2, encoder=_ShortSpanEncoder())
+    assert excinfo.value.code is ErrorCode.BAD_CONFIG
+    assert excinfo.value.data["key"] == "embedding.embed_model"

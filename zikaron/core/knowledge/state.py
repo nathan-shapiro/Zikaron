@@ -9,8 +9,10 @@ reported decides whether a caller searches a corpus it should not.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
-from zikaron.core.knowledge import meta
+from zikaron.core.config.resolution import EffectiveConfig
+from zikaron.core.knowledge import database, lock, meta
 
 
 class KnowledgeState(StrEnum):
@@ -86,6 +88,26 @@ def resolve(inputs: StateInputs) -> KnowledgeState:
     if inputs.indexing:
         return KnowledgeState.INDEXING
     return KnowledgeState.OK
+
+
+def inputs_for_open(
+    current_meta: meta.KnowledgeMeta, raw: Mapping[str, str], config: EffectiveConfig
+) -> StateInputs:
+    """The four questions only an *open* knowledge base can answer, gathered in one place.
+
+    Every caller that has a knowledge base open needs exactly this, and the two that exist — a
+    status report and a search — must not be able to answer the same question differently about one
+    corpus. The two inputs left out are the ones this function's own precondition settles: the
+    database is neither absent nor unreadable, since it is open.
+    """
+    return StateInputs(
+        unreadable=False,
+        database_absent=False,
+        root_missing=not Path(current_meta.root_path).is_dir(),
+        encoder_mismatch=not database.encoder_matches_config(current_meta, config),
+        never_built=never_built(raw),
+        indexing=lock.is_held(raw),
+    )
 
 
 def never_built(raw: Mapping[str, str]) -> bool:

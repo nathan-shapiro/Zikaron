@@ -30,6 +30,7 @@ from fastmcp.client.transports import StdioTransport
 from zikaron.install import main as install_main
 from zikaron.install.entries import MCP_SERVER_NAME
 from zikaron.install.writer import Targets
+from zikaron.mcp.tool_names import PRIMARY_TOOLS
 from zikaron.service import paths
 
 #: `integration` because everything here is real — a hook subprocess, a service, a socket, an MCP
@@ -278,13 +279,11 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
     written: list[str] = []
     async with Client(_stdio(mcp_command, "primary", project)) as client:
         tools = {tool.name for tool in await client.list_tools()}
-        assert tools == {
-            "zikaron_search",
-            "zikaron_fetch",
-            "zikaron_remember",
-            "zikaron_amend",
-            "zikaron_retire",
-        }
+        # Compared against the declaration the installer itself spells into shipped prose, rather
+        # than against a list written out here: a second copy of these names is exactly the drift
+        # that produces a prompt naming a tool that does not exist, and a model that cannot find a
+        # tool improvises rather than failing.
+        assert tools == set(PRIMARY_TOOLS)
         for gist, content in _MEMORIES:
             remembered = await _call(client, "zikaron_remember", {"gist": gist, "content": content})
             written.append(remembered["uuid"])

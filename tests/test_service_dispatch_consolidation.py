@@ -9,7 +9,7 @@ from tests.fake_encoder import FakeEncoder, unit_at
 from tests.service_fixtures import envelope, open_context
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.events import ClientKind
-from zikaron.core.indexing.chunking import GIST_SEPARATOR
+from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.service import dispatch, dispatch_consolidation
 from zikaron.service.context import ServiceContext
 from zikaron.service.dispatch_consolidation import (
@@ -39,7 +39,7 @@ async def _set_long_term(ctx: ServiceContext, uuid: str) -> None:
 async def _write_orphan_pair(ctx: ServiceContext) -> tuple[str, str]:
     assert isinstance(ctx.encoder, FakeEncoder)
     for gist, content, degrees in ((*_A, 0.0), (*_B, 10.0)):
-        embedded = f"{gist}{GIST_SEPARATOR}{content}"
+        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
         ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
     first = await dispatch.remember(
         ctx.store.connection, ctx, _AGENT, {"gist": _A[0], "content": _A[1]}
@@ -62,7 +62,7 @@ async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
     """Returns `(anchor_uuid, member_uuid)` — the anchor already `tier='long_term'`."""
     assert isinstance(ctx.encoder, FakeEncoder)
     for gist, content, degrees in ((*_ANCHOR, 0.0), (*_MEMBER, 10.0)):
-        embedded = f"{gist}{GIST_SEPARATOR}{content}"
+        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
         ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
     anchor = await dispatch.remember(
         ctx.store.connection, ctx, _AGENT, {"gist": _ANCHOR[0], "content": _ANCHOR[1]}
@@ -93,7 +93,7 @@ async def _write_anchor_member_and_candidate(ctx: ServiceContext) -> tuple[str, 
         (*_MEMBER, 10.0),
         (*_CANDIDATE, 12.0),
     ):
-        embedded = f"{gist}{GIST_SEPARATOR}{content}"
+        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
         ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
     anchor = await dispatch.remember(
         ctx.store.connection, ctx, _AGENT, {"gist": _ANCHOR[0], "content": _ANCHOR[1]}

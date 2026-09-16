@@ -3,7 +3,8 @@
 **The walk phase** establishes what the corpus *is*: it walks the root, asks git what changed,
 reads and hashes the candidates git could not clear, deletes everything the walk no longer admits,
 and then replaces the pending list wholesale with the paths still to be done. **The index phase**
-then disposes of each of those paths, one transaction each.
+then disposes of each of those paths, one transaction each, and lives in `disposal.py` — the pending
+table is the whole of what passes between them, which is what makes them separable at all.
 
 **Which phase performs a deletion follows from which phase discovered it.** The walk phase knows
 the whole admitted set, so every indexed path it stops admitting — gone, over the cap, newly
@@ -20,6 +21,20 @@ implies survives until a later walk replaces the list. **"Not indexable" is two 
 than one**: the file is no longer text, or it has grown past the size cap since the walk measured
 it. Both produce a recorded skip, and both delete the row where one exists.
 
+**Indexing one file is chunking it, embedding those chunks, and writing all of it in one
+transaction.** The first two are the expensive steps and both happen before the transaction opens,
+so the write lock is never held across a model call.
+
+**A chunking or embedding failure ends the build, rather than skipping that file**, and that is the
+right shape for what can still raise there: the model is unavailable, or it answered with the wrong
+number of vectors, or the packing violated its own budget. None of those is a fact about the file in
+front of it, so continuing would mean the same failure on every file after it and a corpus reported
+as built from whatever happened to precede the first one. Everything already committed stays
+committed, the completion instant is not written, and the next build resumes from the `files` rows.
+The one failure that *was* about a single file — a path too long to leave room for content — is
+handled by the chunker rather than raised, precisely because it would otherwise trap a build on one
+file forever.
+
 **Nothing here is a checkpoint.** A build that dies leaves its committed files intact and its
 pending rows naming what it never got to; the next build walks again, compares hashes, and does
 whatever still does not match.
@@ -35,20 +50,23 @@ from typing import Final
 import aiosqlite
 
 from zikaron.core.clock import timestamp
+from zikaron.core.indexing.encoder import Encoder, index_identity_disagrees
 from zikaron.core.knowledge import (
     candidates,
     changes,
     database,
+    disposal,
     files,
     lock,
     meta,
     pending,
     roots,
-    text,
     walk,
+    writes,
 )
-from zikaron.core.knowledge.counters import ScanCounters, SkipReason
+from zikaron.core.knowledge.counters import ScanCounters
 from zikaron.core.knowledge.database import KnowledgeDatabase
+from zikaron.core.knowledge.disposal import BuildSettings, Disposals
 from zikaron.core.knowledge.errors import CorpusRootMissingError
 from zikaron.core.knowledge.meta import GitMode, KnowledgeMeta
 from zikaron.core.store.transactions import in_one_transaction, propagate
@@ -58,11 +76,6 @@ from zikaron.core.store.transactions import in_one_transaction, propagate
 #: entry costs to produce. It also sets how often the seen count reaches the database, which is
 #: the only evidence a scan is progressing before it has worked out what changed.
 _WALK_BATCH: Final = 500
-
-#: Chunking is not part of this build, so every file it indexes has none. Written explicitly
-#: rather than left to a default, because a count that agreed with the rows present by accident
-#: would stop agreeing the moment anything wrote a chunk.
-_CHUNK_COUNT: Final = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,21 +96,6 @@ class ScanResult:
     files_deleted: int
     files_remaining: int
     counters: ScanCounters
-
-
-@dataclass(frozen=True, slots=True)
-class _Disposals:
-    """What every index-phase disposal needs and none of them varies.
-
-    One value rather than four parameters threaded through each call: they are established once by
-    the walk phase and read by every disposal, and passing them separately would let one call site
-    supply a different size cap from the one the walk admitted files under.
-    """
-
-    root: Path
-    answers: candidates.GitAnswers
-    counters: ScanCounters
-    max_file_bytes: int
 
 
 def _take(walker: Iterator[walk.Candidate], count: int) -> list[walk.Candidate]:
@@ -171,7 +169,7 @@ async def _delete(db: aiosqlite.Connection, path: str, counters: ScanCounters) -
     """Remove one path from the index, together with any pending row naming it."""
 
     async def _work(connection: aiosqlite.Connection) -> None:
-        await files.forget(connection, path)
+        await writes.forget_file(connection, path=path)
         await pending.dispose(connection, path)
         await database.write_meta(connection, counters.as_meta_rows())
 
@@ -249,108 +247,6 @@ async def _walk_phase(
     return answers, comparison, len(deletions)
 
 
-async def _record_skip(
-    db: aiosqlite.Connection, path: str, was_indexed: bool, counters: ScanCounters
-) -> bool:
-    """Dispose of a path this scan will not index: a deletion if it was indexed, else nothing.
-
-    A path with no row serves nothing, so recording the skip and clearing the pending row is the
-    whole of it. A path that *was* indexed has text in the index that no longer corresponds to
-    anything indexable, and serving that forever behind a stale flag is worse than removing it.
-
-    **The second case is narrow, and saying which ways it is reachable is worth more than the
-    branch.** A previously indexed file is normally read during the walk, which is where it
-    ceasing to be indexable is noticed and where it is deleted. It reaches here only when the walk
-    could not settle it: its read **failed** there, or the file was indexable when the walk read it
-    and had changed by the time this read ran — into something not text, or past the size cap. All
-    are races against an edit, all are rare, and the alternative to handling them is an index entry
-    for content that is no longer there.
-
-    Returns whether a file was removed from the index.
-    """
-
-    async def _work(connection: aiosqlite.Connection) -> None:
-        if was_indexed:
-            await files.forget(connection, path)
-        await pending.dispose(connection, path)
-        await database.write_meta(connection, counters.as_meta_rows())
-
-    await in_one_transaction(db, _work, failure=propagate)
-    return was_indexed
-
-
-async def _record_indexed(
-    db: aiosqlite.Connection,
-    path: str,
-    raw: bytes,
-    answers: candidates.GitAnswers,
-    counters: ScanCounters,
-) -> None:
-    """Write this file's row and clear its pending row, in one transaction.
-
-    The stored content hash is this read's rather than the walk phase's: it is the read whose
-    bytes were indexed, so a file that changed between the two phases records what was indexed
-    rather than what was noticed.
-    """
-    indexed = files.IndexedFile(
-        path=path,
-        size=len(raw),
-        content_hash=files.content_hash(raw),
-        git_blob_hash=answers.listed.get(path),
-        chunk_count=_CHUNK_COUNT,
-        indexed_at=timestamp(),
-    )
-
-    async def _work(connection: aiosqlite.Connection) -> None:
-        await files.record(connection, indexed)
-        await pending.dispose(connection, path)
-        await database.write_meta(connection, counters.as_meta_rows())
-
-    await in_one_transaction(db, _work, failure=propagate)
-
-
-async def _dispose(
-    db: aiosqlite.Connection, path: str, context: _Disposals, *, was_indexed: bool
-) -> bool:
-    """Do whatever this pending path needs, in one transaction, and remove its row.
-
-    The exception is a file that cannot be read: its row stays, because the work it names has not
-    been done and a search should keep saying so until a later walk decides otherwise.
-
-    Returns whether this path was removed from the index.
-    """
-    counters = context.counters
-    raw = await asyncio.to_thread(files.read_bounded, context.root / path, context.max_file_bytes)
-    if raw is SkipReason.UNREADABLE:
-        counters.skip(SkipReason.UNREADABLE)
-        await _write_counters(db, counters)
-        return False
-    if isinstance(raw, SkipReason):
-        counters.skip(raw)
-        return await _record_skip(db, path, was_indexed, counters)
-    detection = text.sniff(raw)
-    if isinstance(detection, text.NotText):
-        counters.skip(detection.reason)
-        return await _record_skip(db, path, was_indexed, counters)
-    counters.index(len(raw))
-    await _record_indexed(db, path, raw, context.answers, counters)
-    return False
-
-
-async def _index_phase(
-    db: aiosqlite.Connection, comparison: changes.Comparison, context: _Disposals
-) -> int:
-    """Dispose of every pending path, reading the list from the table the walk phase wrote.
-
-    Returns how many of them were removed from the index rather than written to it.
-    """
-    deleted = 0
-    for path in await pending.paths(db):
-        if await _dispose(db, path, context, was_indexed=path in comparison.previously_indexed):
-            deleted += 1
-    return deleted
-
-
 async def _complete(db: aiosqlite.Connection) -> None:
     """Record that this scan finished.
 
@@ -372,16 +268,38 @@ async def _release(db: aiosqlite.Connection) -> None:
     await in_one_transaction(db, _work, failure=propagate)
 
 
-async def run(opened: KnowledgeDatabase) -> ScanResult:
+def _require_matching_encoder(corpus: KnowledgeMeta, encoder: Encoder) -> None:
+    """Refuse a build whose encoder is not the one this corpus's vectors were made with.
+
+    Checked before the lock is taken and before a single file is read, because the alternative is a
+    corpus half-filled with vectors labelled with a model that did not produce them — the one
+    inconsistency this store will not serve around, and one no later reader can detect from the
+    rows alone. A knowledge base in this state already reports that it needs rebuilding; refusing
+    here is what stops a build from quietly making the disagreement worse instead.
+    """
+    if encoder.model_name == corpus.embed_model and encoder.dim == corpus.embed_dim:
+        return
+    raise index_identity_disagrees(
+        reported_model=encoder.model_name,
+        reported_dim=encoder.dim,
+        recorded_model=corpus.embed_model,
+        recorded_dim=corpus.embed_dim,
+    )
+
+
+async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
     """Build this knowledge base's index, holding its lock for as long as it takes.
 
     Args:
         opened: the knowledge base to build, already open. Its `meta` is what defines the corpus —
-            the root, the globs, the size cap and the git mode all come from there rather than
-            from configuration, so that changing a global default cannot silently re-shape an
-            index that is already built.
+            the root, the globs, the size cap, the chunk budget, the encoder identity and the git
+            mode all come from there rather than from configuration, so that changing a global
+            default cannot silently re-shape an index that is already built.
+        build: the artifact this process loaded and how many chunks to embed per pass.
 
     Raises:
+        ZikaronError: `BAD_CONFIG` if `build`'s encoder disagrees with the identity this corpus
+            recorded. Nothing is written and the lock is never taken.
         CorpusRootMissingError: the indexed directory is gone. The index is left exactly as it is;
             an empty walk would read as *every file was deleted*.
         IndexerBusyError: another indexer holds this knowledge base's lock and cannot be shown to
@@ -390,6 +308,7 @@ async def run(opened: KnowledgeDatabase) -> ScanResult:
     """
     db = opened.connection
     corpus = opened.meta
+    _require_matching_encoder(corpus, build.encoder)
     root = Path(corpus.root_path)
     if not root.is_dir():
         raise CorpusRootMissingError(
@@ -402,15 +321,10 @@ async def run(opened: KnowledgeDatabase) -> ScanResult:
     await _begin(db, counters, effective=probed)
     try:
         answers, comparison, deleted = await _walk_phase(db, root, corpus, counters, probed)
-        deleted += await _index_phase(
+        deleted += await disposal.run(
             db,
             comparison,
-            _Disposals(
-                root=root,
-                answers=answers,
-                counters=counters,
-                max_file_bytes=corpus.max_file_bytes,
-            ),
+            Disposals(root=root, answers=answers, counters=counters, corpus=corpus, build=build),
         )
         remaining = await pending.count(db)
         await _complete(db)

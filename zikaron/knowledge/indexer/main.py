@@ -6,6 +6,7 @@ one thing however it was asked for.
 """
 
 import argparse
+import asyncio
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -13,7 +14,8 @@ from pathlib import Path
 import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
-from zikaron.core.knowledge import lifecycle, scan
+from zikaron.core.indexing.encoder import FastEmbedEncoder
+from zikaron.core.knowledge import disposal, lifecycle, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.knowledge import scope
@@ -57,12 +59,30 @@ async def build(
     Args:
         store_dir: the `.zikaron` directory this store lives in.
         db: an open connection to `memory.db`, which carries the registry.
-        config: the effective configuration, for reporting the corpus's state afterwards.
+        config: the effective configuration: which encoder to load, how many chunks to embed per
+            pass, and what to compare the built corpus's identity against afterwards.
         name: which knowledge base to build.
     """
-    refreshed = await lifecycle.refresh(store_dir, db, config, name=name)
+    refreshed = await lifecycle.refresh(
+        store_dir, db, config, name=name, build=await build_settings(config)
+    )
     _print_report(refreshed)
     return 0
+
+
+async def build_settings(config: EffectiveConfig) -> disposal.BuildSettings:
+    """Load the configured encoder and read the batch size, for one build.
+
+    The load costs roughly a second and runs on a worker thread, which keeps it off the event loop
+    rather than making it cheaper — a build is a batch job with no interactive path to protect, so
+    paying it up front and once is the right trade. A corpus whose recorded identity disagrees with
+    what this loads is refused by the build itself rather than here, where the corpus has not been
+    opened yet and there is nothing to compare against.
+    """
+    return disposal.BuildSettings(
+        encoder=await asyncio.to_thread(FastEmbedEncoder.load, config.get_str("embed_model")),
+        embed_batch=config.get_int("knowledge_embed_batch"),
+    )
 
 
 def _print_report(refreshed: lifecycle.Refreshed) -> None:

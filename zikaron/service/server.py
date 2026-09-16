@@ -25,11 +25,16 @@ from zikaron.core.errors import ZikaronError
 from zikaron.service import dispatch, rpc
 from zikaron.service.context import ServiceContext
 from zikaron.service.dispatch_consolidation import CONSOLIDATOR_METHODS
+from zikaron.service.dispatch_knowledge import KNOWLEDGE_METHODS
 from zikaron.service.envelope import ResolvedEnvelope, parse_envelope, resolve
 from zikaron.service.params import Handler
 from zikaron.service.rpc import ProtocolErrorCode, RequestParseError, RpcRequest
 
-_METHODS: Mapping[str, Handler] = {**dispatch.PRIMARY_METHODS, **CONSOLIDATOR_METHODS}
+_METHODS: Mapping[str, Handler] = {
+    **dispatch.PRIMARY_METHODS,
+    **CONSOLIDATOR_METHODS,
+    **KNOWLEDGE_METHODS,
+}
 
 _READ_LIMIT = 1 << 20  # 1 MiB per line — generous for any request this surface takes.
 

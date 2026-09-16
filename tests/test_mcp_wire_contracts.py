@@ -4,13 +4,18 @@ via the real tool through `fastmcp.Client`, rather than only against the module'
 helper functions.
 """
 
+import json
 from pathlib import Path
 from typing import NamedTuple
 
 import pytest
 from fastmcp import Client
 from fastmcp.client.transports import FastMCPTransport
+from fastmcp.exceptions import ToolError
 
+from zikaron.core.knowledge.groups import Group, SearchResponse, response_bytes
+from zikaron.core.knowledge.search import Result
+from zikaron.core.knowledge.state import KnowledgeState
 from zikaron.mcp.connection import ServiceConnection
 from zikaron.mcp.server import Mode, build_server
 
@@ -81,6 +86,18 @@ class _ToolCase(NamedTuple):
             {"uuid": "u1", "version": 2, "superseded_by": "u2"},
             "retire",
             {"uuid": "u1", "version": 2, "superseded_by": "u2"},
+        ),
+        _ToolCase(
+            "zikaron_knowledge_search",
+            {"query": "q", "knowledge_bases": ["docs"], "limit_per_kb": 7},
+            "knowledge_search",
+            {"query": "q", "knowledge_bases": ["docs"], "limit_per_kb": 7},
+        ),
+        _ToolCase(
+            "zikaron_knowledge_search",
+            {"query": "q"},
+            "knowledge_search",
+            {"query": "q", "knowledge_bases": None, "limit_per_kb": 5},
         ),
     ],
 )
@@ -158,3 +175,98 @@ async def test_each_consolidator_write_tool_sends_its_exact_apply_prefixed_wire_
     assert method == case.expected_method
     assert params == case.expected_params
     assert kind == "consolidator"
+
+
+async def test_the_knowledge_response_cap_is_denominated_as_the_transport_delivers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap exists to stop a result being truncated at the harness without anything saying so,
+    so what it counts has to be the same quantity the measured threshold counted.
+
+    **Two facts, and the second is the trap.** Our accounting bounds the payload the transport
+    delivers as text — asserted below, and non-zero, so a delivery carrying nothing cannot pass this
+    by arithmetic. And the transport *also* sends that payload again as structured content, which
+    is pinned here because it is the fact that invites the wrong conclusion: charging the cap twice
+    for it would halve the answer, since the threshold the cap sits under was itself measured
+    through this same duplication and recorded in single-counted payload size.
+    """
+    payload = SearchResponse(
+        groups=(
+            Group(
+                knowledge_base="docs",
+                description="design records",
+                state=KnowledgeState.OK,
+                files_remaining=None,
+                results=tuple(
+                    Result(
+                        path=f"design/{index}.md",
+                        start_line=1,
+                        end_line=4,
+                        snippet="a paragraph of prose with some length to it\n" * 4,
+                        truncated=False,
+                        score=0.5,
+                        stale=False,
+                    )
+                    for index in range(5)
+                ),
+            ),
+        ),
+        groups_dropped=False,
+    )
+    response: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "result": payload.payload()}
+    client, _calls = await _client_for("primary", tmp_path, monkeypatch, response)
+    async with client:
+        delivered = await client.call_tool("zikaron_knowledge_search", {"query": "anything"})
+    as_text = sum(
+        len(block.text.encode("utf-8")) for block in delivered.content if hasattr(block, "text")
+    )
+    assert as_text > 0
+    assert as_text <= response_bytes(payload)
+    # The duplication itself, pinned rather than described: the same payload again, as structured
+    # content, which is what a reader has to know before deciding what the cap should count. Pinned
+    # as equality rather than as presence, because what matters is that the second copy carries the
+    # whole answer — a transport that shipped a stub or a summary here would leave the cap counting
+    # a quantity nobody receives. Compared through a serialization round trip, which is the form
+    # both copies cross the wire in: the payload's tuples arrive as lists.
+    #
+    # The `{"result": ...}` wrapper is the transport's rather than ours, and it is the detail that
+    # settles the denomination. A tool that does not declare a structured return shape has its
+    # answer wrapped under that single key; these tools do not declare one, so this is the same
+    # shape taken by the probe whose measurements the cap's threshold comes from — which is why the
+    # threshold and the cap describe one quantity, and why counting this copy would count it twice.
+    assert delivered.structured_content == {"result": json.loads(json.dumps(payload.payload()))}
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_args"),
+    [
+        ("zikaron_search", {"query": "anything"}),
+        ("zikaron_knowledge_search", {"query": "anything"}),
+    ],
+)
+async def test_a_primary_tool_reports_a_transport_failure_as_a_tool_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    tool_args: dict[str, object],
+) -> None:
+    """A service that cannot be reached must arrive at the model as a tool error carrying what went
+    wrong — not as an opaque internal failure, which is what an uncaught exception from the socket
+    layer would be. The message is checked as well as the type, because the type alone would pass
+    for a handler that swallowed the cause."""
+
+    async def _refuse(
+        _self: ServiceConnection,
+        _method: str,
+        _params: dict[str, object],
+        *,
+        envelope: object,  # noqa: ARG001 — the keyword is the caller's, so the name cannot move.
+    ) -> dict[str, object]:
+        raise OSError("the socket is gone")
+
+    monkeypatch.setattr(ServiceConnection, "envelope", lambda _self, *, kind: _FakeEnvelope(kind))
+    monkeypatch.setattr(ServiceConnection, "request", _refuse)
+    mcp = build_server("primary", scope_dir=tmp_path)
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="the socket is gone"):
+            await client.call_tool(tool_name, tool_args)

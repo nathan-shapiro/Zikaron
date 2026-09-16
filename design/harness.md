@@ -212,7 +212,7 @@ it is most likely to have been dropped. Kiro can do nothing equivalent.
 Measured across four configurations (§6):
 
 - **Subagent frontmatter `tools:` genuinely restricts MCP tools.** So the consolidator still receives the
-  four consolidation verbs and **no `search` or `fetch`**. **The half of D32 that carries D7's enforcement is
+  four consolidation verbs and **nothing that reads** — no `search`, no `fetch`, and no knowledge search. **The half of D32 that carries D7's enforcement is
   mechanical here exactly as it is under kiro**, and that is the half that matters: code picks the
   candidates, and the consolidator cannot wander outside the group it was handed.
 - **The other half cannot be reproduced.** An MCP server must be registered session-wide to be reachable by
@@ -537,7 +537,7 @@ consolidator`, which is where D32 implements it anyway.
   nothing saying why. The notes are conditioned on the grants being genuinely absent, since the merge never
   removes one and an unconditional note would contradict the file on a re-run.
 - **The primary agent's exposure to the four consolidation verbs.** A server must be registered session-wide
-  to reach any subagent, so the primary necessarily sees all nine tools; D32's other half is prompt-only here
+  to reach any subagent, so the primary necessarily sees both tool sets; D32's other half is prompt-only here
   (§"Tool gating"). Reported, not silently accepted — the same reflex M12 applied to the array format's
   inherited `max_output_size`.
 - **No model check.** Claude Code refuses an unknown id at spawn, loudly (§"The consolidator's model"), so

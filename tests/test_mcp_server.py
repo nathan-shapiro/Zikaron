@@ -30,25 +30,31 @@ _PRIMARY_TOOL_NAMES = PRIMARY_TOOLS
 _CONSOLIDATOR_TOOL_NAMES = CONSOLIDATOR_TOOLS
 
 
-async def test_primary_mode_exposes_exactly_five_tools(tmp_path: Path) -> None:
+async def test_primary_mode_exposes_exactly_the_primary_tool_set(tmp_path: Path) -> None:
+    """Named for the set rather than for its size: the count has already changed once and will
+    again, and a test whose name carries a number goes stale without failing."""
     mcp = build_server("primary", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()
     assert {tool.name for tool in tools} == _PRIMARY_TOOL_NAMES
 
 
-async def test_consolidator_mode_exposes_exactly_four_tools(tmp_path: Path) -> None:
+async def test_consolidator_mode_exposes_exactly_the_consolidator_tool_set(
+    tmp_path: Path,
+) -> None:
     mcp = build_server("consolidator", scope_dir=tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()
     assert {tool.name for tool in tools} == _CONSOLIDATOR_TOOL_NAMES
 
 
-async def test_a_consolidator_config_provably_cannot_reach_search_or_fetch(
+async def test_a_consolidator_config_provably_cannot_reach_any_reading_tool(
     tmp_path: Path,
 ) -> None:
-    """`architecture.md`'s exact done-when phrase. "Provably" means structural absence, not a
-    denied call: the consolidator's `FastMCP` instance never had `zikaron_search`/`zikaron_fetch`
+    """`architecture.md`'s exact done-when phrase, now covering knowledge search as well — a
+    corpus of project documents is no more a consolidator's business than the memory store's own
+    read path is. "Provably" means structural absence, not a
+    denied call: the consolidator's `FastMCP` instance never had these tools
     decorated onto it at all (`server.py`'s own docstring), so they are not merely refused —
     `tools/list` cannot name them and `tools/call` has no handler to dispatch to, which this test
     checks from both directions rather than only the enumeration one."""
@@ -57,10 +63,13 @@ async def test_a_consolidator_config_provably_cannot_reach_search_or_fetch(
         tool_names = {tool.name for tool in await client.list_tools()}
         assert "zikaron_search" not in tool_names
         assert "zikaron_fetch" not in tool_names
+        assert "zikaron_knowledge_search" not in tool_names
         with pytest.raises(ToolError, match="Unknown tool"):
             await client.call_tool("zikaron_search", {"query": "anything"})
         with pytest.raises(ToolError, match="Unknown tool"):
             await client.call_tool("zikaron_fetch", {"uuids": ["x"]})
+        with pytest.raises(ToolError, match="Unknown tool"):
+            await client.call_tool("zikaron_knowledge_search", {"query": "anything"})
 
 
 async def test_a_primary_config_has_no_consolidator_tools_either(tmp_path: Path) -> None:

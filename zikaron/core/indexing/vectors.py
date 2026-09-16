@@ -29,6 +29,9 @@ from zikaron.core.indexing.encoder import Encoder
 #: `vec0`'s wire format for a `float[N]` column: N little-endian 32-bit floats, no header.
 _FLOAT32 = "<{n}f"
 
+#: How many bytes one of those floats occupies, which is what turns a packed length into a width.
+_FLOAT32_BYTES = 4
+
 
 @dataclass(frozen=True, slots=True)
 class IndexIdentity:
@@ -49,7 +52,7 @@ def _reject_embed() -> ZikaronError:
     return ZikaronError(ErrorCode.INDEX_FAILED, stage=IndexStage.EMBED)
 
 
-def _normalize(vector: Sequence[float], *, embed_dim: int) -> tuple[float, ...]:
+def normalize(vector: Sequence[float], *, embed_dim: int) -> tuple[float, ...]:
     """Scale one vector to unit length, refusing anything the metric cannot describe.
 
     `retrieval.md` states the corpus is L2-normalized at write time, and the cosine arithmetic every
@@ -61,6 +64,14 @@ def _normalize(vector: Sequence[float], *, embed_dim: int) -> tuple[float, ...]:
 
     A zero-norm or non-finite vector has no direction to preserve and cannot be compared to
     anything, so it is `index_failed` rather than a divide that produces `inf` and stores it.
+
+    Public because the knowledge index writes vectors into its own database and reads cosines back
+    off them with the same `cos = 1 - d^2/2` arithmetic. A second normalization, or one path
+    skipping it, would leave two corpora whose distances mean different things.
+
+    Raises:
+        ZikaronError: `INDEX_FAILED` at stage `embed` if the vector is the wrong width, has zero
+            length, or is not finite.
     """
     if len(vector) != embed_dim:
         raise _reject_embed()
@@ -77,6 +88,17 @@ def serialize(vector: Sequence[float]) -> bytes:
     two copies of a binary layout is how a query silently stops describing the corpus it searches.
     """
     return struct.pack(_FLOAT32.format(n=len(vector)), *vector)
+
+
+def deserialize(packed: bytes) -> tuple[float, ...]:
+    """The coordinates of a serialized vector, the exact inverse of `serialize`.
+
+    For a caller that has a vector in wire form and needs its values back — scaling a query vector
+    to unit length so that the cosine read off a distance is the real cosine rather than a
+    monotone stand-in for it. Stated as the inverse rather than reimplemented per caller, because a
+    second reading of this layout is how a query silently stops describing the corpus.
+    """
+    return struct.unpack(_FLOAT32.format(n=len(packed) // _FLOAT32_BYTES), packed)
 
 
 async def embed_chunks(
@@ -107,7 +129,7 @@ async def embed_chunks(
         raise _reject_embed() from error
     if len(vectors) != len(texts):
         raise _reject_embed()
-    return tuple(serialize(_normalize(vector, embed_dim=embed_dim)) for vector in vectors)
+    return tuple(serialize(normalize(vector, embed_dim=embed_dim)) for vector in vectors)
 
 
 async def insert_chunks(

@@ -28,6 +28,12 @@ from zikaron.knowledge.main import main as manage
 _READY_TIMEOUT_SECONDS = 30.0
 _POLL_SECONDS = 0.05
 
+#: Every test here drives the real command, and the real command loads the real encoder before it
+#: indexes anything — which is exactly what the `integration` tier is for. The decisions the command
+#: reports are tested against the deterministic encoder in `zikaron.core.knowledge`'s own tests, so
+#: nothing is covered only here.
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
@@ -174,7 +180,6 @@ class TestTheManagementVerb:
         assert "built     'docs'" in capsys.readouterr().out
 
 
-@pytest.mark.integration
 class TestAsARealProcess:
     def test_the_documented_invocation_runs(self, project: Path) -> None:
         """The only way to exercise an entry point is to be one, so this spawns it."""

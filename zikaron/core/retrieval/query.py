@@ -29,7 +29,7 @@ from typing import Final
 import aiosqlite
 
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
-from zikaron.core.indexing.encoder import Encoder
+from zikaron.core.indexing.encoder import Encoder, assembled_tokens, token_head
 from zikaron.core.indexing.vectors import serialize
 
 #: What separates the two prose fields of an internal query's lexical side. Any non-alphanumeric
@@ -191,18 +191,6 @@ def _prefix_too_long(prefix_tokens: int, cap: int) -> ZikaronError:
     )
 
 
-def _inconsistent_tokenizer(model_name: str) -> ZikaronError:
-    return ZikaronError(
-        ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
-        file="<embedding artifact>",
-        key="embedding.embed_model",
-        value=model_name,
-        expected="a tokenizer whose token count and token spans agree — they disagree, so the "
-        "head kept here would not be the head that was counted",
-    )
-
-
 def _prefix_leaves_no_query_token(prefix_tokens: int, cap: int) -> ZikaronError:
     """`bad_config` for a prefix beside which not even this query's first token fits.
 
@@ -222,20 +210,6 @@ def _prefix_leaves_no_query_token(prefix_tokens: int, cap: int) -> ZikaronError:
         f"tokenized together — assembled with even one of its tokens the sequence exceeds the "
         f"model's {cap}-token input",
     )
-
-
-def assembled_tokens(prefix: str, kept: str, *, encoder: Encoder) -> int:
-    """How many tokens the model will actually see for `prefix + kept`, special tokens included.
-
-    Counted on the **concatenation**, never as the sum of the two pieces' counts. A tokenizer
-    re-tokenizes across a join, so neither count bounds the other: with the shipped prefix, which
-    ends in whitespace, the pre-tokenizer splits at the boundary and the two agree — but
-    `embed_prefix_query` is a free-form string, and a prefix without a trailing boundary fuses with
-    the query's first token and can produce *more* pieces than the two counts predicted. Trusting
-    the sum would then report a short prompt as untruncated while the model quietly dropped its
-    tail, which is the single failure this preflight exists to prevent.
-    """
-    return encoder.count_tokens(f"{prefix}{kept}") + encoder.n_special_tokens
 
 
 def _fit_to_cap(text: str, *, prefix: str, budget: int, encoder: Encoder) -> str:
@@ -258,34 +232,10 @@ def _fit_to_cap(text: str, *, prefix: str, budget: int, encoder: Encoder) -> str
             first token fits beside the prefix.
     """
     for tokens in range(min(budget, encoder.count_tokens(text)), 0, -1):
-        kept = _head(text, tokens=tokens, encoder=encoder)
+        kept = token_head(text, tokens=tokens, encoder=encoder)
         if assembled_tokens(prefix, kept, encoder=encoder) <= encoder.max_sequence_tokens:
             return kept
     raise _prefix_leaves_no_query_token(encoder.count_tokens(prefix), encoder.max_sequence_tokens)
-
-
-def _head(text: str, *, tokens: int, encoder: Encoder) -> str:
-    """The first `tokens` tokens of `text`, sliced on token boundaries.
-
-    Head rather than tail for one stated reason and one measured mitigation: the head carries the
-    topic and the earliest-named identifiers, and it is the same direction the write-side hard split
-    takes, so there is one rule rather than two; and the lexical arm still sees the whole prompt, so
-    an identifier past the dense cutoff stays retrievable through BM25.
-
-    The spans are counted against the count that decided a truncation was needed, for the same
-    reason the write-side hard split does it: a well-formed but *short* span list would keep fewer
-    tokens than intended and record a number describing text that was never embedded, with nothing
-    later able to notice.
-
-    Raises:
-        ZikaronError: `BAD_CONFIG` naming `embedding.embed_model` if the artifact's token count and
-            token spans disagree.
-    """
-    spans = encoder.token_char_spans(text)
-    if len(spans) != encoder.count_tokens(text):
-        raise _inconsistent_tokenizer(encoder.model_name)
-    window = spans[:tokens]
-    return text[window[0][0] : window[-1][1]]
 
 
 def external_query(text: str, *, encoder: Encoder, prefix: str, max_terms: int) -> ExternalQuery:
@@ -319,7 +269,7 @@ def external_query(text: str, *, encoder: Encoder, prefix: str, max_terms: int) 
     query_tokens = encoder.count_tokens(text)
     # The assembled sequence is counted first, so the common path pays one tokenizer call and the
     # search below runs only when the input genuinely overflows. Checking it this way also keeps
-    # `query_truncated` exact: `_head` slices from the first token's start to the last token's end,
+    # `query_truncated` exact: a head slices from the first token's start to the last token's end,
     # so calling it on a query that already fits would drop leading or trailing punctuation and
     # report a truncation that did not happen.
     fits_whole = assembled_tokens(prefix, text, encoder=encoder) <= cap

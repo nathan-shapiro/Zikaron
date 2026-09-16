@@ -30,7 +30,7 @@ from zikaron.core.consolidation.groups import Disposition, GroupStatus
 from zikaron.core.consolidation.runs import RunStatus
 from zikaron.core.events import ClientKind
 from zikaron.core.indexing import writes
-from zikaron.core.indexing.chunking import GIST_SEPARATOR
+from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.core.indexing.writes import IndexedCall, IndexingContext
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import CallParams, Rewrite, Tier
@@ -129,7 +129,7 @@ class Consolidator:
         before any verb has run.
         """
         if degrees is not None:
-            embedded = f"{gist}{GIST_SEPARATOR}{content}"
+            embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
             self.harness.encoder.planned[embedded] = unit_at(degrees, self.harness.encoder.dim)
         uuid = await self.harness.write(
             gist=gist, content=content, call_ctx=ctx(session_id=AGENT_SESSION)

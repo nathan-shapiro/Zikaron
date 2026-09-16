@@ -167,7 +167,7 @@ harness's default.
 *configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
 agent can record without interrupting you. That is deliberate rather than lax — the whole design leans
 on the agent writing freely, and a permission prompt per write both suppresses that and trains you to
-click through prompts. What it trusts is narrow: five tools reading and writing rows in a local
+click through prompts. What it trusts is narrow: tools reading and writing rows in a local
 database, with no network and no effect outside the project. A mistaken write is *recoverable* rather
 than undoable — `zikaron_retire` withdraws a record from ordinary retrieval and leaves it auditable,
 while an amend overwrites prose that nothing restores. Pass `--no-trust-tools` if you would rather

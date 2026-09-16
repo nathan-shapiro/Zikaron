@@ -191,4 +191,13 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 # A ratchet: it may rise, never fall.
-fail_under = 90
+#
+# **Raised from 90 once the measured margin made that safe rather than merely tidier.** The figure
+# to set this against is not the run in front of you: the total is load-sensitive, because the
+# socket-and-timing code takes error branches or not depending on how a race lands, and three
+# consecutive runs over one unchanged tree have been measured at 97.64%, 96.85% and 97.64% with
+# every test passing. A floor close to the *observed* number would turn that flap into a red gate
+# for reasons unrelated to the change under test, which is the one thing a gate may never do. So it
+# sits below the lowest figure ever measured here, with room, and rises again when the flap is
+# pinned rather than when a lucky run suggests it could.
+fail_under = 95

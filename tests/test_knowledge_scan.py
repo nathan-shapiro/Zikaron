@@ -15,8 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.knowledge_fixtures import Corpus, add_request, open_corpus, open_index
-from zikaron.core.knowledge import files, lifecycle, lock, pending, scan
+from tests.fake_encoder import FakeEncoder
+from tests.knowledge_fixtures import Corpus, add_request, build_index, open_corpus, open_index
+from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.knowledge import disposal, files, lifecycle, lock, pending, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.database import read_meta
 from zikaron.core.knowledge.errors import (
@@ -66,7 +68,7 @@ async def _hold_the_lock(corpus: Corpus, *, pid: int) -> None:
 
 
 async def _build(corpus: Corpus) -> lifecycle.Refreshed:
-    return await lifecycle.refresh(corpus.store_dir, corpus.db, corpus.config, name=corpus.name)
+    return await build_index(corpus)
 
 
 async def _indexed(corpus: Corpus) -> dict[str, files.IndexedFile]:
@@ -426,6 +428,35 @@ class TestWhenABuildRefuses:
             async with open_index(corpus) as opened:
                 assert lock.is_held(await read_meta(opened.connection))
 
+    @pytest.mark.parametrize(
+        "encoder",
+        [FakeEncoder(model_name="some-other-model"), FakeEncoder(dim=7)],
+        ids=["a different model", "a different width"],
+    )
+    async def test_an_encoder_that_is_not_the_corpuss_own_is_refused(
+        self, tmp_path: Path, encoder: FakeEncoder
+    ) -> None:
+        """Vectors labelled with a model that did not produce them are the one inconsistency this
+        store cannot serve around, and nothing reading the rows afterwards could detect it."""
+        async with _corpus_over(tmp_path, {"a.md": b"alpha\n"}) as corpus:
+            with pytest.raises(ZikaronError) as excinfo:
+                await build_index(corpus, encoder=encoder)
+            assert excinfo.value.code is ErrorCode.BAD_CONFIG
+
+    async def test_a_refused_encoder_leaves_the_lock_untaken_and_the_index_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """Refused before the lock and before a single file is read, so a corpus is never left
+        half-filled with vectors two models produced."""
+        async with _corpus_over(tmp_path, {"a.md": b"alpha\n"}) as corpus:
+            await _build(corpus)
+            before = await _indexed(corpus)
+            with pytest.raises(ZikaronError):
+                await build_index(corpus, encoder=FakeEncoder(dim=7))
+            async with open_index(corpus) as opened:
+                assert not lock.is_held(await read_meta(opened.connection))
+            assert await _indexed(corpus) == before
+
 
 class TestCrashAndResume:
     async def test_a_build_that_dies_leaves_its_pending_rows_and_the_next_one_finishes(
@@ -434,7 +465,7 @@ class TestCrashAndResume:
         """Those rows are the only thing keeping a stale flag honest between the crash and the
         next scan, so nothing sweeps them — a sweep would look tidy and delete the signal."""
         async with _corpus_over(tmp_path, {"a.md": b"alpha\n", "b.md": b"beta\n"}) as corpus:
-            real = scan._dispose
+            real = disposal.dispose
 
             async def _die_on_the_second(*args: object, **kwargs: object) -> None:
                 if _die_on_the_second.seen:  # type: ignore[attr-defined]
@@ -443,7 +474,7 @@ class TestCrashAndResume:
                 await real(*args, **kwargs)  # type: ignore[arg-type]
 
             _die_on_the_second.seen = False  # type: ignore[attr-defined]
-            monkeypatch.setattr(scan, "_dispose", _die_on_the_second)
+            monkeypatch.setattr(disposal, "dispose", _die_on_the_second)
             with pytest.raises(RuntimeError, match="the indexer died"):
                 await _build(corpus)
             async with open_index(corpus) as opened:
@@ -452,7 +483,7 @@ class TestCrashAndResume:
                 raw = await read_meta(opened.connection)
             assert LAST_SCAN_COMPLETED_AT_KEY not in raw
 
-            monkeypatch.setattr(scan, "_dispose", real)
+            monkeypatch.setattr(disposal, "dispose", real)
             await _build(corpus)
             async with open_index(corpus) as opened:
                 assert await pending.count(opened.connection) == 0

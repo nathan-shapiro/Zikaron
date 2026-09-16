@@ -168,8 +168,15 @@ def cosine_from_distance(distance: float) -> float:
 
     Exact **only when both vectors are unit length**, which is why `query.QueryOrigin` exists: the
     corpus is L2-normalized by the write path, and an internal query reuses a stored chunk vector,
-    so the three cosine cutoffs are computed on two unit vectors. An external query's vector is not
-    renormalized, and no external query is thresholded.
+    so the three cosine cutoffs are computed on two unit vectors.
+
+    **Two callers, and only one of them leaves an external query unnormalized.** In the memory
+    store, an external query's vector is used as the embedder returned it and no external query is
+    ever thresholded — ordering by distance is monotone in cosine for any fixed query vector, so the
+    ranking is unaffected and no number is read off it. The knowledge index does read a number off
+    it — a result reports a cosine, and group order is decided by one — so it normalizes the query
+    before binding it, which is what makes this function's output a cosine there rather than a
+    monotone stand-in for one.
     """
     return 1.0 - (distance * distance) / 2.0
 

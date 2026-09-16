@@ -26,6 +26,7 @@ import aiosqlite
 
 from zikaron.core.consolidation.context import ConsolidationCall
 from zikaron.core.consolidation.payload import GroupRecord, RankedRecord
+from zikaron.core.indexing import encoder as encoding
 from zikaron.core.records import memory as records
 from zikaron.core.retrieval import query as query_construction
 from zikaron.core.retrieval.eligibility import Consumer, Scope
@@ -82,7 +83,7 @@ async def build_group_query(
     kept: list[str] = []
     for record in served:
         candidate = _GIST_JOIN.join([*kept, record.gist])
-        assembled = query_construction.assembled_tokens(prefix, candidate, encoder=encoder)
+        assembled = encoding.assembled_tokens(prefix, candidate, encoder=encoder)
         if assembled > encoder.max_sequence_tokens:
             break
         kept.append(record.gist)

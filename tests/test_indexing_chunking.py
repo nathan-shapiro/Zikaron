@@ -21,7 +21,7 @@ from tests.fake_encoder import FakeEncoder
 from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.indexing.chunking import (
     GIST_MAX_CHARACTERS,
-    GIST_SEPARATOR,
+    PREFIX_SEPARATOR,
     SEPARATOR_TOKENS,
     ChunkPlan,
     paragraphs,
@@ -143,7 +143,7 @@ def test_the_gist_is_prepended_to_every_chunk_with_one_separator() -> None:
     assert plan.n_chunks == 2
     for chunk in plan.chunks:
         assembled = chunk.embedded_text(_GIST)
-        assert assembled == f"{_GIST}{GIST_SEPARATOR}{chunk.text}"
+        assert assembled == f"{_GIST}{PREFIX_SEPARATOR}{chunk.text}"
     assert plan.embedded_texts(_GIST) == tuple(chunk.embedded_text(_GIST) for chunk in plan.chunks)
 
 
@@ -368,7 +368,7 @@ def test_an_assembled_sequence_over_the_cap_is_index_failed_at_the_assembly_stag
     class NonAdditiveEncoder(FakeEncoder):
         def count_tokens(self, text: str) -> int:
             counted = super().count_tokens(text)
-            return counted * 100 if GIST_SEPARATOR in text else counted
+            return counted * 100 if PREFIX_SEPARATOR in text else counted
 
     with pytest.raises(ZikaronError) as raised:
         _plan("a b c", encoder=NonAdditiveEncoder())

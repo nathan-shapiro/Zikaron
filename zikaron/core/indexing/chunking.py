@@ -23,10 +23,13 @@ from zikaron.core.indexing.encoder import Encoder
 #: a run of several blank lines is one boundary rather than several empty paragraphs.
 _PARAGRAPH_BREAK: Final = re.compile(r"\n\s*\n")
 
-#: The separator between the prepended gist and the chunk's content (`indexing.md` step 7).
-GIST_SEPARATOR: Final = "\n"
+#: The separator between a chunk's prepended prefix and its own content (`indexing.md` step 7).
+#: The prefix is a memory's gist here and an indexed file's path in the knowledge index; the
+#: separator is the same character in both, so it is stated once — two copies of one byte is how a
+#: budget computed in one place comes to describe a sequence assembled in another.
+PREFIX_SEPARATOR: Final = "\n"
 
-#: What the budget arithmetic charges for `GIST_SEPARATOR`, per `indexing.md`: one token, even
+#: What the budget arithmetic charges for `PREFIX_SEPARATOR`, per `indexing.md`: one token, even
 #: though a bare newline is whitespace that BGE's WordPiece pre-tokenizer discards and so
 #: measures zero. The error is then one token of unused budget instead of one token of overflow,
 #: and the assembled-sequence assertion stays a bug-catcher rather than becoming the mechanism
@@ -115,7 +118,7 @@ class Chunk:
         nothing saying what it concerns — and it is why the budget is computed against the
         assembled sequence rather than against content alone.
         """
-        return f"{gist}{GIST_SEPARATOR}{self.text}"
+        return f"{gist}{PREFIX_SEPARATOR}{self.text}"
 
 
 @dataclass(frozen=True, slots=True)

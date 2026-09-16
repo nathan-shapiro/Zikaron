@@ -23,7 +23,7 @@ import pytest
 
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.indexing import writes
-from zikaron.core.indexing.encoder import FastEmbedEncoder
+from zikaron.core.indexing.encoder import FastEmbedEncoder, token_head
 from zikaron.core.indexing.writes import IndexedCall, IndexingContext
 from zikaron.core.records.memory import CallParams, Rewrite
 from zikaron.core.retrieval import block, query, reads
@@ -113,7 +113,7 @@ def test_the_truncated_query_actually_fits_the_model_it_is_sent_to(
     """The whole point of the preflight: what reaches the model, prefix and special tokens included,
     is under the cap — so the model has nothing left to truncate silently."""
     budget = encoder.max_sequence_tokens - encoder.n_special_tokens - encoder.count_tokens(_PREFIX)
-    kept = query._head(_LONG_PROMPT, tokens=budget, encoder=encoder)
+    kept = token_head(_LONG_PROMPT, tokens=budget, encoder=encoder)
     assembled = encoder.count_tokens(_PREFIX + kept) + encoder.n_special_tokens
     assert assembled <= encoder.max_sequence_tokens
 

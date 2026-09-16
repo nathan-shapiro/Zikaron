@@ -122,6 +122,60 @@ def index_identity_disagrees(
     )
 
 
+def assembled_tokens(prefix: str, text: str, *, encoder: Encoder) -> int:
+    """How many tokens the model will actually see for `prefix + text`, special tokens included.
+
+    Counted on the **concatenation**, never as the sum of the two pieces' counts. A tokenizer
+    re-tokenizes across a join, so neither count bounds the other: with a prefix ending in
+    whitespace the pre-tokenizer splits at the boundary and the two agree — but a prefix is
+    free-form text, and one without a trailing boundary fuses with the following first token and can
+    produce *more* pieces than the two counts predicted. Trusting the sum would then report a
+    sequence as fitting while the model quietly dropped its tail, which is the single failure every
+    budget in this codebase exists to prevent.
+
+    Both prefixes this store uses go through here: the query instruction a read prepends to a
+    prompt, and the file path the knowledge index prepends to a chunk. **A caller whose real
+    sequence has a separator between the two passes it as part of `prefix`**, because the whole
+    point of this function is that the counted string and the emitted string are the same string —
+    a separator charged separately, or assumed, is a join this does not see.
+    """
+    return encoder.count_tokens(f"{prefix}{text}") + encoder.n_special_tokens
+
+
+def token_head(text: str, *, tokens: int, encoder: Encoder) -> str:
+    """The first `tokens` tokens of `text`, sliced on token boundaries.
+
+    The one way this codebase shortens a sequence for the model: the cut lands between tokens and
+    never inside one, because a fragment of a word embeds as a different word. Head rather than
+    tail, in both places that need it — the head carries the topic and the earliest-named
+    identifiers — and in both the lexical arm still sees the whole text, so what the head drops
+    stays reachable by the other arm.
+
+    The spans are counted against the count that decided a shortening was needed. A span list that
+    is well-formed but *short* — ordered, in range, and covering only the first few tokens — would
+    keep less text than intended while every later check still passed, so the disagreement is
+    refused here rather than left to something that cannot see it.
+
+    A text the tokenizer finds no token in has no head, and yields the empty string rather than an
+    index error: it is the honest answer, and the sequence it goes on to build is the prefix alone.
+
+    Raises:
+        ZikaronError: `BAD_CONFIG` naming `embedding.embed_model` if the artifact's token count and
+            token spans disagree, since the head kept would then not be the head that was counted.
+    """
+    spans = encoder.token_char_spans(text)
+    if len(spans) != encoder.count_tokens(text):
+        raise _artifact_failure(
+            encoder.model_name,
+            "a tokenizer whose token count and token spans agree — they disagree, so the head "
+            "kept here would not be the head that was counted",
+        )
+    window = spans[:tokens]
+    if not window:
+        return ""
+    return text[window[0][0] : window[-1][1]]
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactFacts:
     """Everything `FastEmbedEncoder` measures off the loaded artifact rather than assuming.

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.knowledge_fixtures import Corpus, add_request, open_corpus, open_index
+from tests.knowledge_fixtures import Corpus, add_request, build_index, open_corpus, open_index
 from zikaron.core.knowledge import files, git, lifecycle
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.database import read_meta
@@ -50,7 +50,7 @@ def repository(tmp_path: Path) -> Path:
 
 
 async def _build(corpus: Corpus) -> lifecycle.Refreshed:
-    return await lifecycle.refresh(corpus.store_dir, corpus.db, corpus.config, name=corpus.name)
+    return await build_index(corpus)
 
 
 async def _indexed(corpus: Corpus) -> dict[str, files.IndexedFile]:

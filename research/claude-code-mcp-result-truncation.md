@@ -134,6 +134,49 @@ to say that the notice is data, not instruction.
 `mcp__zktrunc` and `Read` and held both, which confirms the grant mechanism even though the remedy
 it was meant to enable does not work.
 
+## Denomination of the delivery-threshold counts, established 2026-09-15
+
+**Every character count in §"What was measured" is the size of the payload the tool returned, counted
+once — through a transport that delivered it twice.** This is not a caveat on the numbers; it is the
+unit they are in, and a later bound compared against them has to count the same way.
+
+**Scoped to that section deliberately**, since this note carries more than one table: the long-line
+figures in §"Long lines are not truncated" were measured through `Read`, which delivers once and has
+no structured content, so nothing here applies to them.
+
+The transport sends a tool result as a text block **and** again as structured content. Nothing in
+the probe run distinguishes the two, because the probe reported what it returned, so the bracket
+"44,000 delivered / 50,012 spilled" is in returned-payload characters and the wire carried roughly
+double at each point.
+
+Measured with `experiments/mcp_result_denomination.py`, which is in this repository precisely so
+this fact does not depend on a probe directory under `/tmp`:
+
+| tool return annotation | text block | structured content | structured shape |
+|---|---|---|---|
+| `-> str` (this note's probe) | 4,000 B | 4,014 B | `{"result": …}` |
+| `-> object` (the shipped tools) | 4,014 B | 4,027 B | `{"result": …}` |
+
+**The two rows are not comparable to each other**, and are not meant to be: each tool returns the
+shape its annotation describes, so the `-> object` row carries a small JSON object where the `-> str`
+row carries a bare string of the same 4,000 characters. What each row establishes is the relationship
+between its *own* two columns. The structured column is the wrapper re-serialized with `json.dumps`'s
+default spacing; a compact serializer reports one byte less. The point is the doubling, not the
+wrapper's exact width.
+
+Two things follow, and the second is the one that gets misread.
+
+**The wrapper is the transport's.** A tool that does not declare a structured return shape has its
+answer wrapped under a single `result` key — which is why the spilled result file above holds
+`{"result": "…"}` rather than the bare string. Both annotations take that path, so this note's probe
+and Zikaron's own tools are the same shape, and a bound calibrated here transfers.
+
+**A bound that charges for both copies is in the wrong unit.** M22 briefly made exactly that change
+— doubling its response cap's accounting because the duplication is real — and it halved the
+deliverable answer against a threshold that had not moved. The duplication is already inside
+§"What was measured"'s figures. Both of the payload bounds that cite this note (`spill_threshold` in
+`architecture.md`, `RESPONSE_MAX_BYTES` in `knowledge-index.md` §8.7) count once, deliberately.
+
 ## Not measured here
 
 The exact token cap on an MCP result (derived at ≈29,900–34,000 tokens, never stated numerically by

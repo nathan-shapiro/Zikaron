@@ -16,8 +16,10 @@ from typing import Any
 
 import aiosqlite
 
+from tests.fake_encoder import FakeEncoder
 from zikaron.core.config.resolution import EffectiveConfig, resolve
-from zikaron.core.knowledge import lifecycle, registry
+from zikaron.core.indexing.encoder import Encoder
+from zikaron.core.knowledge import disposal, lifecycle, registry
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
@@ -26,6 +28,16 @@ from zikaron.core.store.store import Store
 def config_for(tmp_path: Path) -> EffectiveConfig:
     """The effective config with both layers absent — every key at its built-in default."""
     return resolve(tmp_path / "system.toml", tmp_path / "project.toml")
+
+
+def write_config(tmp_path: Path, toml_text: str) -> None:
+    """Write the project configuration layer `config_for` will read for this store.
+
+    Call before anything opens the store: a knowledge base copies the tuning keys into its own
+    `meta` when it is created, which is the whole point of seeding them, so a value written
+    afterwards would not reach the corpus under test.
+    """
+    (tmp_path / "project.toml").write_text(toml_text, encoding="utf-8")
 
 
 def corpus_root(tmp_path: Path, name: str = "docs") -> Path:
@@ -37,6 +49,19 @@ def corpus_root(tmp_path: Path, name: str = "docs") -> Path:
     root = tmp_path / name
     root.mkdir(exist_ok=True)
     (root / "a.md").write_text("a line\n", encoding="utf-8")
+    return root
+
+
+def write_tree(root: Path, layout: dict[str, bytes]) -> Path:
+    """Write `layout`'s paths under `root`, creating directories, and return `root`.
+
+    Bytes rather than text, because several callers are about what happens to a file that is not
+    valid UTF-8 at all.
+    """
+    for relative, content in layout.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
     return root
 
 
@@ -67,6 +92,31 @@ class Corpus:
     config: EffectiveConfig
     name: str
     root: Path
+
+
+def build_settings(
+    config: EffectiveConfig, *, encoder: Encoder | None = None
+) -> disposal.BuildSettings:
+    """What a build needs beyond the corpus itself, with the deterministic encoder by default.
+
+    The batch size comes from the configuration rather than from a literal here, so a test never
+    asserts against a second statement of a default that is free to drift from the real one.
+    """
+    return disposal.BuildSettings(
+        encoder=encoder if encoder is not None else FakeEncoder(),
+        embed_batch=config.get_int("knowledge_embed_batch"),
+    )
+
+
+async def build_index(corpus: "Corpus", *, encoder: Encoder | None = None) -> lifecycle.Refreshed:
+    """Build one corpus's index the way every command does, and report what the build did."""
+    return await lifecycle.refresh(
+        corpus.store_dir,
+        corpus.db,
+        corpus.config,
+        name=corpus.name,
+        build=build_settings(corpus.config, encoder=encoder),
+    )
 
 
 def add_request(root: Path, **options: Any) -> lifecycle.AddRequest:  # noqa: ANN401

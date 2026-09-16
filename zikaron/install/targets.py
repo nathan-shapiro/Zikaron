@@ -132,7 +132,7 @@ _SPILL_READ_NOTE: Final = (
 #: the same reflex M12 applied to the array format's inherited `max_output_size`.
 _EXPOSURE_NOTE: Final = (
     "Your primary agent can see the four consolidation verbs "
-    f"(`mcp__{CONSOLIDATOR_AGENT_NAME}__*`) as well as its own five tools. That is not a "
+    f"(`mcp__{CONSOLIDATOR_AGENT_NAME}__*`) as well as its own tools. That is not a "
     "misconfiguration and it cannot be fixed here: a server must be registered session-wide to be "
     "reachable by any subagent at all, and `permissions.deny` is global — denying a verb "
     "unregisters it and the consolidator subagent is then refused at spawn with zero tools. Under "

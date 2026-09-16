@@ -173,9 +173,27 @@ do not silently skip it.
 **Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result — groupordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the same input and
 asserts byte-identical output. "It was deterministic on my machine" is how ordering bugs ship.
 
-**Coverage is measured and gated.** `pytest-cov`, with a floor on `zikaron/core` (start at **90%**) and the
-report published on every run. The floor is a ratchet: it may rise, never fall. Do not chase 100% — the last
-few percent buys tests written for the coverage tool rather than for the code.
+**Coverage is measured and gated.** The floor is **95%**, raised from 90% once the measured margin made
+that safe, and it is a ratchet: it may rise, never fall. A test compares this sentence against
+`pyproject.toml`, so the two cannot drift.
+
+**It is measured over every package under `zikaron/`, and that list is checked rather than remembered.**
+A package nobody names in a `--cov` flag reports *nothing* rather than reporting zero, so its absence is
+invisible from a green gate — which is how `zikaron/knowledge` went a milestone with no floor over it at
+all, the second time this project has lost a package that way. A test now asserts the flags in `check.sh`
+name every package that exists.
+
+**Two rules about where the floor sits, and they pull in opposite directions on purpose.** It is raised as
+the suite earns it, and it is never set close to the figure a run
+happens to report, because the total is load-sensitive: the socket-and-timing code takes error branches or
+not depending on how a race lands, and three consecutive runs over one unchanged tree measured 97.64%,
+96.85% and 97.64% with everything passing. A floor inside that spread turns a gate into a coin toss.
+
+**Do not chase 100% on the total** — the last few percent buys tests written for the coverage tool rather
+than for the code. **Do expect it of a new module**, where it is cheap and means something: a line nothing
+reaches is either dead or untested, and both are worth knowing at the moment the module is written rather
+than a year later. Where a line genuinely cannot be reached, delete it or mark it with a reason, rather
+than leaving a reader to work out which of the two it is.
 
 **Property-based tests where the design states a property.** `hypothesis` for things like: chunking never
 loses content, RRF is monotone in each arm's rank, a receipt key is unique per `(session, kind, uuid, version)`.

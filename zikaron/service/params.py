@@ -95,6 +95,23 @@ def require_uuid_list(params: dict[str, object], name: str) -> list[str]:
     return value
 
 
+def optional_str_list(params: dict[str, object], name: str) -> tuple[str, ...] | None:
+    """`params[name]` as a tuple of strings, `None` if absent or explicitly `null`, else `bounds`.
+
+    A tuple rather than a list because what it becomes is a field of a frozen request, and absence
+    is distinct from emptiness: a caller naming no corpora is asking for all of them, while one
+    naming an empty list has asked for none and is answered with none.
+    """
+    value = params.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ZikaronError(
+            ErrorCode.BOUNDS, field=name, limit="a list of strings or absent", actual=value
+        )
+    return tuple(value)
+
+
 def require_object(params: dict[str, object], name: str) -> dict[str, object]:
     """`params[name]` if it is a JSON object, else `bounds`."""
     value = params.get(name)

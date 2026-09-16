@@ -27,7 +27,7 @@ from typing import Final
 from tests.fake_encoder import FakeEncoder, vector_for
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.indexing import writes
-from zikaron.core.indexing.chunking import GIST_SEPARATOR
+from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.core.indexing.writes import IndexedCall, IndexingContext
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import CallParams, Rewrite
@@ -196,6 +196,6 @@ def query_vector_for(gist: str, content: str, *, dim: int = 384) -> bytes:
     which is what makes a dense-arm assertion about *ranks* rather than about hash luck. It assumes
     the content fits one chunk, which every fixture here keeps true.
     """
-    embedded = f"{gist}{GIST_SEPARATOR}{content}"
+    embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
     values = _unit(vector_for(embedded, dim))
     return struct.pack(f"<{dim}f", *values)

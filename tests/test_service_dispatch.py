@@ -8,7 +8,7 @@ import pytest
 from tests.fake_encoder import FakeEncoder, unit_at
 from tests.service_fixtures import envelope, open_context
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.indexing.chunking import GIST_SEPARATOR
+from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.service import dispatch
 from zikaron.service.dispatch import ConflictResult, VersionResult
 
@@ -73,8 +73,10 @@ async def test_remember_offers_near_duplicates_above_the_threshold(tmp_path: Pat
     two independent random hashes happen to score."""
     async with open_context(tmp_path, overrides="[dedup]\ndedup_threshold = 0.5\n") as ctx:
         assert isinstance(ctx.encoder, FakeEncoder)
-        ctx.encoder.planned[f"first{GIST_SEPARATOR}first content"] = unit_at(0.0, ctx.encoder.dim)
-        ctx.encoder.planned[f"second{GIST_SEPARATOR}second content"] = unit_at(1.0, ctx.encoder.dim)
+        ctx.encoder.planned[f"first{PREFIX_SEPARATOR}first content"] = unit_at(0.0, ctx.encoder.dim)
+        ctx.encoder.planned[f"second{PREFIX_SEPARATOR}second content"] = unit_at(
+            1.0, ctx.encoder.dim
+        )
         await dispatch.remember(
             ctx.store.connection, ctx, envelope(), {"gist": "first", "content": "first content"}
         )

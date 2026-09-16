@@ -1631,6 +1631,9 @@ that as an explicit OWED item.
 
 ## M22 — Chunking, both index arms, and search
 
+**COMPLETE 2026-09-15**, APPROVED after seven review rounds; trail
+`reviews/m22-knowledge-search-review.md`. Not committed, per the standing rule in `CLAUDE.md`.
+
 Normative: §4.3, §4.5, §4.6, §7.1–§7.4, §7.6, §8.1, §8.3, §8.7, §10; invariants 3, 6, 7, 9, 10, 13, 16.
 
 Paragraph-greedy chunking with line ranges, the budget enforced against the assembled sequence, and the
@@ -1665,6 +1668,21 @@ version *newer* than it supports, so a fourth `reindex_required` cause — a rec
 than the supported one — is what converts the bump into a rebuild. Both halves are this
 milestone's, and neither is optional: the bump without the rule changes nothing, and the rule
 without the bump fires on nobody.
+
+**Withdrawn on operator ruling, before any of this milestone's code: neither half is built here.**
+Nothing is deployed anywhere, so the only knowledge bases in this state are a developer's own, and the
+remedy for one is `remove` followed by `add` rather than a migration lever built for a population of
+one. Building the lever now would also make its first real exercise the *second* time it is needed,
+which is the worse of the two orders to learn a migration path in. **What is owed instead is stated
+rather than closed:** the open path still refuses only a version newer than it supports, so the first
+schema change made after this build ships is the one that has to carry both halves — the bump and the
+older-recorded-version `reindex_required` cause — and it inherits this paragraph's argument for why.
+The reasoning above stands as written; only its conclusion moved.
+
+**The §12 counters are not written here either, and that is M24's brief rather than an omission.**
+`searches`, `searches_empty`, `results_returned` and `results_stale` are seeded at creation and
+reported by `status` already; the best-effort writes that advance them, and the `SQLITE_BUSY`
+behaviour they require, belong with the milestone that holds §12.
 
 **Invariants:** 3, 6, 7, 9, 10, 13, 16. **Done when:** `Read(path, start_line, end_line)` returns a
 result's snippet byte-for-byte including the no-trailing-newline case, as a property test over a fixture
@@ -1722,6 +1740,14 @@ The four §12 counters, written best-effort and abandoned on `SQLITE_BUSY`.
 deferred under Claude Code. Confirm the tool list is delivered whole and the descriptions are not
 truncated, before writing six more.
 
+**Two things this milestone inherits, both deliberately deferred rather than forgotten.** The search
+tool's description was shipped *without* §8.3's sentence pointing at `zikaron_knowledge_list`, because
+a description that names a tool the server does not register is the defect §8.4 records in a
+comparable product; restoring that sentence belongs to the change that makes it true, which is this
+one. And the README still documents no way to create a corpus, which is why it does not mention one —
+the management tools and the `knowledge/` directory they produce are documented here, in the
+milestone that makes a corpus reachable without leaving the harness.
+
 **Invariants:** none new. **Done when:** an agent creates, fills, searches, renames and removes a KB
 without leaving the harness; `remove` without `confirm` fails and says what would be destroyed; `refresh`
 under a held lock reports `already_indexing` rather than queueing; the consolidator mode registers none of
@@ -1743,6 +1769,14 @@ they were chosen on, with the identifier-versus-prose split that FINDINGS open q
 
 **The measurement discipline is this project's, not a new one**: name the quantity before quoting a
 number, preregister the decision thresholds, and record what did not replicate.
+
+**`limit_per_kb`'s default is one of the parameters in scope, and its crossing point is already
+measured** — start from the number rather than re-deriving it. Over five real trees at the shipped
+defaults, a search across three corpora fits (19,764 payload bytes of 24,000) and the **fourth**
+corpus is where the response cap begins dropping whole groups; one result serializes to roughly
+950–1,374 bytes on prose. Harness, re-runnable in one command: `experiments/m22_response_cap.py`.
+An earlier figure putting that crossing at the third corpus was taken while the cap double-counted
+the transport's two copies, and is withdrawn in place in `FINDINGS.md` — do not tune against it.
 
 **Invariants:** none new. **Done when:** a research note reports search-per-session use on a real
 corpus, the empty-group rate from the §12 counters, and the swept parameters with the evidence for
