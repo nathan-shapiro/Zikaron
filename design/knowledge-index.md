@@ -2668,12 +2668,46 @@ One line each; the reasoning is in the section named.
 
 ## 16. Open questions
 
-1. **`rrf_k = 60` and `fusion_depth = 50` were tuned against a 187-record benchmark**; a KB is ~22,800
+1. ~~**`rrf_k = 60` and `fusion_depth = 50` were tuned against a 187-record benchmark**; a KB is ~22,800
    chunks. **FINDINGS open question 2** already records that unweighted RRF *discards* the signal an
    embedder
    upgrade would buy — all 960 of 960 fused top-5 slots held by documents both arms returned, while the
    arms intersect in ~28% of their union. At two orders more documents this stops being post-build
-   tuning. Both are `meta` keys, so it is a sweep, but it must run before a ranking here is trusted.
+   tuning. Both are `meta` keys, so it is a sweep, but it must run before a ranking here is trusted.~~
+   **— CLOSED POSITIVE by the M25 sweep, 2026-09-18, on the one query family measured valid. Both
+   defaults stand and neither moved.** Evidence: `research/m25-fusion-sweep.md`, preregistered at
+   `research/m25-fusion-sweep-preregistration.md`, full output in
+   `experiments/results/m25_fusion_sweep.json`. 252 cells over `rrf_k` × `fusion_depth` × an arm
+   weight, against **2,720 chunks** of `cockroachdb/cockroach` `docs/RFCS/` at commit `13cb3eb2`.
+   On `heading` — the only family whose queries are not substrings of their own answers — the best
+   cell beat the shipped configuration by **+0.0069 MRR@10**, 95% paired-bootstrap CI
+   **[−0.0084, +0.0227]**, against a 0.02 threshold fixed before any cell ran.
+   **Read the closure with three limits, none of them optional.**
+   (a) **On the bar as *preregistered* — pooled across all four families — 48 cells cleared every
+   threshold**, the largest by +0.1314 with a CI excluding zero. The closure depends on a
+   re-scoping to the valid family that was decided *after* the data. The threshold value was fixed
+   in advance; its denominator was not.
+   (b) It rests on **one prose corpus and one family of 150**, at 2,720 chunks — **an order of
+   magnitude short of the ~22,800 this item's own text names**, and no public prose tree reaches
+   that figure. Source code is open question 3.
+   (c) It **does not address FINDINGS open question 2**, a *memory*-store finding about an embedder
+   upgrade rather than a parameter; nothing here replicates or refutes it.
+   **What the valid family does show about D5's hybrid premise, and what it does not.** Fusion beats
+   the **lexical** arm — shipped minus lexical-only **+0.0764, CI [+0.0393, +0.1147]**, excluding
+   zero. It is **not shown to beat the dense arm**: **+0.0284, CI [−0.0114, +0.0683]**, which spans
+   zero at n=150. An earlier revision of this entry claimed it beat *both*; that is withdrawn, having
+   applied a looser standard to a welcome claim than to the rejected ones.
+   **And `rrf_k` is flat only here.** On exact-phrase queries it is not: `rrf_k = 10` beats 60 by
+   **0.102 MRR@10** on one family. **This is not the opposite-optima shape** the arm weight shows —
+   every family's maximum is at `k = 10`, `heading` included at 0.3268 against 0.3226, and
+   `(60, 10, 0.5)` beats shipped on all four. Smaller `k` and smaller depth are **weakly dominant
+   everywhere**; the gains are large only where one arm is confidently right and about **+0.004** on
+   the valid family, which is under the bar. **Nothing moves, and the reason is "below the bar on
+   the valid family" rather than "confined to families that cannot support a global change"** — an
+   earlier revision said the latter, and the +0.004 refutes it.
+   `fusion_depth` is flat-to-slightly-negative on the shipped slice;
+   **its latency cost is unmeasured** and must not be asserted, since `vec0` brute-forces the table
+   whatever `k` is.
 2. ~~**Group ordering is blind to lexical-only hits**~~ — **CLOSED by M19 spike C, and the premise
    was wrong rather than the parameter.** Two ways. **"Blind" was already false against §8.3**, which
    gives a lexical-only chunk an explicit `chunks_vec` lookup so it has an ordering key like any other
@@ -2692,7 +2726,26 @@ One line each; the reasoning is in the section named.
 3. **The dense/lexical balance for source code.** **FINDINGS open question 8** measures identifier
    discrimination at
    0.194–0.233, and **AWS's own documentation steers large codebases to the lexical arm**. Unweighted
-   RRF is the wrong default if that holds; arm weighting has never been swept.
+   RRF is the wrong default if that holds. ~~arm weighting has never been swept.~~
+   **— amended 2026-09-18: arm weighting *has* now been swept, on prose, and the result does not
+   transfer.** M25 (`research/m25-fusion-sweep.md`) implemented a weight in its harness and found the
+   optimum at **w = 0.5–0.6**, a broad plateau containing the shipped unweighted fusion. The
+   lexical-only extreme loses clearly (CI excludes zero); **the dense-only extreme is not shown to
+   lose** (+0.0284, CI [−0.0114, +0.0683]) — a distinction that matters here, because this item's
+   hypothesis is that *code* should lean **lexical**, and the one corpus swept says the dense side
+   is where prose is indifferent. **That is a result about technical prose and says nothing about code**,
+   which is this item's entire subject — so the item stands open, with one thing added that it did
+   not have: **a method it must not reuse.**
+   M25's three span-based query families were measured invalid, because a query lifted out of the
+   corpus appears **verbatim in its own answer** — 0.9975 to 1.0000 of its terms on average, never
+   below 0.70 on any single query, against 0.5950 for the one valid family — and so hands
+   the lexical arm the result. Ranked on the pooled metric those families dominate, the winner is
+   **lexical-only by +0.2206** (pooled 0.7056 against the shipped 0.4850), an artefact of the oracle
+   rather than a fact about retrieval
+   — and is precisely the shape of the conclusion this item is waiting for, which is why it is
+   flagged here. **A code
+   corpus needs an oracle whose query is not a substring of its answer**: identifier to
+   *definition site*, or a docstring with its identifier masked, not span to source chunk.
 4. **AST-aware chunking** (§4.4) — deferred, cost recorded.
 5. **Is a KB a directory tree or an explicit file manifest?** Specified here as a tree. A manifest
    would make refresh a re-hash rather than a re-walk and would suit curated corpora.

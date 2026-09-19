@@ -1829,12 +1829,123 @@ moves in lockstep with the design's block quotes and the parity tests that compa
 
 ---
 
+## M26 — Rerank the pull path, because retrieval finds the document and picks the wrong passage
+
+Normative: `design/retrieval.md` §"No reranker" and **D23**, whose rejection is scoped to the *push*
+path and which says in terms that the pull path is **not** rejected. Knowledge search is the pull
+path. `knowledge-index.md` §7.2 (within-KB ranking) and §16 items 1 and 7.
+
+### Why this, and why it is not more measurement
+
+M25 measured the shipped configuration on 150 mechanically-labelled conceptual queries against
+2,720 chunks of CockroachDB RFCs, and **no configuration of `rrf_k`, `fusion_depth` or an arm weight
+beat it by enough to move** (`research/m25-fusion-sweep.md`). What it also measured is that the
+absolute quality is poor, and **where** it is poor:
+
+| outcome on the shipped config, post-cap top 5 | share |
+|---|---|
+| right section returned | **39%** |
+| **right file, wrong section** | **28%** |
+| right file not retrieved at all | **33%** |
+
+**The 28% is a ranking failure inside a document retrieval already found, and a cross-encoder is the
+standard fix for exactly that shape.** The 33% is an embedding or query-construction problem and is
+**not** this milestone. Tuning cannot reach either: M25 showed the fusion parameters are flat on
+this family, and the two query classes want opposite arm weights, so no constant serves both.
+
+**No new dependency.** `fastembed 0.8.0` already ships `fastembed.rerank.cross_encoder.TextCrossEncoder`;
+`Xenova/ms-marco-MiniLM-L-6-v2` is 80 MB, with `jinaai/jina-reranker-v1-turbo-en` (150 MB) and
+`BAAI/bge-reranker-base` (1.04 GB) as alternatives. Verify the list with
+`TextCrossEncoder.list_supported_models()` rather than trusting this line.
+
+### What ships
+
+A reranking stage in `core/knowledge/search.py`, applied to the fused candidate pool **before**
+§7.3's per-file cap — the cap must act on the final order, not on an order the reranker then
+rewrites. One new configuration key, **off by default until the bar below is cleared**, declared in
+`schema.md`'s table like every other key.
+
+### Decisions to settle before any code, and record with reasons
+
+1. **Where the model is loaded, and by whom.** D22 forbids the hook loading an embedding model and
+   §6.1 protects the search path's latency. A cross-encoder is heavier than the encoder. It belongs
+   to the service, loaded once; a per-search load is disqualifying and must be shown not to happen.
+2. **Whether the key is per-KB `meta` or read from configuration at search time.** M25 recorded
+   that §10's own stated criterion — *does it describe how the index was built?* — puts search-time
+   keys in the second group, and that `rrf_k`/`fusion_depth` are in the first by an argument that
+   does not apply to them. **A reranker model changes no stored bytes.** Do not repeat that mistake:
+   this is a search-time key.
+3. **How many candidates are reranked**, and what happens when the pool is smaller.
+4. **Degraded mode.** A missing or unloadable reranker model must degrade to today's ranking with a
+   line in the log, never fail the search. §11 is the pattern.
+
+### Done when — preregister before the first run, in the M25 pattern
+
+`research/m26-rerank-preregistration.md`, written before any number exists, fixing the metric, the
+query set and these thresholds. **The bar is deliberately 2.5× M25's 0.02**, because a model load
+and hundreds of milliseconds must buy something *visible*, not something *detectable*:
+
+1. **hit@5 on the `heading` family improves by ≥ 0.05 absolute** over the shipped configuration,
+   with a 95% paired-bootstrap CI excluding zero.
+2. **Added latency ≤ 250 ms at p50** for a five-corpus search, measured on the machine and reported
+   with its load average, not asserted.
+3. **No family regresses** by more than 0.01 — the span families included, since a reranker that
+   improves conceptual queries by wrecking exact-phrase lookup is not an improvement.
+
+**Miss any of the three and it does not ship**: the key is not added, §16 gains the negative result,
+and the note says so. That is an acceptable outcome and naming it here is deliberate.
+
+### The instrument already exists — this is a re-run, not a project
+
+Everything M25 built is reusable and is the reason this is a day rather than a milestone-sized dig:
+
+```
+# 1. corpus  (~6 min; identical to M25's — same commit, same command, same 20 non-markdown chunks)
+git clone --depth 1 --filter=blob:none --sparse https://github.com/cockroachdb/cockroach <c>
+cd <c> && git checkout 13cb3eb27674b4a981e5c526d04c2387e81efd0b && git sparse-checkout set docs/RFCS
+.venv/bin/python experiments/m25_build_sweep_corpus.py <c>/docs/RFCS <store> cockroach_rfcs
+# 2. oracle + baseline: m25_fusion_sweep.py's build_queries(), heading family, 150 queries, seed 20260918
+.venv/bin/python experiments/m25_fusion_sweep.py <store> cockroach_rfcs 150
+```
+
+`experiments/m25_fusion_sweep.py` carries the query builder, the filtered-ranking exclusions, the
+paired bootstrap and the per-file cap mirror. `experiments/m25_verify_note_figures.py` checks every
+published figure against the committed run — **extend its `SOURCES` to M26's note**, or it silently
+covers only M25's.
+
+### Traps M25 paid for, listed so M26 does not pay again
+
+- **Preregister the *quantity*, not only the threshold.** M25 fixed 0.02 on a pooled metric later
+  measured invalid; 48 cells cleared the bar as written. Fix what the number is a number *of*, and
+  fix what makes a query family admissible, before the families exist.
+- **Measure the instrument before measuring with it.** Seven harness corrections were needed, each
+  with a symptom already visible in the harness's own output.
+- **A mislabelled output field is a false claim with a number attached** — one sent a review round
+  into a wrong blocker.
+- **`heading` scoring requires the exclusions** M25 built (the holding chunk, and same-titled
+  sections' heading chunks). A reranker will rank the holding chunk first on every query if it is
+  not excluded, because it contains the query verbatim.
+
+### Fence
+
+Reranking only. **Not** the 33% — no embedder change, no query rewriting, no chunking change; each
+is its own milestone and each has a measured share of the failure now. No change to `rrf_k`,
+`fusion_depth` or arm weighting: M25 closed those.
+
+---
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable
   as a `COUNT(*)`. Left in place pre-code deliberately. If M7 finds it genuinely redundant, that is a design
   change to propose, not to make silently.
-- **Open questions in `FINDINGS.md` are open on purpose.** Open question 2 (RRF arm weighting) is the largest
-  known quality lever and needs no reindex, so it is deliberately post-build. Do not tune fusion during M5.
+- **Open questions in `FINDINGS.md` are open on purpose.** Open question 2 (RRF arm weighting) needs no
+  reindex, so it is deliberately post-build. Do not tune fusion during M5.
+  *This read "is the largest known quality lever" until 2026-09-18. M25 swept exactly those parameters on the
+  knowledge index and found none worth moving **on the one query family measured valid** — best cell +0.0069
+  MRR@10 against a 0.02 bar, while 48 cells cleared that bar on the pooled metric the sweep had actually
+  preregistered (`research/m25-fusion-sweep.md`). Different store, so open question 2 is untouched and still
+  open; the superlative went because it was stated of fusion tuning generally and the point here never rested
+  on it.*
 - **The design is normative; where code and design disagree, one of them is a bug.** Decide which, fix that one,
   and re-index the knowledge base if it was the design.

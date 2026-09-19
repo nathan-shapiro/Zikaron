@@ -884,9 +884,15 @@ Age-pruning was considered and **rejected on two grounds**, the first of which i
    inflating the under-writing rate in exactly the direction `~/Memory`'s evidence predisposes us to believe.
    The artifact would be indistinguishable from the finding.
 2. **`event.detail` is the input to the open fusion-tuning question**, not disposable diagnostics. The RRF `k`,
-   arm-weighting and `fusion_depth` pass (`FINDINGS.md` open question 2, the largest known quality lever)
+   arm-weighting and `fusion_depth` pass (`FINDINGS.md` open question 2 — **this store's**, and still open)
    needs historical distributions of `dense_stop_reason`, `lexical_stop_reason`, `probe_cap_hit` and
    `depth_reached`. Nulling `detail` past a horizon would destroy precisely the evidence that pass requires.
+   *This parenthetical read "the largest known quality lever" until 2026-09-18, when the equivalent sweep on
+   the knowledge index found no configuration beating the shipped one by more than 0.0069 MRR@10 **on the one
+   query family measured valid** — against 48 cells clearing the bar on the pooled metric that sweep had
+   preregistered (`research/m25-fusion-sweep.md`). That is a different store and does not refute open question
+   2, which is about an embedder upgrade rather than a parameter — but the superlative was stated of fusion
+   tuning in general, and the argument here never needed it.*
 
 Not pruning also removes machinery rather than adding it: no schedule, no background job, no invariant to
 police it, and `read_receipt` no longer needs an age-pruning exemption — it was only ever special because

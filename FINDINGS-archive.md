@@ -969,6 +969,79 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
   the very round that recorded this: anchor on paragraph boundaries, never mid-sentence; and when a
   patch changes a paragraph's shape, **rewrap the whole paragraph** rather than editing line by
   line, which strands widow words the formatter will never touch.
+  **THIRD OCCURRENCE, 2026-09-14, and the recurrence is worth more than the defect.** The same
+  practice produced the same class of damage again while revising `design/knowledge-index.md` across
+  three review rounds. This time the *mechanical* discipline was sound — every replacement asserted
+  exactly one match and two aborted correctly on a miss — and it made no difference: **round 2 of the
+  review was four blockers, every one an artifact of having edited round 1's fixes in place.** A
+  citation corrected in one sentence and left standing in the next. A counter added in §12 that
+  falsified an "exactly one writer" claim in §3.3. An invariant that contradicted the crash story
+  three sections away *and* would have destroyed the signal it named had anyone enforced it. A
+  matched-once replacement proves you changed what you aimed at; it proves nothing about the
+  sentences around it, and that is where this failure lives.
+  **Why this is evidence about memory rather than about `sed`.** The lesson was already written down
+  — this very bullet, plus M18's "replace-once with an assert that cannot fail on a partial fix" —
+  it was specific, actionable, operator-endorsed, and sitting in a file the agent can read. It did
+  not fire. The mechanism of the failure is exactly **open question 1**: `FINDINGS-archive.md` is
+  read *on demand*, the session was framed as "write a design document", and so nothing surfaced an
+  editing lesson at the moment editing began, twenty tool calls later, when no injection fires and
+  no occasion triggers a search. **A recorded, correct, retrievable memory lost to the retrieval
+  occasion never arriving** — which is the strongest single piece of evidence this project has that
+  push-at-task-framing does not cover the mid-task moment.
+  **The operator's fix is the remedy the design would predict: promote it from pull to push.** The
+  rule now lives in `CLAUDE.md`, which loads every session, rather than in an archive read on
+  demand. Note what that costs and what it implies — the always-loaded surface is finite, so this is
+  a *budget allocation* decision, and the criterion it suggests is "a lesson that must fire at a
+  moment no occasion will announce belongs in push, not pull."
+- **An agent truncated its input and then made a universal claim about the whole of it — and the
+  claim was wrong.** 2026-09-14, the same `design/knowledge-index.md` review. Round 2 of the review
+  contained **14** findings. The agent read the review file with `head -120`, saw eleven, applied
+  those, and reported to both the operator and the next reviewer that **"all 11 round-2 findings
+  were accepted and applied"**. Findings 12–14 were below the cut and were never read. The *next*
+  round caught it, by counting.
+  **Why it is worth recording separately from the editing defect above:** the failure is not
+  carelessness about *text*, it is a claim whose quantifier exceeded its evidence. `head -120` is a
+  sampling decision; "all 11 findings" is a statement about a population. Nothing in between checked
+  that the sample was the population, and the number eleven was *derived from the truncated view*,
+  so it corroborated itself — the agent counted what it had read and reported that count as the
+  total. A self-consistent wrong number is much harder to notice than a missing one.
+  **This is the corpus's own rule, violated by the agent that maintains it:** *name the quantity
+  before quoting a number about it.* The quantity was "findings I read", reported as "findings there
+  were". It is also M14's lesson — *a universal claim proven only by its best-case fixture* — and
+  M18's, about audits that enumerate the phrasings a reviewer quoted rather than the claim.
+  **Cheap mechanical guard, since the judgement-based one demonstrably fails:** when reading a file
+  to act on all of it, either read it whole or **count the population first** (`grep -c` for the item
+  pattern) and reconcile that count against what was applied. The count is one command and it is
+  falsifiable; "I think I read it all" is neither.
+- **One failure shape produced four distinct defects in a single day, and it has a name the corpus
+  already coined.** 2026-09-14, across six review rounds on `design/knowledge-index.md`. M18 called
+  it *audits that enumerate the **phrasings** a reviewer quoted rather than the **claim***. Every
+  instance below is that, and none was caught by the mechanism that ought to have caught it:
+  1. **The editing recurrence.** Fixed a claim in the sentence a reviewer quoted, left the same
+    claim standing in the next sentence. Round 2 was four blockers, all of this shape.
+  2. **The truncated count.** Read a 14-finding review with `head -120`, counted eleven, reported
+    "all 11". The number was derived from the truncated view, so it corroborated itself.
+  3. **The 10/10 key audit that missed a key.** Verified programmatically that every `meta` key
+    named in prose appeared in the authoritative schema list — and scored 10/10 while a per-KB
+    setting was persisted nowhere at all, **because it wore a command-line flag's spelling**
+    (`--max-file-bytes`) rather than a key's. The audit could only see things already shaped like
+    the thing it was checking.
+  4. **The enumeration fix that fixed two of three.** A finding named three enumerations that must
+    agree; two were updated and the transmittal claimed all three. The third not only omitted the
+    new case but *prohibited* it, so the invariant test would have been written to forbid what two
+    other sections mandated.
+  **The transferable rule, since "be careful" has now failed four times in one session:** an audit
+  must be expressed over the **claim**, not over the sites a reviewer happened to cite. In practice
+  that means `grep` for every statement of the proposition and reconcile the count — instance 4 was
+  found in seconds that way, after being missed by a careful read. **And the audit's own scope is
+  the thing most likely to be wrong**: instance 3 failed not because the check was sloppy but
+  because its search space was defined by the defect's usual spelling.
+  **Why this belongs in a memory project's evidence file rather than a style guide.** All four are
+  retrieval failures, not reasoning failures. The knowledge needed was present and correct in every
+  case — in the corpus, in the review file, in the document itself — and what failed was *finding
+  the right subset at the moment of acting*. That is the same thing Zikaron's retrieval layer is
+  for, one level up, and it is why the count-first guard is worth more than the resolution to be
+  careful: it replaces a judgement about coverage with a number that can be wrong out loud.
 - **A shipped check was a no-op for three milestones, and the thing that exposed it was refusing to
   let a passing assertion stand unexamined.** M15 round 4, 2026-08-16. A review asked the installer
   to validate the *real* shipped consolidator config rather than a four-key toy. The rewritten test
@@ -1579,6 +1652,12 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
   already handles by design, and the fix wants its own change with a test that pins the race deterministically
   rather than one that reproduces it under load. Recorded so the next person to see this failure does not
   spend the diagnosis again.
+  **FIXED 2026-09-16, and the diagnosis above was correct in every particular** — `main.run` now
+  installs the handlers *before* the bind, so the socket file's existence implies a process that
+  will clean it up on either signal it handles. The deterministic test the last sentence asked for
+  exists as `test_service_main.py::test_the_signal_handlers_are_installed_before_the_socket_is_bound`,
+  which reads the process-wide disposition at the moment `serve()` is called, since the ordering is
+  observable nowhere else. Detail: `FINDINGS.md` priority item 6.
 
 - **Planning determinism is verified against real data, and it is the first time that claim has been
   tested outside fixtures.** `consolidation.md` states planning is a pure function of the store plus its
@@ -1687,7 +1766,1602 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
   actor or an occasion cannot answer a question about autonomy, however many events it counts.**
 
 
+## The knowledge index as built — M19 to M24 (moved out of FINDINGS 2026-09-18)
+
+> Moved verbatim, byte-for-byte, when `FINDINGS.md` had reached **~83–89k tokens — well past the
+> ~49k that forced this file's own creation.** *That figure was written here as "~60k", from an
+> estimate of 4 bytes per token; a `/context` reading the same day put this corpus at **2.7–2.9**,
+> and `FINDINGS.md` §"Track C" carries the measurement and the method. The byte counts were always
+> right; only the conversion was wrong.* Each of these six milestones is DONE and APPROVED;
+> what they built is normative in `design/knowledge-index.md` and what they *taught* is here.
+> **M25's block stays in `FINDINGS.md`** because it is live.
+>
+> **Read "this file" below as `FINDINGS.md`.** These blocks say *this file* or *the always-loaded
+> file* **16 times**, and every one of them was written about `FINDINGS.md`, where this text lived
+> until today. Nothing was rewritten to fix that, deliberately — this file's own header says to
+> append rather than rewrite, because it records what was believed and when, and silently
+> re-pointing sixteen sentences would edit the record to match the filing. One reading note is
+> cheaper and does not falsify anything.
+>
+> *An earlier revision of this line read "two pointers were rewritten on the way out rather than
+> left dangling", which was **written before the pointers were counted** and was wrong twice over:
+> none were rewritten, and it is sixteen rather than two. Withdrawn in place, because the failure is
+> this corpus's own — a confident-looking number asserted ahead of the check, inside the pass whose
+> whole subject is a number nobody re-checked for five milestones.*
+
+**M19 — the knowledge index's risk-first spike milestone — is DONE, 2026-09-15**
+(`design/build-plan.md` §M19). No product code and no schema changes. Three harnesses under `spikes/`,
+three notes under `research/`, and every correction folded into `design/knowledge-index.md` before M20
+starts.
+
+**It landed without a pre-landing review gate, on operator direction** — a research spike's output is
+measurement plus a design amendment — **and was then reviewed post-landing, on the operator's
+subsequent instruction, once the results turned out to be substantial: four rounds, APPROVED
+2026-09-15, trail `reviews/m19-spikes-review.md`.** That review moved real things: a **blocker** (a failure rule stated
+as an enumeration of causes, three paragraphs below the rule forbidding exactly that), a "lower bound"
+claim corrected to identity, an invariant's oracle found to be measured in only one of its two
+directions, and two overstated numbers withdrawn. Read the trail before trusting any single figure
+here — several were corrected in place.
+
+**No mechanism the design depends on was refuted — all three held, so nothing forced a redesign.**
+What the probes bought instead is **fourteen corrections**, enumerated in the three notes' own "What
+changes in the design" sections (5 + 6 + 3) and all folded in — the §8.3 one below is counted inside
+spike C's three, not added to them. **Full entries are in `FINDINGS-archive.md` §References**; the two
+things worth carrying here:
+
+**Almost every gap fails by *returning success*.** A `DROP TABLE` outside an explicit transaction
+autocommits and `executescript()` commits first, so §8.4's "one transaction" is a property of how the
+statements are issued; FTS5's `'delete'` with wrong values is a silent no-op; `integrity-check` reports
+OK on **both** halves of a broken invariant 3 unless given argument `1`; `check-ignore` exits **1** to
+mean *nothing ignored*, which §5.2's degradation rule would have read as failure; and `text=auto` —
+GitHub's own recommended first line — makes the predicate §4.2's prose implies return an **empty
+corpus**. None of these raises. Ruff, mypy and a green suite could see none of them.
+
+**The sharpest finding came from reading, not from probing.** §7.2 called cosine ordering "blind" to a
+lexical-only hit while **§8.3 gives exactly such a chunk an explicit `chunks_vec` lookup** — two
+sections of one document disagreeing, through twelve review rounds. Spike C then measured the fix §7.2
+proposed on that premise and **rejected it**: better in no family of 72 mechanically-labelled queries,
+and collapsing 0.57 → 0.38 top-1 as `fusion_depth` tightens to where lexical-only hits are common —
+over exactly which range cosine ordering *improves*, 0.74 → 0.76. **And the harness convicted itself of
+the same class twice, both now recorded in the notes themselves**: spike B's first parser dropped empty
+NUL fields, which misaligns every `check-ignore -v` record (note B §5), and spike A's first
+`integrity-check` used the argument-less form — the one its own table shows cannot see the defect the
+probe was written to characterise (note A, trap 4). Both were the natural implementation; both returned
+success.
+
+**M20 — the registry, and knowledge-base lifecycle without indexing — DONE, 2026-09-15. APPROVED
+after five review rounds**, the last closing with no findings at any tag level; trail
+`reviews/m20-knowledge-registry-review.md`, summarised in `FINDINGS-archive.md` §References.
+Brief: `design/build-plan.md` §M20, now marked complete.
+
+**What is true of the product now.** `python -m zikaron.knowledge` creates, lists, renames, removes
+and reports on knowledge bases; the registry lives in `memory.db` and is created idempotently on
+first use, so **`meta.schema_version` stays at 1** and a store predating the table opens unchanged.
+Each knowledge base is `knowledge/<uuid4>.db` carrying the full schema — `chunks`, `chunks_fts`,
+`chunks_vec`, `files`, `pending`, `meta` — seeded from configuration with **no encoder on the
+path** (measured: creating one never imports `fastembed`). **Nothing indexes yet**, so every
+knowledge base reports `reindex_required`, which is the truth rather than a placeholder: no scan
+has completed. **Next is M21** — discovery, filtering and change detection — whose brief also asks
+for three throughput numbers that cannot be taken later without re-walking.
+
+Plan as executed:
+1. ~~Settle the three decisions the brief leaves open~~ **— done**; all three are below, and the
+   design documents carry them.
+2. ~~Generalize the store primitives~~ **— done.** `_open_connection` moved out of `store.py` into
+   `core/store/connection.py` as a shared opener taking a caller-supplied name for a failed
+   *connect* only (the `FailureMap` pattern, so a missing memory store and an absent knowledge base
+   are named by whoever knows which they are looking at); and `permissions.database_files` now
+   enumerates the WAL three-file set in one place, replacing three hand-written literal triples.
+3. ~~`core/knowledge/`~~ **— done**: `ddl`, `meta`, `registry`, `database`, `paths`, `roots`,
+   `state`, `reporting`, `lifecycle`, `errors`.
+4. ~~Lifecycle verbs and the CLI~~ **— done**, as `python -m zikaron.knowledge`.
+5. ~~Tests~~ **— done.** Eight files, 100% statement and branch coverage on every new module except
+   `zikaron/knowledge/__main__.py`, which is subprocess-only and reads 0% for the same reason the
+   installer's does. **Eleven mutations applied and all eleven caught** — the practice this project
+   keeps because the gate cannot see any of them: dropping `IF NOT EXISTS`, changing a `CHECK`,
+   adding the third pragma, removing the id re-parse, removing the lower-casing, reordering the
+   state precedence, treating a never-built corpus as `ok`, reversing the registry-first ordering,
+   collapsing the three integrity failures into one, creating the schema outside a transaction, and
+   removing the walk-completion half of the `files_remaining` rule. **Grown to fourteen after
+   review round 1**, with four aimed at that round's own fixes — opening knowledge bases with the
+   memory store's pragmas, reading an orphan through the writing opener, leaving the file behind
+   when creation fails, and adding the third pragma to the declared tuple. All fourteen caught.
+   **Two of the original eleven were bad mutations rather than passing tests**, and both taught
+   something: one moved a statement whose position did not matter, which exposed that *nothing*
+   pinned the registry-first ordering until a test was written to force an interruption between the
+   commit and the unlink; the other flipped `mode=ro` to `mode=rw` on a connection that applies no
+   pragmas, where nothing is written either way — the real regression is routing that read back
+   through the opener, and that is what the mutation now does. **Eighteen after round 2**, with six
+   more aimed at the review's own fixes — narrowing the cleanup back, running it on the branch it
+   must never run on, abandoning the connection instead of closing it, accepting any uuid rather
+   than the shared parser, comparing timestamp *lengths* instead of ordering them, and reading an
+   orphan through the writing opener. None survived.
+6. ~~Gate green, then `self-review` to approval~~ **— done.** `./check.sh` exits 0 (2127 passed,
+   97.65%, zero warnings); APPROVED after five rounds.
+
+**Three decisions taken before any code, with the reasoning, because the brief asks for exactly that.**
+
+- **`meta.schema_version` is *not* bumped, and `schema.md` says so explicitly rather than by silence.**
+  The rule written there is about compatibility rather than content: a change bumps the version when a
+  binary at the old version would read the store *wrongly*, and adding a table no older code path reads
+  or writes is not that. Bumping would make every older build refuse the store outright — the right
+  answer for a schema it cannot read and the wrong one for a schema it can — and would force the
+  supported-range-plus-migration contract `schema.md` §"Migration posture" defers, for a change needing
+  none of its machinery.
+  **What that obliges instead: `knowledge_bases` has exactly one creation site, and it is idempotent.**
+  It is deliberately **not** in `ddl.FIXED_STATEMENTS`, because a store created before it existed would
+  then need a second creation path and the two would be free to disagree. The registry creates it on
+  first use with `CREATE TABLE IF NOT EXISTS`, for every store alike, which is what makes "a store
+  predating the migration opens and answers normally" true *by construction* — the memory open path is
+  not touched at all — rather than true because a test says so.
+  **Measured, because the ensure runs on every registry open and the memory path's latency is the thing
+  §6.1 exists to protect:** `CREATE TABLE IF NOT EXISTS` on a table that **already exists** takes **no
+  write lock** — it succeeds while another connection holds the writer lock — while the same statement
+  on an absent table does take it and blocks. So the steady-state cost is a schema read, and contention
+  is possible only on the single occasion the table is actually created.
+- **The CLI is `python -m zikaron.knowledge`, not a console script — the brief's sentence is withdrawn
+  on its own cited grounds.** It says the CLI ships as a console script "for the reason `pyproject.toml`
+  already records", and the reason `pyproject.toml` records is that *a config file has to name the
+  command by one absolute path*. Nothing names this CLI in a config file: it is run by a person, which
+  is exactly `zikaron.install`'s own recorded argument for **not** being a console script. §9 — which
+  *is* normative for this milestone — already spells `python -m zikaron.knowledge`, and `-m` names the
+  interpreter whose Zikaron owns the store, which is the fact that matters most when a command creates
+  databases. Brief amended in place.
+- **`reindex_required` has three causes, not two, and the third is the one M20 actually produces.**
+  *(Four as of M23, which added the vector table's declared width — see that milestone's block.)*
+  §8.4 states two — no database file, encoder mismatch — and §8.5's own tool description already says
+  the state means the corpus "has never been built **or** needs rebuilding". A KB whose `add` has just
+  created its database and seeded its `meta` matches neither stated cause, so on the enumeration alone
+  it would report `ok`: *built and serving* over a corpus that has never been indexed. That is the
+  brief's "every knowledge base reports `reindex_required` at the end of this milestone" contradicting
+  §8.4, and the enumeration is the half that is wrong. The third cause is stated as a persisted fact
+  rather than a mood — **`last_scan_completed_at` is absent** — which also covers a first scan that
+  crashed, and it joins the no-database-file cause on mechanism: nothing to drop, an ordinary scan
+  builds it. §8.4's drop-and-recreate remains the encoder-mismatch cause alone.
+  This is the corpus's own enumeration-drift class, found in the design rather than in prose about it.
+
+**A false red, caused by me, and worth one line because the cause is repeatable.** A gate run came
+back with a connection-leak error against an *existing* consolidation test that holds its store with
+`async with` correctly. It did not reproduce: the same tree ran green before and after, and that file
+passes in isolation. The run was made while **three subagents were running and the working tree was
+being edited under it**. The leak guard detects by enumerating threads, so a connection already
+closed whose worker thread has not yet exited is indistinguishable from one that leaked — which is
+the same load-sensitivity this file already records about the coverage number and the idle-self-stop
+intermittent, with a new and entirely avoidable cause. **Do not edit the tree or pile on concurrent
+work while `./check.sh` runs**; a gate that can go red for reasons unrelated to the change under test
+is the thing this project has already decided is not a gate.
+
+**Deliberately not done in M20, with the reason, so it is not mistaken for an oversight: the README
+is untouched.** Its `.zikaron/` listing claims to enumerate everything Zikaron writes, and a project
+that has run the knowledge CLI now also has `knowledge/`. But nothing the README documents can
+create that directory — the installer does not, the service does not, and the agent's own tools do
+not until the MCP management surface lands. So the listing is complete for everything the README
+describes, and adding a directory produced only by an undocumented command would raise a question
+the document cannot answer. **The README gains both the directory and a "Using it" paragraph at
+M24**, which is the milestone that makes knowledge bases reachable without leaving the harness.
+
+**Review round 1 found one blocker, and it is the M14 defect class rebuilt — worth more than the
+milestone.** Every knowledge-base connection was opened with the **memory store's** three pragmas,
+including `foreign_keys = ON`, which the knowledge design spends a paragraph refusing because that
+schema declares no foreign key and advertising a cascade that does not exist is how an implementer
+ships orphaned vectors. The correct two-pragma tuple existed, matched the design, and **was executed
+nowhere.** Three guards all passed: the drift test compared the *constant* against the document, the
+docstring asserted a property of connections no connection had, and **the mutation I ran against it
+mutated the same unused constant.** Measured to confirm before fixing: `PRAGMA foreign_keys`
+answered `1` on a live knowledge connection.
+**The general lesson, which is not about pragmas.** A guard that compares two *texts* — a constant
+and the document it transcribes — cannot see whether either is connected to the running system, and
+a mutation of that constant inherits the same blindness. It is the same shape as M14's
+"agreement-test that could pass vacuously", arrived at from a new direction: there, a test asserted
+two things agree; here, two things did agree, and neither was reachable. **The check that holds is
+reading the setting back off a live connection**, and the pragma set is now a required parameter
+with no default, since a default is precisely how one schema's set becomes the other's.
+
+**Three more things the review surfaced, each measured.** The shared opener **converts a non-WAL
+database to WAL** — so reporting an orphan was writing to a file this system promises to leave
+alone; the breadcrumb read is now `mode=ro` with no pragmas, and `mode=ro` earns its place as a
+tripwire because a WAL pragma on a read-only connection raises rather than silently converting. A
+failed `add` left a registry row pointing at an empty database, reported as the one state meaning
+*a rebuild will not help*, for a condition a rebuild fixes entirely. And **fixing that made a test
+vacuous** — once creation unlinks on failure, the transactionality test passed whether or not a
+transaction existed — which only the mutation set caught, and which is the same "a fix is an edit to
+a system" effect the knowledge design's own twelve review rounds recorded.
+
+**Round 2 found no blocker and two instances of the same class, both created *by round 1's own
+fixes* — which is the effect the knowledge design's twelve review rounds already recorded, met
+again.** The create-failure cleanup covered a narrower window than its new prose claimed: a failure
+during connection setup, or while tightening file modes, both landed after SQLite had created the
+file and escaped the handler — and the second **leaked the connection**, which costs a non-daemon
+thread holding the process open rather than a mere handle. And relocating the clock left three
+docstrings asserting incompatible contracts about whether stored instants may be compared as
+strings, while the code already compared them that way.
+
+**That second one was settled by measuring rather than by picking a side.** Lexicographic order on
+these timestamps agrees with temporal order — zero disagreements across every boundary case and
+~8M random pairs — and the mechanism is stateable: the offset is fixed, the fields are
+most-significant-first, and the one optional field sorts correctly because `+` precedes `.`, putting
+`…:12+00:00` ahead of `…:12.000001+00:00`. So string order is now the **stated contract** in
+`core/clock.py`, pinned by `tests/test_clock.py`, and the consolidation lease parses because it does
+*arithmetic*, not because ordering was ever in doubt.
+
+**And a nitpick turned out to be the round's sharpest finding.** A parametrized fixture named "not a
+uuid" was 38 characters, so it failed the length check and **never reached the parse branch it was
+named for**. Correcting it to 36 turned the suite red: that branch raises `invalid literal for int()
+with base 16`, the parser describing its own internals instead of the caller's value — a message
+nothing had ever reached to read. **Same lesson as the round-1 blocker at smaller scale: a guard
+that never executes proves nothing, whether it is an unused constant or an unreached branch.**
+
+**Round 3 found one factual defect, and its cause is worth more than its content: I installed a
+universal claim taken from the reviewer's own suggested wording without grepping the corpus for
+it.** Round 2 proposed recasting a docstring as "the only place in the system doing *arithmetic* on
+a stored timestamp"; `core/signals/horizon.py` does exactly that arithmetic, and `core/clock.py`'s
+matching "two callers" undercounted because the signal queries take `MIN(event.at)` **inside SQL**,
+where the ordering contract is relied on with no option to parse. Both were caught by the reviewer
+rather than by me. **The mandated after-an-edit step — grep for the *claim* across the corpus, not
+for the phrasing — applies to text a reviewer hands you exactly as much as to text you wrote**, and
+a suggested fix arriving with a verdict attached is the case most likely to skip it.
+
+**And round 4 caught me doing it again, one layer up, in this file.** Remediating the above, I
+reported to the reviewer that I "then ran the corpus grep for the claim rather than the phrasing",
+and an earlier revision of this very paragraph recorded the undercount as corrected. Both were
+false. I had grepped for *universals about timestamp handling* — the shape of the first half of the
+finding — and never for the **caller count**, which is what the second half was about. It survived
+in three sentences the fix did not touch: `clock.py`'s own opening sentence two paragraphs above
+the corrected one, the `timestamp()` docstring twenty lines below it, and the first line of the
+test file that pins the contract. **So an always-loaded file asserted a fix that the module's own
+contract sentence contradicted** — which is precisely the shape this file documents under the M13
+commit hash, committed by the entry describing how to avoid it. The grep is only a guard if it is
+run against the claim you actually changed, and "I ran the grep" is a claim like any other: worth
+checking before it is written down.
+**It also produced the strongest argument for the timestamp contract, which neither of us had:**
+those SQL aggregates mean the system depended on lexicographic order agreeing with temporal order
+*before this milestone existed*, so making `files_remaining` parse would have hidden the one place
+the dependency was visible rather than removed it. `core/clock.py` now states the reliance as a
+**classification** — Python comparisons, SQL ordering, and arithmetic that parses — rather than a
+list, so a new caller is one of those kinds instead of a counterexample.
+
+**One Python fact worth keeping, found while fixing the above:** a default argument naming a module
+attribute (`statements: Sequence[str] = ddl.FIXED_STATEMENTS`) binds **once, at import**, so a test
+monkeypatching that module never reaches it and its assertion quietly stops testing anything. The
+parameter is now required.
+
+**Two things the build established that the plan did not anticipate, both worth carrying.**
+
+- **A security property asserted in a docstring was false at runtime, and the test written to check
+  it is what found that out.** `knowledge_db_path` takes a `UUID` rather than a string precisely so
+  no caller-supplied name can become a path segment — but the filename is interpolated, and
+  interpolation formats whatever it is handed. Passing the string `"../memory"` produced
+  `knowledge/../memory.db`, which resolves onto the memory store. The annotation was a *static*
+  promise the type checker enforces for our own callers and nothing enforces for anyone else. The id
+  is now re-parsed when the path is built — a no-op round trip for a real id, a raise for anything
+  else. **The general lesson is the one this corpus keeps relearning in new clothes:** "by
+  construction" is a claim about the code, and a type annotation is not the code.
+- **`CREATE TABLE IF NOT EXISTS` against a table that already exists takes no write lock**, measured
+  before the design leaned on it: it succeeds while another connection holds the writer lock, where
+  the same statement against an absent table blocks. That is what makes a lazy, idempotent creation
+  site free in the steady state, and it is the measurement the no-bump decision rests on.
+
+**M21 — discovery, filtering and change detection — DONE, 2026-09-15. APPROVED after five review
+rounds**, the last closing with no findings at any tag level; trail `reviews/m21-scan-review.md`.
+Brief: `design/build-plan.md` §M21. Normative: `knowledge-index.md` §4.1, §4.2, §5.1–§5.6, §6.2,
+§6.3, §6.4, §7.5's `pending` half and §8.5's skip breakdown. Fence held: no chunking, no embedding,
+no search — the `files` table, the `pending` table and their maintenance only.
+**Not committed**, by operator instruction.
+
+**What is true of the product now.** `python -m zikaron.knowledge refresh <name>` — and
+`python -m zikaron.knowledge.indexer <name>`, the same implementation through its own entry point —
+walks a corpus root, asks git what changed, and maintains `files` and `pending` under a per-KB
+advisory lock with same-host pid reclamation. A knowledge base that has been built reports `ok`
+rather than `reindex_required`, with its file count, byte total and nine-way skip breakdown. **Every
+`files` row carries `chunk_count = 0`**, which is the truth and which M22 must force a rebuild past
+— that obligation is recorded in `design/build-plan.md` §M22 and is the one thing this milestone
+leaves owed to the next.
+
+Plan as executed:
+1. ~~Settle the decisions the brief leaves open~~ **— done**; the five are below, and
+   `knowledge-index.md` carries each one that is normative rather than an implementation choice.
+2. ~~`core/knowledge/` modules~~ **— done**, as ten rather than the eight planned: `counters.py`,
+   `text.py`, `git.py`, `walk.py`, **`candidates.py`** and **`changes.py`** (which `scan.py` was
+   split into when it passed 560 lines), `files.py`, `pending.py`, `lock.py`, `scan.py`. `git.py`
+   took over the `rev-parse` probe `roots.py` ran by hand, and grew to **six** invocations rather
+   than the four planned — `check-attr` was always there, and `rev-parse --show-prefix` was added
+   by review round 1's blocker.
+3. ~~The indexer entry point and the `refresh` verb~~ **— done**, with `zikaron/knowledge/scope.py`
+   extracted so the two commands resolve one store rather than each opening it their own way.
+4. ~~Tests, invariants, mutations~~ **— done.** Ten test files; invariants 1, 2, 4, 5 and 12 in
+   `tests/test_knowledge_build_invariants.py`, written to fail if violated and with their oracles
+   shown failing on a planted violation first. **Twenty-five mutations applied and all caught** —
+   twenty in the first pass (one survived and is recorded below), three verifying review round 1's
+   fixes, two verifying round 2's.
+5. ~~The throughput numbers~~ **— done**, and they closed §16 items 9 and 11 negative. See the
+   OWED note below: the timings need re-taking on an idle machine.
+6. ~~Gate green, then `self-review`~~ **— done.** `./check.sh` exits 0 (2357 passed, 97.86%);
+   APPROVED after five rounds.
+
+**What the five review rounds are evidence of, since the count is again high.** Findings ran
+**7 → 5 → 2 → 4 → 0**, and only **four of the eighteen touched behaviour**. The rest were prose
+asserting what the adjacent code or evidence contradicted — this corpus's named dominant defect
+class, which `check.sh` cannot see at any coverage. **The one blocker that mattered is worth
+carrying**: `git status --porcelain` reports paths relative to the **repository** root while
+`ls-files` reports them relative to the working directory, so for a corpus rooted *below* its
+repository — a vendored dependency or a docs tree, both of which §8.6 endorses by name — the two
+never joined, and an uncommitted edit to a tracked file was cleared as unchanged **on every scan
+until somebody committed it**. Silent, permanent, in the exact class §5.2 exists to rule out, and
+invisible to every test because every fixture in the suite had used the repository root as the
+corpus root. Reconciled through `rev-parse --show-prefix`; §5.2's status list now states the
+relativity fact beside `-z` and `-uall`.
+
+**Five decisions taken before any code, with the reasoning.**
+
+- **`files_indexed` and `bytes_indexed` describe the corpus the scan leaves behind, not the work the
+  scan did.** A counter that meant *files this scan wrote* reads `0` after a rescan that found
+  nothing changed — and `files_indexed` is the field `list` gives a caller to **choose** a corpus
+  with, so a healthy corpus of 412 files would advertise itself as empty. So each admitted file the
+  scan establishes is in the index increments it, whether the scan reindexed it or cleared it as
+  unchanged. That makes the value a running count during a scan and the corpus's own size after
+  one — which is what §8.5's partials-versus-totals rule already asks of it — and it is checkable:
+  on a scan that completes with nothing unreadable, `files_indexed == COUNT(files)` and
+  `bytes_indexed == SUM(files.size)` exactly.
+- **A deletion the *walk* phase discovers is executed by the walk phase and never enters `pending`;
+  the index phase's deletions are the no-longer-indexable ones — not text, or past the size cap —
+  that it discovers at read time.** This is what
+  reconciles §5.5's "a path in `files` the walk no longer admits is a deletion" with §4.1's and
+  §4.2's "never enters `pending` at all". `pending` names what the index phase must still do, and
+  its three disposals are exactly the three outcomes of reading one pending file: it is indexable
+  (reindex), it is not and was indexed before (deletion), or it is not and never was (a recorded
+  skip). A path the walk stops admitting has no fourth outcome to wait for.
+- **`files_seen` counts what the walk evaluated as a file candidate** — every non-directory entry
+  it reached, symlinks included — rather than what survived filtering. It is the only progress
+  signal in the window before `files_remaining` becomes a number, so it has to climb with the walk
+  rather than with its result, and it is written periodically during the walk for that reason. The
+  consequence, stated rather than left to be derived: under `git_mode = tracked` an untracked file
+  is *seen* and is then outside the corpus without being *skipped*, because no skip reason in the
+  authoritative nine describes it and inventing one would put a value on a reported table.
+- **Globs are `fnmatch` against the POSIX path relative to the corpus root, case-sensitively.**
+  Nothing in the design fixes glob semantics and Python 3.12 has no `PurePath.full_match`, so the
+  choice is ours: `*` crosses `/`, which makes `*.md` match `docs/a.md` and `**` need no special
+  handling, and case-sensitivity matches §5.6's byte-exact path rule.
+- **Chunk deletion stays outside this milestone**, with the `files` and `pending` rows the whole of
+  what a deletion removes. §4.6 owns the per-file transaction that deletes chunks, FTS rows and
+  vectors together, and §4.6 is not normative here. **The obligation this creates is real and is
+  recorded rather than left to be discovered:** a knowledge base built by this milestone's scan
+  carries `files` rows with `chunk_count = 0`, and change detection will not reindex them once a
+  chunker exists, so the milestone that adds chunking must force that rebuild. The lever is the
+  per-KB `meta.schema_version` **plus a rule this build does not have** — the open path refuses
+  only a version newer than it supports, so an *older* recorded version has to become a fourth
+  `reindex_required` cause for the bump to mean anything. Written into `design/build-plan.md` §M22,
+  since that is the milestone that owes both halves.
+
+**A design defect found by building, and it is the interesting kind: the document was internally
+consistent and simply false about what it had made possible.** §11 and §8.4 both said an
+interrupted `add` leaves a *self-healing* state — a registry row with no database file, which "the
+next `refresh` builds". **It cannot.** Everything that defines a corpus other than its name and
+description — `root_path`, the globs, `git_mode`, `max_file_bytes`, the encoder identity — lives in
+that knowledge base's own `meta`, by §3.1a's deliberate authority split, so the missing file *is*
+the missing definition and a rebuild would have to invent a root to walk. Three sentences asserted
+the repair, one of them the argument for the registry-first ordering; none of them was reachable
+from the registry's four columns. Corrected in place: `refresh` **refuses** for an absent database
+and names `remove` plus `add` as the remedy, which loses nothing because such a knowledge base has
+never indexed anything. **The ordering argument survives on its own terms** — a permanent orphan is
+still worse than a name one command clears — but it now rests on *recoverable* rather than on
+*self-healing*, and that is a weaker claim honestly stated rather than the same claim reworded.
+The lesson is the corpus's own, arriving from a new direction: a claim can be consistent with every
+sentence around it and still be false about the system, and what exposed this one was writing the
+function that was supposed to do the repairing.
+
+**The mutation set was twenty, nineteen were caught on the first pass, and the survivor is the one
+worth recording.** Mutating the walk to sort entries **descending** changed nothing any test could
+see. The determinism test compared a walk against *a second walk of the same tree* — which detects
+an order that is *unstable* and is blind to one that is stable and wrong — and every other fixture
+happened to hold at most one file per directory, where ascending and descending agree. Corrected
+by asserting the order itself against three files in one directory, after which the mutation is
+caught. **It is this corpus's own lesson again, one turn further in:** a test written to pin a
+property can pin a weaker property than the one it is named for, and only a mutation says which.
+
+**OWED: re-take M21's timings on an idle machine, after the chunker and the embedder land.**
+`research/m21-scan-throughput.md` reports a cold build of **at most 2.9 s** over 2,034 files, a
+rebuild of **at most 0.26 s**, and **~40 MiB** peak — each the slowest of the three git modes, and
+every one of them additionally an *upper bound*, because the
+machine was under other load throughout and is expected to stay that way for days. The two §16
+items the note closes are **not** affected: both rest on counts and fractions (1 file in 2,491;
+4.81% and 0.00%), which no amount of load moves. What is owed is §6.1's comparison, and the right
+moment for it is when a *whole* build can be timed rather than its floor — the number that section
+wants is the build including embedding, which does not exist yet. One command per corpus and mode.
+
+**And the way the bad claim got written is the part worth keeping.** The note's environment line
+said *"an otherwise idle machine"* — which I never checked, and which the operator corrected. It
+was written because that is the phrase this corpus's other measurement notes carry, so it arrived
+as **template rather than observation**. This is the "name the quantity before quoting a number"
+rule one step earlier than usual: state the conditions you actually had, not the conditions the
+template has. The claim is withdrawn in place in the note, with the direction of the contamination
+stated, because an unverified condition on a measurement is worth more as a recorded error than as
+a quiet deletion.
+
+**And the fix for it introduced a second, worse error of the same family — which is the part that
+generalises.** Restating the timings as upper bounds, I wrote *"at most 2.6 s"* and *"at most
+0.15 s"* into `design/knowledge-index.md` §6.1 and into this file. Both are the **`tracked`
+column**, quoted as though they were corpus-wide maxima, from a six-row table whose `all` row reads
+**2.903 s and 0.253 s** — so the words "at most" were attached to numbers the cited evidence
+refutes, in a normative document and in the always-loaded one, three lines below the table that
+contradicts them. Caught by the reviewer, not by me. Corrected everywhere to the slowest row.
+**The lesson is not "check your arithmetic".** It is that *the act of adding a safety qualifier
+feels like the check*: writing "at most" satisfied the part of me that knew the number needed
+guarding, and then no guarding happened. A bound taken from the convenient column is not a bound,
+and this corpus's own rule — name the quantity before quoting a number about it — has a corollary
+it did not previously state: **name which row a bound comes from, because "at most" over a table
+is a claim about every row.**
+
+**Enumeration drift ran to ten sites in this milestone, across three review rounds, and the shape
+of each round is the finding.** One claim — *what the index phase's deletions are* — was too narrow
+because the code refuses a pending file on **two** grounds (no longer text, or grown past the size
+cap) while every sentence about it named only the first. Round 2 found it in five places and I
+fixed six, having grepped and found one the reviewer had not listed. Round 3 found **three more**,
+two of them in `scan.py` — one *two paragraphs above* the sentence round 2 had widened, so the
+module docstring contradicted itself — and one in this file. Grepping the claim again in wider
+phrasings then found a **tenth**, in `pending.py`.
+
+**The mechanism is precise and worth more than the instance.** In round 3's brief I told the
+reviewer I had "grepped the claim rather than the phrasing". I had grepped `text-detection skip`,
+which *is* a phrasing; the same claim also lives as `no longer text`, `became-binary`, and
+`it is text`. **A grep is only over the claim if it is over every phrasing the claim has**, and the
+way to find those is to ask what the sentence *asserts* and then search for its synonyms — not to
+search for the words the last fix happened to change. This corpus already convicted itself of
+exactly this at M20 round 4, where "I ran the grep" was itself the false claim. It has now happened
+again, to the agent that wrote that entry, inside the milestone that cites it.
+
+**One guard that would have caught it, cheaply:** a claim widened from N cases to N+1 has a
+*countable* signature — every site that enumerates the old N. Counting the sites before fixing, and
+reconciling that count afterwards, is the same count-first discipline this file already prescribes
+for reading a review, applied to editing one.
+
+*The archive pass this section owes now also owes M19's and M20's blocks.*
+
+**M22 — chunking, both index arms, and search — DONE 2026-09-15. APPROVED after seven review
+rounds**, every finding at every tag level addressed. **Not committed**, per the standing operator
+rule that this agent never commits. Trail: `reviews/m22-knowledge-search-review.md`.
+Brief: `design/build-plan.md` §M22. Normative: `knowledge-index.md` §4.3, §4.5, §4.6, §7.1–§7.4,
+§7.6, §8.1, §8.3, §8.7, §10; invariants 3, 6, 7, 9, 10, 13, 16. Fence: no management tools over
+MCP, no detached indexing, **no fusion tuning** — `rrf_k`, `fusion_depth` and arm weighting are
+M25's.
+
+**Operator ruling taken before any code: the per-KB `meta.schema_version` is *not* bumped, and the
+fourth `reindex_required` cause the brief asks for is not built.** Nothing is deployed, so a
+knowledge base built by M21 — whose `files` rows all carry `chunk_count = 0` and which change
+detection would never reindex — is removed and added again rather than migrated. **The obligation
+does not disappear, it moves**: the first schema change made after this build ships is the one
+that has to carry both halves, and the brief now says so in place rather than being marked done.
+
+**Four decisions taken before any code, with the reasoning.**
+
+- **A chunk is a contiguous run of whole lines, and a line ends at `\n` and nowhere else.**
+  `str.splitlines` breaks on **nine** further characters — measured over every character below
+  U+2100: `\v`, `\f`, a lone `\r`, `\x1c`–`\x1e`, `\x85`, U+2028 and U+2029 — so a form feed in a
+  source file would shift every line number after it away from what git, an editor and the agent's
+  own reader count. A line range that names the wrong lines is worse than none, because it reads
+  as precise.
+- **A single line longer than the chunk budget is stored whole and embedded from its head.** This
+  is the one place two of the design's own rules collide: invariant 16 requires whole lines,
+  §4.3 requires the assembled sequence to fit the model, and one over-long line can satisfy either
+  but not both. Shortening only what is *embedded* — deliberately, on a token boundary, by the
+  mechanism the query preflight already uses — keeps the `Read` round-trip that the whole snippet
+  contract rests on, and keeps the tail lexically reachable since FTS5 applies no length limit.
+  The cost is real and stated: that tail contributes no dense signal.
+- **The §12 counters stay M24's**, which holds §12. They are seeded and reported already; what is
+  missing is the best-effort writes and their `SQLITE_BUSY` behaviour.
+- **Three new configuration keys, declared; the fourth is deliberately not.**
+  `knowledge_embed_batch` (1–256, 32), `knowledge_max_chunks_per_file` (1–20, 2) and
+  `knowledge_snippet_max_chars` (80–24000, 1200) join `schema.md`'s table, which is where ranges
+  live. One of those maxima is mechanical rather than taste: above 20 chunks per file the key can
+  never bind, because `limit_per_kb` itself caps at 20. The snippet ceiling is **not** the second
+  such case, and an earlier revision of this line said it was — it reads the response cap's 24,000
+  as though the two counted the same thing. They do not: the snippet cap counts **code points** and
+  the response cap counts **bytes**, so 24,000 code points can be four times 24,000 bytes. The
+  ceiling borrows that number as an order-of-magnitude sanity bound, which is all it has to be:
+  anywhere near it a single snippet is undeliverable whatever the encoding.
+  **`knowledge_scan_on_session_start` is not declared
+  at all** — a declared key is one the resolver accepts from a project's TOML, and accepting a
+  setting nothing acts on is worse than not offering it. It stays described and reserved by name.
+
+**What is true of the product now.** `python -m zikaron.knowledge refresh <name>` chunks, embeds
+and indexes a corpus, and `zikaron_knowledge_search` answers from it in the primary agent's own MCP
+server. A result is a fragment with a line range whose snippet is the file's own bytes; every
+corpus a caller names is in the answer whatever state it is in; and the response is held under a
+24,000-byte cap **counted once on the payload** — the transport delivers both a text and a
+structured copy, so the wire carries roughly twice that, and the threshold this sits under was
+measured in the same single-counted unit (`knowledge-index.md` §8.7) — by dropping whole groups
+into stubs — **with one stated floor**: dropping stops
+at one stub per named corpus, because a corpus silently missing from an answer is indistinguishable
+from a corpus that had nothing. **Nothing creates a corpus through the harness yet** — that is
+M24 — so the tool is reachable and has nothing to search until somebody runs the CLI.
+
+Plan as executed:
+1. ~~Settle the decisions the brief leaves open, and amend the design documents in place~~
+   **— done**; the four are above, and `knowledge-index.md` §4.3, §4.5 and §10, `schema.md`
+   §"Configuration keys" and `build-plan.md` §M22 carry each one that is normative.
+2. ~~Generalize the shared indexing primitives rather than writing second copies~~ **— done.**
+   `GIST_SEPARATOR` became `PREFIX_SEPARATOR` (a memory's prefix is its gist, a document's is its
+   path, and the separator is one byte stated once); `assembled_tokens` and token-boundary head
+   slicing moved from `retrieval/query.py` into `indexing/encoder.py`, where the knowledge chunker
+   can reach them without a cycle; `vectors.normalize` became public and `deserialize` joined
+   `serialize` as its stated inverse.
+3. ~~`core/knowledge/chunking.py`~~ **— done**: line-aware, verbatim, paragraph-preferring, with
+   the partition property asserted by concatenation rather than trusted.
+4. ~~Both index arms and §4.6's per-file transaction~~ **— done**, as `lexical.py`, `vectors.py`
+   and `writes.py`, with embedding batched outside the transaction.
+5. ~~An encoder on the build path~~ **— done**, as `disposal.BuildSettings`, loaded once per build
+   by the command, with a refusal before the lock when its identity disagrees with the corpus's.
+   (It was `scan.BuildSettings` until the split below moved the index phase; `scan` still imports
+   the name, so the old spelling resolves and is the kind of drift nothing raises on.)
+6. ~~Per-KB retrieval~~ **— done**, as `arms.py` and `search.py`.
+7. ~~Cross-KB assembly~~ **— done**, as `groups.py`.
+8. ~~The service RPC and the tool~~ **— done**, as `service/dispatch_knowledge.py` and one more
+   entry in `mcp/tool_names.PRIMARY_TOOLS`.
+9. ~~Invariants, done-when clauses, mutations~~ **— done.** Every done-when clause of the brief has
+   a test; invariants 3, 6, 7, 9, 10, 13 and 16 are named tests with their oracles shown failing on
+   a planted violation; **nineteen mutations applied, eighteen caught and one survivor closed**
+   (below).
+10. ~~`./check.sh` green~~ **— done** (2511 passed, 98%), then `self-review`. **Not committed** —
+    operator instruction.
+
+**Coverage, since the operator asked for a high bar rather than a passing one.** Every module this
+milestone added is at **100% statement and branch** coverage — `arms`, `chunking`, `groups`,
+`lexical`, `search`, `vectors`, `writes`, `dispatch_knowledge` — and so are the two it changed most,
+`scan` and `state`. The **ratchet moved from 90% to 95%**, which is a real raise and deliberately
+not a tight one: the total is load-sensitive, measured at 97.64 / 96.85 / 97.64 across three runs
+over one unchanged tree, so a floor inside that spread would make the gate a coin toss. Two lines
+outside this milestone were covered on the way — `token_head`'s empty-head answer, and the primary
+MCP server's transport-failure path, which had no test at all and is the one that decides whether a
+model is told the service is unreachable or handed an opaque internal failure.
+
+**The gate's own `timeout` moved 300 s → 600 s.** The suite now measures ~155 s, so the old margin
+was under 2×, and the slow part is exactly what a busy or colder machine slows down further: real
+model loads and real subprocess spawns. A hang detector is not a performance budget.
+
+**A package had been sitting outside the gate entirely, and the operator spotted it from a wording
+mismatch.** `CLAUDE.md` said the ratchet ran over "all five shipped packages"; `check.sh` named
+**six** `--cov` targets; `zikaron/` holds **seven**. The missing one was `zikaron/knowledge` — the
+command that creates and builds corpora, built two milestones ago. **The failure is invisible by
+construction**: a package nobody names reports *nothing* rather than reporting zero, so it is absent
+from the coverage table rather than sitting at the bottom of it, and every gate run since has been
+green. Added, and it lands at **98%** — everything but the two subprocess-only entry points.
+**This is the second time this project has lost a package out of those flags**, which is the tell
+that "remember to add the flag" was never the fix: `tests/test_check_gate.py` now discovers the
+package list from the tree and compares it against the script, and compares the configured floor
+against the sentence in `coding-standards.md` that states it. Verified by removing a flag and
+watching it fail.
+
+**The first real use, against this repository's own `design/` tree — 14 files, 923 KB, 651
+chunks.** Numbers, on a machine that was not idle: the **build took 88.6 s** (embedding dominates;
+the model load is 0.6 s of it), and a **search costs 16–17 ms** including the query embedding.
+Quality, qualitatively: a query about *why the lexical delete is given the original column values*
+put the exact passage first at cosine 0.733; a conceptual query about the hook's readiness deadline
+did not — it returned D12 and two near-misses, which is the dense arm's known identifier-versus-
+concept weakness showing up on the first day rather than being predicted.
+
+**Superseded by measurement: on these trees, three corpora do *not* trip the response cap — the
+fourth does.**
+Original text: *"And a measured consequence the design had assumed away: at the shipped defaults,
+three corpora trip the response cap. Two corpora of real prose came to **20,872 wire bytes** of the
+24,000 budget and dropped nothing; a third took it to **20,436 with the lowest-ranked corpus's
+results dropped whole**. So `groups_dropped` is an ordinary occurrence rather than a rare one, which
+§8.7's 'a smaller `limit_per_kb` is always available' reads as remote."*
+**Both numbers were taken while the cap charged for each of the transport's two copies**, so each is
+roughly double the single-counted size of the response it described, and the crossing they reported
+was an artifact of that accounting rather than a fact about the answer. Caught by the reviewer from
+the arithmetic — on text like this repository's, a result cannot serialize to enough bytes for two
+groups to reach 20,872 — not by me, and not by re-measuring.
+**Do not expect the withdrawn numbers halved to match the table below.** The re-run is over these
+trees *as they stand now*, which have grown since, and the original query is not certainly the one
+the harness uses; halving 20,872 gives 10,436 against a measured 12,880 for two corpora, and that
+gap is the two sessions differing rather than the accounting failing to reconcile.
+**Re-taken through the shipped `response_bytes`, in single-counted payload bytes**, over five real
+trees of this repository at `limit_per_kb = 5` and the 1,200-code-point snippet cap. Harness:
+`experiments/m22_response_cap.py`, re-runnable, one command.
+
+| corpora searched | response bytes | results served | `groups_dropped` |
+|---|---|---|---|
+| 1 | 6,753 | 5 | no |
+| 2 | 12,880 | 10 | no |
+| 3 | 19,764 | 15 | no |
+| 4 | 19,874 | 15 | **yes** |
+| 5 | 20,035 | 15 | **yes** |
+
+One result serializes to **950–1,374 bytes** on this text, so a full group of five costs **6.1–6.9
+KB** — read off the table's own differences rather than from the result range — and three of them
+fit with 4,236 bytes to spare. **On corpora like these, three fit and the fourth is where dropping
+starts**, and past it the response stays near 20 KB because every further group arrives as a stub.
+§8.7's "a smaller `limit_per_kb` is always available" is the right remedy and the tool description
+already states it.
+**The crossing is a fact about this text, not about store size, and it moves in both directions.**
+The snippet cap counts **1,200 code points** while `response_bytes` counts **UTF-8 bytes of the JSON
+encoding**, and those are the same number only for unescaped ASCII. A corpus of short lines serves
+smaller results and crosses later; text that costs more than a byte per code point crosses much
+earlier — roughly 2 bytes per point for backslash-heavy content, 3 for CJK, 4 for astral, which puts
+a single five-result group between 12 and 25 KB and can trip the cap at **two corpora, or at one**.
+So there is no store size at which dropping is impossible, and none at which it is guaranteed. An
+earlier revision of this paragraph said "a store of three or fewer corpora never sees it, and one of
+four or more sees it on any search that names them all"; both halves are withdrawn, being this
+measurement's corpus generalised into a claim about arithmetic it does not license.
+**Byte counts do not move with machine load**, so unlike this section's timings they are not upper
+bounds.
+**Not tuned here** — `limit_per_kb`'s default and the snippet cap are parameters M25 owns — but M25
+now has a measurement in the unit the cap is written in.
+
+**One measurement taken to stop a speculative optimisation, since a search opens every corpus it
+answers for and closes it again.** Opening one knowledge base — connect, load the vector extension,
+validate `meta` — is **p50 1.32 ms** (min 1.12, max 1.38, n=20 on this machine, which was not idle).
+Five corpora is therefore ~7 ms per search against an embedding call an order of magnitude larger,
+so **no connection cache is warranted**, and anybody proposing one now has a number to beat rather
+than an intuition to argue with.
+
+**Three findings worth more than the milestone.**
+
+- **A `vec0` nearest-neighbour query accepts `ORDER BY distance` and nothing else** — a second term
+  raises *"Only a single 'ORDER BY distance' clause is allowed"*, measured. So the tie-break between
+  two chunks at an identical distance had to move into Python; left in SQL it is the extension's
+  business, and two runs of one query could disagree. Related and also measured: a `vec0` table
+  declared with its own `INTEGER PRIMARY KEY` **exposes no `rowid` at all**, which is the opposite of
+  the memory store's vector table and reads as a typo when it raises.
+- **Two of the tests written for this milestone were vacuous when first written, and both looked
+  fine.** The per-file cap test's "big" file was a single chunk at the default budget, so the cap it
+  asserted could never bind; and the lexical-only cosine test never reached the vector lookup it was
+  named for, because at the shipped `fusion_depth` a small corpus is returned whole by the dense arm
+  and every hit already has a distance. Both now **force the condition and assert it arose** — the
+  file's chunk count, and the corpus's depth. This is the corpus's own "a guard that never executes
+  proves nothing" in a new place: not an unreached branch this time, but a *condition the fixture
+  could not produce*, which no coverage report can see because the lines all ran.
+- **The one mutation that survived is the one worth recording.** Removing the query vector's
+  normalization changed no test: every planted vector was already unit length, and no test asserted
+  an exact score for a hashed one. But `score` is documented as a cosine, and `1 - d^2/2` is a
+  cosine only when both vectors are unit — so the surviving mutation silently turned the one
+  cross-corpus quantity into a number outside the range a cosine has. Closed by a test that plants a
+  query vector three times as long as the unit it points along, and the mutation is now caught.
+
+**Round 1 of the review found one blocker, five improvements and two nitpicks, and two of them are
+worth more than the milestone.**
+
+- **A measurement that was real, a conclusion that was wrong, and the review caught the second —
+  which is the whole entry.** Chasing a reviewer nitpick about a docstring's wording produced a
+  genuine measurement: **the MCP layer delivers a tool result twice** — a JSON text block and again
+  as structured content — so a 281-byte payload arrives as 256 + 293 = **549 bytes**. I concluded
+  the cap had been under-counting by 2×, made it charge for both copies, wrote that correction into
+  the design and this file, and backed it with a test. **All of that was wrong, and M18's own
+  measurement said so**: the threshold the cap sits under was established *through the same
+  duplicating transport* and recorded in single-counted payload size — its probe returned a plain
+  string, and `-> str` is wrapped as structured content exactly as `-> object` is, which is why its
+  spill file holds `{"result": …}`. Confirmed by re-running the probe's own shape: `emit(4 KB)`
+  delivers 4,000 text bytes **and** ~4,014 structured bytes — the wrapper, whose exact width depends
+  on the serializer's spacing, which is why an earlier line here said 4,013 and the difference is
+  not a disagreement. Re-runnable as `experiments/mcp_result_denomination.py`, and written into
+  `research/claude-code-mcp-result-truncation.md` §"Denomination of the delivery-threshold counts",
+  which is where it has to survive this file's own archiving. So 44,000 characters delivered intact
+  was always a dual-copy observation counted once, 24,000 counted once was always under it, and my
+  "fix" halved the deliverable answer against a threshold that had not moved. Reverted; the
+  duplication is kept as a recorded fact with the denomination stated beside it.
+  **The lesson is sharper than the usual one about measuring before asserting, because I did
+  measure.** A bound and the evidence it rests on must count *the same quantity*, and I changed one
+  denominator without re-reading the other — then wrote the mismatch into two documents as a
+  correction. The reviewer's route to it is worth copying: it did not re-measure, it went and read
+  what the cited threshold had actually been measured on.
+- **The cap was also bypassable by the shape of a request, which is the same failure by another
+  route.** Every unknown name carried the *entire registry* — names and descriptions — and an
+  unknown group was not something the cap could shed, so thirty bad names against twenty corpora
+  produced the registry thirty times over in bytes nothing could reduce. The listing now rides on
+  the response once, is **populated** only when a name went unmatched — the field is always there,
+  empty otherwise, so a client reads it rather than testing for the key — and is the last thing shed.
+  Duplicate names were the other half and were already deduped before the review landed.
+
+**And two corrections of the corpus's own dominant class, prose narrower than the code beside it.**
+The mid-line snippet cut is described everywhere as "a single line longer than the cap", but the
+branch fires whenever a chunk's **first** line exceeds it — reachable at defaults with a chunk of
+six lines, whose later lines then fall outside the snippet with only `truncated` to say so. Fixed in
+four places. And a corpus-relative path long enough to crowd out the content used to **refuse the
+file**, which made one deep path a permanent trap: every build dying at the same file, no skip
+reason or state naming it, and an exclude glob nobody had a pointer toward as the only remedy. The
+prefix is an address rather than content, so the prefix now yields — and the plan carries the prefix
+it was budgeted against, so the sequence that reaches the model cannot be reassembled by a second
+caller from the raw path.
+
+**Round 2 found one blocker — the wrong conclusion above — and five more of the neighbour class,
+four of them created by round 1's own fixes.** That effect is now this corpus's most reliable
+prediction about itself: `KnowledgeSearchResult`'s two docstrings still described the two-field
+response the fix had outgrown; the shipped tool description still said the *unknown group* lists the
+valid names after they had moved to the response; and the new dedup deduplicated unknown names on
+the **raw** spelling while its own docstring three lines above, and the design, both said "after
+normalisation" — so `["DCOS", "dcos"]` produced two groups for one absent corpus, and the test could
+not see it because it used byte-identical names. Also withdrawn: §8.3 claimed the response reports
+the clamped `limit_per_kb`, which nothing has ever reported.
+
+**`scan.py` was split, on the seam the design itself names.** It had grown back to 502 lines against
+a ~400 guideline — the same file M21 split at 560 — so the index phase moved to `disposal.py`
+(340 + 211 lines, both at 100% coverage). The pending table is the entire interface between the two
+phases, which is what made the seam free.
+
+**REVIEW LOOP CLOSED — APPROVED at round 7, 2026-09-15**, with every finding at every tag level
+addressed including round 7's own nitpick. Trail: `reviews/m22-knowledge-search-review.md`. Verdicts
+ran **NEEDS_CHANGES ×6 → APPROVED**, and **round 7 is the first round in the trail whose predecessor's
+fixes produced no new defect** — rounds 2 through 6 each cascaded. What changed between round 6 and
+round 7 was not the code, which was already done, but how the fixes were made: each arrived with its
+corpus sweep already run and its result reported, and the heading fix — *a second rename, the exact
+operation that caused the original drift* — moved all three citations in one pass. That is the
+process fix below, working, and it is the only evidence in this trail that it does.
+**Round 7's single nitpick predates the fix and is instructive anyway**: this file stated round 1's
+tally as "1 blocker, 7 improvements" in two places, in a list whose every other entry gives the exact
+three-way tag tally. It is 1 blocker, 5 improvements, 2 nitpicks — the two nitpicks were absorbed.
+Nothing computes from it (the 14-of-17 classification starts at round 3), and **six rounds of
+reviewing did not check it, nor did I**: a count that looks like the ones around it is the hardest
+kind to see. Both sites corrected.
+
+**Historical state of the loop, kept for the record:**
+Trail: `reviews/m22-knowledge-search-review.md`. **Round 1 NEEDS_CHANGES** (1 blocker, 5
+improvements, 2 nitpicks) — all addressed. **Round 2 NEEDS_CHANGES** (1 blocker, 4 improvements, 1 nitpick) —
+all addressed, and the round-2 blocker is the wire-denomination entry above. **Round 3
+NEEDS_CHANGES** (1 blocker, 1 improvement, 4 nitpicks) — all addressed; the blocker is the
+superseded cap measurement above, which is now re-taken. **Round 4 NEEDS_CHANGES** (0 blockers, 3
+improvements, 4 nitpicks) — all addressed; **it found no behaviour defect**, and every finding was
+scope-of-claim or hygiene. The operator's instruction is to iterate to bare approval *with every
+nitpick addressed*, even past the usual three rounds.
+**Round 5 NEEDS_CHANGES** (0 blockers, 1 improvement, 3 nitpicks) — all addressed. Its deep pass
+over the milestone's less-reviewed code — the chunker, both arms, the per-file transaction, the
+disposal phase — found **one real defect**, below, and nothing else.
+**Round 6 NEEDS_CHANGES** (0 blockers, 1 improvement, 2 nitpicks) — all addressed. It ran after the
+process fix below, was told what had been swept, and **confirmed the milestone's code is done**:
+`state.py` and `vectors.py` read for the first time, `groups.py` re-read whole, every self-verified
+conclusion independently re-derived, no behaviour defect. Its improvement is the one that matters —
+**the corrected count survived uncorrected in `CLAUDE.md`**, because the correction was applied to
+the file being edited rather than to the claim. A site fix, committed inside the pair of documents
+that exist to define why a site fix is not enough. It is recorded in both.
+
+**PROCESS FAILURE, operator-identified after round 5, and it is the most useful thing this milestone
+produced. Read it before spawning another review anywhere in this project.**
+Five completed rounds and a sixth spawned is not thoroughness, it is a loop that was being run
+wrong, and the composition of the findings says so. Classifying rounds 3–5's findings by whether
+the agent had the means to find them alone: **14 of 17 did** (round 3: 6 of 6; round 4: 5 of 7;
+round 5: 3 of 4), leaving **three** that carried genuine independent-reviewer value — the
+description paragraph no guard covered, the fenced-quote hole in the new parser, and the chunker
+recount. The three counts come from the round headers, which state them.
+**An earlier revision of this line said "roughly 14 of 18", and the 18 was never counted** — the
+confident-looking number this file has a standing rule about, written into the entry whose whole
+subject is not running the rules, and caught by re-reading the passage rather than by trusting it.
+The self-findable ones were not subtle — they were failures to apply rules written in `CLAUDE.md`
+and quoted back to the operator in nearly every message of the session:
+- The round-3 blocker existed because round 2 **reverted an accounting change and nothing swept the
+  numbers taken under it.** A reverted denominator makes every figure measured with it suspect.
+- **Three separate nitpicks were Nth sites of a claim already fixed elsewhere** — the
+  enumeration-drift class this file documents at length.
+- The rest were stale citations after a rename, an unscoped lede over a scoped body, a tautological
+  assertion, and hygiene in a file the agent had just written.
+
+**The mechanism, stated so it can be interrupted rather than admired: "the gate is green" was being
+treated as "ready for review".** Each round became *fix the named sites → re-run the gate → spawn*,
+and fixing the named site rather than the class is what guarantees the next round finds the class
+again. **Every one of this review's rounds 2 through 5 contained a cascade of the preceding round's
+own fixes** — round 2's four neighbour-class findings from round 1's, round 3's blocker from round
+2's revert, round 4's unscoped universals from round 3's rewrite, round 5's stale citations and
+unscoped lede from round 4's. Four rounds out of five. (An earlier revision of this line said "four
+of the last nine rounds", which is the *knowledge-index design* review's figure borrowed for a
+different review — the same reach for a number that was not counted here.) The agent kept writing
+entries about that pattern instead of interrupting it — **narrating a rule is not running it**, and
+an eloquent write-up of a lesson reads exactly like having learned it.
+
+**The cost is real and asymmetric.** A review round is the most expensive tool in this crew; a grep
+is nearly free. Spending the former on findings the latter would have produced is the waste the
+operator objected to, and it is invisible from inside the loop because every round ends in a green
+gate and a tidy summary.
+
+**The rule that follows, and it is now binding on this project's review loop: before spawning a
+round, run the class-level sweep, not the site-level fix.** Concretely — grep every claim changed
+in the work *in all of its phrasings*, not the phrasing just edited; re-read each changed passage
+with its neighbours; mutation-verify every guard added since the last round; and check whether a
+defect found in one caller of a shared helper exists in its other callers. Round 6's brief was
+already written asking the reviewer to do four checks the agent could do itself, which is the
+tell — **if the brief asks the reviewer to verify something you have the means to verify, verify it
+first and tell the reviewer what you found.**
+**Applied immediately, with what it caught before the next round was spawned:** round 6 was killed
+mid-flight; the recount-versus-derivation consistency and the over-long-prefix path were checked by
+hand and hold; **`assembled_tokens`' two other call sites were audited for round 5's defect class
+and are clean** — both emit exactly what they count, the knowledge chunker being the only caller
+whose emitted string carries a separator; the degenerate empty-fence case round 5 recorded without
+raising was closed with a test; and the three guards added in rounds 3–5 were each mutation-verified
+to fail on the defect they name.
+
+**Round 6 ran against a green gate: `./check.sh` exits 0, 2543 passed, 98.02%.** The figure here
+first read *2542 passed, 98%*, which was the gate behind the **killed** round-6 spawn; the extra
+test is the empty-fence joining case added during the sweep that replaced it. One test's worth of
+staleness, in the always-loaded file, from a line that was true when written and was not re-checked
+when the thing it described was thrown away and redone.
+
+What round 6 needed to know, and what a round 7 would inherit:
+
+- **The chunker's post-condition was measuring a string the embedder never receives.** The recount
+  called `assembled_tokens(plan.prefix, body)`, which counts `prefix + body`; the emitted sequence
+  is `prefix + separator + body`. So the exact string handed to the model was counted **nowhere** —
+  the budget derivation charges the separator as a constant over pieces counted apart, and the one
+  check that measures the whole thing as a single string had the separator deleted. Both prose
+  statements of the property (`chunking.py`'s module docstring and §4.3) described a check the code
+  did not perform. **Not a live overflow on the deployed tokenizer**, which splits at the newline,
+  so the charged token is slack today — but the constant's own comment argues this assertion is the
+  bug-catcher for a future model whose separator *does* tokenize, and for exactly that model it was
+  measuring the wrong string. D20 makes such a model an ordinary config change. Fixed by passing
+  the separator as part of the prefix, so the counted string is byte-for-byte the emitted one.
+- **The test named for that property could not tell the two apart**, which is why the defect
+  survived the build's own mutation pass. Its fake encoder fired on any text containing the
+  separator *anywhere* and starting with the path — and a body ending in a newline satisfies that
+  whether or not a separator was ever placed between the two. Trigger sharpened to
+  `startswith(f"{path}{separator}")`; **verified by reverting the fix and watching the test fail**,
+  which it did not do before.
+- **Nitpick 2 was the fourth site of round 4's finding-3 claim**, in `_fit_to_cap`'s docstring,
+  missed by my own grep because it said "absent"/"absence" where the others said "present". Now
+  "empty"/"emptiness".
+- **Nitpick 3**: two FINDINGS citations pointed at the research-note heading as it read *before*
+  round 4 renamed it. Rather than repeat the rename into the citations, the heading itself is now
+  §"Denomination of the delivery-threshold counts" — the round-4 version embedded a quoted section
+  name inside a section name, which also made it awkward to cite. **The drift itself was round 4's
+  rename landing without its citations**, the cascade class named above; an earlier revision of this
+  line blamed the unciteability, which retroactively turns a missed sweep into a structural
+  inevitability — in the entry stream whose whole subject is getting defect causes right.
+- **Nitpick 4**: the cap paragraph's bold lede stated the crossing without the scope its own body
+  had just gained, which is how a skimming reader of an always-loaded file takes a lede. Now "on
+  these trees".
+
+What round 5 needs to know changed since round 4:
+
+- **Round 4's sharpest finding was a universal I had just written, and its cause is the one this
+  corpus keeps recording.** Restating the cap measurement I wrote that a store of three or fewer
+  corpora *never* trips it and one of four or more trips it on *any* such search. Both are false:
+  the snippet cap counts code points and `response_bytes` counts UTF-8 bytes, so text costing more
+  than a byte per point can trip the cap at two corpora or at one, and short-line corpora cross
+  later. My own conditions sentence three lines below already contradicted the second half. **And
+  the "two groups cannot reach 20,872" line inherited the same missing qualifier from the
+  reviewer's round-3 arithmetic** — installed without re-scoping it, which is exactly the M20
+  round-3 mechanism. Both withdrawn in place, with the crossing now stated as a fact about text
+  rather than about store size.
+- **Finding 3 turned out to have a third site the review did not list**, found by the mandated grep
+  for the claim rather than the quoted phrasing: the design said `known_knowledge_bases` is
+  "present only when some name went unmatched", §8.7 argued from its "absence", and FINDINGS said
+  the same — while `payload()` always emits the key, `[]` when empty. A client keying on presence
+  would have built a signal the shipped shape never sends. All three now say *populated*.
+- **Finding 2**: the research note's new section said "the table above" while sitting under a
+  different table — one measured through `Read`, which does not duplicate. Both references now name
+  the section.
+- **Finding 4**: the withdrawn numbers halved do not match the new table (10,436 against 12,880),
+  and the paragraph now says why — the trees have grown between the two sessions — rather than
+  leaving a 23% residual for a reader to trip on.
+- **Finding 5**: the denomination probe moved to `experiments/mcp_result_denomination.py`, which is
+  where the evidence taxonomy puts a re-runnable harness; `KIBIBYTE = 1000` became `KILOBYTE`; and
+  `delivered_twice` no longer reports true for an absent structured copy, `json.dumps(None)` being
+  four real bytes.
+- **Finding 6**: the exempted paragraph now has a required-phrase test, since the omit-names
+  instruction and the clamp sentence live only there — and the clamp sentence is the entire
+  justification for §8.3's withdrawn clause.
+- **Finding 7**: `parse_block_quote` masks fenced content like every sibling parser. The reason is
+  this corpus's own policy of keeping withdrawn text: a fenced historical copy of a quote could
+  otherwise satisfy the exactly-one rule and point a guard at an archive. Two tests added.
+
+The list from round 3, still current:
+
+- **Round-3 blocker accepted, and the re-measurement refutes what it replaced.** Both "wire bytes"
+  sites are gone. The cap paragraph is withdrawn in place and restated from
+  `experiments/m22_response_cap.py`, a re-runnable harness over five real trees: three corpora fit
+  at 19,764 payload bytes and the **fourth** is where dropping starts. `design/build-plan.md` §M25
+  now carries the crossing point, since tuning against the withdrawn one was the blocker's stated
+  cost.
+- **Finding 2**: the denomination fact moved into
+  `research/claude-code-mcp-result-truncation.md` §"Denomination of the delivery-threshold counts"
+  — the note both payload bounds cite — and its probe is now
+  `experiments/mcp_result_denomination.py` rather
+  than a directory under `/tmp`. Re-measured there: our tools' `-> object` annotation takes the same
+  `{"result": …}` wrapping path as the threshold probe's `-> str`, which is the step the argument
+  needed and did not have.
+- **Finding 3**: the wire test's tautology is gone; the structured copy is now pinned as *equality
+  with the payload*, which fails if a transport ever ships a stub. Mutation-verified — it failed
+  first against an unwrapped expectation.
+- **Finding 4**: FINDINGS' snippet-ceiling clause now states that the two bounds count different
+  units, matching `keys.py` and `schema.md`.
+- **Finding 5**: `disposal.BuildSettings` and the `write_counters` export corrected.
+- **Finding 6**: the design's quote gained the shipped tail clause — **and the byte-level rule the
+  finding asked to restore is now mechanical rather than a reading.**
+  `tests/test_mcp_tool_descriptions.py` parses the block quote out of the design and compares it
+  paragraph by paragraph against the live `tools/list` description, exempting only the one paragraph
+  §"Until `zikaron_knowledge_list` exists" licenses — and a second test pins that the exemption is
+  needed, so it cannot quietly widen. `tests/design_tables.py` gained `parse_block_quote`, anchored
+  on a quote's opening words and refusing ambiguity, with its own tests. Mutation-verified by
+  planting a one-word change in the design and watching the guard go red.
+
+The list from round 2, still current: 
+
+- **Round-2 blocker accepted in full.** `_WIRE_COPIES` is gone; `response_bytes` counts once again,
+  with the denomination argument in its docstring; `RESPONSE_MAX_BYTES`, §8.7 and this file no longer
+  assert an overflow M18's table refutes; the wire test was re-aimed at the *denomination* premise
+  and strengthened per finding 2 (asserts the text bytes are non-zero and bounded by our count, and
+  that structured content is present), which also closes its vacuous-pass path.
+- **Finding 3**: unknown names now dedupe on the normalized spelling, with a case-variant test.
+- **Finding 4**: `KnowledgeSearchResult`'s two docstrings name all three response fields.
+- **Finding 5**: §8.3's "the response reports the effective value" clause is withdrawn in place with
+  its reasoning, rather than implemented.
+- **Finding 6**: `scan.py` split — the index phase is now `zikaron/core/knowledge/disposal.py`
+  (`BuildSettings`, `Disposals`, `write_counters`, `dispose`, `run`); scan 340 lines, disposal 211,
+  both 100% covered.
+- **Found by me between rounds**: the shipped tool description still said the *unknown group* lists
+  the valid names after they had moved to the response — fixed; and the design's quoted description
+  had drifted from the shipped text in three ways (a note split the block quote in half, and it
+  lacked the `known_knowledge_bases` and `groups_dropped` sentences) — reconciled.
+- Standing **intentional** list for every round: no per-KB schema bump; §12 counters are M24's; the
+  shipped description names no `zikaron_knowledge_list`; `KnowledgeSearchResult` forwards core's
+  payload; no management tools, detached indexing or fusion tuning; the README documents no
+  knowledge bases until M24.
+
+**Not committed**, per operator instruction, and nothing here is a milestone completion until the
+review reaches APPROVED.
+
+**And one thing caught by reading the design against what it would ship.** §8.3's tool description
+tells the model to call `zikaron_knowledge_list` first — a tool that does not exist until M24. That
+is the defect the same document records in the nearest comparable product, whose success message
+names a command that no longer exists and that the model could not invoke anyway. The shipped
+description routes around it; a test now asserts the description names no tool the server does not
+register; and the restoration is written into §M24's brief rather than left to be noticed.
+
+**M23 — the detached indexer, progress, and the repair paths — DONE 2026-09-16. APPROVED after
+seven review rounds**, every finding at every tag level addressed including round 7's four nitpicks.
+**Not committed**, per the standing operator rule. Trail: `reviews/m23-detached-indexer-review.md`.
+Brief: `design/build-plan.md` §M23. Normative: `knowledge-index.md` §6.1–§6.4, §8.4's repair rules,
+§8.5's state machinery, §11 in full, §9's `--force-unlock`; invariants 8 and 12. Fence held: no new
+retrieval behaviour — lifecycle, state and recovery only.
+
+**What is true of the product now.** `python -m zikaron.knowledge add|refresh` spawns a **detached**
+indexer and returns, printing how to follow it and how to see it fail; `refresh --full` bypasses
+change detection; `refresh --force-unlock` clears a lock and still refreshes, refusing while a
+process on this host answers to the recorded pid. A corpus whose encoder no longer matches is
+**rebuilt**: one transaction empties the derived tables, declares `chunks_vec` at the new width,
+records the identity about to fill it and clears the completion instant — so `meta` describes what
+is stored at every instant and **invariant 7 has no exception**. A rebuild killed part-way is
+resumed where the swap was seen through and redone where configuration was reverted. `status`
+reports the lock's holder, whether a process on this host answers to that pid, and its age.
+
+**What M21 and M22 already built, so this milestone does not rebuild it**: the lock with its
+same-host pid reclamation, the five-state precedence, the `files_remaining` rule under
+`last_walk_completed_at`, per-file progress writes, search serving committed state with
+`state: "indexing"`, and `pending` surviving a crash because nothing sweeps it. What is missing is
+the detachment, the repair, `full`, `--force-unlock`, and the reporting that makes a dead build
+visible.
+
+Plan as executed:
+1. ~~Settle the decisions and amend the design documents in place~~ **— done**; the five are below,
+   and `knowledge-index.md` §6.2, §8.4, §8.5, §9 and §11 carry each one that is normative.
+2. ~~The encoder-mismatch repair~~ **— done**, as `core/knowledge/repair.py`: one transaction
+   dropping the derived tables, recreating `chunks_vec` at the new width and recording the identity
+   about to fill it, then the scan, then the completion instant.
+   `ddl.rebuild_derived_statements` creates from
+   the same statements a fresh knowledge base is built from, so a rebuilt table cannot drift from a
+   created one.
+3. ~~`full`~~ **— done**, as `changes.Criteria.bypass`: change detection skipped, everything else
+   unchanged, so the corpus is replaced a file at a time rather than emptied first.
+4. ~~Detachment~~ **— done**, as `zikaron/knowledge/indexer/detach.py`; `add` and `refresh` both
+   spawn and return.
+5. ~~`--force-unlock`, lock reporting, `registry_unavailable`~~ **— done**, as `lock.force_release`,
+   `reporting.LockReport` and `RegistryUnavailableError`.
+6. ~~Tests, invariants 8 and 12, mutations~~ **— done.** Nine test files touched and two added;
+   invariants 8 and 12 have named tests whose oracles are shown failing on a planted violation.
+   **Thirty-three mutations applied and all thirty-three caught** — twenty in the first pass, of
+   which one survived and was closed (below), and thirteen more aimed at the fixes the review rounds
+   produced, one of which was later **retired** rather than kept: it planted the early identity flip
+   that round 4 then made the real behaviour, so its inverse replaced it. **The whole set is re-run
+   after every round**, which is how the second survivor below was found — a mutation that had been
+   *caught* until a later fix moved what its guard uniquely did — and how the retired one was found,
+   since an obsolete mutation reports `SKIPPED` rather than passing quietly.
+7. ~~Class-level sweep, gate, review to bare approval~~ **— done. APPROVED at round 7**, whose four
+   nitpicks were all addressed: three were pointer and scope drift *created by* the §8.4
+   consolidation — a "the paragraph above" whose referent moved, a reference to a rule that had gone
+   to §15, and an unscoped "the only thing that reports one" its own bullet corrected two sentences
+   later — which is the predictable cost of reordering a normative section and the reason that round
+   was worth spending. The fourth was the two-sites pattern once more: round 6's fix to the
+   `_SERVING` disjunction reached the code comment and not the normative table paraphrasing it.
+   Final `./check.sh`: exit 0, **2741 passed, 98.07%**, 33 of 33 mutations caught, with every
+   module under `core/knowledge/` and `knowledge/` at **100% statement and branch** except the two
+   subprocess-only `__main__.py` entry points, which are exercised as subprocesses and read 0% for
+   the reason the installer's does. Then `self-review` to bare approval. Do not commit.
+
+**Three review rounds went into one hole, and the shape of that is the milestone's real finding.**
+Rounds 1, 3 and 4 all found the same thing at increasing depth: an interrupted rebuild leaving a
+corpus that later reports `ok` over something it should refuse. Rounds 1 and 3 each asked *what
+trace does the failure leave that a reader can find?* and each answered correctly — the table's
+declared width, then the withdrawn completion instant — and each fix covered exactly the instances
+that leave that trace while its own prose read as though it covered the class. Round 4's fix asked a
+different question, and it is the one that ended the sequence: **what makes the record true by
+construction?** Writing the identity in the same transaction that empties the tables removes the bad
+state rather than detecting it. *Ask that first next time; the evidence question is the one that has
+to be re-argued for every shape the failure can take.*
+
+**The review's first blocker, and the first of those three: an interrupted
+rebuild was recoverable only for as long as the configuration that triggered it persisted.** The
+drop widens `chunks_vec` and — *as the design then stood, before round 4 reversed it* — the
+*completing* transaction records the new identity, deliberately two transactions, so an interruption
+between them leaves a corpus that keeps refusing. But the
+refusal was read off `meta` against **configuration**, and an operator who tries a model and reverts
+makes that disagreement vanish: the completion instant is the older build's, so `never_built` is
+false, and the corpus reported **`ok` over an index the drop had emptied**. Every later build then
+died inserting a vector of the recorded width into a table declared for the other one — one rejected
+insert per file, in a detached process whose output goes nowhere. Reproduced before fixing: `vec0`
+answers *"Dimension mismatch … Expected 384 … received 16"*.
+**The fix adds no state, because the table already carries the fact.** `chunks_vec`'s declared width
+is read at open — `PRAGMA table_info` reports an **empty type** for a `vec0` column, measured, so
+`sqlite_master` is the only source — and carried on `KnowledgeDatabase.vector_width`. A width that
+disagrees with `meta` is a **fourth `reindex_required` cause** and a second trigger for the rebuild.
+A database that cannot report the width fails to open, which is the honest answer for one whose
+accepted width is unknowable. **Round 3's fix then demoted half of this, and the demotion is
+recorded rather than quietly absorbed**: once the drop clears the completion instant, every route
+this system has to a mis-declared table already reports `reindex_required` through that, so the
+width as a *state cause* is a backstop for a `meta` and a table separated by something outside the
+system. What stayed of the width is its second job, as a *repair input* for that same tamper case —
+where it is what makes the next scan declare the table back rather than die on its first insert.
+(Round 4 then made the interrupted-rebuild case unreachable for it in that job too, below: the drop
+records the identity, so a reverted width-changing rebuild fires the *encoder* comparison, which
+never consults the stored width.) **The general lesson:** a recovery whose only evidence is a
+*comparison against configuration* is recoverable only while the configuration stays wrong, and
+configuration is the half a human is most likely to put back.
+**One thing the probe turned up that the review did not ask for:** `vec0` also accepts `FLOAT[16]`
+and `float [16]`, storing whichever spelling was used verbatim, so the pattern that reads the width
+back is deliberately as tolerant as the extension rather than as narrow as what this project emits.
+
+**And the third round found the same blocker again, in the one instance the width fix cannot see by
+construction — which is the finding worth more than either fix.** The width test detects a rebuild by
+the *physical* change the drop made. A model swapped for another of the **same** width makes none:
+`bge-small-en-v1.5` and `all-MiniLM-L6-v2` are both 384, and both are models this project has named,
+so interrupt that rebuild and revert the configuration — **under the rule as it then stood, with the
+identity written at completion** — and the identity agrees, the declaration never moved, and the
+corpus reports `ok` and answers every search as *searched, found nothing* over tables the drop had
+emptied. Silent, and unbounded — there is no scheduler, so nothing repairs it until a
+human runs `refresh`. **The fix again adds no state, and this time by removing a claim rather than
+reading one**: the drop clears `last_scan_completed_at` in the same transaction that empties the
+tables that key vouched for, so the corpus says the one thing that is unconditionally true after a
+drop — nothing a completed build made is stored. That lands in the existing second cause, so the
+count stays four. *(Under the round-4 rule below, that same revert is an encoder mismatch and takes
+the drop; what the cleared instant covers today is the swap **seen through**.)*
+**The general lesson, and it is sharper than round 1's.** A fix aimed at the *evidence a failure
+happens to leave* covers exactly the instances that leave it, and the fix's own prose then reads as
+though it covered the class — four sites here said the declaration was "the one fact that still
+disagrees", which is true where the width moved and silent where it did not. What covered the class
+was asking instead what the *operation* had made false, which is a property of the operation rather
+than of the case: a drop always falsifies the completion instant, whatever the width did.
+**Round 4's blocker: the same hole a third time, and the third fix is the one that closes the class
+rather than an instance.** Rounds 1 and 3 both asked *what trace does an interrupted rebuild leave
+that a later reader can find?* — first the table's declared width, then the withdrawn completion
+instant. Both answers were right and neither was enough, because the question was wrong. A rebuild
+commits **file by file**, so one killed part-way has already written the *new* model's vectors under
+`files` rows whose hashes say they are current. Revert to a model of the same width and nothing
+compared disagrees, so the next scan is an ordinary one: it clears those files as unchanged, indexes
+the rest with the *old* model, and completes. `state: ok`, permanently, over a corpus holding two
+models' vectors — invariant 7 violated with nothing able to detect it, on the ordinary shape of a
+revert rather than an edge of it. ("Too slow, revert" is learned *during* a build, which is exactly
+when files have already committed.)
+**The fix is a design reversal, and the argument it reverses had already been falsified by round 3.**
+The identity is now written by the **drop**, in the transaction that empties the derived tables — so
+`meta` describes what is in the table at every instant, and **invariant 7's exception is withdrawn
+rather than weakened**. §8.4 had rejected exactly this on the grounds that flipping early would let
+the knowledge base serve during a rebuild; once the drop began clearing the completion instant, the
+corpus is held out of service by that regardless of what `meta` says, so the later moment bought
+nothing and cost correctness.
+**And the reversal makes the system cheaper, not just safer.** Recovery is now a **resume** where the
+configuration was seen through — the dead run's rows came from the model `meta` names, so keeping
+them is correct — and a **redo** where it was reverted, because the abandoned identity is then an
+ordinary encoder mismatch. The expensive path is taken exactly where the cheap one would be wrong,
+which is what the old rule could not arrange.
+**The lesson, and it is the one worth carrying off this milestone:** three rounds went into detecting
+a bad state, and what fixed it was making the bad state unrepresentable. A guard that answers *how
+will a reader notice?* has to be re-argued for every shape the failure can take; moving the write so
+that the record and the thing it describes change in one transaction ends the question. Ask what
+makes the claim true by construction before asking what evidence it leaves.
+
+**PROCESS FAILURE, M23, operator-identified after round 6 — and the first version of this entry was
+itself the failure.** Six review rounds on one milestone, **53% of a week's reviewer capacity spent
+in a day**, with rounds 1, 3 and 4 all finding *the same hole* at increasing depth. The entry that
+stood here drew the lesson as "a claim's consequences are separate claims — grep for those too",
+which is the wrong lesson and reads as though something was learned. **Withdrawn, in place, because
+the wrongness is the evidence**: it prescribes more of the procedure that had just failed five times.
+**The actual failure is treating a string search as a coverage decision.** Grep finds sentences that
+resemble the sentence you edited. The sentences that go stale are the ones that *followed from* what
+you edited, and they share none of its words — on M23 the change was "the identity is written by the
+drop, not at completion" and the conclusion that died was "a revert restores agreement", which
+survived two honest sweeps in seven places because no phrasing of it contains any phrasing of the
+change. No amount of additional grepping reaches it. **Deriving does**: state the change as a
+before/after pair, write down what the old proposition licensed, and decide per conclusion whether
+it still holds.
+**And the reviewer was doing my reasoning for me, which is what the budget actually bought.** M23's
+three blockers all lived in one eight-cell table — interrupted before/after the drop and before/after
+the first file commit × configuration reverted or seen through × same width or different — and I
+never built that table. I walked a cell when a review round handed me one. For a milestone whose
+entire subject is crash recovery, enumerating that matrix was the first thing to do and it costs an
+hour of reading. Both rules are now in `CLAUDE.md`; this entry is the accounting behind them.
+
+**A second survivor, found by re-running the whole set after round 3's fix, and it is the sharpest
+process finding of the milestone.** `state.width_mismatch = False` had been **caught** by the
+mutation set for two rounds; after the drop began clearing the completion instant it **survived**,
+because `never_built` now fires first in every test that reaches it. Nothing was broken — the guard
+still runs and still does something — but the thing it uniquely does had changed, and no test said
+so. **A fix can make an existing guard unfalsifiable without touching it**, and the only reason this
+was visible is that the whole mutation set is re-run rather than only the mutations aimed at the new
+code. That is now the rule for this project: **after a behavioural fix, re-run every mutation, not
+the new ones.** Closed by a test that constructs the one state where the width is the sole cause —
+the table redeclared under a corpus that completed — and by restating every site that credited the
+width with *reporting* an interrupted rebuild, which it no longer does, across `state.py`, `scan.py`,
+`repair.py`, §3.2, §8.4, §8.5 and the tests' own docstrings.
+
+**The one mutation that survived the first pass, and why it is the interesting one.** Replacing
+`RegistryUnavailableError` with its own base class `KnowledgeError` changed nothing any test could
+see — because the test asserted the *message* the command prints, and the message is built from the
+exception's text, which the base class carries identically. But `errors.py`'s whole stated reason
+for one class per refusal is that a surface mapping refusals onto wire codes branches on the
+**type**, "and a message may then be reworded without silently changing which branch it takes". The
+test pinned the half that is explicitly not the contract. Closed by a test that asserts the type at
+the boundary that raises it. **The general shape:** a test written against what a user sees is the
+right test for a command, and the wrong one for a contract whose whole point is that what the user
+sees may change.
+
+**Decisions taken before any code, with the reasoning.**
+
+- **The detached spawn lives in `zikaron/knowledge/indexer/`, not in `core`.** `coding-standards.md`
+  §1 gives `core/` no process concerns, and the two places this project already spawns a detached
+  child — the service's start-if-absent and the hook's warm helper — both keep the spawn in the
+  package that owns the child's argv. The module that knows `python -m zikaron.knowledge.indexer`
+  is the indexer package itself, and the service reaches the same function when it grows the
+  management tools.
+- **CLI `add` spawns an indexer, and its "run refresh to build it" line goes.** §8.4 says `add`
+  creates the database, spawns a detached indexer and returns immediately, and the sentence that
+  follows only parses under that reading: a successful `add` reports `reindex_required` which
+  "settles to `ok` when that scan's completing transaction writes `last_scan_completed_at`" — there
+  is no such scan unless `add` started one. §9's "Both spawn a detached indexer" names `refresh`
+  and `--full` and says nothing about `add` either way, so it is not evidence against. The cost is
+  real and stated: an `add` in a shell script now starts a multi-minute CPU job, which is what
+  §6.1 says a build is.
+- **The repair writes the *encoder's* identity, not configuration's.** The keys record what
+  produced the vectors that are actually in the table, and a repair that wrote a configured
+  `embed_dim` the loaded model does not emit would restate the very defect the keys exist to
+  detect. The consequence is honest rather than hidden: when configuration and the model disagree,
+  the repaired corpus still reports `reindex_required`, because it still does.
+- **A detached build that dies writes to no log, and that is a choice.** The three log files this
+  project has are each written by one long-lived process; one indexer per knowledge base means
+  several processes and `logging.FileHandler` has no cross-process append locking, which is the
+  rule `coding-standards.md` §6 already states. What replaces it is that the *fact* of a dead build
+  is reported rather than the reason: `status` shows the lock's holder and whether a process on
+  this host still answers to the recorded pid — which is not the same as *that* process, since a
+  pid is reused — and the reason is reproduced by running the indexer in the foreground, which is what
+  its own entry point is for. The commands say so where they print how to follow progress.
+- **`refresh(name=None)` — the every-knowledge-base form — stays M24's.** It is specified in §8.4,
+  which is M24's normative section; M23's slice of §9 is `--force-unlock` alone.
+
+**A defect found by reading the design against the code it already had, which is the sweep this
+project mandates doing its job.** `state` reported `indexing` on the mere *presence* of the lock
+rows, so a local build that was killed reported *a scan is in flight* for as long as nobody started
+another one — with `files_remaining` frozen at whatever the dead scan had left, both keyed off the
+same presence test. §8.5 defines `indexing` as "a scan is in flight", and §6.2 licenses the
+conservative reading only where liveness **cannot be refuted**, which is the cross-host case by
+name; here it can be refuted, by the probe the reclaim rule already runs. Both now key off one
+predicate — a holder this machine cannot show has stopped — so a foreign lock still reports
+`indexing` exactly as §6.2 requires, and a crashed local build reports the state its committed
+corpus actually has, with `lock.live: false` saying what happened. **The general shape is one this
+corpus keeps meeting:** the presence test was right for the question M21 asked it (*may a second
+build start*) and wrong for the two questions M22 and M23 then asked it, and nothing about a shared
+helper says which question a new caller is asking.
+
+**Three modules moved, and none of it is new behaviour.** `lifecycle.py` had reached 566 lines and
+split on the seam its own name implies: it keeps the verbs that change a knowledge base, and the
+read side — `observe`, the orphan scan, `list_bases` and `status` — joined `reporting.py`, which
+already said in its first line that it owns what those two calls report. `ensure_registry` became
+`registry.ensure`, which also removes `groups.py`'s import of `lifecycle` for that one function.
+
+**M24 — the MCP management surface — DONE 2026-09-16. APPROVED after four review rounds**, every
+finding at every tag level addressed including round 4's three nitpicks. **Not committed**, per the
+standing operator rule. Trail: `reviews/m24-management-surface-review.md`. Brief:
+`design/build-plan.md` §M24. Normative: `knowledge-index.md` §8.2, §8.4, §8.5, §12. No new
+invariants. Fence: `--force-unlock` stays CLI-only, per §8.2's stated exception.
+Final `./check.sh`: exit 0, **2859 passed, 98.12%**, zero warnings.
+
+**What is true of the product now.** A corpus can be created, listed, inspected, renamed, removed
+and rebuilt **without leaving the harness**: twelve primary tools rather than six, of which seven
+are the knowledge index's. Every memory tool and RPC method carries a `memory_` segment, so the two
+subsystems are named symmetrically and a model choosing between two stores reads which is which
+before it reads a description. `refresh` with no name sweeps every corpus, each lock checked on its
+own. A search raises the four §12 counters best-effort, abandoning the write rather than waiting out
+`busy_timeout`. The README documents `knowledge/` and how to use it.
+
+**Findings ran 11 → 15 → 6 → 3, and the composition is the interesting part.** One blocker in
+total, in round 1. Round 2 found **no behaviour defect** in the six verbs or the counters; round 3's
+only behavioural finding was a hole **round 2's own fix opened**; round 4 found nothing material.
+The one finding no amount of self-review would plausibly have produced is round 3's, and it is worth
+knowing why: it required reading CPython's `pathlib` to learn that `expanduser` on `~nosuchuser`
+raises `RuntimeError` rather than returning the string unchanged.
+
+**PROCESS FAILURE, and it is the same one M22 and M23 already recorded — committed again by the
+agent that had both entries loaded in context throughout.** Four of this review's findings were
+mine to catch, and each is one instance of a single habit: **fixing the site a reviewer named
+instead of the class it belonged to.**
+- Round 1 established that error-payload fields carry *values, not sentences*. I fixed the two
+  classes it named and never asked which other refusal had the same shape — so `InvalidNameError`
+  went on reporting the wrong field, and round 2 spent a finding on it.
+- Round 1's blocker established that an unreadable database must not be reported as *empty*. I
+  fixed the preview and its CLI twin, and never asked which other printer made that claim — so
+  `_print_details` went on saying "nothing has been built here yet", and round 2 spent a finding.
+- Round 2 corrected a universal about which methods carry no tool, in `primary.py`. Its sibling
+  sentence in `dispatch.py` said the pre-fix thing, and round 3 spent a finding.
+- The round-2 **gate failure** was a test asserting `BAD_CONFIG`, the exact contract round 1's
+  finding 2 changed. My sweep had checked prose claims and never asked *which tests pin the old
+  behaviour*.
+**The rule that follows, and it is narrower than the ones already written down:** a behavioural fix
+has two kinds of dependant — documents and **tests** — and the sweep was only ever run over the
+first. And finish each finding by asking *what kind of defect was this*, then grep for the kind.
+`CLAUDE.md` already says to audit the other callers of a shared helper; quoting that rule in four
+consecutive review briefs is not the same as running it, which is this corpus's own "narrating a
+rule is not running it" met again.
+
+**Mutation verification: 18 in the first pass** (15 caught, 3 survived and closed — below) **and
+nineteen more aimed at the fixes review rounds 2–4 produced, all nineteen caught.** The whole set
+is re-run after each round, per the rule M23 established that a behavioural fix can make an existing
+guard unfalsifiable without touching it — and that re-run is what confirmed round 1's fixes had not
+retired the `confirm`-default guard or the abandon-the-counter-write one.
+
+**One test was strengthened because its mutation was caught for the wrong reason**, which is the
+class this corpus keeps meeting. The relative-path test failed its mutation only because `docs/`
+did not exist in the runner's working directory — not because a corpus had been built over the
+wrong tree. It now plants a decoy `docs/` in the service's working directory so the wrong
+resolution *succeeds*, and the assertion that fails is `root_path`. A mutation caught for the wrong
+reason is a test that will stop catching it the day the environment changes.
+
+**Seven decisions taken before or during the build, with the reasoning.**
+
+- **`refresh` answers with one `outcome` per corpus and raises only when it cannot produce that
+  list.** The line is between a fact about the *request* and a fact about a *corpus*: an unknown
+  name is the first — with one name given there is no other corpus to answer for, so a success
+  envelope carrying only a refusal would be §11's own named defect — and everything else is the
+  second, reported per corpus so one unbuildable knowledge base never denies the others a build.
+  Five outcomes: `started`, `already_indexing`, `no_database`, `root_missing`, `unreadable`.
+- **That outcome is a closed set of its own rather than a reading of `state`**, and for exactly one
+  pair: a corpus that has never been built and one whose database file is gone both report
+  `reindex_required`, and the first starts a build while the second can never have one. A caller
+  deriving the outcome from `state` reads those two identically.
+- **`already_indexing` is not a failure**, in either surface. The tool reports it in the result; the
+  CLI prints it to stdout and exits 0. §8.2 lists it under *guards that make the call idempotent*,
+  and a loop of refreshes against a long build must not read as a loop of failures. **This changes
+  the CLI's existing behaviour** — it used to exit 1 — and the test that pinned that is rewritten
+  rather than deleted, with the reasoning in its docstring.
+- **Four new wire codes, and three refusals that deliberately get none.**
+  `knowledge_base_unknown`, `knowledge_base_exists`, `knowledge_base_busy` and
+  `knowledge_confirm_required` join `architecture.md`'s error table; a blank name, a bad `path` and
+  an out-of-range `max_file_bytes`
+  reuse **`bounds`**, whose `{field, limit, actual}` payload is exactly what a caller needs and
+  whose contract — the rejection of a parameter value, decided with no store state consulted —
+  all three satisfy. The size cap joined them in review: it had been surfacing as a complaint about
+  *configuration*, which sends a caller that typed a number looking in a file for its own typo. An unmapped `KnowledgeError` propagates unchanged rather than being given a nearby
+  code, because answering a defect with a plausible refusal is how a bug becomes something a
+  caller acts on.
+- **`add` reports its git probe beside the per-corpus entries, under its own names.** A caller
+  asking for `tracked` outside a work tree gets `off`, and learning that at creation is the whole
+  reason `add` probes — but §8.5's per-corpus `git_mode_effective` means *what the last completed
+  build used*, which for a corpus created a moment ago is `null` until one finishes. So the probe
+  is `requested_git_mode`/`effective_git_mode` on the response, and the per-corpus field is not in
+  these entries at all: they are §8.5's **`list` projection**, not its full `status` shape. The two
+  fields never appear together, which is the point — one name for two subjects is the seam avoided.
+- **Only a corpus that was actually searched raises the §12 counters**, which is what keeps
+  `searches_empty` an abstention rate rather than a mixture: a corpus §11 refuses to serve answers
+  with an empty group without a query ever running against it. **Contention is the only failure
+  swallowed** — a knowledge base that refuses a four-row `UPDATE` for any other reason is one this
+  process should stop claiming to serve, so it propagates into that corpus's own `error` group
+  rather than being dropped with the count. And every count is added **in SQL**, because two
+  searches finishing together would lose one under read-modify-write.
+- **Build planning moved out of `lifecycle.py` into `core/knowledge/builds.py`**, one classifier
+  with two callers: a sweep *reports* what it decided and a named call *raises* it. One function so
+  the two cannot disagree about, for instance, whether a corpus with a missing root and a held lock
+  reports the root or the build — and the ordering is not this module's to choose, since it reads
+  the state the corpus already reports. `lifecycle.prepare_build` became `builds.prepare`.
+
+**Eighteen mutations applied; fifteen caught, three survived, and the three were all one class — a
+test whose fixture could not produce the condition it was named for.** The count is of mutations
+*applied*, not of lines mutated: the destruction preview was mutated twice, once to an obviously
+wrong constant, which was caught, and once to `0`, which was not — and the second is the one that
+taught something, because `0` is what the fixture's own corpus held. That is this corpus's own
+recorded class ("a guard that never executes proves nothing"), met three times in one milestone,
+and each survivor is worth its line because none of them looked wrong:
+
+- **`record_search` with the timeout left at its ordinary value passed the test named *abandons the
+  write rather than waiting*.** Whether the connection refuses at once or waits out `busy_timeout`,
+  the call returns `False` and the counters stay put — so the test measured everything about the
+  outcome and nothing about the *wait*, which is the whole behaviour. Closed by asserting the
+  elapsed time; the mutation now takes 5.00 s and the assertion is at a fifth of that.
+- **`confirm`'s default flipped to `True` destroyed a corpus and every `remove` test still
+  passed**, because all of them passed `confirm` explicitly. The one case that decides the default
+  — omitting the field, which the tool's own signature cannot produce and a direct RPC caller
+  can — had no test. **This is the mirror image of the defect this design criticizes in the nearest
+  comparable product**, whose `confirm` is absent from its published schema so the guard cannot be
+  satisfied; an omitted field that silently destroys is the worse half.
+- **The destruction preview reporting a constant `chunks=0` passed**, because the fixture corpus
+  had never been built and *nothing here* and *zero* are the same number. "Says what would be
+  destroyed" was a sentence with no measurement behind it. Closed by previewing a corpus that was
+  actually built.
+
+**The perturbation table was built before the first review round rather than after the first
+blocker, which is what `CLAUDE.md` asks for and what M23 paid six rounds for not doing.** The new
+state surface is `builds.plan`'s classification, and its axes are the ones the feature already
+names: *database* (absent | present-and-unreadable | present-and-readable) × *root* (present |
+gone) × *lock* (none | live-local | dead-local | foreign) × *corpus state* (never-built |
+encoder-mismatch | ok). Walking it found **two cells no test covered — a foreign lock, for
+`refresh` and for `remove`** — and one worth stating rather than testing: an absent database is
+classified before the root is consulted at all, so *absent database + gone root* reports
+`no_database`, which is right because that is the remedy either way. The cells that matter are now
+each a named test, and the ordering ones (`root_missing` outranks a live lock; `unreadable` outranks
+a missing root) are tested as orderings rather than inferred from single-condition fixtures.
+
+**One accepted cost, named so it is a choice.** `plan` is built on `reporting.observe`, which does
+more than the old `prepare_build` did — it counts chunks and reads `pending` for every corpus. That
+is the price of one classification rather than two that could disagree, and on a whole-store
+refresh it is a sub-millisecond query per corpus on a management path, not the latency path §6.1
+protects.
+
+**And one cost measured rather than argued, because it *is* on that path.** A search now ends in a
+write transaction per corpus it served. `research/m24-counter-write-cost.md`, harness
+`experiments/m24_counter_write_cost.py`: **p50 0.743 ms** against an idle database and **0.331 ms**
+when the writer lock is held — the contended case is *faster*, because refusing the lock costs less
+than taking it, which makes contention a shortcut off the path rather than a tax on it. Against a
+search measured at 16–17 ms that is 4–5% of one corpus's answer, and less than the 1.32 ms open
+that precedes it. Stated per corpus rather than per call, since a search naming ten pays it ten
+times. Without the dropped timeout the contended row would read **5,000 ms**, which is the mutation
+above.
+
+**The rename is a breaking change for an install that is already on disk, and for a service that is
+already running. Both are stated here because neither announces itself.**
+
+- **An installed project keeps its old shipped prose until somebody re-runs the installer.** The
+  consolidator prompt and the skill body name tools by their bare names, so an install written
+  before this milestone points a model at `zikaron_next_group`, which no longer exists — and a model
+  told to call a tool it cannot find improvises rather than failing. M15's staleness check is a
+  *content* comparison, so re-running `python -m zikaron.install` refreshes them; nothing does it
+  automatically. **The operator's own stores — `~/Memory`, `~/Trading/LeibaTrader` — are installs of
+  this kind.**
+- **A service that was already running answers the old method names and nothing else.** Both thin
+  clients and the service ship from one venv, so an upgrade moves them together — but the service is
+  long-lived and *survives* the upgrade, and there is no version in the `health()` handshake for a
+  client to notice with. A freshly-upgraded hook therefore sends `memory_surface` to a service that
+  only knows `surface`, gets `METHOD_NOT_FOUND`, and degrades exactly as it would for any transport
+  failure: a line in `hook.log` and a relay on stdout, one per user message. **It self-heals** —
+  `idle_timeout` stops the old service after 30 minutes and start-if-absent spawns a current one —
+  and the fix in the meantime is to stop it. Adding a build identity to `health()` was considered
+  and **not built**: it is a real mechanism for a real hazard, but it belongs to whoever decides
+  what Zikaron's upgrade story is, and inventing one inside this milestone would be a version
+  contract nothing else in the project has.
+
+**The `.kiro/` reference copies were regenerated, on operator approval.** The rename changes the
+text the installer ships for kiro, and `tests/test_install_assets.py` compares the two tracked
+copies against that text — so leaving them alone would have left the reference asserting a tool
+surface the product no longer has. Only `zikaron-consolidator.json`'s `prompt` and the skill body
+moved; the crew wiring, hooks, `mcpServers` and the dogfood config are untouched.
+
+**The brief's tool-list probe was run *after* the six tools were written, not before, and the
+number is reassuring rather than conclusive.** `research/m24-tool-list-size.md`, harness
+`experiments/m24_tool_list_size.py`: the primary server's whole `tools/list` answer is **18,594
+bytes** across twelve tools (14,971 of it descriptions, mean 1,248), the largest single entry being
+`zikaron_knowledge_search` at 2,891. **Re-run the harness rather than quoting this line** — it read
+18,461 / 14,840 when the probe was first taken and moved 133 bytes on the review rounds' own prose
+edits, which is this file's standing lesson about confident numbers arriving again in a new place.
+**What it does not establish is delivery.** A tool *list* is
+a different channel from a tool *result*, so the ~29,923-token result threshold this corpus
+measured bounds nothing here — it is merely the nearest order of magnitude, and it sits well above.
+The live half — install into a throwaway, start a session, read what the model was actually
+given — is the shape M16 and M18 used, is operator-driven, and is **not done**. Recorded as owed.
+
+**And a size is not a cost, which is the question the operator opened at the end of this
+milestone: what do twelve descriptions occupy in a real context window?** Deferred to M25 by
+operator direction, with the reading itself the operator's to take via a context inspector — bytes
+cannot answer it, since what a description costs is window occupancy on every turn of every
+session. `design/build-plan.md` §M25 carries the scope, the per-tool breakdown, and the seam to cut
+on if the reading says cut: *when to call and what to pass* stays, *how to read what came back*
+goes, which is ~2,827 bytes across the three largest tools — a permanent cost for information
+useful only in the turn after a call returns. **Do not cut the occasions paragraphs on size
+grounds**: they are the one part of a description this corpus has positive evidence for, and the
+brief states the evidence.
+
+**And the golden artefact fixture was re-baselined, which costs something worth naming.** It was
+captured from a commit that *predated* the prose renderer, which is what made it independent
+evidence that the renderer changed nothing. Three of its six entries changed deliberately here, so
+re-capturing it spends that independence: it now pins that kiro's shipped prose does not move by
+accident, and nothing pins that this deliberate move was correct. Renamed
+`kiro_artefacts_m12.json` → `kiro_artefacts.json`, since the milestone in the filename had stopped
+being true of it.
+
+**Operator-expanded scope, three additions beyond the brief**, taken as one milestone because the
+first two touch every shipped tool description and the third is the brief's own deferred item:
+a dependency bump; a **`memory_` prefix on every memory tool and RPC method**, so the two
+subsystems are named symmetrically; and the knowledge tools' cross-references.
+
+Plan:
+0. **Bump every pin to latest stable.** ruff 0.16.7, mypy 2.3.1, hypothesis 6.168.0,
+   types-PyYAML 6.0.12.20260906, setuptools 84.0.0, fastmcp **3.4.7 — the latest 3.x, not 4.0.4**.
+   `aiosqlite`, `sqlite-vec`, `fastembed`, `pytest`, `pytest-cov`, `pytest-asyncio` and `pyyaml`
+   are already latest. Zero deprecation warnings, and `requirements-lock.txt` regenerated.
+   **Two holds, both operator decisions with stated reasons.** fastmcp 4.x makes MCP stateless,
+   which is a transport change this milestone is the wrong place for. And **Python stays 3.12**:
+   Ubuntu 24.04 — the machine this is built on — ships no newer interpreter, so raising
+   `requires-python` would push an out-of-band interpreter install onto every user to buy nothing
+   this milestone needs. The 3.13 consequence worth recording so it is not re-derived when the
+   move does happen: `asyncio.start_unix_server` defaults to `cleanup_socket=True` there, which
+   unlinks the socket on close — the service's teardown and start-if-absent's vet-and-unlink both
+   rest on owning that decision themselves.
+1. **The `memory_` prefix.** Tools `zikaron_{search,fetch,remember,amend,retire}` →
+   `zikaron_memory_*`, and `zikaron_{next_group,merge,promote,discard}` → `zikaron_memory_*`. RPC
+   `{remember,amend,retire,search,surface,fetch}` → `memory_*`, and
+   `{plan_groups,next_group,apply_merge,apply_promote,apply_discard}` → `memory_*`. **`health`
+   keeps its bare name**, being about the service rather than about either store. The rename
+   *restores* a rule `primary.py` already states and the consolidator already broke — a wire method
+   is its tool's name without the `zikaron_` prefix — for the five primary verbs;
+   `zikaron_memory_merge`→`memory_apply_merge` still departs from it, as `zikaron_merge`→
+   `apply_merge` already did.
+2. **The six management tools**, over six `knowledge_*` RPC methods, reusing `core/knowledge`'s
+   existing `lifecycle` and `reporting` verbs rather than growing a second implementation beside
+   them.
+3. **`refresh(name=None)`** — every corpus, each lock checked on its own, `already_indexing`
+   reported per corpus rather than failing the call — in the tool **and** the CLI, whose §9 block
+   already spells the optional form.
+4. **The four §12 counters**, best-effort, abandoned on `SQLITE_BUSY` rather than waiting out
+   `busy_timeout`.
+5. **The cross-references**, including §8.3's sentence pointing search at `zikaron_knowledge_list`,
+   which shipped omitted because it named a tool the server did not register.
+6. **The README's `knowledge/` directory and a "Using it" paragraph**, deliberately deferred to
+   the milestone that makes a corpus reachable without leaving the harness.
+7. ~~Tests, mutations, the class-level sweep, `./check.sh` green, then `self-review` to bare
+   approval~~ **— done.** APPROVED at round 4; every nitpick addressed. **Not committed.**
+
+**Three things the review changed that are worth more than the milestone.**
+
+- **A `~` that names no user was an internal error on the tool and a traceback on the CLI, and the
+  fix I made one round earlier is what opened it.** Passing a leading `~` through unjoined is
+  necessary — `<project>/~/notes` would never expand — but it means the value reaches
+  `Path.expanduser()`, which for `~nosuchuser` raises `RuntimeError` rather than handing the string
+  back. That is not a `KnowledgeError`, so nothing translated it. Closed at `roots.validate_root`,
+  the one site both surfaces pass through, by folding it into *does not exist* rather than widening
+  the refusal enumeration — which was the cheaper answer because the enumeration has ten sites and
+  the fold has none. **The general shape:** documenting a behaviour is how you find out what it
+  actually does. Round 2 asked only that the `~` rule be written down; writing it down is what made
+  someone look.
+- **An error payload naming the wrong field is worse than one naming none.**
+  `rename(name="docs", new_name="   ")` answered `field: "name", actual: "docs"` — the parameter
+  that was fine, carrying the value that was accepted — so a caller resending a different `name`
+  got the identical refusal forever. `InvalidNameError` now carries the refused value and the
+  surface matches it against the names it was given, reporting the parameter the caller actually
+  has to change.
+- **A refusal about a value the call never sent is a defect, and is now propagated rather than
+  guessed at.** When no supplied name matches, the translation returns `None` and the exception
+  travels out as itself. Naming one of the parameters anyway would have handed a caller a refusal
+  it would act on by resending a field that was never the problem — the same "answering a defect
+  with a plausible refusal" this module already refuses to do for unmapped classes.
+
+
 ## References
+- **M25 fusion-sweep review** — `reviews/m25-fusion-sweep-review.md`, **four rounds, no `APPROVED`
+  verdict**: round 4 found no blocker and closed *"I would approve on those being made"*, which they
+  were. 23 findings, 7 blockers, **3 of which moved a conclusion**. Artefacts:
+  `research/m25-fusion-sweep.md` (the note), `research/m25-fusion-sweep-preregistration.md` (written
+  before any cell was scored, with its deviations recorded in place),
+  `experiments/m25_fusion_sweep.py`, `experiments/m25_verify_note_figures.py`,
+  `experiments/results/m25_fusion_sweep.json`.
+  **Reuse two things from it.** *Preregistration protects the threshold, not the quantity* — the
+  0.02 never moved while what it was 0.02 *of* did, after the data, which is the entire difference
+  between 48 passing cells and none. And *measure the instrument before measuring with it*: seven
+  instrument corrections were needed, every one with a symptom already visible in the harness's own
+  output (a column identical to its neighbour, two cells that should have matched and did not, a
+  counter named for one population and computed over another), and not one was noticed by reading
+  conclusions instead of the instrument. The mislabelled counter sent a reviewer into a wrong
+  blocker — **a mislabelled field is a false claim with a number attached**.
+- **M24 management-surface review** — `reviews/m24-management-surface-review.md`, **four rounds,
+  APPROVED 2026-09-16**, every nitpick addressed. Findings ran **11 → 15 → 6 → 3** with one blocker
+  in total, and the shape is unusual for this corpus: round 2 found **no behaviour defect** in the
+  six new verbs, round 3's only behavioural finding was a hole **round 2's own fix opened**, and
+  round 4 found nothing material. 18 mutations in the first pass and 19 more against the rounds'
+  fixes; all 19 caught.
+  **The blocker is the one to reuse, because it is about what a number *claims*.** An unconfirmed
+  `remove` previewed `chunks: 0` for a corpus whose database is present and will not open — the
+  same value it reports for a corpus that holds nothing — on the one verb nothing undoes. *Unknown*
+  and *empty* are not the same answer, and a preview that cannot tell them apart tells somebody
+  about to destroy a corpus that there is nothing to lose when nobody can say. Now `null` with the
+  state beside it. The same claim then turned up twice more in sibling printers nobody had swept.
+  **And the methodological finding is that this milestone committed one habit four times**: fixing
+  the site a reviewer named rather than the class it belonged to. Two of round 2's three
+  improvements, one of round 3's, and the round-2 gate failure were each the *second* instance of a
+  defect round 1 had already characterised — a payload field carrying a sentence, a preview claiming
+  emptiness, a universal about which methods carry no tool, and a test pinning a contract a fix had
+  changed. The last is the new part and is now a rule: **a behavioural fix has two kinds of
+  dependant, documents and tests, and a sweep that only reads prose finds one of them.**
+- **M21 scan review** — `reviews/m21-scan-review.md`, **five rounds, APPROVED 2026-09-15**, round 5
+  closing with no findings at any tag level. Findings ran **7 → 5 → 2 → 4 → 0**, and **only four of
+  the eighteen touched behaviour** — the same rounds-1-2-do-things, rounds-3-onward-do-prose shape
+  M20 recorded, with the non-monotonic bump at round 4 coming from a fresh pass over modules the
+  earlier rounds had not itemised rather than from a cascade.
+  **The blocker is the reusable one, and it is a join-key defect rather than a logic one.**
+  `git status --porcelain` reports paths relative to the **repository** root whatever the working
+  directory; `ls-files` reports them relative to the working directory. For a corpus rooted below
+  its repository — a vendored dependency, a docs tree, both endorsed by name — the change guard
+  therefore matched nothing, and an uncommitted edit to a tracked file was cleared as unchanged on
+  every scan until it was committed. **Every fixture in the suite had used the repository root as
+  the corpus root**, so no test could see it; the design's own "parsing `git status` is a
+  correctness surface" list named `-z`, `-uall`, both columns and the rename pair, and not path
+  relativity. Reconciled through `rev-parse --show-prefix`.
+  **And the sharpest methodological finding: one claim drifted across ten sites over three rounds.**
+  The index phase refuses a pending file on two grounds and every sentence about it named one. Round
+  2 found five sites, round 3 found three more — two in one file, two paragraphs apart, so a module
+  docstring contradicted itself — and a wider grep found a tenth. The cause was reported in a
+  round-3 brief as "I grepped the claim rather than the phrasing" when the grep had been for one
+  phrasing; a claim's other spellings are where it survives. `FINDINGS.md` carries the count-first
+  guard this suggests.
+- **M20 knowledge-registry review** — `reviews/m20-knowledge-registry-review.md`, **five rounds,
+  APPROVED 2026-09-15**, round 5 closing with no findings at any tag level. Findings ran
+  **9 → 5 → 3 → 2 → 0**, and the shape is the thing worth carrying: **rounds 1–2 found defects in
+  what the system does; rounds 3–5 found defects only in what it says about itself.** No behaviour
+  changed after round 2.
+  **The blocker is the reusable one.** Every knowledge-base connection opened with the *memory
+  store's* three pragmas, including the `foreign_keys = ON` the knowledge design spends a paragraph
+  refusing — while the correct two-pragma tuple existed, matched the document, had an accurate
+  docstring, passed a drift test, and **was executed nowhere**. A mutation of that constant passed
+  too, inheriting the same blindness. *A guard comparing two texts cannot see whether either reaches
+  the running system*; the check that holds reads the setting back off a live connection, and the
+  pragma set is now a required parameter with no default.
+  **Then the same shape three more times, smaller each round, and each created by the previous
+  round's own fix**: a cleanup whose prose claimed a wider window than its `try` covered (and which
+  leaked a connection on one escaping path); a relocated clock leaving three docstrings asserting
+  incompatible contracts about comparing stored instants; and a caller count corrected in the
+  paragraph a finding quoted while surviving in three sentences around it — recorded in `FINDINGS.md`
+  as fixed when it was not. **The author-side lesson, and the one that cost the most rounds: the
+  mandated corpus grep applies to wording a reviewer hands you, and "I ran the grep" is a claim like
+  any other.**
+  Two decisions settled with measurement rather than argument: lexicographic order on stored
+  timestamps is a **stated contract** (the signal queries take `MIN(event.at)` inside SQL, so the
+  dependency predates this milestone and cannot be parsed away), pinned by `tests/test_clock.py`;
+  and `CREATE TABLE IF NOT EXISTS` against an existing table takes **no write lock**, which is what
+  makes one idempotent creation site free and lets `meta.schema_version` stay at 1.
+- **M19 spike review** — `reviews/m19-spikes-review.md`, **four rounds, APPROVED 2026-09-15**, run
+  **after** the milestone landed, on operator instruction once the spike results proved substantial.
+  Findings ran **13 → 5 → 3 → 1**, monotonically, which is unusual here — the knowledge-index design
+  review needed twelve rounds and was not monotonic, because in an interconnected document a fix is
+  itself an edit to a system. Measurement-backed corrections appear to behave better: a probe either
+  answers the question or does not. **What a post-landing review was
+  worth, since this project normally gates before landing:** one **blocker** — §4.1/§5.2 classified
+  `check-ignore` failure as *"only exit 128"*, an enumeration of causes stated three paragraphs below
+  the rule forbidding exactly that, which would have classified a signal death or `exit 2` as an
+  answer and silently stopped applying `.gitignore` under `git_mode = all`. Then four claims that were
+  true-sounding and unearned: a "lower bound" that was provably **identity** (0 of 216 groups could
+  have been affected); invariant 3's oracle **measured in only one of its two directions**; a tie
+  claim refuted by numbers added in the same round; and a "20–40×" multiplier contradicted by the
+  table beside it (really 5–40×). **Three of the findings were answerable only by extending a harness
+  and re-running it**, which is the argument for reviewing spike *results* rather than only designs.
+  Two rounds also caught the reviewer's and the author's own misses — round 3 found a "no reviewer
+  round" claim that had been false since round 1 and that two fix passes had edited around.
+- **M19 spike A — `vec0` DDL in a transaction, external-content FTS5 without its content.** §8.4's
+  encoder-mismatch repair and §3.2's no-cascade reasoning both hold. Beside them: Python's legacy
+  transaction control opens **no** transaction for DDL and `executescript()` commits first, so "one
+  transaction" is a property of *how* the statements are issued; an orphaned FTS index raises
+  **`database disk image is malformed`** on any query projecting a column while `bm25()` answers
+  silently, so §3.2's "returns garbage" is withdrawn as written; FTS5's `'delete'` with wrong values is
+  accepted and is a **no-op**, which fixes an ordering constraint into §4.6; `integrity-check` sees
+  **both** directions of invariant 3 — an orphaned FTS row and a missing one — but **only with
+  argument 1**, the bare and argument-0 forms reporting OK on either; and a trigger-based cascade
+  **does** work, rejected on a measured cost (it breaks the §8.4 repair).
+  Harness `spikes/spike_vec0_fts5_ddl.py` —
+  `research/knowledge-index-vec0-fts5-probe.md`.
+- **M19 spike B — git plumbing on the shapes the walk must handle.** Every §5.6 shape confirmed on one
+  fixture tree (submodule, sparse checkout, linked worktree, `safe.directory` refusal via git's own
+  `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`, paths with spaces and newlines), and six specification gaps
+  found. Sharpest: `check-attr` is **three-valued plus arbitrary strings**, and the predicate §4.2's
+  prose implies excludes every file in a repository carrying `* text=auto`. Then: `check-ignore` exits
+  **1** for "nothing ignored", which the degradation rule would read as failure; `ls-files` needs `-z`
+  for the join-key reason `status` does; `--no-index` would invert the tracked-file exemption; and
+  under `tracked` a submodule contributes **nothing**. Harness `spikes/spike_git_shapes.py` —
+  `research/knowledge-index-git-shapes.md`.
+- **M19 spike C — which quantity orders the groups.** §7.2's best-dense-cosine ordering stands, and the
+  fused-contribution alternative it named is **measured and rejected**: better in no family of 72
+  mechanically-labelled queries over three real corpora — in the bare-identifier family the argument is
+  about, four queries against six, **p = 0.75** — and collapsing 0.57 → 0.38 top-1 across a 16×
+  `fusion_depth` sweep, over exactly which range lexical-only top chunks rise 0 → 51 of 216 groups and
+  cosine ordering *improves* 0.74 → 0.76. Mechanism: **saturation**, since max-RRF's discriminating
+  event is both arms agreeing on one chunk and any query with ordinary words produces it everywhere.
+  Two corrections to §7.2's own argument, the second found by reading sections against each other
+  rather than by the probe: a lexical-only *chunk* does not make the *group* invisible, and **"blind"
+  was already false against §8.3**, which gives such a chunk an explicit `chunks_vec` lookup. Harness
+  `spikes/spike_group_ordering.py` — `research/knowledge-index-group-ordering.md`.
 - **M18's end-to-end run** — the milestone's done-when, and the reason its review reopened after
   round 9 had already approved the implementation. It confirmed the feature and destroyed a
   mechanism: groups spilled, the consolidator read every file on the exact path first try, and
@@ -1811,6 +3485,33 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
   every measured point, which is worth recording precisely because this project's two previous probes
   both refuted their documentation readings — `research/claude-code-install-artefact-contract.md`.
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
+- **Knowledge-index design, 2026-09-14** — `design/knowledge-index.md`, **APPROVED after ten rounds**;
+  trail `reviews/knowledge-index-review.md`. Supporting measurements:
+  `research/cross-kb-ranking-probe.md` (BM25 is not comparable across corpora: **−4.21 vs −0.00** for
+  identical text in same-size corpora; `ATTACH` limit **10**; FTS5 `MATCH` cannot be aliased) with
+  `spikes/spike_attach_cross_kb.py` and `spikes/spike_attach_limits.py`;
+  `research/knowledge-index-hash-timings.md` (git's precomputed hashes **4.3 ms** versus **71 ms** to
+  read and hash, on two corpora — and the `sha1sum`-beats-Python claim **withdrawn**, having reversed
+  on the second corpus) with `spikes/spike_hash_timings.py`.
+- **Evaluation research, 2026-09-14** — three briefs answering "which public benchmark can evaluate
+  Zikaron". Verdict: none directly; the plan is `design/evaluation.md`. Folded into open question 9.
+  - `research/memory-benchmark-landscape.md` — verifies open question 9's brainstorm list (8 of 10
+    real; **LongMemCode and AFTER not found**), per-benchmark fit, the LoCoMo abstention defect
+    (adversarial category excluded from official grading), and the Zep/Mem0 dispute that moved a
+    claimed 84% to **58.44%**. Key ids: LoCoMo 2402.17753, LongMemEval 2410.10813, BEAM 2510.27246,
+    HaluMem 2511.03506, EvoMemBench 2605.18421, MemoryAgentBench 2507.05257.
+  - `research/coding-agent-experience-benchmarks.md` — **CTIM-Rover 2505.23422** (repo-scoped memory
+    for a code agent, **42% → 31%**, the on-topic negative result), **ChainSWE 2607.02606** (304
+    issues / 54 repos mined into within-repo chronological chains — the protocol we hypothesised,
+    already built), **AgentKB 2507.06229** (24.3% → 28.3%), SWE-bench Verified's repo skew
+    (**django 231 of 500**), and the environment-setup family (SetupBench, Installamatic,
+    ExecutionAgent, EnvBench) as the purest scope match lacking any sequencing mechanism.
+  - `research/agentic-eval-methodology.md` — agent run-to-run noise (**SD >1.5 pp, single-run spread
+    2.2–6.0 pp** over ~60k trajectories, arXiv 2602.07150), paired McNemar sizing, contamination
+    evidence (**SWE-Bench Illusion 2506.12286**: 76% vs 53% buggy-file identification from issue text
+    alone), the "tools present, store empty" baseline argument, and two questions the literature
+    does not answer at all — contamination *suppressing* a memory effect, and cross-task leakage
+    inside a memory A/B.
   (verbatim extract; the source PDF was deleted 2026-08-01 at the user's request).
 - Prior art as built — schema, RRF+recency ranking, `/sleep`, `merge_reframes` — `~/Memory/design/long-term-memory.md`, `~/Memory/design/ltm-revision-revamp.md`; digested in `design/prior-art.md`.
 - kiro-cli hooks + `introspect` — exactly 5 triggers (`agentSpawn`, `userPromptSubmit`, `preToolUse`,

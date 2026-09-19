@@ -17,8 +17,11 @@ letting this file sprawl. It is the thing a fresh session resumes from, and it i
 current.
 
 `FINDINGS-archive.md` holds the finished record — build history, the milestone plan, dogfooding evidence,
-references. Read on demand. **Read its §"Dogfooding notes" before proposing anything**: most of what a
+references, and §"The knowledge index as built" (M19–M24, moved there 2026-09-18). Read on demand.
+**Read its §"Dogfooding notes" before proposing anything**: most of what a
 fresh session would think to try has already been measured there, and several plausible ideas are refuted.
+**"This file" inside a moved block means `FINDINGS.md`**, where that text was written; the section
+header says so, and nothing was re-pointed, because the archive records what was believed and when.
 
 @FINDINGS.md
 

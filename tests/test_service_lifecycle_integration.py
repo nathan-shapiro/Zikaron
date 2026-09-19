@@ -137,6 +137,41 @@ def _wait_for_socket(sock_path: Path, *, deadline_seconds: float) -> None:
     raise TimeoutError(f"{sock_path} never appeared")
 
 
+def _wait_for_accepting_socket(sock_path: Path, *, deadline_seconds: float) -> None:
+    """Wait until the socket **accepts a connection**, not until its file exists.
+
+    **The two are different and the difference is a real flake.** `bind()` creates the path and
+    `listen()` follows it, so between them the file exists and a `connect()` gets
+    `ECONNREFUSED` — measured, as a gate failure at load ~7 in
+    `test_client_retries_through_start_if_absent_when_the_server_exits_mid_connect`, which then
+    passed 5 of 5 in isolation. `_wait_for_socket` is waiting on the *start* of the readiness
+    window, which is the same observation `FINDINGS.md` item 6 records for the signal-handler race
+    in the other direction.
+
+    **`_wait_for_socket` is deliberately left alone rather than changed to this.** Its other caller
+    is the test asserting a `SIGTERM` arriving *as soon as the socket appears* still unlinks it,
+    and for that one the gap between appearing and being ready "is precisely what must not exist" —
+    waiting for acceptance there would hide the defect the test exists to catch. One helper per
+    question, because the two questions genuinely differ.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    last: OSError | None = None
+    while time.monotonic() < deadline:
+        if sock_path.exists():
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                probe.settimeout(1.0)
+                probe.connect(str(sock_path))
+            except OSError as error:  # not listening yet, or gone again
+                last = error
+            else:
+                return
+            finally:
+                probe.close()
+        time.sleep(0.02)
+    raise TimeoutError(f"{sock_path} never accepted a connection (last error: {last})")
+
+
 def _wait_for_pid_file(pid_file: Path, *, deadline_seconds: float) -> int | None:
     """The pid a fake test server wrote to `pid_file` immediately after binding, or `None` if it
     never appeared before the deadline — tolerant rather than raising, since this is a cleanup
@@ -293,7 +328,7 @@ async def _running_server(
     sock_path = _runtime_dir(tmp_path) / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
-        _wait_for_socket(sock_path, deadline_seconds=_SPAWN_DEADLINE_SECONDS)
+        _wait_for_accepting_socket(sock_path, deadline_seconds=_SPAWN_DEADLINE_SECONDS)
         yield sock_path, store_dir, store_id, process
     finally:
         try:

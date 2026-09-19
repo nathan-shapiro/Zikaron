@@ -16,10 +16,34 @@ what it must hold. The shape of it, lowest layer first:
 - `block` — the injected block's exact text.
 - `reads` — `search` and `surface`: one transaction each, with the instrumentation inside it.
 
-Two things this package deliberately does not do. It **does not tune fusion**: arm weighting is the
-largest known quality lever and it is a measurement rather than a judgement, so `rrf_k`,
-`fusion_depth` and `chunk_overfetch` stay config keys and the pass stays a sweep — which is safe to
-defer precisely because none of them invalidates a stored vector. And it **does not rerank** on the
+Two things this package deliberately does not do. It **does not tune fusion**: arm weighting is a
+measurement rather than a judgement, so `rrf_k`, `fusion_depth` and `chunk_overfetch` stay config
+keys and the pass stays a sweep — which is safe to defer precisely because none of them invalidates
+a stored vector.
+
+**"The largest known quality lever" used to stand in that sentence unqualified, and one half of it
+has now been measured and did not hold.** Swept over 2,720 chunks of technical prose in the
+knowledge index — 252 cells of `rrf_k` by `fusion_depth` by an arm weight — no configuration beat
+the shipped one by more than 0.0069 MRR@10 **on the one query family measured valid** (`heading`,
+n=150), against a 0.02 bar fixed in advance. **Two scope warnings belong with that number.** The
+other three families were measured invalid — their queries are substrings of their own answers, so
+they hand the lexical arm the result — and **on the pooled metric the preregistration actually
+named, 48 cells cleared every threshold**, the largest by +0.1314. And `rrf_k` is flat only on that
+valid family: on exact-phrase queries it is emphatically not, `rrf_k = 10` beating 60 by **0.102**
+MRR@10 on one family. **That is not an opposite-optima result** — every family's maximum is at
+`k = 10`, the valid one included — so the honest statement is that smaller `k` and smaller depth are
+weakly dominant everywhere, with gains large only where one arm is confidently right and about
++0.004 on the valid family, which is under the bar. Nothing moves. `fusion_depth` is
+flat-to-slightly-negative across 40-fold on the shipped slice, and the optimal weight sat on a broad
+plateau containing the unweighted fusion that ships. `research/m25-fusion-sweep.md`.
+**What that does not touch is the claim the phrase came from**, which is `FINDINGS.md` open question
+2: on the *memory* store's 187-record benchmark, unweighted RRF erased a dense-model improvement of
++0.0705 MRR@10. That is a different corpus, a different scale, and a different question — an
+embedder upgrade rather than a parameter — so it is neither replicated nor refuted here and stays
+open. The phrase is removed because it was stated of fusion tuning in general and is now known to
+be false of at least one real corpus, not because the finding behind it went away.
+
+And it **does not rerank** on the
 push path (D23), because the measured latency curve leaves one affordable point there and reranking
 five candidates is operationally pointless; the pull path is explicitly not rejected.
 
