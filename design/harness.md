@@ -404,7 +404,7 @@ above, and UTF-8 needs at most **3 bytes per UTF-16 unit** — a Basic-Multiling
 and at most three bytes, an astral character is two units and four bytes, so the widest *per unit* is the
 three-byte BMP character rather than the four-byte astral one. A five-row block fitting 10,000 units is
 therefore at most 30,000 bytes, comfortably inside kiro's shipped 65,536; at the gist bound the real figure
-is 18,261. That ×3 is a real ceiling from the encoding — worth distinguishing from the invented "four bytes
+is 19,287. That ×3 is a real ceiling from the encoding — worth distinguishing from the invented "four bytes
 per token" factor an earlier `tests/test_install_limits.py` asserted, which was a guess and was wrong in the
 opposite direction. Entirely different standing.
 

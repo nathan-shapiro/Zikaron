@@ -759,7 +759,8 @@ consolidation does not run against `~/Memory`.** That store's next consolidation
 testing the positive merge criterion on a journal grown by real work (FINDINGS priority 1) — a one-shot
 experiment, since the corpus cannot be regrown, and one this checkpoint would confound twice over by running
 under a changed harness *and* a changed model. A future session executing this brief literally will reach for
-the primary real-work store; that is the mistake this sentence exists to prevent.
+`~/Memory`, which `FINDINGS.md` then called the primary real-work store; that is the mistake this sentence
+exists to prevent.
 
 ## M17 — The cold start loses the race it was given, and the encoder is why
 

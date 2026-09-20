@@ -46,9 +46,9 @@ TIMEOUT_MS: Final = HOOK_TIMEOUT_SECONDS * 1_000
 #: test reads.
 #:
 #: Its margin is what makes overrun unreachable rather than merely unlikely, and both real worst
-#: cases are asserted in the suite rather than estimated: the shipped policy text is ~5.5 kB, and a
-#: five-row push block is bounded by the `gist` character bound at 6,087 UTF-16 code units — at most
-#: ~18 kB of UTF-8 at the 3-bytes-per-unit ceiling. Both figures are stated in the unit they are
+#: cases are asserted in the suite rather than estimated: the shipped policy text is ~6.1 kB, and a
+#: five-row push block is bounded by the `gist` character bound at 6,429 UTF-16 code units — at most
+#: ~19 kB of UTF-8 at the 3-bytes-per-unit ceiling. Both figures are stated in the unit they are
 #: measured in, which this module of all places has to get right: a units count wearing a byte
 #: suffix is exactly the conflation the runtime budget check exists to prevent.
 MAX_OUTPUT_SIZE: Final = KIRO.injection_budget

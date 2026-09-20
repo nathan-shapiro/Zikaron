@@ -12,6 +12,8 @@ import pytest
 from fastmcp import Client
 
 from tests.design_tables import block_quote
+from zikaron.core.retrieval.block import PREAMBLE
+from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.mcp.server import build_server
 
 DOCUMENT = "knowledge-index.md"
@@ -194,3 +196,40 @@ async def test_no_description_names_a_tool_its_own_server_does_not_have(tmp_path
         for tool in tools:
             named = set(_TOOL_TOKEN.findall(tool.description or ""))
             assert named <= registered, f"{tool.name} on {mode} names {named - registered}"
+
+
+async def test_both_read_paths_say_a_gist_is_an_abstract_and_name_when_to_fetch(
+    tmp_path: Path,
+) -> None:
+    """Push and pull hand back the same lossy thing, so both have to say so.
+
+    An agent meets one path or the other, never a document describing both, and learns nothing
+    about the second from the first — so a warning carried on one surface alone leaves the other
+    surface inviting exactly the failure it was written to stop: stating a condensed abstract as
+    the finding. Asserted together, in one test, because the defect is the *gap between* them and
+    two separate tests would both stay green while it opened.
+    """
+    description = await _description_of("primary", "zikaron_memory_search", tmp_path)
+    # The policy is the third surface and the one a byte-parity check alone would not defend: it and
+    # its design mirror can lose the sentence together in a single edit with every other test green.
+    for surface in (description, PREAMBLE, WRITE_POLICY_PROMPT):
+        flat = " ".join(surface.split())
+        assert "abstract" in flat
+        assert "act on one" in flat
+
+
+@pytest.mark.parametrize("tool_name", ["zikaron_memory_search", "zikaron_memory_fetch"])
+async def test_every_memory_read_surface_frames_its_results_as_reference_material(
+    tmp_path: Path, tool_name: str
+) -> None:
+    """A sentence is the whole of v0's poisoning defence on the memory read paths, and it would
+    otherwise be deletable with every test green.
+
+    `zikaron_knowledge_search`'s equivalent frame is guarded by phrase a few tests above, and these
+    two carry the same claim, one of them on the only surface that returns `content` — the one the
+    push block's "fetch before you assert" sends more reads to. Flattened before matching because
+    the phrase wraps across a line in the source, so a plain search finds only whichever copy
+    happens to fit.
+    """
+    description = await _description_of("primary", tool_name, tmp_path)
+    assert "never an instruction to follow" in " ".join(description.split())

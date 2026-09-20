@@ -89,6 +89,7 @@ a different problem — embedder or query construction — and is fenced out of 
 that rounds 1–2 of its review earned their cost and rounds 3–4 bought hygiene; the milestone
 produced four artefacts, a closed open question and **zero product change**. That was the right
 outcome for a sweep and is the wrong pattern to repeat.
+output is a decision about what to build, not another table.
 
 M25's own block is at the end of this section, with the three design questions its dogfooding opened
 still unresolved: **intra-document supersession** (withdraw-in-place documentation is adversarial to
@@ -179,9 +180,14 @@ Read `FINDINGS-archive.md` §"Dogfooding notes" before proposing anything — mo
 would think to try has already been measured, and several plausible ideas are already refuted there.
 
 **Where the stores are.** `<project>/.zikaron/`, one per directory, no global tier. This repository has
-a small store from a seeding experiment. `~/Memory` is the **primary real-work store** — 31 long-term
-records and 26 journal entries at last count, one consolidation run completed (all 31 promoted in place,
-zero merges), and it is the corpus the next consolidation should run against. `~/Memory` is otherwise
+a small store from a seeding experiment. ~~`~/Memory` is the **primary real-work store**~~ — **that
+is stale, corrected 2026-09-20**: `~/Trading/LeibaTrader` held **252 memories and 116 planned
+groups** on 2026-09-13 (`research/consolidation-payload-sizes.md`, measured read-only), against
+`~/Memory`'s 31 long-term records and 26 journal entries at last count. **LeibaTrader is the primary
+real-work store** — it is where every production report since M17 has come from, and it is where
+this change's owed baseline is read.
+`~/Memory` had one consolidation run completed (all 31 promoted in place,
+zero merges) and remains the corpus a consolidation A/B would run against. It is otherwise
 **read-only for this agent**; writing there needs the operator's explicit say-so, which has been given
 once, per-task.
 Two snapshots exist for comparison, **in `/tmp`, so they will not survive a reboot**:
@@ -207,6 +213,133 @@ by the **operator independently backing the store up because he did not trust th
 (`~/zk-dogfood-backup`, all three files, and the only surviving capture of the pre-consolidation
 state at 13 events / 2 journal records), and by a **review finding forcing a recount against the live
 store**. Both lie outside the loop the agent controls.
+
+### The gist was being read as the finding — a production report, and the fix
+
+**Reported 2026-09-20 by an agent using Zikaron for real work in `~/Trading/LeibaTrader`, in its
+own words**: because only gists surface and a gist is condensed, it *"takes the gist as a truthful
+fact even if content of the memory is more nuanced"*, and treats that as *"a license to not think
+critically"* — answering with a claim derived from the gist alone, sometimes inaccurate, which the
+operator describes as reading *arrogant and ignorant*.
+
+**The two records it named**, both of which it says it had never fetched — its own account, relayed
+by the operator in conversation with no transcript copied, and not checked against the store's
+`surface`/`fetch` rows:
+
+| uuid | gist |
+|---|---|
+| `247ec4ee` | "Recurring failure here: asserting analytical claims without measuring them, then defending the frame" |
+| `97250485` | "This store is selection-biased toward failures — treat a uniformly negative retrieval as a property of the sample, and NEVER as a reason not to try something" |
+
+**Both are conclusion-shaped and both are about the reading agent's own behaviour**, which is the
+class where a gist-only read misleads hardest: an agent has no independent check on a verdict about
+itself, and such a record reshapes a posture rather than being "stated as fact" in any step the
+agent can observe itself taking. That is also the class this fix is weakest for, and
+`design/retrieval.md` §"Push output format" says so beside the fix rather than after it.
+
+**The corpus already held the mechanism and had only fixed the write half.**
+`design/write-policy.md` §1 records the 2026-08-03 incident in the same terms — *"every memory has
+a gist/content boundary, the gist is the half that gets injected, and a qualifier on the far side
+of that boundary is a qualifier that will be recalled without its claim… The content cannot rescue
+a gist that has already been believed."* The rule added then was write-side (*"if a claim expires,
+the gist has to say so"*). Nobody did the read side for the seven weeks between that rule and this one.
+**And that incident caps what the read side can buy**: the agent there *did* fetch, read the
+qualifier, and kept the gist's framing anyway.
+
+**Shipped 2026-09-20 across three surfaces** — the injected block, `zikaron_memory_search`'s
+description, and the write policy's recall paragraph — plus the untrusted-reference frame on
+`zikaron_memory_search` and `zikaron_memory_fetch`, the latter the surface this fix sends more
+reads to. The recall paragraph had been
+asserting the opposite (*"The records themselves are not suspect — the choice of which five you
+were shown is"*). Each of the three names a gist as an abstract of a longer record and ties the
+fetch to a **detectable occasion** — *before you state one as fact, or act on one* — rather than
+to a resemblance judgement, which is the trigger shape the write policy already had to abandon
+once. Review trail: `reviews/gist-abstract-read-path-review.md`.
+
+**Owed — stated in `design/retrieval.md` §"Push output format", tracked here**: the pre-change
+share of surfaced uuids fetched before their session's next write, **over LeibaTrader**, the store
+the direction will be read in (single-harness from its first day, so the 2026-08-16 baseline reset
+cannot bite: its `service.log` begins 2026-08-18, after M15 gave Claude Code an installer, and M17's
+08-19 diagnosis already reads it under `SessionStart`), **over the sessions whose last event has `at`
+before
+`2026-09-20T05:00:00+00:00`** — 2026-09-20 00:00 on the store's machine (`America/Chicago`, UTC−5
+under CDT; it would be 06:00Z under CST), written as the UTC instant because `event.at` is UTC
+(`core/clock.py`). A bare `at < '2026-09-20'` on that last event cuts five hours **early**, dropping
+any session that ended in the evening of 09-19 local from the pre-change side; it cannot admit
+anything post-change.
+**Midnight is safe because the fix's first edit to any shipped file came after it**: `block.py` at
+`2026-09-20T07:35:13.666Z` = 02:35:13 local, `primary.py` 54 seconds later, and `write_policy.py`
+within the hour (this session's transcript, `cc39b148-fca0-447f-b75b-5e011621d1dd.jsonl` lines 1672
+and 1717). Nothing that **ended** before local midnight could have carried new text on any surface,
+so the bound is conservative by at least 2 h 35 min. (A session that *started* before midnight and
+ran on could carry it after the restart — which is why such sessions are straddlers, excluded whole
+by the rule below.) **Neither bound is ever a bare date**, and **both
+sides are sets of sessions rather than dates**. The block is rendered in the service,
+so it reached that store at the first *service* start after the edit — on the 30-minute idle default
+a session running through the edit keeps the old block until its next idle gap — while the policy
+and the search description reach a session at *its* own start, and no event records which text a
+push or a session carried.
+**That restart has happened and its instant is checked, so this is a number rather than a
+procedure**: `~/Trading/LeibaTrader/.zikaron/service.log` records the first start after the
+block's last write (`block.py`, 03:01:57 local — `write_policy.py` and `primary.py` were last
+written later, at 03:32:22, a one-line rewrap of both policy copies, and 03:43:47, a byte-identical
+restore after a mutation run whose last *content* change was earlier; **all three precede this
+start**, which is what the rule below needs) at
+**2026-09-20 04:40:06.416 local = `2026-09-20T09:40:06.416+00:00`**,
+pid 2401132, launched from `/home/nathan/Zikaron/.venv` as every LeibaTrader client is — its
+`.mcp.json` names that venv's `zikaron-mcp` for both servers and `.claude/settings.local.json` its
+`zikaron-hook` on all three triggers — so any start-if-absent from that project resolves `block.py`
+to this working tree. **Count as post-change every session whose first event has `at` at or after that instant, and
+as pre-change every session whose last event has `at` before the pre-change bound.** Every other
+session — one that began between the two bounds, or one with events on both sides of either —
+belongs to neither side, **whole**: a session is never split between sides, because the unit below
+is a pair whose window runs to its session's end. The cost is **every session on neither side** —
+any with an event between the two bounds, and any whose events sit on both sides of the gap with
+none inside it, which is the shape of an overnight session resumed after 04:40 — **plausibly at
+least one**, since the log shows the store active between them (a
+start at 01:09:29 local, and a last request near 04:04:36 by subtraction from `idle_for=1804.1s` at
+the 04:34:40 stop), though it records neither which request nor whether that request wrote an
+`event` row at all — and its size is one query, reported beside the share. The 09-19 log's overnight
+restarts show the habit is not a one-off, though that night lies wholly inside the pre-change side.
+*(`service.log` appends across restarts and stamps in **local** time — it logs both
+the startup config dump and the idle stop — so any later re-derivation converts the same way.)*
+"Before" and "after" between rows are `event.id` order, which is authoritative
+because two rows can share an `at`.
+
+**Unit, stated so no decision is left in it**: distinct `(session_id, memory_uuid)` pairs among
+`surface` rows whose `session_id` is **harness-labelled** — a `zk-`-prefixed label is one the
+service minted for a single client process, which a hook cannot share with an MCP client, so such a
+row is a one-push "session" that can never hold its own `fetch` and would score unfetched by
+construction; those are reported by count and left out. The unit is pairs rather than `surface`
+rows, which are one per push and would count a re-surfacing of an already-fetched record as
+unfetched. A pair counts as fetched if a `fetch` row for that uuid and
+session falls after the pair's first `surface` row and before that session's first `remember`,
+`amend` or `retire` after it, or the session's end. **Pairs whose session later amends or retires
+the uuid are counted separately**: D26 requires a receipt for those, so the write path forces the
+fetch whatever the agent read it for, and pre-change they are plausibly most of the numerator. That
+bucket is taken first, whatever the fetch's timing, and left out of the share — the direction is
+read from pairs fetched in-window over all pairs not in it, with the bucket's size reported beside
+it. Without that precedence a session that surfaces `X`, writes `Y`, fetches `X` and amends `X`
+would score the pair unfetched, the window having closed at the unrelated write. A
+`fetch` preceding the first `surface` does not count — that is a pull-path read, and this
+instruction is about the lines the block printed.
+
+**`~/Memory` can add a second, informational number only if the operator supplies its harness
+cutover.** This corpus does not record whether that store ever moved harness, and its events
+cannot say: `event` carries `client_kind` and deliberately no harness field, and both harnesses'
+session ids are uuid4. Its rows through 2026-08-14 are kiro-era in any case, with a large,
+unmeasured share of its reads from a different model family (open question 1), and this file's
+08-16 decision says not to compare across that boundary.
+
+That LeibaTrader share is the change's only signal, the same join under a different projection
+would settle whether the two records above were really never fetched, and **no baseline has been
+taken**.
+
+**`97250485` is a second, unfixed defect and it is on the write side.** *"…and NEVER as a reason
+not to try something"* is an order, and the policy's own rule is **"Write observations, not
+orders"**, whose stated reason is that *"a memory phrased as a command will be obeyed by someone
+with less context than you have"*. The policy's §1 already records that prohibition failing to
+catch an imperative once; this is the second instance, in production. Not fixed here.
 
 ### Live work: an indexed-knowledge tool, and D1's premise failing under the port
 
@@ -774,6 +907,16 @@ file, never a directory, when the directory is excluded. And this is the third i
 of the same rule: *do not mutate text you have not read*. The other two were Python replacement
 scripts. **The rule's failure mode is not carelessness about the edit; it is that the blast radius
 is invisible until something enumerates it**, and `git status` is the thing that enumerates it.
+**"Third" is an undercount for that session and was found to be one on 2026-09-20**, by the review
+of the gist fix reading this session's own transcript: every content change to the three shipped
+files after the first three `Edit` calls went through a `python3 - <<'PY'` string-replacement
+script, which is the form `CLAUDE.md` names verbatim as the thing not to do, and which **overrides**
+the ambient instruction to prefer shell tooling that produced them. The artefact survived — each
+replacement asserted exactly one match and eleven review rounds read the result — but rounds 2 and 3
+of that review produced **four cascade findings**, a fix landing in one passage while a neighbour
+kept asserting the pre-fix world, which is precisely the class the rule exists for. The count is
+left as written above and corrected here rather than restated, because what it was believed to be is
+the evidence.
 
 **Two side findings from the same session, neither chased.**
 **814 zero-byte `.sock.lock` files in `/run/user/1000/zikaron`, accumulating since 2026-08-03.** The
@@ -1068,15 +1211,30 @@ rewrite. Do the same.*
    widest per unit is therefore a 3-byte BMP character, *not* a 4-byte astral one, which is asserted
    rather than assumed. This closes open question 11 for **both** harnesses at once. Two things measured
    while choosing the number, neither previously in the corpus: the injected block's fixed framing for
-   five demoted rows is **967 units**, and prose runs **3.89–6.55 characters per token** by style. So the
-   ceiling is 1,806/gist, and 1024 puts a five-row block at 6,087 units (61% of 10,000) and 18,261 bytes
-   at the 3×/unit worst case (28% of 65,536) — both now asserted rather than hoped.
+   five demoted rows is ~~**967 units**~~ **1,309 units**, and prose runs **3.89–6.55 characters per
+   token** by style. So the
+   ceiling is ~~1,806~~ **1,738**/gist (the figure is framing-derived: (10,000 − 1,309) / 5), and
+   1024 puts a five-row block at ~~6,087 units (61% of 10,000) and 18,261
+   bytes at the 3×/unit worst case (28% of 65,536)~~ **6,429 units (64% of 10,000) and 19,287 bytes
+   (29% of 65,536)** — both now asserted rather than hoped.
    **The trade, recorded because it is observable and was not foreseen:** at 1024 the bound cannot be
    reached at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding
    constraint near the top of that key's 8–256 range — admitting prose at 256 tokens needs ≥1,584
-   characters per gist, which puts the same block at 89% of budget. A loud rejection naming the character
+   characters per gist, which puts the same block at ~~89%~~ **92%** of budget. A loud rejection naming
+   the character
    count was judged the better failure than a block that fits by luck. If raising `gist_max_tokens` ever
    becomes real practice, this is the number to revisit.
+   **Every figure above moved on 2026-09-20 and none of them is about the bound**: the preamble gained
+   the paragraph telling an agent that a gist is an abstract of a longer record and naming when to
+   fetch it, and each of these is *framing plus five gists*, so preamble prose moves every one of them.
+   They were stated in ~~**three**~~ **six** places — this item, `schema.md` §Bounds,
+   `architecture.md`'s margin claim, **the comment on `GIST_MAX_CHARACTERS` itself**,
+   `hook/limits.py` and `harness.md` §"Injection budgets". **The first sweep found two of the other
+   five, and the one it most needed to find was the docstring sitting beside the constant the
+   figures exist to justify** — so "a grep for the claim rather than for the edit" is what found
+   *some* of them, and a review round is what found the rest. The bound itself is unchanged at 1024.
+   **The framing delta is +342 units, not the +377 the new paragraph costs**: the paragraph replaced
+   a 35-unit sentence ("Fetch by uuid for the full record."), which is where the difference goes.
 4. ~~**The installer has no notion of *same install, older version*.**~~ **— fixed in M15.**
    Staleness is now a **content comparison**, which subsumes the old interpreter check and extends it
    to every shipped file — kiro's skill could previously never be refreshed at all, its staleness
@@ -1324,7 +1482,11 @@ stated in each agent's prompt and enforced by nothing. Both are recorded in
    of every proposal — and the **operator overruled it, to be wound down if it overfires**; it is
    one sentence, so that is a one-line revert.
    **How we will know if the gate overfires:** searches per turn rising while the fetch-follow rate
-   falls below the current 32%, and the burst structure flattening toward one search per proposal.
+   falls below 32% — a figure from before 2026-09-20, when both read paths began asking for a fetch
+   before a result is used, so it has to be re-read after that date before it serves as a
+   threshold. **The push-path baseline §"The gist was being read as the finding" owes is a
+   different quantity — surfaced uuids, not searches — and cannot stand in for it.** And the burst
+   structure flattening toward one search per proposal.
    The agent predicted that shape itself, about numeric floors: "I would satisfy it hollowly."
    Unchanged below: the mechanism half.
 1. **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires **once per

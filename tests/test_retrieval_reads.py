@@ -23,6 +23,7 @@ import aiosqlite
 import pytest
 
 from tests import retrieval_fixtures as fx
+from tests.design_tables import fenced_code
 from tests.fake_encoder import FakeEncoder
 from zikaron.core.errors import ErrorCode, RowState, ZikaronError
 from zikaron.core.events import (
@@ -578,3 +579,30 @@ def test_the_block_refuses_a_row_push_cannot_retrieve() -> None:
     replacement's uuid, and this row has none by definition."""
     with pytest.raises(ValueError, match="retired outright"):
         block.render([_pool_row("a", active=False)])
+
+
+def test_the_designs_sample_block_states_the_preamble_this_code_prints() -> None:
+    """`retrieval.md` quotes the block verbatim as its normative form, and nothing compared the two.
+
+    The preamble is prose a model reads, so a paraphrase is a different prompt — which makes the
+    document and the constant two statements of one text, hand-synchronised, with no way to notice
+    when only one of them moves. That is the drift this suite exists to catch everywhere else.
+    """
+    sample = fenced_code("retrieval.md", "## Push output format", "")
+    assert block.HEADER in sample
+    assert block.PREAMBLE in sample
+
+
+def test_the_block_says_a_gist_is_an_abstract_and_names_when_to_fetch() -> None:
+    """An agent reading a gist as the finding asserts a condensed claim without its qualifications.
+
+    Two halves, and neither works alone: saying what a gist leaves out gives the agent no moment to
+    act on, and naming the moment without saying why leaves the gist looking sufficient. The moment
+    is deliberately about what the agent is doing — asserting or acting — rather than about whether
+    the gist resembles what it already believes, since that judgement is made mid-task by an agent
+    that already thinks it has the answer.
+    """
+    flat = " ".join(block.PREAMBLE.split())
+    assert "abstract of a longer record" in flat
+    assert "not the finding itself" in flat
+    assert "Before you state one as fact, or act on one, fetch it by uuid" in flat

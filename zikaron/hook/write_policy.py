@@ -53,8 +53,10 @@ read what you write.
 you receive, but they were selected for the *user's words*, not for the problem as you understand
 it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
 gists arrive, and nothing tells you the set has stopped covering the problem. The records
-themselves are not suspect — the choice of which five you were shown is. They are a starting
-point, never evidence that memory has already been consulted.
+themselves are not suspect, but you are not shown the records: each line is a gist, a one-sentence
+abstract written to help you choose what to read, and the conditions a finding held under usually
+live in the entry behind it. So before you state one as fact, or act on one, fetch it. The
+injected set is a starting point, never evidence that memory has already been consulted.
 
 Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
 — effort feels like progress, so that judgement arrives too late to act on:

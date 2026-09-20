@@ -16,8 +16,12 @@
 
 ## 1. Why this text is shaped the way it is
 
-**One rule is here because of a measured production failure rather than an argument, and it is the
-newest.** "If a claim expires, the gist has to say so" was added 2026-08-03, in the first hour of real
+**Two rules are here because of a production failure rather than an argument — one observed, one
+reported.** The older is
+below; the newer is §2's instruction to fetch a record before asserting from its gist, added
+2026-09-20 after an agent in real use reported taking gists as findings and answering from them
+(`FINDINGS.md` §"The gist was being read as the finding" records the report and both records).
+"If a claim expires, the gist has to say so" was added 2026-08-03, in the first hour of real
 dogfooding. An agent asked to record project knowledge wrote the gist *"do not tune rrf_k/fusion_depth/arm
 weighting during retrieval work — it's a deliberate standing instruction"*, with the condition that makes
 it true ("during M5") left in the `content`. A later session with no other context was asked "should I tune
@@ -30,7 +34,10 @@ Two prohibitions were already in this text and neither caught it. "Write observa
 the imperative but not the expiry; nothing named the expiry at all. The structural point is what makes the
 new rule a rule rather than an emphasis: **every memory has a gist/content boundary, the gist is the half
 that gets injected, and a qualifier on the far side of that boundary is a qualifier that will be recalled
-without its claim.** The content cannot rescue a gist that has already been believed.
+without its claim.** The content cannot rescue a gist that has already been believed. The read side now names the fetch
+occasion (`retrieval.md` §"Push output format"): it is the second half of this rule rather than a
+replacement for it, for the reason this paragraph gives — a qualifier in the line reaches every
+agent, and one in the content reaches only an agent that fetches.
 
 **The dominant failure mode is under-writing, and we have evidence, not a hunch.** `~/Memory`'s first live
 run found `REMEMBER` **under-triggered**: the model funnelled durable facts — even improvised self-details —
@@ -79,8 +86,10 @@ read what you write.
 you receive, but they were selected for the *user's words*, not for the problem as you understand
 it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
 gists arrive, and nothing tells you the set has stopped covering the problem. The records
-themselves are not suspect — the choice of which five you were shown is. They are a starting
-point, never evidence that memory has already been consulted.
+themselves are not suspect, but you are not shown the records: each line is a gist, a one-sentence
+abstract written to help you choose what to read, and the conditions a finding held under usually
+live in the entry behind it. So before you state one as fact, or act on one, fetch it. The
+injected set is a starting point, never evidence that memory has already been consulted.
 
 Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
 — effort feels like progress, so that judgement arrives too late to act on:
@@ -321,14 +330,18 @@ Two supports sit beside it, both from the same account. The **sufficiency illusi
 injected block and not only here: five on-point gists make memory feel already consulted, while they
 matched the *user's words* and go stale as soon as the problem is reframed, and nothing arrives to
 say so. The policy is read once per session; the block prints once per message, which is where the
-impression is actually formed, at a cost of 187 bytes against the harness's own output cap. And a
+impression is actually formed, at a cost of 187 bytes against the harness's own output cap. The
+block carries a second paragraph from §1's pair — a gist is an abstract of its record, fetch before
+asserting from it — which is the larger addition at 342 units per push; `retrieval.md` §"Push output
+format" carries its rationale, its ceiling and its cost. And a
 **gate** — a design, plan or dead-end claim must state what was searched for and what came back,
 including that nothing relevant did — because it is the only lever with a checking mechanism, and
 the agent ranked it first on the evidence that everything it did reliably was gated. The scope
 objection to putting it here is real and was overruled deliberately: a memory system is shaping the
 form of the agent's proposals, which is broader than memory. It is one sentence so that winding it
 down is one deletion, and the signal that it is overfiring is searches rising while the share
-followed by a `fetch` falls.
+followed by a `fetch` falls — against a share re-read after 2026-09-20, since the same change told
+`zikaron_memory_search`'s caller to fetch before using a result.
 
 ### Why general facts enter as the decision they forced, and not at all on their own
 

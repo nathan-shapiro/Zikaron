@@ -58,18 +58,20 @@ SEPARATOR_TOKENS: Final = 1
 #: the worst case — five gists of astral characters — would exceed the budget it is supposed to
 #: prove.
 #:
-#: **The number, and what it buys.** A five-row injected block's fixed framing measures 967 units,
-#: so five gists at this bound come to 6,087 — 61% of the smallest injection budget any supported
-#: harness states. UTF-8 needs at most three bytes per UTF-16 unit (a Basic-Multilingual-Plane
-#: character is one unit and at most three bytes; an astral character is two units and four bytes),
-#: so the same block is at most 18,261 bytes against the largest byte-denominated budget, 28% of
-#: it.
+#: **The number, and what it buys.** A five-row injected block's fixed framing measures 1,309
+#: units, so five gists at this bound come to 6,429 — 64% of the smallest injection budget any
+#: supported harness states. UTF-8 needs at most three bytes per UTF-16 unit (a
+#: Basic-Multilingual-Plane character is one unit and at most three bytes; an astral character is
+#: two units and four bytes),
+#: so the same block is at most 19,287 bytes against the largest byte-denominated budget, 29% of
+#: it. The framing is preamble prose and moves when that prose does, so every figure in this
+#: paragraph is recomputed rather than carried.
 #:
 #: **The trade it makes.** Measured across prose styles at 3.89 to 6.55 characters per token, this
 #: binds above roughly 156 tokens of plain English: comfortably clear of the default gist token
 #: bound of 64 (worst case 363 characters), and genuinely the binding constraint near the top of
 #: that key's range. Admitting prose at the highest configurable token bound would need ~1,584
-#: characters per gist, which puts the same block at 89% of budget — a rejection naming the count
+#: characters per gist, which puts the same block at 92% of budget — a rejection naming the count
 #: is the better failure than a block that fits by luck.
 GIST_MAX_CHARACTERS: Final = 1024
 

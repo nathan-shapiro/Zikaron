@@ -20,10 +20,12 @@ tests below state what is actually true rather than restating the assumption:
   cannot fix a store's own bounds.
 """
 
+import re
 import uuid as uuid_module
 
 import pytest
 
+from tests.design_tables import table_with_columns
 from zikaron.core.config.keys import CONFIG_KEYS, IntBounds
 from zikaron.core.indexing.chunking import GIST_MAX_CHARACTERS, utf16_units
 from zikaron.core.indexing.encoder import FastEmbedEncoder
@@ -54,6 +56,16 @@ def _gist_max_tokens_ceiling() -> int:
     ceiling = bounds.maximum
     assert ceiling is not None, "an unbounded token count would make this whole bound unprovable"
     return ceiling
+
+
+#: The two figures `schema.md` states for the worst-case block: its UTF-16 units and, at the
+#: encoding ceiling below, its bytes. Matched as "N,NNN units" and "N,NNN bytes" so a reworded
+#: sentence keeps working while a changed number does not.
+_STATED_WORST_CASE = re.compile(r"\*\*([\d,]+) units[^*]*\*\*|\*\*([\d,]+) bytes")
+
+#: UTF-8 needs at most three bytes per UTF-16 code unit, which is what lets a unit bound stand
+#: in for a byte bound.
+_UTF8_BYTES_PER_UTF16_UNIT = 3
 
 
 def _block_of(gist: str) -> str:
@@ -197,3 +209,29 @@ def test_the_stated_timeout_leaves_the_hooks_own_deadline_room_to_fire_first() -
     `hook.log` line and a model-facing relay while the harness's kill produces neither.
     """
     assert push._DEADLINE_SECONDS * 2 <= TIMEOUT_MS / 1000
+
+
+def test_the_designs_stated_worst_case_block_matches_what_the_block_actually_renders() -> None:
+    """The one hand-carried figure a test can read, and it has drifted twice.
+
+    `schema.md`'s `gist.characters` row states the worst-case block in both units as the derivation
+    that makes `GIST_MAX_CHARACTERS` worth having. That figure is framing plus five gists, so it
+    moves whenever the preamble's prose moves — which has now happened twice in one change, each
+    time re-carried by hand to six separate sites while every test stayed green. Five of those
+    sites are prose or comments no test reads; this is the sixth, and it is the normative one the
+    others claim to derive from.
+    """
+    rows = table_with_columns("schema.md", "## Bounds", ("Bound", "Value", "Why"))
+    why = [row["Why"] for row in rows if "gist.characters" in row["Bound"]]
+    assert len(why) == 1, "schema.md must state the gist character bound exactly once"
+    found = [
+        int(group.replace(",", ""))
+        for pair in _STATED_WORST_CASE.findall(why[0])
+        for group in pair
+        if group
+    ]
+    assert len(found) == 2, f"expected a units and a bytes figure, found {found}"
+    stated_units, stated_bytes = found
+    rendered = _block_of(_at_the_gist_bound("a"))
+    assert utf16_units(rendered) == stated_units
+    assert stated_units * _UTF8_BYTES_PER_UTF16_UNIT == stated_bytes
