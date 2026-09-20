@@ -3778,3 +3778,1154 @@ Plan:
   do accept a per-trigger flag), and an exported-but-empty session variable silently suppressing every
   push because the seam forwarded `""` while the service treats it as no label —
   `reviews/m14-harness-seam-review.md`.
+
+## M25, and the last three pre-knowledge-index milestones (moved out of FINDINGS 2026-09-20)
+
+**Why these moved.** M25 was measurement-complete and M16–M18 were landed and APPROVED, so by
+`FINDINGS.md`'s own rule — *a milestone's block stops being live the moment it is APPROVED* — all
+four had stopped being live. The file had reached **199,091 bytes ≈ 70k tokens** against the ~49k
+that forced the original split, while loading on every session.
+
+**Read these as record, not as a starting point.** Moved **byte-for-byte**, with no renumbering and
+no re-pointing, because this corpus has convicted itself before of rewriting moved text into
+something subtly different from what was believed at the time.
+
+**Three reading notes, each of which the source file explicitly warned about:**
+
+1. **"This file" inside these blocks means `FINDINGS.md`**, where the text was written.
+2. **The three items numbered `0.` are M18, M17 and M16, and the numbering is deliberate** — it was
+   chosen so that removing them renumbers none of the live items 1–6, which are addressed *by
+   number from outside `FINDINGS.md`*, where a silent renumber would be undetectable.
+3. **`design/build-plan.md` §M17 carries two references that now point across files** — into the
+   M17 item and into the superseded cold-start diagnosis paragraphs that follow it here. Those
+   paragraphs were moved together with the M17 item precisely so the pointer *between them* stays
+   internal; they were **not contiguous** in the source, being separated by the live priority items
+   1–6, and they are joined here.
+
+**What M25 left open and is therefore NOT closed by this move**: intra-document supersession
+(withdraw-in-place documentation is adversarial to chunk retrieval, and this repository writes that
+way), the `git_mode` default, and who owns scan scheduling. All three are design questions still
+owed.
+
+**And one caution about M25's central instrument, established after it landed.** Its heading oracle
+was later measured not merely to understate but to **invert** a result — see `FINDINGS.md`'s M26
+entry and `research/m26-chunking-levers.md` §§10–11. Treat every figure below as measured correctly
+against a query shape no real agent sends.
+
+---
+
+**M25 — dogfooding, and the parameters this design deliberately did not tune — IN PROGRESS, opened
+2026-09-18.** Brief: `design/build-plan.md` §M25. Normative: open questions 1–3 here and
+`knowledge-index.md` §16 items 1–3. Fence: no new capability; measurement and tuning only.
+
+**The shape changed before any work started, on two operator corrections, and both corrections
+are load-bearing.**
+
+- **"Does the agent reach for it unprompted" is the wrong question, and asking it was a category
+  error.** The memory store is written by the agent, so the agent knows what is in it and can have
+  its own occasions. **A knowledge base is a corpus somebody else chose**, and nothing in a tool
+  description can say when `design documents` is relevant, because relevance depends on contents the
+  description cannot know. The occasion therefore arrives as **steering** — a project instruction
+  naming a corpus for a situation — and an agent reaching for it *because it was told to* is the
+  design working, not the measurement failing. This is the same seam open question 14 resolved for
+  standing preferences: a rule that must bind lives in the instruction file, not in a store framed
+  as untrusted reference material. **What I had carried across that seam was the memory side's
+  model of recall**, and nothing in the corpus had noticed the two subsystems differ here.
+- **Do not script the dogfooding.** Operator's framing: let agents explore and write down what they
+  found. So M25 does **not** run a paired control arm against a public repository, which is what I
+  first proposed. It lets a real install accrue and reads what was written — including what the
+  *user* writes into the instruction file, since every line added there is a gap the product left
+  open. The public repository stays in scope for the **sweep** alone, where a corpus has to be
+  rebuilt repeatedly at different parameters without disturbing live work.
+
+**Two tracks, different clocks, and only one of them is this agent's.**
+**Track A — live use**, at `~/Trading/LeibaTrader`, already running (below). Yields the §12 counters
+and the transcripts. Its clock is the operator's real work, so it is read periodically rather than
+executed. **Track B — the sweep**, offline against a public corpus, rebuildable at will. Yields
+`rrf_k`, `fusion_depth`, arm weighting and `limit_per_kb`. Neither blocks the other, and **A must be
+allowed to run on shipped defaults** — it is the only honest baseline, and it cannot be tuned before
+there is usage.
+
+**First production use, 2026-09-18, and what it is evidence of is narrower than it first looked.**
+Two knowledge bases in `~/Trading/LeibaTrader`, created and built within four minutes of each other:
+`arcs` (20 files, **960 chunks**, 1,223,843 bytes, built 21:48:12–21:50:26 = **134 s**) and
+`research` (3 files, **67 chunks**, 91,827 bytes, built 21:48:16–21:48:31 = **15 s**). **The two
+builds overlapped**, so M23's detachment ran two indexers at once in production for the first time,
+and `arcs`' 134 s includes whatever contention that caused. Evidence, copied out of the harness's
+pruning window: `~/zikaron-m25-evidence/520d5ca4-0b4f-400e-80a8-b4d43bf4631d.jsonl` (10,732,555
+bytes) plus its `subagents/`.
+**Operator correction, and it removes the reading that made this exciting:** the searches were a
+**smoke test**. The agent had just been told to register the directories and wire its own
+`CLAUDE.md` to use them, and it tried the tool to see that it worked. So this is evidence that the
+**mechanics** hold end to end on first contact, and evidence about **nothing** regarding whether an
+agent reaches for the tool during real work. An earlier revision of this entry called it "unprompted
+dogfooding evidence arriving on its own"; that is withdrawn.
+
+**What the mechanics did establish, all of it first-time-outside-tests.** Exactly **2** searches,
+both from the main agent and **0** across all **10** subagent transcripts. Counters read `arcs` 1
+search / 3 results / 0 empty / 0 stale and `research` the same. **That reconciles exactly**, and
+checking why is what killed a wrong hypothesis: search 1 named no corpus so it reached both, search
+2 named `arcs` alone, so `arcs` should read 2. It reads 1 because at 21:48:50 `arcs` was
+**`reindex_required` with `files_remaining: 14`**, returned an empty group, and was correctly not
+counted — §12 counts only the serving states. **The hypothesis that died was mine**: I had read the
+gap as §12's documented contention loss, which fits the observed numbers, is the phenomenon §12
+predicts, and was wrong. What refuted it was reading the tool result the transcript had kept rather
+than reasoning from the counters — **the same route the M22 reviewer took to the wire-denomination
+blocker, and worth copying: go read what the cited evidence actually was.**
+Also confirmed live: the agent read `files_remaining`, polled `list` twice, and re-searched once the
+corpus turned `ok` — the state machinery doing its job with no guidance; `known_knowledge_bases: []`
+present-but-empty; `groups_dropped: false` across two corpora, consistent with the M22 table.
+
+**A first build is never served through, and nobody chose that — it fell out of two milestones
+composing.** §6.3 promises search sees committed state during a build. It did not here: 38 s in,
+with 6 of 20 files committed, `arcs` refused before a query ran. The cause is M20's third
+`reindex_required` cause — **`last_scan_completed_at` is absent** — which holds for the whole of a
+*first* build; and M23 then made the encoder rebuild clear that same key in the drop transaction. So
+§6.3's promise holds for exactly one case, an **incremental refresh of an already-complete corpus**,
+where the previous build's completion instant is still set. A first build and a rebuild both report
+`reindex_required` start to finish. **It may be the right behaviour** — a partial first index
+arguably should refuse — but it is not what §6.3 says, and it is the decision-by-composition class
+this corpus keeps recording. Resolve §6.3 against §8.4 before quoting either.
+
+**The steering artifact is the milestone's best find so far, and it was written by a user rather
+than by us.** `~/Trading/LeibaTrader/CLAUDE.md` §"Searching what has already been written". Four
+things it teaches, ranked:
+
+1. **Withdraw-in-place documentation is adversarial to chunk retrieval, and this design has never
+   named it.** The file warns: *"several arcs record a claim and then its correction… A snippet is a
+   fragment, not a verdict."* A chunk carrying a withdrawn claim is exactly as retrievable as the one
+   carrying its refutation, and **more likely to match**, because the query that motivated the
+   original claim is the query that matches its wording. The memory side solved this — **D25**,
+   structural supersession that demotes rather than hides and labels the row. The knowledge side has
+   no analogue: §7.5's staleness is *file-level* and silent about a document that contradicts itself
+   on purpose. **This repository does the identical thing** — "withdraw claims in place" is a
+   standing rule in our own `CLAUDE.md` — so indexing our own `design/` walks into it, and so does a
+   supersession-heavy RFC tree. **Intra-document supersession has no representation at all.** A
+   design question, not a parameter.
+2. **The shipped `git_mode` default may be backwards for the loop this is used in.** Both corpora
+   were overridden to `all`, with the reason stated: `tracked` *"would leave a newly written arc
+   invisible until it was committed, which is exactly when you most want to find it."* That argument
+   is correct and it is about the dominant workflow — write a document, then search for it. **One
+   user overriding it twice is not proof**; it is the first evidence there is, and the thing to watch
+   for rather than act on.
+3. **The staleness story depends on a human knowing to write an instruction.** The file has to say
+   *"after you write in `arcs/` or `research/`, refresh the index — otherwise what you just wrote is
+   not findable."* Nothing in the product says it, and the failure is the quiet kind. That is §16
+   item 6's reserved-and-inert `knowledge_scan_on_session_start` arriving as a user workaround, which
+   is what an undecided owner looks like in the field.
+4. **Two things went right and should be recorded as wins.** The occasions list — *"the first move
+   whenever you are about to propose a design, a selection criterion, an exit rule, an indicator, or
+   argue that an approach is a dead end"* — is near-verbatim the memory write policy's four
+   detectable occasions, arrived at independently for a different tool, which is corroboration that
+   the occasions formulation transfers. And *"this is a different store from `zikaron_memory_search`,
+   and they answer different questions"* pre-empts by hand the two-stores-compete failure nobody had
+   tested — **and it is only writable because M24 renamed the memory tools.** Before the rename there
+   was no symmetric pair of names to contrast.
+
+**Blocking finding, found by planning the milestone rather than by running it: a swept value cannot
+reach an existing knowledge base.** `rrf_k` and `fusion_depth` are written by
+`meta.defaults_at_creation` and by nothing else — the only other `meta` writes are the four counters
+and `repair`, which writes `embed_model`/`embed_dim` and clears `last_scan_completed_at`. So there is
+**no supported path that changes either key after `add`**, and M25's own done-when ("any parameter
+moved is moved in `meta` with a stated reason") is not executable against a live corpus; the remedies
+are `remove` + `add`, a full rebuild, or hand-editing a row.
+**And §10's own stated criterion says neither belongs there.** It seeds four keys *"so changing a
+global default does not silently invalidate an existing index"*, then says the other three are read
+live *"because none of them describes how an index was built"*. By that test `chunk_max_tokens` and
+`max_file_bytes` are build-time and these two are not — they shape one response and invalidate
+nothing. **The grouping and the justification disagree, and the justification is the half that is
+right.** Candidate fix, not yet taken: per-KB value where `meta` carries one, else configuration at
+search time — which keeps the per-corpus override seeding exists for and unfreezes the key.
+~~**Operator decision owed before track B is worth running**, since it decides whether the sweep's
+output is applicable or merely informative.~~ **— withdrawn as a blocker, on operator challenge, and
+the challenge was right.** The sweep builds throwaway corpora and constructs its own search settings,
+so a frozen key blocks *applying* a tuned value, never *measuring* one. The same is true of the other
+two items this block called blockers: arm weighting is a harness-local change, and the oracle was
+never a decision — it was the work. **All three were end-of-pass decisions dressed as gates**, and
+naming them as gates is what stopped the milestone for a turn. The defect in `meta` is real and still
+owed; it simply owes nothing to this measurement, which ran and moved nothing.
+
+**Two more facts the sweep has to be designed around.** **Arm weighting is not implemented** —
+`ranking.rrf_score` takes no weights and is shared by both subsystems — so sweeping it means a
+harness-local change, and landing it is a new key. Proposed, and matching how M21 closed §16 items 9
+and 11: sweep in the harness, and build the key **only** if a preregistered bar is cleared; otherwise
+close §16 item 3 negative and ship nothing. And **`limit_per_kb`'s default of 5 is not a config key**
+— it is a constant in `mcp/primary.py`'s signature and `dispatch_knowledge.DEFAULT_LIMIT_PER_KB` —
+so moving it is prose plus two constants plus the design's block quotes and their parity tests.
+
+**There is no within-KB relevance oracle, and that is the largest piece of new methodology M25
+needs.** M19 spike C's oracle is mechanical and good and answers *which KB* — cross-KB routing.
+§16 items 1 and 3 are *within-KB ranking* questions and nothing in the corpus can score them.
+Candidate design, to be settled before any harness is written: two mechanically-labelled families,
+each carrying a dial that separates the arms — **identifier → definition site** (bare identifier /
+identifier in prose / the docstring above it with the identifier masked) and **known-item on a masked
+span** (corpus-unique tokens masked at 0 / 50 / 100%). **Stated limit, up front:** this is known-item
+retrieval, and a real agent asking "how do I configure the retry budget" is not doing known-item
+retrieval. The sweep is evidence about ranking mechanics against a proxy task, and the note says so
+beside the numbers rather than after them.
+
+**Sweep corpus: measured, not estimated** (`research/design-doc-repos.md` carries the search; these
+totals are mine, from depth-1 sparse checkouts, counting `.md`/`.rst`/`.txt` only, which is why they
+differ from the note's GitHub-API directory counts).
+
+| corpus | files | bytes | median file | largest |
+|---|---|---|---|---|
+| `cockroachdb/cockroach` `docs/RFCS/` | 188 | 4,121,360 | 17,080 | 181,756 |
+| `MaterializeInc/materialize` `doc/developer/design/` | 142 | 2,271,048 | 12,372 | 79,789 |
+| `pingcap/tidb` `docs/design/` | 116 | 1,613,338 | 9,936 | 99,064 |
+
+**Cockroach is the recommendation**, on the criterion that decides it: median 17 KB and a 182 KB
+maximum is the shape where retrieval has work to do — the filename addresses the RFC's subject and
+nothing addresses where inside it the answer is. A tidy tree of small well-named files is the case
+`ls` and grep already solve, and picking one would measure the corpus rather than the tool. Costs,
+both real: ~~the tree is **frozen since January 2023** (a confound for "did search help", and an
+opportunity for the staleness question)~~, and the repository's licence is proprietary rather than
+permissive — fine for reading and quoting, not for shipping a corpus. `pingcap/tidb` is the
+Apache-2.0 fallback at 40% of the corpus.
+**The frozen claim is withdrawn, checked against the tree 2026-09-18.** `docs/RFCS/` carries
+`20240103_generic_query_plans.md` and `20260420_continuous_backup.md`, so it is **sparse after
+2023, not frozen**; and the commit M25 pinned, `13cb3eb2`, is not an old commit at all but the
+repository's current `master`, dated **2026-09-16**. A reader pairing "frozen since January 2023"
+with that hash would take the checkout to be three years stale, and it is two days old.
+**That difference is load-bearing for anything comparing documents against code**: uniform
+staleness is a clean condition nobody has, while drift that varies per document — most RFCs old,
+a few current — is the real one.
+**No public design-doc tree reaches §16's ~22,800-chunk figure**, which is a *code*-repository
+estimate; the largest available is ~2,900 chunks extrapolating at the two prose ratios now measured
+(1,275 bytes/chunk on `arcs`, 1,417 on this repository's `design/`). **That is an extrapolation and
+not a measurement** — the real count comes from building it.
+
+**Plan.**
+1. ~~**Settle the three decisions above before any code**~~ **— dissolved; see the withdrawal above.
+   None of them gated the measurement.**
+2. **Track A: let it run, and read it periodically.** Nothing to execute. The instrument is the §12
+   counters plus the transcripts, and the transcripts expire on `cleanupPeriodDays` — copy before
+   reading, as already done once.
+3. ~~**Track B: build the sweep corpus and the oracle**~~ **— DONE 2026-09-18.
+   `research/m25-fusion-sweep.md`, preregistered at
+   `research/m25-fusion-sweep-preregistration.md`, harnesses `experiments/m25_build_sweep_corpus.py`
+   and `experiments/m25_fusion_sweep.py`.** Summary below.
+4. ~~**Track C: the description budget** waits on the operator's context reading.~~ **— CLOSED
+   2026-09-18, on the reading, with the outcome "do not cut" and the reading recorded as the
+   reason** — which is one of the two outcomes §M25's done-when allows.
+   **The measurement: `/context` reports MCP tools at `0 tokens`, labelled *loaded on-demand*, and
+   the operator reports it stays at zero even after the agent has loaded the tools.** So the
+   per-turn occupancy the brief's argument rests on is not observable, and by the only instrument
+   available it is zero. **The cut is therefore not made**: it would trade the occasions paragraphs
+   and the poisoning boundary — the one part of a description this corpus has positive evidence
+   for — against a saving nothing can demonstrate.
+   **Two honest limits.** A schema the model loads must arrive *somewhere*, and `/context`
+   attributes it to **Messages**, where it cannot be separated from conversation; so "zero" may mean
+   *not resident* rather than *free*. And the corroborating datum is that **agent bodies behave the
+   same way** — 522 tokens reported for five agents whose files total 33,281 bytes, against ~555
+   predicted from their `name`/`description` frontmatter alone. Only the dispatch listing is
+   resident. **If a future reading can separate loaded schemas from conversation, reopen this**; on
+   what is measurable today, there is nothing to cut.
+5. **The note** — done, `research/m25-fusion-sweep.md`. Four review rounds, no `APPROVED` verdict;
+   see the review-state paragraph above. Do not commit.
+
+**Review state, stated exactly because it is not the usual one: the trail carries NO `APPROVED`
+verdict.** Four rounds, `reviews/m25-fusion-sweep-review.md`. Round 4 found **no blocker**, four
+improvements and six nitpicks, and closed with *"I would approve on those being made, and a fifth
+round need not re-read the note."* All ten are made and the gate is green. **That is a conditional
+approval honoured, not an approval given**, and the difference is worth the sentence: a fifth round
+would cost ~240k subagent tokens to convert a stated condition into a verdict line. Spawn one if the
+verdict matters more than the finding; the findings are all applied either way.
+**What four rounds cost and bought**: 23 findings, of which **7 were blockers and 3 of those moved a
+conclusion** — the bar applied to the wrong quantity, "hybrid beats both arms", and the `rrf_k`
+opposite-optima claim. The rest were stale figures and scope. **The reviewer's own numbers were
+wrong once** (round 2's 146-of-150), and it withdrew one of its own instructions in round 3.
+
+**Track B's result, after four review rounds: the defaults survive the bar that
+matters and fail the bar as written.** Corpus: `cockroachdb/cockroach` `docs/RFCS/` at commit
+`13cb3eb2`, **198 files, 4,135,684 bytes, 2,720 chunks**, built in 367 s on a loaded machine. 252
+cells over `rrf_k` × `fusion_depth` × an arm weight implemented in the harness only. Full output is
+committed at `experiments/results/m25_fusion_sweep.json`. **§16 item 1 closes positive on the one
+valid family; §16 item 3 stays open**, asking about *code* where this corpus is prose. Arm weighting
+is **not built**, per the preregistration's own condition.
+
+**The headline, and it is not the one first written here.** On `heading` — the only family whose
+queries are not substrings of their own answers — the best of 252 cells beats shipped by **+0.0069
+MRR@10**, CI **[−0.0084, +0.0227]**, under a 0.02 bar. **But on the pooled metric the
+preregistration actually named, 48 cells clear every threshold**, the largest by **+0.1314** with a
+CI excluding zero. The procedure fixed in advance *would have shipped a change*; it is refused only
+by re-scoping to the valid family, which was decided after seeing the data.
+**So the transferable finding is about preregistration itself: it protects the threshold, not the
+quantity.** The 0.02 never moved. What moved was *what it was 0.02 of*, and that is the entire
+difference between 48 passing cells and none. **Preregister the quantity — and preregister what
+makes a family admissible — before the families exist.**
+
+- **The instrument needed seven corrections across rounds 1 and 2, and only the first was found
+  without a reviewer.** Three of
+  four families lift their text out of the corpus, so **0.9975 to 1.0000 of their query terms
+  appear verbatim in the true chunk** on average and never below 0.70 on any single query, at every
+  masking rate — they hand the lexical arm the answer. *(An earlier revision said "100.0%, minimum
+  included", measured with a tokenizer that could not see what the arm indexes; corrected once the
+  overlap was tokenized as the lexical arm tokenizes. The conclusion is unchanged and the figure was
+  not.)* The preregistration's claim that masking "starves the lexical arm" is **withdrawn in
+  place** there. **And `heading` was not clean either**, which round 1 found and I had not: the
+  chunk *holding* the heading line, and the heading chunks of **same-titled sections elsewhere**,
+  are guaranteed exact-match non-truth chunks that were being ranked. Filtering them (mean **1.17**
+  chunks per query) moved `heading` **+0.055, from 0.2671 to 0.3226**, so every earlier `heading`
+  figure is superseded. *Title repetition is real but small here — **14 of 150** sampled queries
+  share a title at all; see the mislabelled-field entry below for why a revision of this line said
+  146.*
+- **"Hybrid beats both single arms" is withdrawn.** Shipped beats lexical-only by **+0.0764, CI
+  [+0.0393, +0.1147]** — real. Shipped beats dense-only by **+0.0284, CI [−0.0114, +0.0683]** —
+  **spans zero**. The earlier claim applied a looser standard to a welcome result than the
+  0.02-with-a-CI standard applied to the rejected ones, and compared a max-over-36-cells blend
+  against single-arm columns that barely move — invariant to `rrf_k`, and to depth except at depth
+  10, where the exclusion set can leave the surviving arm short of ten rows.
+- **And the sharpest product finding of the sweep, which the "artefact" framing had buried.** On
+  multi-word verbatim spans the shipped hybrid **discards 27% of the lexical arm's MRR@10** —
+  0.7124 against 0.9780 — and drops the **caller-facing hit@5 from 0.9867 to 0.7733**, so more than
+  one span in five loses its own source chunk from the five results a caller receives. *(Those are
+  post-cap, which is the preregistration's own definition of hit@5; pre-cap the pair is 0.9933
+  against 0.8267, and an earlier revision quoted that.)* The lexical arm puts the answer at rank 1 and fusion drags it
+  down with dense votes for chunks that merely resemble it. On conceptual queries the ordering
+  reverses. **The two classes want opposite weights**, so a global constant cannot serve both — which
+  is the real argument for query-dependent weighting and the strongest thing this run says about
+  §16 item 3. It also refutes the earlier explanation that sibling near-duplicates held `verbatim`
+  down: lexical-only scores 0.978 on the identical queries.
+  *Two scope corrections from review round 2, both narrowing: quote **27%**, not the 27–47% an
+  earlier revision used, since the 47% end is `masked-100` — "text no human would type" by the
+  preregistration's own description. And **error strings and bare identifiers are not in this query
+  set**; what was measured is multi-word contiguous spans with a single known source. They are a
+  neighbouring hypothesis, and a code corpus is what would test them.*
+- **"`rrf_k` is flat" is withdrawn too, and so is the first thing that replaced it.** Flat on
+  `heading` (spread 0.004); emphatically not on exact-phrase queries, where **`rrf_k = 10` beats 60
+  by 0.102 MRR@10** on one family — a small `k` lets a confidently-right arm win (1/11 against
+  1/61). *A revision in between said this showed the families pulling `k` in **different
+  directions**, therefore that the right `k` is query-dependent. **Refuted by the table printed
+  beside it**: every family's maximum is at `k = 10`, `heading` included, and `(60, 10, 0.5)` beats
+  shipped on all four. It also quoted 0.106, which is the 10-vs-**200** span rather than 10-vs-60 —
+  a number carried to three documents before being checked.* **The honest statement: smaller `k`
+  and smaller depth are weakly dominant everywhere**, with gains large only where one arm is
+  confidently right and ~+0.004 on the valid family. Nothing moves, because that is under the
+  bar — **not** because the gain is "confined to families that cannot support a global change",
+  which the +0.004 refutes. The opposite-optima shape is established for the **arm weight** alone.
+  `fusion_depth`'s latency cost is **unmeasured** and was previously asserted; `vec0` brute-forces
+  the table whatever `k` is.
+- **Review round 2's third blocker was refuted by correcting a field name I had got wrong, and the
+  mechanism is worth more than the refutation.** It argued `heading` was invalid because 146 of 150
+  queries carry a duplicated title, at ~9.6 same-titled sections each. **The real figures are 14 of
+  150 and 0.17.** My JSON emitted `heading_queries_with_duplicate_title = 146` and
+  `chunks_excluded_from_ranking = 1595` **counted over every section in the corpus**, not over the
+  sampled queries their names describe. The reviewer read the names, which is the only thing a
+  reader can do. **A mislabelled instrument field is a false claim with a number attached**, and it
+  cost a review round — this corpus's *name the quantity* rule, arriving in a JSON key.
+  **The substantive half stood and was measured anyway**: filtered ranking was half-applied, so the
+  conclusion was re-run under a widened oracle (same-titled bodies count as truth) and a strict one
+  (excluded from the ranking). **All three agree on every sign and every significance decision**,
+  largest disagreement 0.3259 against 0.3226. **Read that as confirming the multiplicity count, not
+  as independent evidence of validity — the agreement is bounded by construction**: with only 14 of
+  150 queries affected, the three oracles could not have differed by more than ~0.09 even in the
+  worst case. The closure does not rest on the choice.
+- **Round 2 found three defects in the instrument itself, and each had a visible symptom nobody
+  read.** (a) **A zero-weight arm still entered the pool** with score 0.0, so whenever the surviving
+  arm returned fewer than ten rows the silenced arm's ranks filled the tail — which made the
+  single-arm cells *not* constant, refuting a "by construction" claim the note used to criticise an
+  earlier revision. Symptom in the output: `(10, 10, 0.0)` scored 0.2515 where `(60, 50, 0.0)`
+  scored 0.2475. (b) **The `text + path` overlap column measured nothing**: this harness tokenized
+  with a three-character, letter-led pattern while the arm uses `unicode61` and `isalnum` runs, so
+  it read `20160210_range_leases` as one token where the arm reads three. Symptom: the column came
+  back *identical to the text-only column to four decimals for all 150 queries*. (c) **The post-cap
+  metrics capped the filtered ranking**, so "a caller sees the capped numbers" was false in the
+  direction that flatters — in production the holding chunk takes one of its file's two slots ahead
+  of truth. **The common shape: an instrument that cannot see a thing reports that the thing is
+  absent, and the absence looks like a finding.** All three printed their own refutation and none
+  was read, which is an argument for diffing an instrument's output against what it should be able
+  to distinguish — not only for reading its conclusions.
+- **A mechanical figure checker now exists, because the sweep-by-grep failed again — and round 3
+  then showed the checker itself was weaker than its docstring claimed.**
+  Round 2 found **six** superseded figures still in the note after I reported sweeping for them; I
+  had grepped the strings I remembered changing. `experiments/m25_verify_note_figures.py` extracts
+  every four-decimal figure and fails unless it appears in the committed run.
+  **Round 3 then found five more, four of them in files the checker did not read** — it opened only
+  the note, while the same figures live in `FINDINGS.md`, `knowledge-index.md`, `schema.md`,
+  `build-plan.md` and a module docstring. It now reads all seven, scoped by section, and asserts
+  that the run's named integers **appear** in the note. *That closes half the hole the stale
+  `27`-against-23 went through and not the other half: the check sees a correct integer **absent**,
+  never a stale one **present**. Claiming otherwise would be this checker's own warning — a check
+  quoted as coverage — turned on itself, which is what an earlier revision of this line did.*
+  **Round 4 also found two guards inside it that could not fail**: a scope marker that stopped
+  matching yielded an empty region, zero figures and `ok`; and the integer check printed its verdict
+  without counting it as a failure. Both now fail, **mutation-verified in both directions**.
+  **And the sharper finding: its oracle was "appears anywhere in the JSON", which accepts by
+  coincidence.** The run holds **1,506** distinct four-decimal values, so a stale figure in [0, 1]
+  reconciles by luck **~15% of the time** — demonstrated, since the note's historical `0.2671`
+  passed only because one unrelated cell carries it as `mrr10_capped_heading`. The rate is now
+  **printed on every run**, and a figure quoted as history or derived in prose must be **declared**
+  with its reason rather than passing by collision. **A mechanical check that reports success at a
+  1-in-7 false-pass rate is worse than none, because it gets quoted as coverage.**
+  **It remains a lint, not a proof**: a figure can reconcile and still be quoted about the wrong
+  quantity, which is what every real blocker in three rounds actually was.
+- **A harness defect, found chasing a reviewer nitpick about a count.** The build never passed an
+  `include` glob, so 9 `.puml` files and **an `.svg`** were indexed alongside the markdown — 20
+  chunks of 2,720. Zero queries draw truth from them, so the effect is 20 extra distractors. An
+  earlier revision of this file explained the 188-vs-198 gap as "md/rst/txt only", which was a
+  reconciliation **invented rather than checked**.
+
+**Not in scope, recorded so they are not mistaken for oversights.** The three design questions this
+entry opens — intra-document supersession, the `git_mode` default, and who owns scan scheduling —
+are findings for the note, not builds for this milestone. And §6.3-versus-§8.4 is a documentation
+reconciliation, which is prose and therefore inside the fence.
+
+**A second load-dependent gate intermittent, diagnosed and FIXED 2026-09-18 — and the way it was
+nearly misfiled is worth more than the fix.**
+`test_client_retries_through_start_if_absent_when_the_server_exits_mid_connect` failed one gate run
+at load ~7 with `ConnectionRefusedError`, then passed **5 of 5** in isolation. **Cause: the fixture
+waited on `sock_path.exists()`.** `bind()` creates the path and `listen()` follows it, so between
+the two the file exists and `connect()` gets `ECONNREFUSED`; under load that window widens enough to
+hit. This is **item 6's own sentence arriving from the other direction** — *"waiting for the socket
+is waiting on the start of the window"* — for a different test, in a different year of the same
+file.
+**Fixed test-side, which item 6's defect could not be**, because acceptance *is* observable where
+handler installation is not: a new `_wait_for_accepting_socket` probes with a real `connect()`.
+**`_wait_for_socket` is deliberately left in place for its other caller** — the test asserting that
+a `SIGTERM` arriving *as soon as the socket appears* still unlinks it, where the gap "is precisely
+what must not exist" and waiting for acceptance would hide the defect the test is for. One helper
+per question. **Verified rather than assumed**: against a socket bound without `listen()`, the old
+helper returns in 0.000 s and the new one raises `TimeoutError` after its full deadline, then
+returns immediately once `listen()` is called.
+**The part to carry: `py-runner` attributed the failure to "the known load-dependent intermittent
+described in FINDINGS.md item 6", and that was confidently, specifically, plausibly wrong.** Item 6
+names a *different* test, which M23 *fixed*. The attribution pattern-matched "load-dependent service
+race" onto the nearest recorded entry. Accepting it would have written a false claim into this file
+**and** left a real defect unfixed, with the flake blamed on something already closed — and it would
+have looked like diligence, because it cited a specific item by number. **A subagent's causal claim
+is evidence to check, not a finding to record**; the check here was one grep for the test's name,
+which returned nothing. This is the corpus's own *name the quantity* rule applied to attribution,
+and it is the sharpest instance yet of why a memory system must make its claims falsifiable rather
+than merely retrievable.
+
+**`ruff format experiments/` reformatted 29 files nobody asked it to, and the gate could not have
+caught it.** `pyproject.toml` has `extend-exclude = ["spikes", "experiments"]`, so `ruff check .`
+skips that tree — but **an explicitly-named path overrides an exclude**, so formatting
+`experiments/` rewrapped every pre-existing harness under `embedder-precision/` plus two older
+ones: 27 files, ~5,000 lines, purely cosmetic, and all of it staged for a commit about something
+else. Caught by reading `git status` before handing off, reverted with `git checkout --`.
+**Two things to carry.** An exclude is not a guard when the path is named explicitly — lint a single
+file, never a directory, when the directory is excluded. And this is the third instance this session
+of the same rule: *do not mutate text you have not read*. The other two were Python replacement
+scripts. **The rule's failure mode is not carelessness about the edit; it is that the blast radius
+is invisible until something enumerates it**, and `git status` is the thing that enumerates it.
+**"Third" is an undercount for that session and was found to be one on 2026-09-20**, by the review
+of the gist fix reading this session's own transcript: every content change to the three shipped
+files after the first three `Edit` calls went through a `python3 - <<'PY'` string-replacement
+script, which is the form `CLAUDE.md` names verbatim as the thing not to do, and which **overrides**
+the ambient instruction to prefer shell tooling that produced them. The artefact survived — each
+replacement asserted exactly one match and eleven review rounds read the result — but rounds 2 and 3
+of that review produced **four cascade findings**, a fix landing in one passage while a neighbour
+kept asserting the pre-fix world, which is precisely the class the rule exists for. The count is
+left as written above and corrected here rather than restated, because what it was believed to be is
+the evidence.
+
+**Two side findings from the same session, neither chased.**
+**814 zero-byte `.sock.lock` files in `/run/user/1000/zikaron`, accumulating since 2026-08-03.** The
+socket hash is deterministic per store directory, so 814 files means 814 distinct store *paths* —
+almost certainly temp stores from test runs leaking into the real runtime directory;
+`tests/test_hook_main.py:195` reads `os.environ.get("XDG_RUNTIME_DIR", "/tmp")`, which is a plausible
+source and not proven to be the only one. Costs no disk, leaks inodes in tmpfs. **A lead, not a
+finding.**
+**Grepping a transcript for tool names overcounts, and M25's own instrument is the transcript.**
+`grep -o '"name":"mcp__zikaron__zikaron_knowledge_[a-z_]*"'` reported 3 `add`, 5 `list`, 1 `refresh`,
+3 `search`, 1 `status`; parsing actual `tool_use` blocks gives **2, 4, 0, 2, 0**. The surplus is tool
+*descriptions* naming other tools. Count by parsing the blocks, never by grepping the names.
+
+**Track C, 2026-09-18: the operator's `/context` reading arrived, and it answers the brief's question
+by refuting its premise — then corrects this file's own arithmetic, which is the bigger finding.**
+Reading taken in `~/Trading/LeibaTrader` (identified by its 5 custom agents against this project's 4):
+
+- **`MCP tools · 24 tools · 0 tokens`, labelled *loaded on-demand*.** M16 found this qualitatively —
+  tools arrive **deferred**, which is why a model cannot name one that is not in its context. This is
+  the quantitative form. **The same is true of agent bodies**: `/context` reports **522 tokens** for
+  5 custom agents whose files total 33,281 bytes (~12.4k tokens if resident), and the
+  `name:`/`description:` frontmatter lines alone are 1,494 bytes ≈ **555 tokens** — within 6% of the
+  reported figure. Only the dispatch listing is resident.
+- **§M25's track C premise is therefore wrong.** The brief argues the description budget matters
+  because *"what a description costs is context-window occupancy on every turn of every session"*,
+  and proposes cutting ~2,827 bytes of *how to read what came back*. If descriptions are deferred,
+  that cost is **not per-turn**. **Do not make the cut on the strength of this alone** — 0 resident
+  tokens does not mean free: a schema the model loads must arrive in the message history, where
+  `/context` attributes it to **Messages** and cannot separate it from conversation. The
+  disambiguating measurement is a **before/after in a fresh session**: `/context`, call one knowledge
+  tool, `/context` again; the jump in Messages is the real cost. Expect ~4.6k tokens if the whole
+  primary server loads at once, far less if it loads per tool. **Owed, and cheap.**
+- **The correction: this corpus has been estimating tokens at 4 bytes each, and the real ratio is
+  ~2.7–2.9.** `/context` gives a genuine tokenizer reading against a byte count anyone can take.
+  LeibaTrader's memory files are exactly `CLAUDE.md` + its `@AGENTS.md` import (no user-level
+  `~/.claude/CLAUDE.md` exists, `STATE.md` says it is not imported, `FINDINGS.md` is not imported
+  there) = **53,333 bytes reported as 19.8k tokens → 2.69 B/token**; the agent-frontmatter figure
+  above gives **2.86** independently. Both on dense technical markdown, which is what this corpus is.
+
+**What that does to the archive pass, whose numbers are in this file two sections up.** Restated at
+2.7–2.9 B/token rather than 4:
+
+| | reported | actual |
+|---|---|---|
+| `FINDINGS.md` before the pass | ~60k | **~83–89k** |
+| `FINDINGS.md` after | ~30k | **~44–47k** |
+| the threshold that forced the original split | ~49k | ~49k |
+
+~~"back under the threshold that forced the original split"~~ **— withdrawn. It is still
+essentially *at* it.** The pass halved the file, which was real and is unchanged; what is false is
+the conclusion drawn from the halving. **Part 2 is therefore necessary rather than tidying**, and the
+always-loaded cost of working in this project is `CLAUDE.md` ~6.9k + `FINDINGS.md` ~47k ≈ **54k
+tokens every session, before a single message**.
+**The lesson is one this file wrote against itself hours earlier and then committed anyway.** The
+archive entry says *"name the method, because the two disagree by 20% and neither is the harness's
+own tokenizer"* — correctly identifying that the estimate was unanchored — and then went on to draw
+a threshold conclusion from the unanchored number. **Naming an uncertainty is not measuring it**, and
+the measurement was one `/context` away the whole time. Take the reading before quoting a token
+count; `/context` against a known byte total is the instrument, and it is free.
+
+0. **M18 — a group too big for the harness to deliver. Built, measured end to end, APPROVED after
+   24 rounds, and landed 2026-09-14** (`reviews/m18-payload-spill-review.md` — round 9 approved
+   the implementation, the end-to-end run then reopened it, and rounds 21–24 were this file's own
+   consistency rather than the milestone's; its artefacts were stable from round 21).
+   Brief: `design/build-plan.md` §M18.
+   `zikaron-mcp`, in consolidator mode only, writes an over-threshold result to a line-paginable
+   file in the runtime directory and returns a pointer; the consolidator reads it with `Read`.
+   **Both bounds are proofs rather than margins** — a token spans at least one byte, so
+   `spill_threshold` (27,000 bytes, a config key) is at most 27,000 tokens against the ≈29,923 the
+   harness was observed to deliver, and `SPILL_MAX_LINE_BYTES` (24,000, fixed) is under `Read`'s
+   25,000. No characters-per-token ratio appears in either. Evidence:
+   `research/claude-code-mcp-result-truncation.md` and `research/consolidation-payload-sizes.md`.
+   **The end-to-end run is done and it changed the milestone.** Evidence, with transcripts copied
+   out of the harness's pruning window to `~/zikaron-m18-evidence/`:
+   `research/m18-spill-end-to-end.md`. The spill works — groups spilled, the consolidator read
+   every file on the exact path, first try, and **did not balk at a pointer that is structurally an
+   injection**, on the shipped guidance alone in a run whose whole prompt was the installed skill's
+   own block. But **`atexit` never fires in production**: the harness terminates its MCP server, so
+   the original cleanup left 217 KB of record prose in tmpfs. Cleanup is now release-on-`next_group`
+   plus a start-of-process sweep, neither depending on a graceful exit; release is verified in that
+   lifecycle, the sweep only in the hermetic tier.
+   **The gate question is answered: it prompts.** Measured in an operator-driven session — `Read`
+   of the runtime directory raises a permission request, and the harness's own option grants that
+   directory **for the session**. A `permissions.allow` entry was considered and **rejected**
+   (reasoning: `design/build-plan.md` §M18; the installer now carries a third note warning the
+   prompt is coming), because `Read` is unscopable in subagent frontmatter, so this is the one
+   place D32's widening is a check an operator answers rather than prose.
+   **One observation from those runs is worth knowing before trusting a consolidation's
+   dispositions.** Given pagination on a deliberately degenerate corpus — five templates rotated
+   twelve times — the consolidator read gists and skipped `content`, then dispositioned members
+   whose prose it had never read. **That was reasonable**: recognising duplicate input and not
+   re-reading it is intelligence, and the fixture invited it. The verb was `discard`, which D16
+   keeps recoverable. What it leaves is that compliance with the pointer's "read it, to its end"
+   is **unmeasured on real prose** in either direction — `research/m18-spill-end-to-end.md`
+   §"Windowed reading".
+   **And one methodological finding worth more than the feature.** Repeatedly in this milestone —
+   the review file has the running record, and it kept growing after every round that claimed to
+   have ended it — prose asserted what the adjacent code or transcript contradicted: a test
+   asserting a process lifecycle the harness never provides, a docstring claiming a cleanup policy
+   the code did not implement, an experiment whose own prompt primed the behaviour it measured, a
+   "corrected" docstring restating a lemma the note beside it had just withdrawn, and this very
+   entry having opened with a claim a later line of it refuted. **Not one was caught by ruff,
+   mypy, the full test suite or 97% coverage.** Every one was caught by a reader comparing a
+   sentence against the thing it described. Two mechanical causes, both mine: edits applied with a
+   replace-once and checked with an assert that cannot fail on a partial fix; and audits that
+   enumerate the *phrasings* a reviewer quoted rather than the *claim*, so the same assertion
+   survives in other words. The check that catches it is reading the changed passage end to end
+   after editing.
+   **Two facts worth carrying, both measured against the operator's real store:** spilling is the
+   *majority* path on a mature corpus (67 of 116 groups), so this is ordinary behaviour rather
+   than a rare fallback; and a candidate-trimming alternative was rejected because it loses data —
+   12–33% of candidates at any budget that fits reliably.
+
+0. **M17 — the cold start loses the race it was given. Built, reviewed (APPROVED, seven rounds),
+   and measured. Landed 2026-08-25 as "M17: the same wait, on the other side of the deadline"**,
+   with the pytest-asyncio fixture-scope pin following it as a separate commit. What it built:
+   `BackgroundLoadedEncoder` in `core/indexing/encoder.py`, `assemble` split open-vs-create,
+   `lifecycle.stop_on_encoder_failure`, and two new test files. `./check.sh` exited 0 at landing
+   (1738 passed, coverage 97.65%, and **zero warnings** — the five it used to emit came from the
+   nested pytester sessions in `test_harness_tier_guard.py`, not from the outer run, which is why
+   setting the option in `pyproject.toml` alone did not silence them). The mutations verified
+   **included** an eager artifact read in `assemble`, deleting the width check, and gutting the
+   self-stop teardown; the exercise found one of the *new tests* vacuous: it asserted a gate had
+   not been released where the gate used a timeout, so it passed while `assemble` blocked for the
+   full five seconds. Fixed and re-verified. **A test written to catch a wrong claim can itself be
+   the wrong claim**, and only mutation showed it.
+   **The A/B is done, on an idle machine, and the defect was reproduced on demand before being
+   fixed.** Full detail, both arms, both conditions and three caveats:
+   `research/m17-cold-start-ab.md`; harnesses `experiments/m17_cold_start_ab.py` and
+   `experiments/m17_hook_outcome.sh`, both re-runnable. Socket-ready **805 ms → 242 ms** idle and
+   **1157 ms → 395 ms** under load, against the hook's 1200 ms poll deadline. Through the shipped
+   `zikaron-hook` under load: old **0/5** clean pushes — 241 B of degrade relay and a `transport`
+   line in `hook.log` every time, which is byte-for-byte the LeibaTrader production failure — and
+   new **5/5**, full 1513 B block, `hook.log` never created, at *higher* load than the old arm.
+   **The fix makes nothing faster and that is the point:** end-to-end is unchanged (827 → 809 ms
+   idle) and under load the new arm's `surface` is *slower*, because the load that used to precede
+   the bind is now paid inside the request. What moved is which side of the deadline the wait falls
+   on.
+   **Read the caveats before quoting any of it**, one of which matters for how this is tested in
+   future: **the defect is load-dependent, so an idle machine cannot demonstrate it** — at idle the
+   old code wins the race 3/3 and an outcome test passes on both arms.
+   Brief: `design/build-plan.md` §M17, which is self-contained and carries every measurement, the
+   design options with their trades, and — most importantly — **the attempt that was already made
+   and reverted**, so it is not made twice. One-line version of what it fixed: the first user
+   message after any idle gap *lost* its injected memories, because a cold service took ~1.2 s to
+   bind against the hook's 1.2 s readiness deadline, and `FastEmbedEncoder.load()` was 1059 ms of
+   that. Priority item 6 below and the superseded diagnosis paragraphs after it carry the numbers.
+   **The design is option (d), operator decision 2026-08-19** after two review rounds
+   (`reviews/m17-cold-start-review.md`): load in a background thread, and validate the artifact
+   against the store's recorded identity *inside that thread* the moment the load returns, latching
+   the failure for every blocking accessor to raise. **Correction to the entry this replaces, which
+   said deferral "does not work":** deferral works — `assemble` drops ~1100 ms to 245 ms on the open
+   path. What did not work was deferring *without* satisfying `IndexingContext.__post_init__`, which
+   reads `encoder.model_name`/`.dim` during assembly and pulls the model straight back onto the
+   critical path (measured 1224 ms versus 1216 ms). The wrapper answers those two properties
+   immediately from the expected identity; the measured check moves into the loader.
+   **Three things the review established that are worth knowing before touching this**, all verified
+   against the code: `Store.open` already performs the config-vs-store comparison on every open
+   (`store.py:472-475`, invariant 11), so the operator-error case never depended on this guard;
+   the wrapper, the latched-failure channel and the self-stop are **common cost** under every design
+   considered, because `FastEmbedEncoder.load` fails after the bind for non-identity reasons too;
+   and the hook's binding constraint is the 1.2 s *connect* deadline, not its 2.0 s total, which is
+   why moving the load past the bind changes the outcome rather than merely the timing.
+0. **M16 — the dogfooding checkpoint under Claude Code. Landed 2026-08-16, APPROVED after five
+   rounds (`reviews/m16-dogfood-checkpoint-review.md`), the last milestone of the port.** Brief:
+   `design/build-plan.md` §M16; what it inherits is in the resume block above. It **gated items 1
+   and 2**; item 2 closed with it, item 1 remains open. Both needed the memory tools and the push
+   hook live in whichever harness the work happens in — and after M15 that is a matter of running
+   the installer, not of building anything. The M13–M15 detail a fresh session might go looking
+   for is in the briefs and in `FINDINGS-archive.md`; nothing outstanding remains in any of them.
+
+   **M16's dogfooding half is DONE, 2026-08-16. Evidence:
+   `research/claude-code-dogfood-checkpoint.md`; raw artefacts in `~/zikaron-m16-evidence/` —
+   `store.db` plus both session transcripts and the consolidator's, since Claude Code prunes
+   `~/.claude/projects/` on `cleanupPeriodDays` and the note's every quoted line came from
+   there.** Every done-when clause is met and five findings arrived that the brief did not ask
+   for. **Read the note before proposing anything about the write
+   policy, the budget, or recall** — it is the only measurement of this system under real use by an
+   agent that was never told to use it.
+   What it settled: **three** approval gates, not two (folder trust reads our `permissions.allow`
+   back at the user as a warning); MCP tools arrive **deferred**, so the policy's tool-name
+   substitution is what makes them discoverable at all; the injection budget counts **UTF-16 code
+   units**, measured by astral bisection, closing open question 11 outright; **link coverage 1.00**;
+   the consolidator ran under the alias `sonnet` resolving to `claude-sonnet-5` **in the harness's
+   own transcript**, which measures `harness.md`'s no-column escape hatch true.
+   What it opened: open questions 13–15 below.
+
+   **How M16 was executed, and why the obvious reading of the brief is wrong.** The brief says
+   "against this repository's own seeded store or a throwaway"; a fresh session reads that as
+   *install into this repo*, which is what this session first proposed and the operator corrected.
+   - **Under kiro, dogfooding was a *controlled* experiment and the control is easy to lose.**
+     `.kiro/agents/zikaron-dogfood.json` carried its **own** `hooks` and `mcpServers`, and its
+     prompt says nothing about memory *on purpose*, so the only guidance it gets is the shipped
+     write policy. The crew agents were never the subject here. `FINDINGS-archive.md` line ~871
+     flagged that Claude Code's directory-scoped settings would destroy this, and it was never
+     resolved until now.
+   - **The direct translation is dead twice over.** A Claude Code subagent gets no MCP registration
+     of its own (frontmatter `mcpServers:` is *silently ignored*) and `UserPromptSubmit` never
+     fires for subagents, so a subagent cannot receive push at all. The dogfood agent must be a
+     **top-level** session (`claude --agent zikaron-dogfood`).
+   - **The arrangement: an empty throwaway at `~/zk-dogfood`**, project-wide install, operator
+     driving a memory-naive agent. Not this repo (the crew's wiring and my own memory-saturated
+     prompt are confounds) and not a clone of it (drags in the same confounds plus a store).
+     A throwaway also tests the **shipped** arrangement rather than a bespoke one, and is the only
+     place the inherited approval-gate question is cleanly askable, since this repo may hold cached
+     approvals.
+   - **The corpus is shell scripting**, operator's choice: conventions plus the gotchas that are
+     unlearnable from code (`set -e` not firing in a pipeline without `pipefail`, `[[ ]]` under
+     `#!/bin/sh`, `local x=$(cmd)` swallowing the exit code). Fast to test, and it sets up a real
+     test of D30's scope line — a convention is *not* derivable from an empty project but *is*
+     derivable once three scripts exist.
+   - **Recall needs two sessions, not one.** Session 1 works and writes; session 2 starts cold on
+     related work while we watch whether it searches unprompted. The baseline is **opened** at this
+     boundary, not established. **Done, and the answer was push rather than pull**: the restarted
+     session had the convention in its *first thought*, four seconds before it called any tool,
+     from the injected block alone — then pulled for the detail. Push triaged, pull deepened.
+   - **Measured on the way, and new to this corpus** (`/tmp/zk-settings-probe`, n=1): `claude -p
+     --settings <file>` fires a `UserPromptSubmit` hook declared in that file and its stdout reaches
+     the model, while the identical command in the same directory **without** the flag gets nothing.
+     So hook wiring can be scoped **per launch**, not only per directory — the mechanism that would
+     preserve a kiro-style control arm inside a directory hosting other sessions. Descoped from M16
+     by the throwaway decision; recorded so it is not re-derived.
+
+**Superseded 2026-08-25 by M17 (the M17 priority item above): the loss described below is fixed
+and measured. Kept as the production diagnosis that motivated it.**
+
+**The first message after any idle gap loses push, observed in production twice.** Recorded
+2026-08-19 from `~/Trading/LeibaTrader`, and diagnosed only because the idle-stop log added the day
+before existed. The store's own logs give the whole chain: `stopping: reason=idle idle_for=1810.5s`
+at 03:34, a new service started by start-if-absent at 15:57:09, and `transport` in `hook.log` at
+15:57:10 — the hook gave up ~1 s after spawning it. The service was fine; it was not *ready*.
+`HEALTH_POLL_DEADLINE_SECONDS` is 1.2 s and a real cold start needs ~1.2 s merely to bind, because
+`main.py` assembles before binding. **The warm helper does not cover this**: it fires on
+`SessionStart`, so it protects the first message of a *session*, not the first message after the
+service idles out *within* one. Both observed failures are ~20:57 UTC a day apart — the first
+message after an overnight break, which is also the message most likely to need memory. The loss is
+bounded and self-healing (the spawned service stays up, so the next message is warm), but it is one
+push per idle gap, every day. **Measured breakdown of the ~1.2 s, which is what makes the fix cheap
+to argue:** imports ~270 ms, config and store open ~140 ms, **`FastEmbedEncoder.load()` 1059 ms**,
+first embed 7 ms. So **88% of the cold start is a component the socket bind does not depend on.**
+`assemble`'s stated reason for preceding the bind — "rather than binding a socket for a store it
+could not open" — is an argument about the *store*, and it is being applied to the encoder, which is
+not the same thing. Note the one real constraint: `Store.create` genuinely needs the encoder (it
+checks `embedder.dim`/`.model_name` before any table exists), so only the **open** path can defer it
+— and the cold-start-after-idle case is always an open.
+
+**Superseded 2026-08-25 by M17, which took a third path — option (d), the wrapper answering
+identity from expectation with the measured check moved into the loader thread. Neither path below
+was taken, as predicted. Kept for the measurements.**
+
+**The obvious fix was built, measured, and does not work — reverted, with the reason.** Deferring
+`FastEmbedEncoder.load()` to a background thread so the socket binds first changed socket-ready
+latency **not at all**: 1224 ms deferred versus 1216 ms eager, three runs each on a pre-existing
+store. The cause is a claim this session asserted in a docstring without checking, which is the same
+failure mode the D17 review caught twice: *"nothing between here and the bind touches the returned
+encoder"* is **false**. `IndexingContext.__post_init__` reads `encoder.model_name` and `encoder.dim`
+to check them against the store's recorded identity — a guard with a good reason ("an encoder that
+disagrees would write vectors labelled with a model that did not produce them") — so assembly blocks
+on the load regardless of when the load was started. Found by disabling the load thread entirely and
+watching the service hang, then capturing the stack of whoever touched it. **What the measurements
+do establish, and they are the useful part.** `assemble` itself drops from ~1100 ms to **245 ms** on
+the open path when the encoder is deferred, so the deferral works; it is the eager identity check
+that puts the model back on the critical path. And the guard does not actually need a *loaded*
+model: `TextEmbedding.list_supported_models()` returns the dimension in **0.4 ms**, with the 638 ms
+it appeared to cost being the `fastembed` import that the service pays anyway — importantly,
+`zikaron.service.main` imports in ~360 ms and therefore does **not** import fastembed eagerly, so a
+dim lookup would drag that import onto the critical path unless the check is restated. **Two paths,
+neither taken here.** Answer `model_name`/`dim` from metadata rather than from a loaded model, which
+keeps the guard exactly as strong; or compare the *config's* `embed_model` against the store's
+recorded one, which is free and needs no encoder but validates configuration rather than the
+artifact actually in hand. Both change a validated component and belong in a milestone with a brief,
+not in a session's tail.
+
+
+## Open questions that closed (moved out of FINDINGS 2026-09-20)
+
+**Why these moved, when the milestone rule did not cover them.** `FINDINGS.md`'s archiving rule is
+written about *milestones*, and milestones were never what made the file large. Measured on
+2026-09-20: **39% of the file was text that had been struck through and kept**, and the
+`## Open questions` section — 40 KB over seventeen entries — was carrying entries **marked CLOSED
+or RESOLVED years of milestones ago**, in full, because nothing in the rule said to move an open
+question that had stopped being open.
+
+**Each entry below leaves a numbered stub behind in `FINDINGS.md`.** The numbers are load-bearing:
+open questions are cited by number from `design/`, `research/` and `reviews/` files, where a silent
+renumber would be undetectable. A stub records what the answer was and points here.
+
+**Moved byte-for-byte, and "this file" inside them means `FINDINGS.md`**, where they were written.
+
+**What is deliberately *not* here.** Questions 1, 2, 3, 5, 6, 7, 8, 9, 12 and 14 stayed, being
+genuinely open or only partly answered — including question 9 (evaluation, parked with its state
+complete) and question 12 (consolidation merging, the largest single live entry at 7 KB).
+
+| # | subject | how it closed |
+|---|---|---|
+| 3 *(superseded original)* | the real length distribution of memories is unknown | superseded in place by the measured distribution, which stays live |
+| 4 | hook→service transport | resolved 2026-08-01 by M0 spike 3; what remained was integration-test material for M9, not a design question |
+| 10 | consolidation-lease takeover | caller specified, both premises measured 2026-08-02; one narrow liveness item stayed open and is in the stub |
+| 11 | nothing bounds a gist's length in bytes | CLOSED in M14 by a **character** bound, its unit then measured in M16 by astral bisection |
+| 13 | two write-policy scope rules disagree | RESOLVED and shipped 2026-08-16 — a general fact enters as the decision it forced here |
+| 15 | records cross-reference each other by gist prose | RESOLVED and shipped 2026-08-16 — point at a record by its subject, never by quoting its gist |
+
+---
+
+3. **The real length distribution of memories is unknown.** D28 settles the chunking mechanism, but its
+   parameters rest on zero real data, and the benchmark's six over-length fixtures turned out to be one
+   template wearing six hats. `token_count` and the `truncated` canary are instrumented so revisiting
+   `chunk_max_tokens` — and chunking itself — becomes a measurement.
+4. **Hook→service transport: designed, and now smoke-tested (M0, spike 3).** D31 settles the shape.
+   **Resolved 2026-08-01:** RPC round-trip latency (cold start-if-absent ~101 ms end to end, dominated by
+   interpreter start; warm p50 0.146 ms over an established connection); `busy_timeout` at 5 s behaves exactly
+   as documented under two real writers, once the service's own blocking `sqlite3` calls are kept off the
+   event loop — getting that wrong produces a self-inflicted deadlock that *presents* as a `busy_timeout`
+   failure, which is now a normative note in `design/architecture.md`; start-if-absent holds under two clients
+   racing the same cold store, converging on one server with no thundering herd; and the connect-as-server-
+   exits race is real and reproducible, with the client's own retry-through-start-if-absent logic recovering
+   unmodified. Measurements: `research/spike-results.md` §"Spike 3". **Still open:** none of this was measured
+   from an actual hook process invocation (the spike used a plain client script, not the real
+   `zikaron-hook`/`zikaron-mcp` clients, which do not exist yet), and **whether a consolidation lease survives
+   a service restart in practice is untouched** — M0 had no consolidation state to restart against. Both are
+   real integration-test material for M9 rather than open design questions. **Three earlier sub-items closed
+   2026-08-01.** The `/proc`-ancestry unknowns
+   (process topology, Linux-only `/proc`, pid namespaces, the MCP-first race) are gone with the rung — see
+   current-state item 4. The round-7 `session_client` resolution-write cost is gone with the write: the preamble
+   no longer touches the store. And **where hook stdout lands is now partly answered**: it arrives as a context
+   entry framed *"I have gathered this context from valuable programmatic script hooks"*, positioned **before**
+   the user message in the same turn. **The size-cap half is now closed and the answer is a number**: every
+   object-format hook entry takes `max_output_size`, default **10240 bytes**, and overrunning it truncates
+   **silently**. Shipped entries state **65536** explicitly. What that does *not* buy is a proof — see open
+   question 11. What stays open here is that placement is *early*, which contradicts `~/Memory`'s "place
+   surfaced memories late" lesson; we cannot choose.
+   Worth noting the framing instructs the model to follow requests found in the injected text, directly against
+   the untrusted-reference-data preamble `retrieval.md` puts on the push block. Still to carry from
+   `~/Memory`: keep surfacing ephemeral and exclude it from the summarizer input — kiro exposes
+   `compaction.excludeMessages` and `compaction.excludeContextWindowPercent`.
+10. **Takeover's caller is specified and its premises are now measured — one item remains open.** The
+   consolidation lease is taken over by an explicit `plan_groups`, on the reasoning that a human
+   reinvoking the skill is the only liveness evidence that exists. A targeted review caught that nothing
+   *converted* that invocation into the call: a fresh consolidator's own first tool call is `next_group`,
+   which refuses a live foreign run, so the takeover path was unreachable through the real client path.
+   The bridge is now **built and tested, not only specified** — `zikaron-mcp` calls `plan_groups` with its
+   own `(session_id, pid)`, **lazily, immediately before the first `next_group` it forwards, and at most
+   once *successfully* per client process**, exactly the three-state machine (`unplanned | ready | failed`)
+   M10's `_PlanBridge` implements, including its own awkward transition (a first `plan_groups` answering
+   `store_busy` leaves the client `unplanned` so a retry replans) and, found during M10's own review, its
+   cancellation edge: a tool call cancelled while `plan_groups`'s *response* is still in flight moves the
+   bridge straight to the terminal `failed` state rather than back to `unplanned`, since the takeover may
+   already have committed on the service side by the time the cancellation reached the client, and a
+   mistaken retry there would risk the second successful takeover the whole "at most one" bound exists to
+   rule out.
+   **Both premises were measured 2026-08-02** (`research/kiro-mcp-lifecycle-probe.md`): kiro runs one MCP
+   server process **per agent instance**, so each invocation carries its own fresh takeover guard — the
+   process supplies the guard, not a limit on attempts, since a failed plan displaces nobody; and the handshake is
+   **eager**, which is why the call is made lazily on the first forwarded `next_group` — a start-wired call
+   would take the
+   lock before the model had been asked anything, so a spawn that then did nothing would displace a live
+   worker for nothing. The operator's constraint, stated directly: *do not take the consolidation lock
+   unless we plan to consolidate.* **Still open:** whether kiro ever restarts a client mid-subagent for its
+   own reasons, which would supply a fresh guard for the next forwarded `next_group` to consume with no new
+   human invocation behind it. Three instances showed no such restart,
+   which is weak evidence at that sample size, and nothing depends on it being false — a spurious takeover
+   costs one worker's in-flight reasoning, never a journal row.
+
+11. ~~**Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**~~
+   **CLOSED in M14, and its last assumption removed by measurement in M16** — by a **character** bound
+   rather than the byte bound this entry proposed, counted in
+   UTF-16 code units, which bounds bytes for both harnesses at once. **M16 measured the unit itself**,
+   by the astral bisection `harness.md` reserved for it: 6,000 astral code points (12,000 UTF-16 units)
+   **truncate** while 4,600 (9,200 units) survive, which refutes the code-point reading; bytes were
+   already refuted by 27,016 B of `漢` arriving whole. UTF-16 code units survive all five data points.
+   So `exceeds_injection_budget`'s unit is now the **measured** one rather than the conservative one
+   that merely upper-bounded the candidates. Detail and the arithmetic: current-state
+   item 3. The original text stands below, per this project's withdraw-in-place rule; the diagnosis was right
+   and only the unit was wrong.
+   Original text:
+   **Nothing bounds a gist's length in bytes, and the hook's output cap is therefore unprovable.**
+   Found at distribution time, measured rather than reasoned: `gist_max_tokens` (default 64, maximum 256)
+   bounds **tokens**, and the deployed WordPiece tokenizer maps anything outside its vocabulary to a single
+   `[UNK]` — so an unbroken 4000-character run counts as **one token**, as do 256 emoji. A gist that passes
+   every bound the write path states can therefore be arbitrarily long in bytes, and five of them overflow
+   any `max_output_size`, after which the harness truncates the injected block in silence. Ordinary prose
+   is nowhere near it: the shipped policy is 2950 B and five prose gists at the 256-token ceiling are a few
+   kB, both far inside 65536. The fix is a byte bound on `gist` in `schema.md` §Bounds — a write-path
+   change, deliberately not made inside a distribution milestone. Asserted as a test
+   (`tests/test_install_limits.py`), stated in `architecture.md` §"The install contract", and named in the
+   README's troubleshooting notes so it is not a limit only a test knows. **An earlier version of that test
+   asserted the opposite**, by multiplying tokens by an invented four-bytes-per-token factor and calling the
+   product a worst case — the review caught it, and the lesson is the corpus's own: name the quantity before
+   quoting a number about it.
+13. **The write policy contains two scope rules that disagree, and an agent obeying it cannot obey
+   both.** Opened by M16. The policy says *"could you learn it by reading the code? If yes, leave it
+   out … This store is for what cost someone time to discover"* **and** *"Not worth recording: …
+   facts about a language or tool in general rather than about this project."* `[[ -f ]]` follows
+   symlinks is not learnable from this repo's code and cost a real bug (rule 1 admits it) and is a
+   fact about a tool in general (rule 2 excludes it). The dogfood agent resolved toward the
+   prohibition and said so.
+   **An earlier version of this entry blamed the agent for drifting from the policy; that is
+   withdrawn** — grepping the shipped text before propagating the claim is the only reason it did not
+   reach the design. **The agent's own boundary is coherent and may be the right answer**: it excluded
+   the general bash fact and *recorded* "`find` here is a shell function wrapping bfs", equally a fact
+   about a tool but about **this environment**. General-tool-behaviour out, this-environment-behaviour
+   in — which is neither sentence's stated rule. What has to be decided is which rule governs
+   general-but-hard-won knowledge. **The conflict is one quadrant, and it is plausibly the largest one**: general
+   facts that are not learnable from this code and cost time here — `set -e` not firing in a pipeline
+   without `pipefail`, `[[ -f ]]` following symlinks, `local x=$(cmd)` swallowing the exit code. Much
+   of what bites a coding agent plausibly lives there — an argument from experience, not a measurement. Three costs follow: two agents obeying one policy make
+   different calls on the same fact, which is a correctness problem for a shared store; whichever rule
+   governs governs the highest-volume category; and consolidation inherits the ambiguity, since it
+   cannot judge "is this one finding?" consistently against an inconsistent scope.
+   **The tempting fix — recast the test as "will this bite someone again here?" — should be rejected,
+   by this corpus's own evidence.** The 2026-08-14 change replaced "search whenever you are about to
+   spend real effort" with four *detectable occasions* precisely because a self-assessment fails
+   mid-task; "will this recur?" is the same shape of prediction and fails the same way. Prefer a test
+   evaluable by inspection.
+   **RESOLVED and shipped 2026-08-16: a general fact enters as the decision it forced here, not as an
+   encyclopedia entry.** The "not worth recording" clause now reads *"a general fact about a language
+   or tool on its own — record the decision it forced here instead"*, with a worked example. That keeps
+   rule 2's encyclopedia out, honours rule 1's "cost someone time" by recording the consequence, and
+   leaves the record genuinely about this project — and it is what the dogfood agent produced anyway
+   when it wrote its convention record. It is also **evaluable by inspection**: "what did this fact
+   make me do here?" is a question about the past, and if the answer is nothing it stays out.
+   **The example is deliberately not shell-shaped**, on operator direction: a language-specific example
+   in a general-purpose policy biases the agent, and ours would have overfitted the policy to the one
+   corpus we happened to dogfood on. It uses a test runner, which every ecosystem has.
+   **Rejected on the way: recasting the test as "will this bite someone again here?"** — it predicts
+   value best but is a *prediction*, and the 2026-08-14 change replaced a self-assessment with four
+   detectable occasions precisely because self-assessment fails mid-task. Same shape, same failure.
+   Widening has a real cost — a store of manual-copyable trivia is
+   what rule 2 exists to prevent, and that is why the clause narrows the *form* rather than the scope.
+   The constant and `design/write-policy.md` moved in lockstep;
+   `tests/test_hook_write_policy.py` parses the document and compares. **Checked, not assumed:** the
+   consolidator prompt carries gist-*authoring* guidance but no scope language, since it decides
+   grouping and merging rather than what to record, so it needed no mirror.
+   **Unmeasured, and named as such:** whether this changes what agents actually write. The M16 write
+   corpus is n=4 records.
+15. **Records cross-reference each other by gist prose, and a gist is not a stable address.** Observed
+   twice in M16, once per session — twice in two sessions by one agent on one model is a pattern worth
+   designing for, not yet a law: *"the record whose gist
+   begins 'dirdiff.sh is POSIX sh for BSD portability'"*. The schema has no relation field but
+   `superseded_by` (D27), so the agent built a soft link out of prose — and **that gist had already been
+   rewritten once**, by an `amend` four minutes earlier. The failure is the
+   worst-shaped one D11 can catch least: nothing fails loudly, the reference just stops resolving.
+   **The agent had the uuid both times** — in the dedup payload and in its own `fetch` — and
+   *preferred* gist prose as the address anyway. So this is a choice rather than a workaround for a
+   missing identifier, and that is what motivates fixing the *form* of the reference rather than
+   exposing uuids better.
+   **The first proposed fix — "cite by uuid, never by gist text" — was wrong, and the operator
+   refuted it the same day.** Three counts. A uuid is **opaque to a human**, and this store is meant to
+   be auditable and user-editable. A uuid **cannot be re-found semantically** when it does fail — store
+   rebuilt, copied between projects, or a digit hallucinated — while prose degrades into a search. And
+   **a hallucinated uuid is undetectable** where a hallucinated description is obviously wrong to a
+   reader, which matters because the agent authors the citation from what it just read. The specific
+   worry that prompted the proposal does not even hold: `fetch` calls `load()` with **no active
+   filter** and returns `active` as a field, so D16's never-`DELETE` rule makes a uuid permanent — a
+   retired record still resolves. The evidence was also weaker than stated: a citation quoting a
+   rewritten gist stays *usable*, because a reader resolves it by searching rather than by exact match.
+   **So the defect is narrower and the fix is one word.** It is not prose-instead-of-uuid; it is
+   **quoting a mutable field verbatim as though it were an identifier**. A citation to the *subject*
+   ("the dirdiff.sh POSIX/BSD portability record") has none of the problem; one that quotes today's
+   gist string does. A uuid is at best a belt-and-braces addition alongside the description, never the
+   primary.
+   **RESOLVED and shipped 2026-08-16**, one line in the policy beside the gist guidance: *"Point at
+   another record by its subject, not by quoting its gist. A gist is rewritten whenever its record is
+   corrected, so a quoted gist becomes a pointer to text that no longer exists."* A second reason this
+   beats a uuid, noticed while checking whether the consolidator prompt needed a mirror: **consolidation
+   is the actor most likely to rewrite a gist**, and a subject-shaped reference survives that *by
+   construction*, with nothing needing to be told to the consolidator at all.
+   Whether a real relation field is wanted is a separate and larger question that D27
+   deliberately closed once.
+
+
+## Closed priority items and the Amazon Q source traces (moved out of FINDINGS 2026-09-20)
+
+**The third and last pass of the day.** The first two moved finished *milestones* and *closed open
+questions*. What was left is measured here so the next person does not go looking for a culprit
+that is not there: after those passes the top fourteen entries were **36% of the file and the
+largest was 5%**. `FINDINGS.md` is not large because of a few giants — it is **uniformly verbose**,
+roughly 250 entries averaging 500 bytes, each carrying its measurement, its method and the lesson
+it taught.
+
+**A diagnosis this session got wrong, recorded because it nearly drove a bad edit.** Withdrawn-in-place
+text was reported as **39% of the file**. It is **5%** — 7.4 KB across 43 small regions. The 39%
+came from counting whole *paragraphs containing* a strikethrough, and this file has paragraphs
+without internal blank lines, so one of them swallowed an entire section. Compressing struck text
+to pointers would save about 4 KB and would spend the evidential value that `CLAUDE.md`'s
+withdraw-in-place rule exists to protect. **It was not done, deliberately.**
+
+**What moved here instead** — four priority items whose own text says they are done, and the two
+Amazon Q source traces, that arc having been closed by the kiro head-to-head:
+
+| what | why it stopped being live |
+|---|---|
+| item 2, read the recall instrument | done in M16; the number is a fresh baseline not to be compared across the harness boundary |
+| item 3, a byte bound on `gist` | done in M14 as a **character** bound, unit measured in M16 |
+| item 4, the installer and *same install, older version* | fixed in M15 by a content comparison |
+| item 6, a known load-dependent intermittent | FIXED 2026-09-16 in the product, not the test |
+| the Amazon Q integration and engine traces | superseded by `research/kiro-knowledge-head-to-head.md`, and re-read as evidence about one rushed implementation rather than about the design space |
+
+**Each leaves a stub in `FINDINGS.md`** carrying whatever is still live — item 3's arithmetic is
+cited by the injection-budget work, item 6's coverage-variance measurement still governs whether
+`fail_under` may be raised, and the Amazon Q entry still owes its one genuinely portable idea.
+**The `0.`/numbered scheme is preserved**: these items are cited by number from `design/`,
+`research/` and `reviews/`, where a silent renumber is undetectable.
+
+**Moved byte-for-byte. "This file" inside them means `FINDINGS.md`**, where they were written.
+
+---
+
+2. ~~**Read the recall instrument.**~~ **— done in M16, and the number is a fresh baseline that must
+   not be compared across the harness boundary.** Claude Code, memory-naive `zikaron-dogfood` agent,
+   **zero operator nudges**: **0.83 searches per user turn** over 2 sessions and 6 turns, every turn
+   containing a search or a write, and of the **3** searches issued after the store held anything
+   **0 came back empty** — the other 2 hit an empty store on turn 1. The
+   conditions are the number — tiny n, one task family, a store that grew 0 → 4 records *during* the
+   measurement. Full table and caveats: `research/claude-code-dogfood-checkpoint.md` §10.
+   **The prose was enough for the framing half.** Recall fired on turn 1, unprompted, and the agent
+   *named the policy's own occasion in its reasoning first*: "Since I'm about to propose a script
+   design, it's worth doing a quick memory search." The proposal gate fired twice in user-facing
+   text, including the "found nothing relevant" case it was written for. **Fired as designed, twice,
+   unprompted** — deliberately not "it earns its sentence", since the keep-or-wind-down decision has
+   its own named criterion and two firings do not settle it; the researcher's objection is withdrawn. **The mechanism half is untouched**: every search
+   in the checkpoint happened at task-framing time, so open question 1's mid-task moment — twenty
+   tool calls in, where no injectable hook fires — is still the real work.
+   Original text: *"`search` calls per session; its pre-change value is **0** across 17
+   hours of real work, which is what the recall paragraph was added to move. One working session answers
+   whether prose was enough or whether the mechanism half of open question 1 is the real work."*
+3. ~~**A byte bound on `gist`**~~ **— done in M14, and it is a *character* bound rather than a byte one.**
+   `GIST_MAX_CHARACTERS = 1024`, a fixed constant in `core/indexing/chunking.py`, enforced in the
+   preflight ahead of the token bound and reported against field `gist.characters` (the error payload
+   carries no unit, so the field name must). **Counted in UTF-16 code units, not code points** — the same
+   conservative unit the injection budget uses, because the two halves of one argument must measure the
+   same thing; the review caught the first version counting code points here while the budget counted
+   units, which made the worst case (five all-astral gists, 11,207 units) exceed the budget the bound
+   exists to prove. Units bound bytes because UTF-8 needs at most **3 bytes per UTF-16 unit** — and the
+   widest per unit is therefore a 3-byte BMP character, *not* a 4-byte astral one, which is asserted
+   rather than assumed. This closes open question 11 for **both** harnesses at once. Two things measured
+   while choosing the number, neither previously in the corpus: the injected block's fixed framing for
+   five demoted rows is ~~**967 units**~~ **1,309 units**, and prose runs **3.89–6.55 characters per
+   token** by style. So the
+   ceiling is ~~1,806~~ **1,738**/gist (the figure is framing-derived: (10,000 − 1,309) / 5), and
+   1024 puts a five-row block at ~~6,087 units (61% of 10,000) and 18,261
+   bytes at the 3×/unit worst case (28% of 65,536)~~ **6,429 units (64% of 10,000) and 19,287 bytes
+   (29% of 65,536)** — both now asserted rather than hoped.
+   **The trade, recorded because it is observable and was not foreseen:** at 1024 the bound cannot be
+   reached at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding
+   constraint near the top of that key's 8–256 range — admitting prose at 256 tokens needs ≥1,584
+   characters per gist, which puts the same block at ~~89%~~ **92%** of budget. A loud rejection naming
+   the character
+   count was judged the better failure than a block that fits by luck. If raising `gist_max_tokens` ever
+   becomes real practice, this is the number to revisit.
+   **Every figure above moved on 2026-09-20 and none of them is about the bound**: the preamble gained
+   the paragraph telling an agent that a gist is an abstract of a longer record and naming when to
+   fetch it, and each of these is *framing plus five gists*, so preamble prose moves every one of them.
+   They were stated in ~~**three**~~ **six** places — this item, `schema.md` §Bounds,
+   `architecture.md`'s margin claim, **the comment on `GIST_MAX_CHARACTERS` itself**,
+   `hook/limits.py` and `harness.md` §"Injection budgets". **The first sweep found two of the other
+   five, and the one it most needed to find was the docstring sitting beside the constant the
+   figures exist to justify** — so "a grep for the claim rather than for the edit" is what found
+   *some* of them, and a review round is what found the rest. The bound itself is unchanged at 1024.
+   **The framing delta is +342 units, not the +377 the new paragraph costs**: the paragraph replaced
+   a 35-unit sentence ("Fetch by uuid for the full record."), which is where the difference goes.
+4. ~~**The installer has no notion of *same install, older version*.**~~ **— fixed in M15.**
+   Staleness is now a **content comparison**, which subsumes the old interpreter check and extends it
+   to every shipped file — kiro's skill could previously never be refreshed at all, its staleness
+   predicate being the constant `False`. It is a **trade**, recorded because the losing side is real:
+   content is the only evidence available, so a hand-edited artefact is backed up and reverted rather
+   than kept. `architecture.md` §"The install contract" carries the argument and names two ways to
+   remove the trade that were deliberately **not** built.
+
+6. ~~**A known intermittent**, diagnosed and left: `test_idle_self_stop_unlinks_the_socket_before_the_process_exits`
+   fails under load because the signal handlers are installed after the socket is bound. Low impact, wants
+   a test that pins the race deterministically.~~ **— FIXED 2026-09-16, in the product rather than
+   in the test, because no test-side wait could close it.** `serve()` publishes the socket the
+   instant it binds, and `asyncio.start_unix_server` accepts from the moment it returns — so there
+   is no observable event after handler installation for a test to wait on, and waiting for the
+   socket is waiting on the *start* of the window. `main.run` now installs the `SIGTERM`/`SIGINT`
+   handlers **before** the bind, so the socket file's existence implies a process that will clean
+   it up **on `SIGTERM`/`SIGINT`** — any death it does *not* handle still leaves one (`SIGKILL`, an
+   OOM kill, a native crash, any signal left at its default disposition such as `SIGHUP`, a power
+   loss), which is what
+   start-if-absent's vet-and-unlink exists for; a signal arriving earlier merely sets `stop`, and
+   the run binds and stops at once. The
+   race is pinned deterministically in-process by
+   `test_service_main.py::test_the_signal_handlers_are_installed_before_the_socket_is_bound`,
+   which reads the process-wide disposition at the moment `serve()` is called and was **verified
+   failing against the old ordering** before being trusted. The integration test is renamed to
+   `test_a_signal_arriving_as_soon_as_the_socket_appears_still_unlinks_it` — its old name claimed
+   an idle exit it never took, since `idle_timeout`'s minimum is 60 s.
+   **One guard went vacuous on the way and was retargeted rather than deleted**: the in-process
+   test for a setup failure *after* binding made `add_signal_handler` fail, which now aborts
+   before any socket exists, so its assertion would have held whatever the cleanup did. It fails
+   task creation instead, which is still inside that window.
+   **What this does not fix**: the process-level window from `exec` to handler installation —
+   imports plus store assembly — where `SIGTERM` is still fatal by default. Closing that means
+   installing handlers before `ServiceContext.assemble`, which would defer a signal until assembly
+   finished; not done, and named here rather than left to be rediscovered.
+   **Timing nondeterminism's impact is wider than this one flaky test: the coverage number itself
+   varies.** Measured in M16 over three consecutive `./check.sh` runs on a tree whose only diffs
+   were comments — **97.64%, 96.85%, 97.64%** — with all 1702 tests passing every time. 0.79 points
+   of 5,882 statements is ~46 statements, and the per-file report points at the same *class* of
+   cause: `service/server.py` (85%) and `service/lifecycle.py` (90%) are socket-and-timing code
+   whose error branches are taken or not depending on how a race lands. **Which** race is not
+   localised — no cross-run per-file diff was taken — so do not read this as a prediction that
+   pinning the intermittent above would end the flap. **The consequence is about the ratchet, not
+   the tests:** `fail_under` is now **95%** (raised from 90 at M22, `pyproject.toml`) against a
+   measured 96.85–98.07% spread, so the margin that absorbs the flap is **under two points** rather
+   than the ~7 an earlier revision of this line implied by quoting the old floor. That margin is the
+   only thing preventing a red gate for reasons unrelated to the change under
+   test, and this project has already been burned once by a floor that was not doing its job
+   (`check.sh`'s own comment records it). **The race named at the head of this item is now pinned;
+   that does not license raising `fail_under`**, because nothing attributes the flap to it — no
+   cross-run per-file diff was ever taken, which is the sentence above and still stands.
+   **A second instance, measured 2026-08-18 — and the diagnosis moved twice before it was right.**
+   Two `test_hook_connect_real_service_integration.py` tests failed deterministically at load ~6.
+   First reading: a load-sensitive test. Second: `hook/connect.py`'s `HEALTH_POLL_DEADLINE_SECONDS =
+   1.2` is a *product* constant the test inherits, so do not raise it. **The correct reading is
+   sharper than both — the test asserted a guarantee the design explicitly declines to make.** That
+   constant's own comment says a cold spawn racing it and losing *"is exactly the case that must
+   degrade (log to hook.log, relay on stdout) rather than make the user wait"*. Losing is a
+   **specified outcome**, covered against a fake service that binds 5 s after spawn. Asserting that
+   a *real* cold start wins the race asserts something the product never promised, and whether it
+   held depended on the machine: a real service then took **1184-1235 ms merely to bind its
+   socket**, because `main.py` assembled the store and loaded the encoder first, deliberately, so
+   it never advertised a store it could not open — the store half of that ordering survives M17;
+   the encoder half is what it moved. **The number that constant was calibrated against never
+   described this peer** — `spike-results.md` §"Cold start" measured ~101 ms "dominated by Python
+   interpreter start" against spike 3's *toy* server, with no store and no fastembed. Fixed by
+   giving those two tests their own 30 s deadline via an autouse fixture that states all of this, so
+   they assert the mechanism while the shipped value stays asserted where it belongs. Mutation-
+   verified: a server that never starts still fails them. **The shipped constant is unchanged, and
+   is still right for the user.** What this does leave open, and it is a product question rather
+   than a test one: a cold start-if-absent loses the race on a loaded machine, so the warm helper
+   is load-bearing rather than an optimisation, and a user message that races it silently loses
+   push. **Closed by M17**, which moved the encoder load to the other side of the bind; the
+   shipped hook delivered 5/5 clean pushes under load (`research/m17-cold-start-ab.md`). The warm
+   helper's structural limit — it fires on `SessionStart` only, so it never covered a mid-session
+   idle-out — stands; whether the helper is still load-bearing after M17's margin is unmeasured.
+
+**The integration trace landed and it inverts the working assumption, which was that Amazon Q's
+knowledge tool "worked well from the agent's perspective".** Detail:
+`research/amazon-q-knowledge-integration.md`.
+- **There is no prompt integration at all.** No system prompt or injected context in
+  `crates/chat-cli/src/` mentions knowledge; the complete set of words the model ever receives is a
+  **25-word tool description** plus seven parameter descriptions, saying *what the tool is* and never
+  *when to reach for it*. The product documentation tells the **user** to type "using your knowledge
+  tools can you find…" — **the human is the trigger.** So the reported good behaviour is evidence
+  about explicit human invocation, not about a tool an agent reaches for on its own.
+- **This is close to a controlled comparison inside one team, and it corroborates our own change.**
+  Eight lines below it in the same `tool_index.json`, `todo_list` spends **78 words on triggers in
+  capitals**. One tool states its identity, the neighbouring one states its occasions. That is
+  independent support for the 2026-08-14 move from "search when you are about to spend real effort"
+  to four **detectable occasions** (open question 1).
+- **The result shape is worse than ours and worse than the obvious design.** One flat string — a
+  header plus raw chunk text, blank-line separated — with **no file path, no score, no context id**;
+  `result.text()` reads one payload key and silently drops results lacking it. Five results *per
+  context*, flattened with **no global cap**, and `MAX_TOOL_RESPONSE_SIZE` (400,000) is enforced in
+  three other tools but **not this one**. That is our open question 11 (unbounded injection) and
+  M18's payload spill, both unsolved, in a shipped product.
+- **Worth copying: the gating.** Default off, and when off the tool spec is *removed from the schema*
+  rather than refusing at call time — the same structural "provably cannot reach" property D32 gives
+  the consolidator split.
+- **A real alternative to D8/D17 we have never examined:** storage is partitioned by **agent
+  identity**, at `~/.aws/amazonq/knowledge_bases/<agent-name>_<hash-of-agent-config-path>/`, not by
+  working directory.
+- **Four schema/implementation contradictions, zero tests on the tool file**, including an advertised
+  `status` operation that is unparseable and a success message pointing the model at a slash command
+  that no longer exists and that the model cannot invoke anyway. This is M18's "prose asserting what
+  the adjacent code contradicts", observed in someone else's codebase — and the mechanism we have and
+  they lack is the test that *parses the document* and compares it against the constant.
+
+**The engine trace landed, and the operator's named gap — incremental reindexing — is not a weak
+implementation there but a total absence.** Detail: `research/amazon-q-knowledge-engine.md`.
+- **No staleness mechanism exists at all.** Grepped for mtime, hash, notify, watch, stale, refresh,
+  incremental, dirty, version, etag: **zero mechanisms**. `KnowledgeContext::updated_at` is written
+  once in the constructor and never touched again. Refresh is a human typing `/knowledge update`,
+  implemented as `remove_context_by_id` then re-add — **unguarded delete-then-rebuild, total
+  unavailability during the window, no rollback if the re-index fails.** Chunks carry no timestamp
+  and no line offsets, so a consumer cannot even check whether what it was handed still exists.
+  **Two consequences for us: D11 is not the weak option, it is strictly more than a shipped AWS
+  competitor has; and there is nothing to copy here — an incremental design would be built fresh.**
+- **Not hybrid.** Per context it picks *one* mode at **index** time: `Best` (all-MiniLM-L6-v2,
+  384-dim, Candle, **CPU only**) or `Fast` (the `bm25` crate). No fusion, no reranker, no threshold.
+  **AWS's own documentation steers large codebases to the lexical arm**, which independently
+  corroborates open question 8's identifier-discrimination finding from the vendor's side.
+- **Worth copying, and cheap: a SHA256 model allowlist** (`model_validator.rs:28-70`) — one pinned
+  hash per file, verified before use, **file deleted on mismatch** so the next run re-downloads. It
+  pins `tokenizer.json` too, which is what makes tokenizer-dependent bounds *provable*. ~20 lines in
+  Python, and it closes a hole D19/D20 leave open.
+- **Three defects, and the first is the bug D28 was written to avoid.** (1) `chunk_size: 512` counts
+  **whitespace words** against a 512-**token** model with **no truncation configured anywhere** —
+  exactly the silent overflow D28 prevents by enforcing the budget against the *assembled* sequence.
+  (2) BM25 `avgdl` is **5.0 at build and 100.0 at load**, so **rankings change after a restart**, and
+  both values are wrong for 512-word chunks. (3) BM25 scores and cosine *distances* share one `f32`
+  field and both cross-context sorts are ascending, so a mixed store ranks partly inverted.
+- **Their test suite pins plumbing only**: the default embedder is an anagram-invariant char-sum
+  hash, three tests are vacuous (one is literally `assert!(p || !p)`), and the single assertion that
+  measured retrieval is commented out.
+- **And a failure this project has already been burned by, in their code**: `contexts.json` is
+  written with `fs::write` and read with `unwrap_or_default()`, so a crash mid-write **silently
+  reports zero contexts** while every directory sits on disk — the same silent-truncation class as
+  the `cp memory.db` finding above.
+- Note for anyone retracing this: `knowledge_beta_improvements_agents` is a **0-byte regular file**,
+  not a directory of design material. The real intent document is `docs/knowledge-management.md`.
+
+**Evidence being gathered** (three agents, 2026-09-14): `research/kiro-knowledge-tool.md` (the
+documented behaviour), `research/amazon-q-knowledge-engine.md` (indexing, chunking, embedding model,
+vector store, staleness — traced from source) and `research/amazon-q-knowledge-integration.md` (the
+agent-facing surface, tool description text, gating, scoping). Source is the open-source predecessor
+`aws/amazon-q-developer-cli`, cloned read-only to `~/amazon-q-developer-cli` (shallow, 18 MB).
