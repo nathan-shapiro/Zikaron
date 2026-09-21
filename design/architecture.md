@@ -715,6 +715,16 @@ requests in flight and time since the last one, never on open connections.
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
 is unlinked before the process ends.
 
+**By this process alone, and that is a property the code has to assert rather than inherit.** From Python
+3.13 a closing `asyncio` Unix server removes the socket path itself, so the listener is opened with
+`cleanup_socket=False` — supplied through `zikaron/service/asyncio_compat.py`, since the parameter does not
+exist on 3.12 — and asyncio's own unlink-on-close never runs. That is what keeps the ordering this
+service chooses intact on every supported version: **on the self-stop and signal paths** the unlink
+comes *before* the close, so a client arriving mid-shutdown finds no socket and starts a fresh service
+rather than connecting to one that is draining. (`main.run`'s error path closes first and unlinks
+after; that is a recorded debt, not the intended ordering.) Two unlinkers would make the ordering
+unobservable wherever it holds, and which of them acted would depend on the interpreter.
+
 **That holds for a signalled exit too, and it rests on an ordering worth stating: the `SIGTERM`/`SIGINT`
 handlers are installed *before* the socket is bound.** `serve()` publishes the socket the instant it binds,
 so handlers installed after it would leave a window in which a signal takes its default disposition and the

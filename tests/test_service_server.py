@@ -21,7 +21,7 @@ from tests.service_fixtures import open_context
 from zikaron.core.errors import ErrorCode
 from zikaron.core.events import ClientKind
 from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
-from zikaron.service import rpc, server
+from zikaron.service import asyncio_compat, rpc, server
 from zikaron.service.context import ServiceContext
 
 
@@ -44,8 +44,8 @@ async def test_shut_down_returns_promptly_even_with_an_idle_client_still_connect
     tmp_path: Path,
 ) -> None:
     """`asyncio.Server.wait_closed()` explicitly waits until every accepted connection is
-    dropped, not merely until new ones stop being accepted — measured directly against this
-    project's own pinned Python 3.12.3 before writing this fix: a standalone repro server with
+    dropped, not merely until new ones stop being accepted — measured directly against
+    Python 3.12.3 before writing this fix: a standalone repro server with
     one accepted-but-idle connection left a bare `close()`/`wait_closed()` pair still pending
     after a 3 s timeout. A client that finishes a request and keeps its socket open is the
     documented norm (`architecture.md`: "the client adopts the returned label and reuses it for
@@ -90,8 +90,8 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
     tmp_path: Path,
 ) -> None:
     """The narrower, more dangerous window the previous test's own request/response round trip
-    cannot reach: a connection already **accepted** — meaning `asyncio.Server`'s own private
-    `_active_count` (the exact quantity `wait_closed()` waits on) already reflects it — but whose
+    cannot reach: a connection already **accepted** — meaning the server's own attached-connection
+    count, the exact quantity `wait_closed()` waits on, already reflects it — but whose
     handler task has not yet run far enough to reach `serve`'s own `connections.add(...)` line, so
     `RunningServer._connections` is still empty. Measured directly with a standalone script before
     writing the fix this test defends: reaching that line reliably took **three** bare
@@ -103,10 +103,10 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
     inside the window on a slower machine, too long and it would not be defending anything a
     request/response round trip did not already cover).
 
-    A real client genuinely connects and is genuinely accepted — `server._active_count` reflects
+    A real client genuinely connects and is genuinely accepted — the server's own count reflects
     it — but `RunningServer` here is constructed with an empty `_connections` set on purpose, the
-    exact state `close_all_connections` must still resolve from correctly by polling `_active_
-    count` itself rather than assuming its own tracking set is already complete.
+    exact state `close_all_connections` must still resolve from correctly by polling the server's
+    count itself rather than assuming its own tracking set is already complete.
     """
     sock_path = tmp_path / "bare_server.sock"
     registration_gate = asyncio.Event()
@@ -145,7 +145,7 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
         # it generously and failing loudly if it is never met keeps this test itself honest about
         # what it is and is not measuring.
         for _ in range(1000):
-            if bare_server._active_count > 0:  # type: ignore[attr-defined]
+            if asyncio_compat.attached_connection_count(bare_server) > 0:
                 break
             await asyncio.sleep(0)
         else:
@@ -186,7 +186,8 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
         await asyncio.wait_for(handler_started.wait(), timeout=5.0)
         assert not shut_down_task.done(), (
             "shut_down() returned before the gated connection ever registered or was released — "
-            "it cannot have genuinely waited for _active_count to reach zero"
+            "it cannot have genuinely waited for the server's attached-connection count to reach "
+            "zero"
         )
 
         registration_gate.set()

@@ -7,11 +7,13 @@ because `logging.FileHandler` has no cross-process append locking.
 """
 
 import logging
+import sqlite3
 import stat
 from pathlib import Path
 from typing import Final
 
 from zikaron.core.config.resolution import EffectiveConfig
+from zikaron.service import asyncio_compat
 
 _FILE_MODE: Final = 0o600
 
@@ -33,6 +35,27 @@ def configure_service_log(log_path: Path) -> None:
     logger = logging.getLogger("zikaron.service")
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
+
+
+def log_runtime_versions() -> None:
+    """The Python and SQLite this process is actually running on, as one line at startup.
+
+    Both vary by how the interpreter was obtained, and neither is recorded anywhere else. The
+    SQLite version is bundled with the interpreter rather than chosen here — measured on one
+    machine, a distribution-packaged Python 3.12 linked SQLite 3.45.1 while a downloaded 3.13 linked
+    3.53.1 — and full-text search ranking is a function of that library, so "the same query returns
+    a different order on my box" is otherwise undiagnosable. The Python version is what selects the
+    compatibility row the shutdown path depends on.
+
+    Separate from the configuration dump below, deliberately: that line's shape is a value with the
+    layer it came from, and neither of these has a layer.
+    """
+    logger = logging.getLogger("zikaron.service")
+    logger.info(
+        "runtime python=%s sqlite=%s",
+        asyncio_compat.interpreter_version(),
+        sqlite3.sqlite_version,
+    )
 
 
 def log_resolved_config(config: EffectiveConfig) -> None:

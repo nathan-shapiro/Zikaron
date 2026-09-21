@@ -71,8 +71,8 @@ async def idle_self_stop(
     `server.shut_down()` — not a bare `server.server.close(); await server.server.wait_closed()`
     — because a client that finished a request and kept its connection open (the documented norm:
     `architecture.md` "the client adopts the returned label and reuses it for its process
-    lifetime") makes `wait_closed()` alone block forever, measured directly against this
-    project's own pinned Python 3.12.3: `wait_closed()` explicitly waits until all accepted
+    lifetime") makes `wait_closed()` alone block forever, measured directly against
+    Python 3.12.3: `wait_closed()` explicitly waits until all accepted
     connections are dropped, not merely until new ones stop being accepted. `RunningServer.
     shut_down` closes every tracked connection first, which is what makes this actually return.
 

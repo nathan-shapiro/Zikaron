@@ -24,15 +24,23 @@
 # Python
 .venv/
 venv/
+# One virtualenv per Python version, built and reused by check-matrix.sh.
+.venv-matrix/
 __pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
 .hypothesis/
-.coverage
 htmlcov/
 *.egg-info/
+# Trailing wildcards, not bare names: `check-matrix.sh` gives each Python version its own copy of
+# every one of these so that versions can run concurrently — `.coverage.3.13`, `.mypy_cache.3.13`
+# and so on. Without the wildcard those per-version paths are untracked-but-not-ignored, which makes
+# them part of the working-tree identity that script samples before and after a run, and every
+# parallel run then fails with "the tree changed during the run" for a reason that looks like an
+# editing mistake.
+.pytest_cache*
+.ruff_cache*
+.mypy_cache*
+.coverage*
 
 # Node
 node_modules/

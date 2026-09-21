@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Coroutine
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -279,7 +280,13 @@ def _count(project: Path, query: str) -> int:
     where a separate process stands, and the opener would apply pragmas to a database another
     process holds.
     """
-    with sqlite3.connect(f"file:{_knowledge_database(project)}?mode=ro", uri=True) as connection:
+    # `closing`, not a bare `with`: `sqlite3.Connection.__exit__` commits or rolls back the
+    # transaction and leaves the connection **open**. From Python 3.13 that surfaces as a
+    # `ResourceWarning: unclosed database`; on 3.12 it was silent, which is how these helpers
+    # accumulated dozens of open handles per run without anything saying so.
+    with closing(
+        sqlite3.connect(f"file:{_knowledge_database(project)}?mode=ro", uri=True)
+    ) as connection:
         ((found,),) = connection.execute(query)
     return int(found)
 
@@ -290,7 +297,9 @@ def _pending_count(project: Path) -> int:
 
 def _recorded_lock(project: Path) -> lock.LockHolder | None:
     """The build lock as another process finds it, read the same read-only way as the counts."""
-    with sqlite3.connect(f"file:{_knowledge_database(project)}?mode=ro", uri=True) as connection:
+    with closing(
+        sqlite3.connect(f"file:{_knowledge_database(project)}?mode=ro", uri=True)
+    ) as connection:
         rows = connection.execute("SELECT key, value FROM meta").fetchall()
     return lock.read({str(key): str(value) for key, value in rows})
 
@@ -343,7 +352,7 @@ def _record_a_different_model(project: Path) -> None:
     machine has. Loading a second real artifact to produce the same disagreement would cost a
     download and prove nothing extra.
     """
-    with sqlite3.connect(_knowledge_database(project)) as connection:
+    with closing(sqlite3.connect(_knowledge_database(project))) as connection:
         connection.execute("UPDATE meta SET value = 'some-other-model' WHERE key = 'embed_model'")
         connection.commit()
 

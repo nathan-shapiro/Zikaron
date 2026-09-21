@@ -6,7 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "zikaron"
 version = "0.0.0"
 description = "Tribal-knowledge memory for coding agents"
-requires-python = "==3.12.*"
+# A floor, with no cap. The floor is real: the package uses PEP 695 type-parameter syntax, which is
+# 3.12+. A cap is deliberately absent — it makes a resolver backsolve to older, possibly broken
+# releases of everything else instead of failing with a clear message about the interpreter, and a
+# version this package has not been tested against is better installed and exercised than silently
+# refused. Which versions *are* tested is a separate statement, made by `check-matrix.sh`.
+requires-python = ">=3.12"
 dependencies = [
     "aiosqlite==0.22.1",
     "sqlite-vec==0.1.9",
@@ -73,6 +78,20 @@ zikaron = ["py.typed"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# **Markdown is dropped by file type, because the reason is about the file type.** `*.md` is in
+# ruff's default `include`, so `ruff format` rewrites Python fenced blocks inside prose — and a
+# review round that quoted a snippet with hand-aligned comments turned the whole gate red, which is
+# the "red for a reason unrelated to the code" this repository refuses. The deeper objection is that
+# those fences are quotations of code as it *was*, including code being quoted in order to show that
+# it was wrong, so reformatting them edits the record. That applies hardest to the files a directory
+# exclusion would have missed: `FINDINGS.md` and `FINDINGS-archive.md`, whose whole method is
+# withdrawing claims in place, `design/`, which is normative, and `.kiro/`, which the instructions
+# forbid editing at all. None of them has been rewritten yet only because their fences either carry
+# no Python or do not parse — a single valid fence would have done it.
+include = ["*.py", "*.pyi", "*.pyw", "*.ipynb", "**/pyproject.toml", "**/ruff.toml", "**/.ruff.toml"]
+
+# `spikes` and `experiments` stay excluded for the older, separate reason: throwaway probes and
+# re-runnable experiment harnesses are not held to the shipped standard.
 extend-exclude = ["spikes", "experiments"]
 
 [tool.ruff.lint]

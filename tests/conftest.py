@@ -35,7 +35,8 @@ leak has already been detected, so the ordinary path pays for one `threading.enu
 
 import gc
 import threading
-from collections.abc import Generator, Iterator
+import time
+from collections.abc import Generator, Iterable, Iterator
 from typing import Final
 
 import aiosqlite
@@ -163,17 +164,65 @@ def _stop_open_connections() -> None:
             candidate.stop()
 
 
+#: How long to let a worker thread finish exiting before calling it leaked. **A thread that is
+#: stopping is not a thread that leaked, and this guard could not tell them apart.** When a connect
+#: *fails*, `aiosqlite`'s own `_connect` calls `stop()`, which sets a flag and queues a sentinel but
+#: never joins — so the thread is alive for a few more milliseconds while it drains the queue and
+#: returns. Checking the instant a test ends caught it mid-exit and failed the test that had done
+#: nothing wrong. Measured before this wait existed: `tests/test_store_connection.py` alone reported
+#: 1, 0, 0, 2 and 1 errors across five identical runs, and a full-suite run stayed green only
+#: because later tests gave the thread room.
+#:
+#: **Generous on purpose, because with `join` the headroom is free.** This is an upper bound on
+#: waiting, not a duration anything sleeps for: an exiting thread is joined the moment it ends, in
+#: milliseconds, so a larger bound costs nothing in the ordinary case. It is only ever spent in full
+#: by a genuinely leaked connection, which blocks on its queue forever — and that test was going to
+#: fail regardless.
+_EXITING_THREAD_GRACE_SECONDS: Final = 5.0
+
+
+def _settle(threads: Iterable[threading.Thread]) -> list[threading.Thread]:
+    """Wait for `threads` to finish exiting; return those still alive.
+
+    Waits on the threads themselves rather than polling a clock: `join` returns the instant a thread
+    ends, so a thread on its way out costs only the microseconds it needs. One deadline spans the
+    whole set, so a test that leaves several behind cannot multiply the bound.
+    """
+    # Materialised once: this walks the set twice, and a generator argument would be empty the
+    # second time — every leak silently passing.
+    pending = list(threads)
+    deadline = time.monotonic() + _EXITING_THREAD_GRACE_SECONDS
+    for thread in pending:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        thread.join(timeout=remaining)
+    return [thread for thread in pending if thread.is_alive()]
+
+
 @pytest.fixture(autouse=True)
 def _no_leaked_store_connections() -> Iterator[None]:
-    """Fail the test that left a store open, and stop the thread it left behind."""
-    before = len(_live_connection_threads())
+    """Fail the test that left a store open, and stop the thread it left behind.
+
+    **Identity, not arithmetic.** Only the threads this test actually added are waited on and
+    counted. Comparing a count before against a count after has two faults that identity does not:
+    it would join threads a *wider-scoped* fixture is legitimately holding open, spending the whole
+    deadline on each and reading as mysteriously slow tests rather than as a detector cost; and
+    after a leak is detected, `_stop_open_connections` queues a stop without joining, so the next
+    test's baseline could still include that exiting thread and its arithmetic would then hide one
+    genuine leak.
+    """
+    before = set(_live_connection_threads())
     yield
-    leaked = len(_live_connection_threads()) - before
-    if leaked > 0:
+    leaked = _settle([t for t in _live_connection_threads() if t not in before])
+    if leaked:
         _stop_open_connections()
+        # Joined before returning, so the next test does not start with these still exiting and
+        # then have to distinguish them from its own.
+        _settle(leaked)
         pytest.fail(
-            f"{leaked} aiosqlite connection thread(s) still running: this test left a store open. "
-            "An unclosed connection is a non-daemon thread, so it hangs the whole session at "
+            f"{len(leaked)} aiosqlite connection thread(s) still running: this test left a store "
+            "open. An unclosed connection is a non-daemon thread, so it hangs the whole session at "
             "interpreter shutdown instead of reporting anything. Hold the store with `async with`.",
             pytrace=False,
         )

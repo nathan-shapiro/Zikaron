@@ -19,6 +19,7 @@ are in `test_knowledge_build_invariants.py`, which needs a built corpus rather t
 
 import sqlite3
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -296,7 +297,12 @@ class TestTheRegistryIsTheAuthorityOnExistence:
                 handmade.commit()
             finally:
                 handmade.close()
-            ((journal_mode,),) = sqlite3.connect(foreign).execute("PRAGMA journal_mode").fetchall()
+            # `closing`, not a bare temporary: since 3.11 a `sqlite3.Connection` is not freed when
+            # its last reference goes, because its statement cache holds a reference back to it — so
+            # it survives until the cyclic collector reaches it, and on 3.13+ the `ResourceWarning`
+            # then fires inside whatever test happens to be running by then.
+            with closing(sqlite3.connect(foreign)) as probe:
+                ((journal_mode,),) = probe.execute("PRAGMA journal_mode").fetchall()
             assert journal_mode == "delete", "the fixture must not already be in WAL"
             before = foreign.read_bytes()
 

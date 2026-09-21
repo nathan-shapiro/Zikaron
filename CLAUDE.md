@@ -48,8 +48,50 @@ settled decision from that index alone.** Read `overview.md` first.
 Evidence is separated by kind and stays that way: **`research/`** measured results and literature notes,
 **`reviews/`** review rounds, **`experiments/`** re-runnable harnesses, **`spikes/`** throwaway probes.
 
+## Setting up a development environment
+
+**Nothing here is in the repository, and none of it needs a Python already on the machine.** Run this
+once per machine, in this order — the order matters, since step 3 has no interpreter to use until
+step 2 has run. Verified end to end on 2026-09-21.
+
+```bash
+# 1. uv. A static binary; needs no Python, which is why it comes first.
+curl -LsSf https://astral.sh/uv/install.sh | sh          # adds only `uv` and `uvx` to ~/.local/bin
+
+# 2. The tested interpreters. `--no-bin` is not optional — see below.
+uv python install --no-bin 3.12 3.13 3.14
+
+# 3. The project virtualenv the gate runs in. `--seed` provides `pip`, which `uv venv` omits by
+#    default and which the editable install below needs.
+uv venv --python 3.12 --seed .venv
+.venv/bin/pip install -e '.[dev]'
+```
+
+After that, `./check.sh` and `./check-matrix.sh --parallel` both work with no `PATH` setup of any kind.
+`.venv-matrix/<version>/` builds itself on first use. A machine that already has a Python ≥ 3.12 it
+would rather use for `.venv` can substitute `python3 -m venv .venv` for step 3; the matrix still
+needs step 2.
+
+**`--no-bin` is the part to get right.** Without it, `uv python install` puts a `python3.12` in
+`~/.local/bin`, which on a normal `PATH` sits *ahead of* `/usr/bin/python3.12` and silently becomes
+what every bare `python3.12` means — including for tools that have nothing to do with this project.
+It happened here: an earlier setup left exactly that shim pointing into a `/tmp` session directory,
+which then made all three matrix virtualenvs ephemeral. `check-matrix.sh` asks `uv` for a
+**managed** interpreter instead (`uv python find --managed-python --no-project`, both flags
+required — the plain form answers with the project virtualenv), so nothing needs to be on `PATH` at
+all.
+
+**Where they live, and why it matters**: `~/.local/share/uv/python/`, which survives a reboot.
+`.venv-matrix/<version>/` is built from them on first use and rebuilt whenever `pyproject.toml`
+changes, or its base interpreter changes or disappears — so switching `ZIKARON_PYTHON_3_13` to a
+different build, or letting `uv python upgrade` move the managed one, rebuilds rather than silently
+reusing the old one. **Never point these at a scratchpad or `/tmp` path** —
+a virtualenv whose base interpreter is deleted has a dangling `bin/python`, and `-m venv` run over
+it does *not* repair the link.
+
 ## The check gate
-**`./check.sh` is the definition of done.** Nothing is finished until it exits 0. It runs `ruff format
+**`./check.sh` is the per-edit gate and the definition of done for a change; `./check-matrix.sh` is
+additionally required before a milestone lands.** Nothing is finished until both exit 0. `check.sh` runs `ruff format
 --check`, `ruff check`, `mypy --strict` over **the package and the tests**, then pytest with a coverage
 ratchet across **every** package under `zikaron/` — a test asserts that list is complete — under a
 600 s `timeout`.
@@ -60,6 +102,19 @@ is somebody else's credential state rather than anything in this repository. Run
 you mean to (`.venv/bin/pytest -m integration_kiro`). **Nothing is covered only there**; the
 hermetic equivalents stub the binary through `conftest.stub_harness_binaries`.
 `design/coding-standards.md` §"five tiers" is normative.
+
+**`check-matrix.sh` is the one deliberate exception to that hermeticity, and it is a separate script for
+exactly that reason.** It needs an interpreter per version it runs — a uv-managed one, an explicit
+`ZIKARON_PYTHON_3_13`, or a bare `python3.<minor>` on `PATH` as the last resort — machine
+state, which `check.sh` depends on nothing of. It builds a virtualenv per version under
+`.venv-matrix/`. What it alone covers is the two version-dependent rows in
+`zikaron/service/asyncio_compat.py`, each unexecuted on the versions that do not select it, plus
+deprecations-as-errors. An absent interpreter is a **red** version, never a skip. `check.sh` itself
+stays hermetic and stays the gate for an ordinary edit.
+**Run it as `./check-matrix.sh --parallel`** — every version at once, about 3.5 minutes on a warm
+tree, one result line carrying the tree identity all three were measured against. **Do not edit
+anything while it runs**: it samples that identity before and after and refuses if they differ, and
+the identity covers untracked files, so a review round appending to `reviews/` voids the run.
 
 The formatter's output is authoritative: a `format --check` failure means running `.venv/bin/ruff format
 .`, not adjusting the code by hand to satisfy it.
@@ -85,6 +140,31 @@ The formatter's output is authoritative: a `format --check` failure means runnin
   a standing rule that must bind. A memory record would be advisory. This file is not. That is
   FINDINGS open question 14 resolved for one concrete case — the seam is real, and the instruction
   file is the right side of it.
+- **Never run a git command that discards uncommitted work.** Not `git checkout -- <path>`, not
+  `git restore <path>`, not `git reset --hard`, not `git stash`, not `git clean`. **None of them has
+  an undo an agent will find in time** — `git stash` technically keeps what it took, but it takes all
+  of it in one step, and a stash nobody remembers is as gone as a revert —
+  and **in this repository they are maximally destructive by construction**: the rule directly above
+  says the agent never commits, so *everything* an agent has produced — every design edit, every
+  finding, hours of it — is uncommitted at all times. The two rules compose into a trap, which is
+  why this one sits here rather than somewhere more logical.
+  **The trigger is never a big dangerous-looking operation. It is tidying up.** Measured here,
+  2026-09-21: verifying that a new tree-fingerprint responded to content, I appended one probe line
+  to `FINDINGS.md` and removed it with `git checkout FINDINGS.md`. That reverts the **whole file**,
+  and it took the entire session's work on it — the file has no notion of "the line I just added".
+  It was recovered only because the content still sat in this session's context; one compaction
+  earlier and it would have been gone. **The operator reports this is not the first session it has
+  happened in**, which is what moved it from an incident to a rule.
+  **It happened a second time the same day, and that instance is the argument for the remedy.** While
+  walking a failure table in a throwaway repo, a `git clean -qfd` in one cell silently deleted the
+  untracked helper script the next cell needed. Identical class, zero cost — because it was a scratch
+  repo and the file was one heredoc away. That is the whole difference between the two instances.
+  **What to do instead.** Probe in a scratch directory, never in the repository — a throwaway
+  `git init` under the scratchpad answers every question about git's behaviour at zero risk, and it
+  is what the fingerprint's own failure table was eventually walked in. To undo *your own* recent
+  edit, re-edit the file. If you genuinely need a pristine copy of a tracked file, read it with
+  `git show HEAD:<path>` and write it somewhere else. **`git checkout` is for branches here, never
+  for paths.** Staging, branching and reading history remain fine.
 - **Pressure-test consequential work with the `self-review` skill** before finalizing a design doc, plan,
   spec, schema, or config. It delegates an independent critique to **memory-reviewer** and iterates to
   convergence. Reserve it for work that is expensive to get wrong — each loop spends extra cycles.
@@ -178,7 +258,7 @@ Four subagents, in `.claude/agents/`. Delegate to them rather than doing their w
 |---|---|---|
 | `memory-assistant` | sonnet | **All literature and prior-art search.** Give it a precise brief and a target `research/<slug>.md`; it writes the full note there and returns a synthesis plus the path |
 | `memory-reviewer` | fable | Independent critique of a **file-based** artifact. Appends tagged findings and a `VERDICT:` line to `reviews/<slug>-review.md`. Driven by the `self-review` skill |
-| `py-runner` | haiku | Any command whose output is verbose or token-heavy — test suites, builds, installs, indexing runs. Returns exit code, a terse verdict, failing ids and a temp-file path |
+| `py-runner` | haiku | Any command whose output is verbose or token-heavy — `./check.sh`, `./check-matrix.sh --parallel` (all tested Python versions at once, ~3.5 min warm), test suites, builds, installs, indexing runs. Returns exit code, a terse verdict, failing ids and a temp-file path |
 | `memory-researcher` | opus | The primary research and engineering partner. Normally the **main session** (`claude --agent memory-researcher`), not a subagent |
 
 `~/Memory` is a sibling project — a human-like memory system for character agents, with agents of the same

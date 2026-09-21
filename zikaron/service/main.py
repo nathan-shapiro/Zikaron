@@ -90,6 +90,11 @@ async def _assemble_or_log_and_raise(store_dir: Path) -> ServiceContext:
     `/dev/null` stderr).
     """
     try:
+        # Before anything that can fail, because a startup that dies in `resolve` or in `assemble`
+        # is exactly when "which Python and which SQLite was this?" is the first thing a reader
+        # needs, and this call depends on nothing. It stays beside the configuration dump on the
+        # success path; it merely no longer depends on reaching one.
+        log.log_runtime_versions()
         config = resolve(
             default_system_config_path(os.environ.get("XDG_CONFIG_HOME"), Path.home()),
             project_config_path(store_dir),
@@ -197,6 +202,11 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     The socket is unlinked exactly once — by whichever self-stopping task fired (each unlinks
     *before* closing the server, to close the connect-during-exit race window, per their own
     docstrings) and by this function on the signal path, where no such race exists to close early.
+    **"Exactly once" is a claim about this process, and it holds only because `serve` says so**:
+    from Python 3.13 a closing Unix server would remove the socket path itself, making a second
+    unlinker whose timing is the close rather than the deliberate ordering above. `serve` switches
+    that off wherever it exists, which is what keeps this sentence true on every supported version
+    rather than on one.
 
     Raises:
         ZikaronError: whatever `config.resolution.resolve` or `ServiceContext.assemble` raise —

@@ -2,7 +2,8 @@
 
 > Per-milestone briefs. `FINDINGS.md` carries the sequence and current position; this carries the detail a
 > session needs to actually do one. Read `design/coding-standards.md` first — the check gate in §9 is the
-> definition of "done" for every milestone below.
+> definition of "done" for every milestone below: `./check.sh` is the per-edit gate and the definition of
+> done for a change, and `./check-matrix.sh` is additionally required before a milestone lands.
 >
 > **How to use this:** pick the lowest-numbered incomplete milestone, read its brief, read the design sections
 > it names as normative, build it, make the check gate pass, then update the status line in `FINDINGS.md`.
@@ -1932,6 +1933,520 @@ covers only M25's.
 Reranking only. **Not** the 33% — no embedder change, no query rewriting, no chunking change; each
 is its own milestone and each has a measured share of the failure now. No change to `rrf_k`,
 `fusion_depth` or arm weighting: M25 closed those.
+
+---
+
+## M27 — Widen the supported Python range, behind a version seam
+
+**Every `file:line` below was read against the tree as it stood before this milestone, and the
+milestone's own edits move many of them.** Locate by the name beside each number, which is why both
+are given. **The `main.py` citations moved twice** — once when its docstring grew, then again when
+the startup log line was reordered — so the numbers there were stale, corrected, and stale again
+within the hour. Where that happened the number has simply been dropped in favour of the name. This
+note is not an apology; it is the argument against citing a line into code the same change edits.
+
+Normative: `design/coding-standards.md` §1 (structure), §6 (dependencies) and §9 (the check gate) —
+**§6 and §9 are this milestone's normative output and it writes both**; `design/architecture.md`
+§"Idle self-stop", which owns the socket-unlink sentence this changes the meaning of.
+Measurements: `research/python-portability-probes.md`. Prior art:
+`research/python-distribution-portability.md`, `research/python-313-314-porting-audit.md`.
+
+`requires-python = "==3.12.*"` becomes `>=3.12`. The **floor** is real and stays — the package uses
+PEP 695 syntax at **18 sites across 10 modules**. The **cap** had no recorded rationale anywhere in
+the corpus, and D19 only ever said "latest stable versions", so it was development convenience that
+hardened into a distribution constraint. **It was also hiding two defects, both found within an hour
+of lifting it**, and that is this milestone's justification. Not reach, and **not** cheapness:
+supporting a range is the *expensive* choice, since it buys a seam, a matrix and a porting audit
+every October, where shipping a single managed interpreter would buy none of them and pin SQLite for
+free. It is worth paying because a cap is a way of never finding out.
+
+**The two differences, and why they are unequal.** `asyncio.Server._active_count` became a
+`_clients` set in 3.13; `RunningServer.close_all_connections` read it in three places — its loop
+condition and both `ShutdownTimeoutError` messages — and 18 tests go red. That one is **loud**,
+and the existing gate finds it the moment the cap lifts. 3.13 also added `cleanup_socket` to
+`create_unix_server`, **defaulting to `True`**, so a Unix server now unlinks its own socket file on
+close; `serve`'s `start_unix_server` call passed no such argument and took the new default. That one
+is **silent** — it
+passed 2,847 tests — and it is the one that says the gate alone is not a sufficient instrument here.
+
+**And the silent one was already written down, which is the more useful half of that story.**
+`tests/test_service_main.py:555–558` states the 3.13 default, what it would do to the assertion
+beneath it, and that *"`pyproject.toml` pins `==3.12.*`, so the guard holds as long as that pin
+does"* — a correct, dated prediction of exactly this milestone, sitting in a test comment that no
+sweep would surface because nothing reads test comments looking for the consequences of a pin.
+Knowing a thing and having it *reachable* are different properties, and only the second survives a
+session boundary.
+
+### What "supported" means, and what §6 says
+
+**§6 gains these five propositions.** They are the milestone's normative output, so they are stated
+here rather than delegated:
+
+1. **Floor `3.12`, no cap.** PEP 695 syntax at 18 sites across 10 modules is the floor's reason.
+   `research/python-distribution-portability.md` §4 carries the argument against reintroducing a cap:
+   a cap makes a resolver backsolve to older, possibly-broken releases instead of failing
+   informatively.
+2. **"Supported" means "tested", and "tested" means the minors `check-matrix.sh` runs** — today
+   3.12, 3.13, 3.14. There is no second, looser sense of the word **as applied to a Python version**;
+   D34 and `design/harness.md` use "supported" of *harnesses*, which is an unrelated sense.
+3. **Every stdlib difference between tested minors lives in `zikaron/service/asyncio_compat.py`, as
+   one row per *behaviour change*, keyed by the minor that introduced it** — not one row per
+   supported minor. Lookup is the greatest key less than or equal to the running version. So today
+   the table has two keys, `(3, 12)` and `(3, 13)`, and 3.14 resolves to the `(3, 13)` row rather
+   than duplicating it. **The key set is a function of CPython's history, not of what we test**,
+   which is why no drift test ties it to the matrix list: a minor that changed nothing gets no row,
+   and that is the correct data model rather than an omission. **Nothing else under `zikaron/` — nor
+   under `tests/` — reads the running version**, which done-when 3's scan covers and which this
+   proposition must say, since as §6 text it is what a reader will believe. A difference in a stdlib
+   module *other* than `asyncio` is a recorded decision about where the seam widens, not a second
+   compat module appearing by itself.
+4. **A minor newer than the matrix is installable and untested.** `>=3.12` means pip will install on
+   3.15 the day it ships, and the brief chooses this behaviour deliberately: the seam applies its
+   **newest row**, so a further private-API move fails loudly at the first shutdown rather than
+   being masked by a fallback. A startup refusal was rejected — it is the cap this milestone removes,
+   wearing a different hat. Adding a minor to `check-matrix.sh` is what makes it supported.
+5. **Deprecations are errors in the matrix only**, never in `pyproject.toml` and so never in
+   `check.sh`. **The reason is the interpreter, not the dependencies.** *(As built, narrower than this
+   first read: the pin is on **direct** dependencies only, and §6 now states that limit — a transitive's
+   release reaches any virtualenv on its next build, pin bump or not. The interpreter reason stands on
+   its own and is the one that ships.)* What makes the local gate the wrong home is that it runs
+   **one** interpreter: a
+   deprecation raised only on a newer minor is invisible there whatever the filter says, and
+   error-on-deprecation belongs where the interpreter varies. *(The decision was taken on the weaker
+   "a dependency release must not redden the gate" framing. That framing is wrong for two reasons, not
+   one: the pin covers only direct dependencies, so a transitive release does reach a virtualenv on its
+   next build. The decision stands on the interpreter reason alone.)*
+
+### The seam
+
+**One stdlib-only module, `zikaron/service/asyncio_compat.py`, holding each difference as data.**
+This is the discipline `CLAUDE.md` already states for `zikaron/harness/`, where the words are *"the
+one seam, stdlib-only, where a harness difference is allowed to live"* and *"Add a harness difference
+**there**, as data, never as a branch downstream of it"* — the same rule, applied to a second axis.
+The shape is **a table keyed on `sys.version_info[:2]`**, consulted by two functions:
+
+| function | 3.12 | 3.13, 3.14 |
+|---|---|---|
+| `attached_connection_count(server)` | `server._active_count` | `len(server._clients)` |
+| `unix_server_kwargs()` | `{}` | `{"cleanup_socket": False}` |
+
+`unix_server_kwargs()` must be a **function returning a fresh mapping**, never a shared module-level
+dict a caller could mutate; and its 3.12 row is `{}` rather than `{"cleanup_socket": False}`, because
+the parameter does not exist there and passing it raises `TypeError`. *(`FINDINGS.md` once stated that
+value unconditionally and now carries the correction with a withdrawal note.)*
+
+**"As data, not as a branch" is mechanical here, not stylistic, and it was measured in this
+repository.** `pyproject.toml` fixes `python_version = "3.12"` for mypy, and mypy evaluates
+`sys.version_info` comparisons against that value during semantic analysis, skipping the losing block
+**without** a `warn_unreachable` report. A probe with a deliberate type error in each position, under
+`strict` plus `warn_unreachable`:
+
+| construct | mypy, `python_version = 3.12` |
+|---|---|
+| error inside `if sys.version_info >= (3, 13):` | **not reported** |
+| error inside the matching `else:` | reported |
+| errors in **both** rows of a keyed table | **both reported** |
+
+So a version *branch* would ship the 3.13+ row un-typechecked on all three matrix interpreters, and
+an unused `type: ignore` inside it would go unreported too. **No version branches inside the seam
+either** — the table is the mechanism. `[tool.ruff] target-version` and mypy's `python_version` both
+**stay at the floor**, `py312`/`3.12`, so the strictest row keeps being checked.
+
+**Named for `asyncio`, deliberately.** §1 forbids `utils.py`, `helpers.py` and `common.py` because
+such names attract whatever has no home, and a module called `compat` is the same trap with a
+technical-sounding name.
+
+**`cleanup_socket=False`.** The alternative — accept the new default — leaves the Python minor a live
+variable in the socket lifecycle, which is the one thing this milestone exists to remove. It also
+forces a rewrite of `main.py`'s *"the socket is unlinked exactly once — by whichever self-stopping
+task fired"* into a version-dependent claim, and three neighbouring comments reason from that
+sentence. `False` keeps it true.
+
+### The contract nobody pinned
+
+Today's tests assert `not sock_path.exists()` **after** shutdown — `test_service_lifecycle.py:60,98,147`,
+`test_service_main.py:92,203,559,723`, `test_service_encoder_failure_stop.py:56,76`,
+`test_service_lifecycle_integration.py:851` — an end state that is **identical on 3.12 and 3.13
+whoever performed the unlink**, which is precisely how the change walked through 2,847 passing tests.
+The new test asserts the **mechanism**: a server started through **`server.serve`, the product's own
+path**, and closed through `shut_down()` **leaves its socket file on disk**, on every minor the matrix
+runs. Through `serve` rather than by calling `asyncio.start_unix_server(**unix_server_kwargs())`
+itself, because the latter passes with `serve`'s own call unchanged and so guards nothing. It fails on
+3.13+ without the seam, and that is what makes it worth writing.
+
+**Verify both guards by mutation before trusting either** — M14's practice, whose measured
+justification is that the gate was green while something material was wrong three separate times.
+The oracle for `attached_connection_count` already exists and can be named rather than designed:
+`tests/test_service_server.py::test_shut_down_survives_a_connection_accepted_but_not_yet_self_registered`.
+**The mutation is of the seam row to a constant `0`, and where it fails depends on this
+milestone's own other edit.** Once `:148`'s precondition poll goes through the seam — which done-when 3
+requires, since it reads the private counter directly today — a zero row makes the `for … else` at
+`:147–152` exhaust its turns and raise *"the server side never attached the accepted transport"*
+**before `shut_down_task` is created at `:174`**. So the failure to expect is an `AssertionError` there,
+**not** a `ShutdownTimeoutError`. The other valid form — mutating the **caller** in
+`close_all_connections` to `len(self._connections)` — passes the poll on a correct row and fails later:
+the loop at `server.py:322` never enters, nothing is cancelled, and `shut_down`'s bounded
+`wait_closed()` raises `ShutdownTimeoutError` at its 5 s deadline. Both fail the same test, which is
+why it is the oracle for both. **Reading the outcomes**: a green run means the mutation did not take;
+a *timeout* rather than an `AssertionError` under the **row** mutation means `:148` is still reading
+the private counter directly — the poll passed on the real count and handed the zero row to
+`close_all_connections`, which is the pre-milestone mechanism — so done-when 3's edit to that line has
+not landed. An `AssertionError` at `:152` under the **caller** mutation means the row was mutated
+instead of the caller. *Which* timeout the caller mutation surfaces is not a signal: `shut_down`'s own
+5 s deadline and the test's own final `wait_for` start within microseconds of each other, and the
+measured run here was won by the test's, producing a bare `TimeoutError`.
+**The poll goes through the seam rather than being re-targeted at something seam-free**
+(`handler_started`, set inside the same window at `:128`, would also work): through the seam it
+exercises the row against a raw `asyncio.Server`, which is the exact shape production hands it.
+*(Not "mutate it to `len(running._connections)`": `attached_connection_count` receives an
+`asyncio.Server` and cannot see the `RunningServer`'s own set, so that mutation is not expressible in
+the function it would test.)*
+
+### The matrix, and its contract
+
+`./check.sh` keeps its **default-invocation** behaviour byte-identical and gains **one behavioural
+change** — its
+hard-coded `venv=.venv/bin` becomes `venv="${ZIKARON_VENV:-.venv}/bin"` — plus the two header-comment
+sentences done-when 11 names, which change no behaviour. That is what lets the matrix reuse the
+one gate instead of copying it — and copying it is the trap, since `tests/test_check_gate.py` polices
+`check.sh`'s `--cov` package list and a second script would put that list in two places, which is the
+two-sites failure this corpus keeps recording.
+
+`check-matrix.sh` then:
+
+- iterates the minors **3.12 3.13 3.14**, fixed in the script rather than read from the environment,
+  resolving each as
+  `python3.<minor>` on `PATH` — `uv python install` puts exactly such shims there, which is how "names
+  interpreters rather than requiring uv" and "uv in practice" reconcile. *(As built, three sources in
+  order: the override, then `uv python find --managed-python --no-project`, then `python3.<minor>` on
+  `PATH` as a last resort. `uv python install --no-bin` deliberately puts **nothing** on `PATH` — the
+  shim this bullet expected is exactly what pointed every matrix virtualenv into a `/tmp` session
+  directory, so the reconciliation it describes was the hazard.)* **A per-minor override
+  `ZIKARON_PYTHON_3_13=/path/to/python` names a path only; nothing in the environment can add or drop
+  a minor**, or done-when 9's drift test would be parsing a list the environment could silently
+  change;
+- creates `.venv-matrix/<minor>` with `-m venv` and `pip install -e '.[dev]'` when absent, and reuses
+  it while a stamp of `pyproject.toml`'s hash **and the base interpreter's `realpath`**, written only
+  after a successful install, still matches
+  — rebuilding rather than installing over when it does not, since `pip install -e` never removes a
+  dependency the file has stopped declaring *(as built; the brief originally reasoned from exact
+  pinning, which covers upstream arrivals and not our own changes failing to arrive. The interpreter
+  half was added at code-review round 10: without it, repointing `ZIKARON_PYTHON_<minor>` at a
+  different build of the same minor kept the existing venv and reported green for an interpreter that
+  never ran — and SQLite, which no seam can absorb, comes with the interpreter)*;
+- runs, per minor, `ZIKARON_VENV=.venv-matrix/<minor>` with `PYTEST_ADDOPTS` and `PYTHONWARNINGS`
+  both set to error on deprecations, invoking `./check.sh` — pytest reads `PYTEST_ADDOPTS` natively,
+  so the filter needs no second copy of the gate; **`PYTHONWARNINGS` is there because the pytest
+  filter is applied in-process and does not reach the service, hook and MCP processes the integration
+  tier spawns** *(added as built, after a review round; measured not to disturb `mypy --strict` or
+  those spawning tests)*;
+- fails on the first red minor, naming which — and **no interpreter from any of the three sources is a
+  red minor, never a skip**, or a machine carrying only 3.12 would satisfy the milestone rule with one
+  interpreter, which is the hole `conftest.pytest_runtest_makereport` already closes for the integration
+  tiers;
+- **checks that `.venv-matrix/<minor>/bin/python` reports the minor it is labelled with, before anything
+  is installed into it**, and refuses naming the remedy otherwise *(as built, after a review round: a
+  wrong override or a stray shim would otherwise run one version under another's name and report green
+  for a version that never ran)*;
+- **takes `--parallel`, which runs every tested version concurrently** *(as built, on operator
+  request: ~3.5 minutes warm against roughly nine sequential)*. Each version gets its own coverage
+  file and tool caches through `ZIKARON_CACHE_SUFFIX`, which `check.sh` reads and which defaults to
+  empty so a plain `./check.sh` writes exactly the paths it always did; `.gitignore` gained trailing
+  wildcards, without which those per-version paths are untracked-but-not-ignored and every parallel
+  run fails on its own tree-identity guard. Virtualenv preparation stays sequential, since an
+  editable install writes one `zikaron.egg-info/` that concurrent installs would race;
+- **stops every process it started on `INT`, `TERM` or `HUP`** *(as built, after three review rounds)*.
+  Bash starts `&` jobs with SIGINT **ignored**, so a Ctrl-C would otherwise leave every gate running,
+  and the next run would merge an orphan's coverage into its own. Processes are found by a token in
+  their environment rather than by walking parent links: a group-delivered `TERM` or `HUP` kills the
+  intermediate shells first, after which `timeout` and `pytest` have no ancestry to walk — measured,
+  six orphans survived a descendant walk and none survives the token. The handler kills before it
+  prints anything, which is not cosmetic: a hangup is generated *by* the terminal going away, so the
+  first write to stderr fails, and under `set -e` a handler that announced itself first exited
+  having killed nothing — measured with `/dev/full` standing in for the hung-up pty, nine surviving
+  processes against zero. `check.sh` additionally erases `${COVERAGE_FILE}.*` fragments before its
+  gate whenever the suffix is set, so a run killed outside the trap cannot lend its data to the next;
+- **prints a tree identity on its last line** — `HEAD`'s short hash alone when the tree is clean,
+  otherwise `HEAD+<12 hex>` over every difference from `HEAD` plus the content of every untracked,
+  non-ignored file — **samples it before and after the loop and refuses if they differ** *(as built;
+  §9 makes matching identities the condition for per-version runs to count as a milestone gate, since
+  three subset runs on three trees are indistinguishable from three on one)*.
+
+**When it runs, stated once here; every site that must say it carries the phrase `additionally
+required before a milestone lands`, so one grep returns them all.** *`./check.sh`
+is the per-edit gate and remains the definition of done for a change; `./check-matrix.sh` is
+additionally required before a milestone lands.* No conditional list — "whenever `pyproject.toml` or
+the seam changes" reads tighter but turns a mechanical rule into a judgement call, and the judgement
+would be made by whoever least wants to spend the seven minutes. Without this sentence §6
+proposition 2 quietly voids itself: "supported means tested" would be true only on the day M27 lands
+and never verified again.
+**The residual, stated so it is a chosen gap rather than a discovered one**: a commit that is not a
+milestone — `89a1e00` is the shape, a fix landed between milestones — is never matrix-gated. Accepted,
+because the alternative is the conditional rule above, and because the next milestone to land catches
+it before anything ships.
+
+**What the deprecation filter is known to surface, and what it is not.** Measured on 3.14: **14
+`asyncio.get_event_loop_policy()` call sites, all in `tests/test_service_main.py`, none in the
+shipped package**, deprecated with removal in 3.16 — and **nothing else**, under an all-origins
+filter. They are replaced here rather than left to redden the new script on its first run. All 14 sit
+inside `async def test_…` bodies, so a running loop exists at each and `type(asyncio.get_running_loop())`
+is the drop-in; `asyncio.SelectorEventLoop` is platform-shaped and `DefaultEventLoopPolicy` is itself
+deprecated. ~~**3.12 and 3.13 were not run under the filter**, so a third-party deprecation there is
+the one way this can still surprise on first execution.~~ *(As built: all three have since run green
+under both filters — the in-process one and the exported one that reaches spawned children — and
+nothing further surfaced.)*
+
+**Coverage, stated so it is not discovered.** The `(3, 12)` row is unexecuted on 3.13 and 3.14 and the
+`(3, 13)` row on 3.12, so `show_missing` lists whatever lines those bodies occupy **on their own** —
+none if the rows are lambdas inside the table literal, one or more if they are `def`s — and the matrix
+produces three coverage measurements against one `fail_under = 95`. **Accepted, with no pragma**
+whichever shape the rows take: a row or two is far inside the measured 96.85–98.07% spread, and a
+`# pragma: no cover` would suppress exactly the signal worth having if the seam ever grows a row
+nothing exercises.
+
+**Cost, likewise.** Three venvs at roughly 200 MB each — `onnxruntime` dominates — and at least
+3 × ~150 s of tests, plus a first-run install per minor. That is the price of the range, and it is
+the reason the matrix is not in the inner loop.
+
+**Three interpreters have to come from somewhere**, and `uv` is how this was measured — **one
+measured `uv python install`, 1.44 s**, probably cache-warm, and its python-build-standalone builds
+were verified here to carry FTS5 and `enable_load_extension` with a real `vec0` query. A `pyenv` or
+distro-packaged set works equally, but **uv becomes a development dependency in practice** — worth
+stating plainly, because shipping a managed interpreter to *users* was considered and not chosen, and
+this brings a piece of that machinery in for *developers* through the back door.
+
+### The definition of done is stated in seven places
+
+`CLAUDE.md`, `README.md`, this file's own header, `.claude/agents/memory-researcher.md`,
+`design/coding-standards.md` §9 (which defines the gate without using the phrase), **`check.sh`'s own
+header** — *"The check gate. Nothing is done until this exits 0."* — and, once it existed,
+**`check-matrix.sh`'s header**, which states the same rule about itself. The brief's own rule is that
+a silently incomplete rule is worse than an inconvenient one, so **all seven change**, and the sweep
+is over the *claim* — not over the filename. *(Six until `check-matrix.sh` was written; the seventh
+is the file the rule is about, which is the easiest one to forget.)* A grep for the phrase returns
+nine lines, the seven sites plus this section and done-when 11 — expected, and said here so the next
+person counting does not re-derive it. **Three traps in
+that grep, each of which costs or adds a site if unstated**: `build-plan.md:5` writes it as
+`definition of "done"` **with quotation marks**, so a search for the bare phrase misses it;
+`check.sh:2` states the claim in *different words entirely* and no phrase-grep returns it, which is
+CLAUDE.md's own find-by-meaning-not-by-match lesson landing on this very sweep; and the grep does
+return `FINDINGS-archive.md:773`, which **stays as written**, the archive's rule being that it records
+what was believed and when.
+
+Two things travel with that edit. **The hermeticity claim becomes false by omission, in two files**:
+`CLAUDE.md:57–62` and `check.sh:38–44` carry it near-verbatim — the gate is hermetic and *"nothing is
+covered only there"* — and after M27 the 3.13/3.14 rows are exercised only in the matrix, which needs
+three interpreters, i.e. machine state, precisely what those paragraphs promise the gate does not
+depend on. **Both** gain a sentence naming the matrix as the deliberate exception: what it needs, what
+it alone covers, and that `check.sh` itself stays hermetic — **naming the set by reference, *"the
+minors `check-matrix.sh` runs"*, never by listing it**, or this milestone's own edit would falsify
+done-when 9's "three places". Fixing one file and not the other is this corpus's two-sites
+failure committed inside the edit that exists to prevent it.
+And **§9 is already drifted, independently of this milestone**: it prints `mypy --strict zikaron`
+against `check.sh`'s `zikaron tests`, and `pytest --cov=zikaron/core` against seven `--cov` flags.
+Leaving a known-false command line beside a new sentence is the neighbour contradiction this project
+keeps paying for, so §9's block is corrected in the same pass and gains `check-matrix.sh` — when it
+runs and what it adds.
+
+### Sites that reason from the pin or from the private read
+
+Enumerated by grepping **`3.12.3`** under `zikaron/` and `tests/` only — the same string appears
+twenty-odd times in `research/`, `reviews/`, `experiments/` and at `design/schema.md:5`, none of which
+is in this count. That grep catches both phrasings the corpus used, *"pinned"* and *"installed"*, where
+either word alone misses sites: `zikaron/service/lifecycle.py:75`, `zikaron/service/main.py:326`,
+`zikaron/service/server.py:231` and `:270`, `tests/test_service_main.py:556`,
+`tests/test_service_server.py:48`. **Six sites, five files.** Every one records a measurement that
+stays true, so **only the four saying "pinned" need anything** — the two saying "installed"
+(`main.py:326`, `server.py:270`) already name the minor they were measured on, which is exactly what
+is wanted, and they change nothing. A measurement offered as universal that was taken on one minor is
+the confidently-stale claim this corpus exists to avoid.
+
+Separately, `server.py:254–291` carries **three** docstring paragraphs reasoning about reading
+`_active_count` *"directly, once per pass"* with *"`type: ignore[attr-defined]` at every read
+below"*, and `tests/test_service_server.py:92–109` repeats that reasoning on the test side. Both are
+false once the seam owns the read. And `tests/test_service_server.py:148` reads
+`bare_server._active_count` in *code*, so the guard below must cover `tests/` too.
+
+**Invariants:** none new in `schema.md`'s numbered sense. The new guards are ordinary tests.
+
+**Done when:**
+1. `requires-python = ">=3.12"`, no upper bound. `[tool.ruff] target-version` and mypy's
+   `python_version` stay at the floor.
+2. `zikaron/service/asyncio_compat.py` exists, holding both differences as a table keyed by the minor
+   that introduced each, with no version branch anywhere inside it, and exposing
+   `attached_connection_count(server)`, `unix_server_kwargs()` **returning a fresh mapping** — never a
+   shared module-level dict a caller could mutate — and the interpreter version string done-when 10 logs.
+   **The row lookup takes the version tuple as an explicit argument**, defaulting to the running one
+   *inside* the seam — because proposition 4's "newest row applies" fires only on a minor the matrix
+   does not run, and done-when 3 forbids any test from reading `sys.version_info`, so without an
+   argument the rule is unfalsifiable. A test then asserts with literal tuples that `(3,12)→(3,12)`,
+   `(3,13)→(3,13)`, `(3,14)→(3,13)` and `(3,99)→(3,13)`: no version read, no private name, no third
+   allowlisted file.
+   **The row *bodies* get no unit test of their own**, and that is deliberate rather than an omission:
+   a stub naming `_active_count` or `_clients` would itself trip done-when 3's scan. They are verified
+   by the matrix alone, through done-when 4 and 5.
+3. **A source-scanning test asserts the seam is the only site.** The mechanism is
+   `tests/test_check_gate.py`'s — a regex over file *text*, not `tests/test_hook_stdlib_only.py`'s
+   `sys.modules` diff, which sees *imports* and would be blind to an attribute read on a module every
+   file already imports. Scope: `zikaron/**/*.py` **and** `tests/**/*.py`. Spellings covered:
+   `sys.version_info`, `sys.hexversion`, `sys.version`, `platform.python_version`,
+   `from sys import version_info` — and `_active_count` / `_clients`, which the porting audit asks for
+   by name and which `tests/test_service_server.py:148` currently violates.
+   **Each is a word-bounded pattern — `\b_clients\b`, `\b_active_count\b` — never a substring.** Six
+   sites under `tests/` contain `_clients` and read nothing — **four** distinct test names,
+   `test_two_clients_racing…` and three `…both_clients…`, two of them quoted a second time in a
+   docstring — and `_` being a word character is exactly what excludes them while keeping a
+   backticked `_clients` in a docstring *in* scope. Measured: the bare substring matches those six; the
+   word-bounded form matches **nothing in the tree today**, since `_clients` only enters with the seam.
+   **Being textual has three consequences, all deliberate.** Prose counts, and that is the point: a
+   docstring that still explains the private counter by name outside the seam is exactly the drift being
+   guarded against, so the rewrites in done-when 7 say *"the private counter"* rather than the
+   attribute name. `tests/test_service_server.py:189`'s assertion *message* names `_active_count` and
+   is reworded. And **the scanner necessarily contains every spelling it forbids**, so it assembles its
+   patterns from fragments rather than literals and exempts itself — the allowlist is
+   `asyncio_compat.py` **plus the scanning test**, which is two files, not one.
+4. **`tests/test_service_server.py:148` polls `attached_connection_count(bare_server)`** — the decision
+   §"The contract nobody pinned" argues for, carried here so it is checkable — and
+   `attached_connection_count` returns the same quantity on all three minors, verified two ways before
+   the guard is trusted. **By mutating each row** to a constant `0` under an interpreter that selects it
+   — the `(3, 12)` row on 3.12, the `(3, 13)` row on 3.13 or 3.14 — and confirming
+   `test_shut_down_survives_a_connection_accepted_but_not_yet_self_registered` fails **at `:152`** each
+   time. **And by mutating the caller** in `close_all_connections` to `len(self._connections)` once, on
+   any minor, confirming the same test fails: the row mutation, now caught at
+   the poll, **never reaches the product's seam call**, so this second mutation is the only one that shows
+   that call is load-bearing.
+   ~~confirming the same test fails with `ShutdownTimeoutError`~~ — **withdrawn on measurement,
+   2026-09-20.** It fails, which is what the guard needs, but *which* exception surfaces is a race
+   between two 5-second deadlines that start within microseconds of each other: `shut_down`'s own,
+   begun when the task first runs during the `:185` await, and the test's `wait_for(shut_down_task,
+   5.0)` at the end of the test body. Run here, the **test's** deadline won and the failure was a
+   bare `TimeoutError`
+   from `asyncio/timeouts.py`, not `ShutdownTimeoutError`. Naming one of them would send an executor
+   hunting for a difference that is scheduling noise. **Require only that the test fails**, and
+   expect either. **Mutating only the `(3, 12)` row on `.venv` proves the test is sensitive to a
+   wrong 3.12 row and says nothing about the row this milestone actually writes** — M14's "universal
+   claim proven only by its best-case fixture", the same lesson §"The contract nobody pinned" cites for
+   verifying both guards by mutation.
+5. **A server started through `server.serve`** — the product's own path, so that what the test proves is
+   `serve`'s own `start_unix_server` call passing `**unix_server_kwargs()` — and closed through
+   `shut_down()` **leaves its
+   socket file on disk**, on every minor the matrix runs. Verified by mutating the `(3, 13)` row to `{}`
+   under 3.13 or 3.14 and confirming it fails. **On 3.12 no row can make it fail, so that run is not
+   evidence** — and a test that called `asyncio.start_unix_server(**unix_server_kwargs())` itself would
+   pass with `serve`'s own call unchanged and guard nothing.
+6. `main.run`'s docstring claim that the socket is "unlinked exactly once" **stays true on every minor
+   and says the seam is why** — it
+   is true today on 3.12 and false only on 3.13+ without the seam, so this is a claim being made
+   durable, not repaired. And `tests/test_service_main.py:555–558`'s comment is rewritten to say that
+   `cleanup_socket=False` is what keeps `:559` distinguishing `run()`'s unlink from asyncio's, on every
+   minor — rather than the pin, which by then is gone.
+7. The four `3.12.3` sites that say "pinned" no longer claim one (the two saying "installed" need
+   nothing), `server.py:254–291`'s three paragraphs and
+   `tests/test_service_server.py:92–109` no longer describe a direct private read, and
+   `design/architecture.md` §"Idle self-stop" states the mechanism the design previously left to a
+   docstring: the socket is unlinked by this process alone, because the listener is opened with
+   `cleanup_socket=False` through the seam, so asyncio's own 3.13+ unlink-on-close never runs.
+8. The 14 `get_event_loop_policy()` sites are `type(asyncio.get_running_loop())`.
+9. `./check.sh` green unchanged in default invocation; `./check-matrix.sh` green on 3.12, 3.13 and
+   3.14 with deprecations as errors; and a test in `tests/test_check_gate.py`'s style asserts the
+   minors named in `check-matrix.sh` are exactly the set §6 states, so those two cannot drift.
+   **The set is written out in three places and drift-tested in all three**: §6 proposition 2
+   (canonical), `check-matrix.sh`, and `README.md:65`. *As built there is a fourth, written after
+   this brief: the `uv python install --no-bin 3.12 3.13 3.14` line in `CLAUDE.md` §"Setting up a
+   development environment". It is not drift-tested and does not need to be — a stale copy installs
+   a subset, and `check-matrix.sh` then refuses the missing version and prints the install command
+   regenerated from `minors`, so the failure names its own remedy.*
+   `test_check_gate.py` already parses prose by
+   fixed sentence (`_STATED_FLOOR`), so extending it to both prose sites is the existing mechanism, not
+   a new one. **`.venv-matrix/` is in `.gitignore`**, which today covers only `.venv/` and `venv/`. **§9 does not restate the set** — it says "the minors `check-matrix.sh` runs" — because a
+   fourth copy buys nothing a reference does not. **The seam's key set is deliberately tied to none of
+   them**: it is keyed by behaviour change, not by supported minor (§6 proposition 3).
+10. The service logs its linked `sqlite3.sqlite_version` **and** its own interpreter version at
+    startup, on one line **beside** the configuration dump `service/log.py` already writes, not inside
+    it — that dump's documented shape is each non-default value *with the layer it came from*, and
+    neither value has a layer. The version string is read **through the seam**, so done-when 3's
+    allowlist gains no third file — it stays the seam plus the scanner. Both values are logged because
+    this milestone is what makes both vary: Ubuntu's 3.12.3 links SQLite **3.45.1** and a uv-managed
+    3.13/3.14 links **3.53.1**, `design/schema.md`'s opening line verifies exactly one of those,
+    nothing in the package reads the value at all, and the minor is what selects the seam row.
+11. **`coding-standards.md` §6 opens with the five propositions of §"What 'supported' means"** — each
+    bold lead sentence and its reason, the interpreter being the first dependency, §6 today saying only
+    *"`venv`, latest stable, pinned exactly"*, which says nothing about it. Without this item a verifier
+    can pass every other one while §6 still carries none of the standing rules a later session is bound
+    by, `coding-standards.md` being binding per `CLAUDE.md`.
+    **In that wording except the brief-relative clauses, which are rewritten in §6's own voice** — a
+    normative document cannot refer to this one, and one of these sentences becomes *false* on being
+    pasted: proposition 1's count is **dated** — "measured at 18 sites across 10 modules when the floor
+    was set, 2026-09-20" — or dropped, "PEP 695 syntax is the floor's reason" being sufficient as a rule,
+    since no test counts those sites either and the brief's own treatment of the `3.12.3` sites is the
+    model; proposition 3's *"which done-when 3's scan covers and which this proposition must say, since as
+    §6 text it is what a reader will believe"* — the whole clause, the second half being an instruction to
+    the writer rather than a rule — becomes "which a source-scanning test over `zikaron/` and `tests/`
+    enforces", and its *"today the table has two keys…"* sentence — a count every added row
+    falsifies, guarded by no drift test by this brief's own design, which is the M13-hash rule — becomes
+    "the module's table is the record of which minors changed what"; proposition 4's *"the brief chooses
+    this behaviour deliberately"* and *"the cap this milestone removes"* become plain statements;
+    proposition 5's *"§6's own first rule pins every dependency exactly"* becomes "the pinning rule
+    below", since pasted as §6's opening it would point at itself and be false, the pinning rule having
+    become the sixth. Its withdrawal parenthetical stays here and in `FINDINGS.md` rather than entering a
+    normative document — the operator's rule that a design document states what we are doing, with the
+    history in the trail. Proposition 2's sentence is the one done-when 9's drift test parses, so it is
+    written together with the regex.
+    Then: all six definition-of-done sites ~~carry the two-script sentence from §"The matrix"
+    **verbatim**~~ — **withdrawn as built**: every site adapts the wording to its own context and none
+    is verbatim. What was wanted is what shipped: each carries the claim with the phrase
+    **`additionally required before a milestone lands`** intact, so one grep for that phrase returns
+    every site. `check.sh:2` included and `FINDINGS-archive.md:773` deliberately untouched; **both** hermeticity
+    paragraphs — `CLAUDE.md:57–62` and `check.sh:38–44` — name the matrix as the deliberate exception;
+    `coding-standards.md` §9's command block is corrected to match `check.sh` and names
+    `check-matrix.sh` and when it runs; `README.md:65` reads *"Python 3.12 or newer — 3.12, 3.13 and
+    3.14 are the tested set"* and `README.md:84`'s install command becomes `python3 -m venv .venv`.
+12. `FINDINGS.md` §"Open: distribution…" records the outcome and the review trail, and its status line
+    moves off "briefed". **Its four internal contradictions were fixed when this brief landed rather
+    than deferred into the milestone** — it had said *"Nothing is decided"* sixty lines above
+    *"Decisions taken with the operator"*, prescribed `filterwarnings = error` (a `pyproject.toml`
+    setting, which is the outcome the matrix decision exists to avoid), and written
+    `unix_server_kwargs()`'s value as `{"cleanup_socket": False}` unconditionally, which is the 3.12
+    `TypeError`; and it had kept an *"**Open decision**: pass `cleanup_socket=False` … or accept the
+    default"* paragraph forty lines above the one settling it. An always-loaded file that states a
+    wrong plan is a defect now, not a milestone task. **The count stays four**: FINDINGS also carried
+    the refuted "a `fastembed` release must not redden the gate" reason, fixed in the same pass, but
+    that was a disagreement with *this brief* rather than a fifth contradiction internal to FINDINGS —
+    said here so the next reader counting them arrives at four rather than five.
+
+**Fence.** This milestone widens the *supported range*; it does not change **how Zikaron is
+obtained**. No `uv tool install`, no PyPI publication, no change to the install flow — shipping a
+managed interpreter and publishing a package are each their own milestone. (Done-when 1 does edit
+`pyproject.toml` metadata; that is the range itself, not packaging.) **No macOS work**: the missing
+`onnxruntime` x86_64 wheel, the 104-byte `sun_path` limit and the absent `$XDG_RUNTIME_DIR` are real
+and are not touched here. **No SQLite pinning and no minimum-SQLite check** beyond logging the value —
+pinning the library means pinning a statically-linked interpreter or vendoring the library, either
+of which is the packaging milestone this one deliberately is not. *(The adjective was added at
+code-review round 12: a distribution interpreter loads the system `libsqlite3.so`, so pinning it
+pins nothing here — which is why §"Still open" names a **managed** interpreter as the remedy, and
+always did. The vendoring alternative is round 14's.)*
+
+**And the shutdown perturbation walk is deliberately dropped, by operator decision, recorded here as
+a debt rather than as a nothing.** Those cells are socket-lifecycle questions that predate any version
+work and that `cleanup_socket=False` leaves exactly as they were. The sharpest one, stated concretely
+so it can be read cold: `main.run`'s `except BaseException` path calls `shut_down()` **before**
+its own `sock_path.unlink`, so between `server.close()` and that unlink the socket file exists and
+refuses connections; a client then takes `hook/connect.py:237`'s vet-and-unlink and spawns a
+successor; and the old process's own unlink, running after the close, can then remove the
+**successor's** live socket.
+**That unlink is a bare `sock_path.unlink(missing_ok=True)` with no vet at all** — as are the four
+other bare ones: `main.run`'s signal path (per its own comment) and its force-exit helper, and
+the two self-stop paths at `lifecycle.py:116` (idle) and `:182` (encoder failure), which are the
+*"self-stopping tasks"* `main.run`'s docstring names. Of the **seven** socket-path unlinks under
+`zikaron/service/` and `zikaron/hook/`, only two vet anything —
+`service/lifecycle.py:430` and `hook/connect.py:238`, each behind
+`security.vet_socket_for_unlink` at the line above. So the hazard is one step worse than
+"unguarded against inode identity": even the client-side vet that does exist checks ownership and type
+and **not** inode identity, while asyncio's own 3.13+ cleanup — the thing we are switching off — is the
+only unlink in the system that checks the inode.
+`research/python-portability-probes.md` §5b item 3 records that asymmetry. `CLAUDE.md`'s rule is
+triggered by *editing* lifecycle code, which the seam does, so this is a decision to skip a required
+step rather than an absence of one.
 
 ---
 

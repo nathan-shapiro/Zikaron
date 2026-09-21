@@ -35,6 +35,16 @@ from zikaron.service import main
 from zikaron.service.server import ShutdownTimeoutError
 
 
+def _event_loop_class() -> type[asyncio.AbstractEventLoop]:
+    """The running loop's class — what the tests below patch signal-handler methods onto.
+
+    The class rather than the instance, because `main.run` calls `asyncio.run` and so builds a loop
+    of its own that these tests never hold a reference to. Only callable from inside a running loop,
+    which every caller is.
+    """
+    return type(asyncio.get_running_loop())
+
+
 def _runtime_dir(tmp_path: Path) -> Path:
     """A socket directory `security.ensure_runtime_dir` will actually accept: exactly `0700` —
     mirroring `test_service_lifecycle_integration.py`'s own fixture of the same name and purpose."""
@@ -246,7 +256,7 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
         raise RuntimeError("signal handler installation failed, deliberately, for this test")
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_signal_handler_always_fails,
         raising=False,
@@ -429,9 +439,7 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
     )
 
     removed: list[object] = []
-    real_remove_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.remove_signal_handler
-    )
+    real_remove_signal_handler = _event_loop_class().remove_signal_handler
 
     def _add_signal_handler_fails_on_the_second_call(
         _loop: object, sig: object, _callback: object, *_args: object
@@ -446,13 +454,13 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
         return result
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_signal_handler_fails_on_the_second_call,
         raising=False,
     )
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "remove_signal_handler",
         _remove_signal_handler_records_calls,
         raising=False,
@@ -502,9 +510,7 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
         "zikaron.service.context.FastEmbedEncoder.load", staticmethod(_load_fake_encoder)
     )
 
-    real_add_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.add_signal_handler
-    )
+    real_add_signal_handler = _event_loop_class().add_signal_handler
     installed_events: dict[int, Callable[..., object]] = {}
 
     def _add_signal_handler_captures_and_fires_sigterm(
@@ -526,9 +532,7 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
             callback(*args)
 
     removed: list[object] = []
-    real_remove_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.remove_signal_handler
-    )
+    real_remove_signal_handler = _event_loop_class().remove_signal_handler
 
     def _remove_signal_handler_records_calls(loop: asyncio.AbstractEventLoop, sig: int) -> bool:
         removed.append(sig)
@@ -537,13 +541,13 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
         return result
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_signal_handler_captures_and_fires_sigterm,
         raising=False,
     )
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "remove_signal_handler",
         _remove_signal_handler_records_calls,
         raising=False,
@@ -552,10 +556,10 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
     await main.run(sock_path, store_dir)
 
     assert set(removed) == {signal.SIGTERM, signal.SIGINT}
-    # The signal path's own unlink. `asyncio.Server.close()` does not remove a Unix socket's path on
-    # the pinned 3.12.3 — from 3.13 `create_unix_server` defaults to `cleanup_socket=True` and does
-    # unlink it, at which point this assertion stops distinguishing `run()`'s unlink from asyncio's.
-    # `pyproject.toml` pins `==3.12.*`, so the guard holds as long as that pin does.
+    # The signal path's own unlink. From 3.13 a closing Unix server would remove the socket path
+    # itself, at which point this assertion would stop distinguishing `run()`'s unlink from
+    # asyncio's; `serve` switches that off wherever it exists, so this stays a statement about
+    # `run()` on every supported version.
     assert not sock_path.exists()
 
 
@@ -691,9 +695,7 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
     # A signal exit is the path that calls `shut_down()` directly from `run()`'s own body; firing
     # `SIGTERM`'s handler synchronously the instant it is installed avoids any race between this
     # test and `run()`'s own setup (the same technique the signal-handler-removal tests use).
-    real_add_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.add_signal_handler
-    )
+    real_add_signal_handler = _event_loop_class().add_signal_handler
 
     def _add_signal_handler_and_fire_sigterm(
         loop: asyncio.AbstractEventLoop,
@@ -706,7 +708,7 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
             callback(*args)
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_signal_handler_and_fire_sigterm,
         raising=False,
@@ -860,9 +862,7 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
 
     # Make the signal win the initial wait, deterministically, by firing SIGTERM's own handler
     # synchronously the instant it is installed.
-    real_add_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.add_signal_handler
-    )
+    real_add_signal_handler = _event_loop_class().add_signal_handler
 
     def _add_and_fire_sigterm(
         loop: asyncio.AbstractEventLoop,
@@ -875,7 +875,7 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
             callback(*args)
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_and_fire_sigterm,
         raising=False,
@@ -923,9 +923,7 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
         _idle_self_stop_raises_something_else_when_cancelled,
     )
 
-    real_add_signal_handler = (
-        asyncio.get_event_loop_policy().get_event_loop().__class__.add_signal_handler
-    )
+    real_add_signal_handler = _event_loop_class().add_signal_handler
 
     def _add_and_fire_sigterm(
         loop: asyncio.AbstractEventLoop,
@@ -938,7 +936,7 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
             callback(*args)
 
     monkeypatch.setattr(
-        asyncio.get_event_loop_policy().get_event_loop().__class__,
+        _event_loop_class(),
         "add_signal_handler",
         _add_and_fire_sigterm,
         raising=False,

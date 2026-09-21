@@ -26,8 +26,11 @@ every caller, because a database that opened and then refused a pragma is the sa
 asked for it.
 """
 
+import asyncio
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Final
 from urllib.parse import quote
 
 import aiosqlite
@@ -36,6 +39,57 @@ import sqlite_vec
 #: How a caller names a failed connect. Takes the driver's error and returns the exception to
 #: raise in its place, with the original kept as the cause.
 type ConnectFailure = Callable[[aiosqlite.Error], Exception]
+
+
+#: How long to wait for the worker thread of a *failed* connect to finish. It is draining a single
+#: queued sentinel, which takes microseconds; this bound exists so a wedged thread cannot hang a
+#: caller rather than as a duration anything is expected to spend.
+_ABANDONED_WORKER_JOIN_SECONDS: Final = 5.0
+
+
+async def join_abandoned_worker(connector: aiosqlite.Connection) -> None:
+    """Wait for the worker thread of a connect that failed, so it cannot outlive this event loop.
+
+    **Why this is needed, reproduced before it was written.** `aiosqlite.connect()` starts a worker
+    thread, and a failed connect leaves it mid-shutdown: the library's own failure path calls
+    `stop()`, which *queues* a sentinel and returns without waiting. If the event loop closes before
+    the thread drains that sentinel — which is exactly what happens when a caller catches the error
+    and returns, the situation every caller of this function is in — the thread tries to deliver the
+    sentinel's result through `call_soon_threadsafe` on a dead loop, raises `RuntimeError: Event
+    loop is closed`, fails identically while trying to report that, and dies with the exception
+    unhandled. A test run surfaces it as `PytestUnhandledThreadExceptionWarning`.
+
+    **What that loses is the thread, and nothing else.** A connect that *failed* never produced a
+    `sqlite3.Connection` for anybody to drop — the driver raised instead of returning one, and the
+    stop the library queues behind it therefore finds no handle to close either. So this path
+    cannot leave a database open, and an `unclosed database` warning seen near it has a different
+    cause. *Superseded, in place: this docstring previously said the dropped connection "surfaces
+    separately as `ResourceWarning: unclosed database`", and the surrounding record called it one
+    bug with two symptoms. It is one symptom; the warnings counted alongside it came from raw
+    `sqlite3` connections in test helpers and were fixed separately.*
+
+    The number this is worth is in `test_store_connection.py`, which keeps the measurement as a
+    test because nothing else in the gate can tell the two states apart: coverage sees both
+    branches execute either way, and the matrix's warning filter errors only on deprecations.
+
+    The join runs off the event loop, so a thread that never exits costs this bound rather than
+    blocking the loop. `_thread` is private, and deliberately so — the library exposes no other way
+    to wait for a worker it has already told to stop, and `stop()`'s own return value is a future on
+    the loop that is about to close, which is the thing that cannot be relied on here.
+
+    **Absence is tolerated for a substitute only, and the type is what draws that line.** A test
+    that replaces `aiosqlite.connect` gets a plain coroutine with no worker behind it, and there is
+    genuinely nothing to wait for; the first version of this assumed the attribute and broke such a
+    test, which is how the tolerance was arrived at. A real `aiosqlite.Connection` that stopped
+    keeping its thread here is the opposite case — the wait would quietly become a no-op and the
+    defect would come back with nothing to announce it — so the check is on the type rather than on
+    mere presence, and `test_store_connection.py` pins the attribute against the installed library
+    so a version that moves it turns the matrix red instead of disabling this.
+    """
+    worker = getattr(connector, "_thread", None)
+    if not isinstance(worker, threading.Thread):
+        return
+    await asyncio.to_thread(worker.join, _ABANDONED_WORKER_JOIN_SECONDS)
 
 
 async def _load_sqlite_vec(db: aiosqlite.Connection) -> None:
@@ -119,13 +173,14 @@ async def open_connection(
             load or a pragma failed.
         OSError: `db_path` could not be `stat`ed once the connection was established.
     """
+    if existing_only:
+        connector = aiosqlite.connect(f"file:{quote(str(db_path))}?mode=rw", uri=True)
+    else:
+        connector = aiosqlite.connect(db_path)
     try:
-        if existing_only:
-            uri = f"file:{quote(str(db_path))}?mode=rw"
-            db = await aiosqlite.connect(uri, uri=True)
-        else:
-            db = await aiosqlite.connect(db_path)
+        db = await connector
     except aiosqlite.Error as error:
+        await join_abandoned_worker(connector)
         if connect_failure is None:
             raise
         raise connect_failure(error) from error

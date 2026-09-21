@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 from zikaron.core.errors import ZikaronError
 from zikaron.service import dispatch, rpc
+from zikaron.service.asyncio_compat import attached_connection_count, unix_server_kwargs
 from zikaron.service.context import ServiceContext
 from zikaron.service.dispatch_consolidation import CONSOLIDATOR_METHODS
 from zikaron.service.dispatch_knowledge import KNOWLEDGE_METHODS
@@ -228,7 +229,7 @@ class RunningServer:
     describes as the norm: "the client adopts the returned label and reuses it for its process
     lifetime") blocks `wait_closed()` **forever**, on both the idle-self-stop path and the signal
     path, since both call `shut_down()` (`main.py`), which calls the identical `close()`/`wait_
-    closed()` pair. Measured directly on this project's own pinned Python 3.12.3 before writing
+    closed()` pair. Measured directly on Python 3.12.3 before writing
     this fix: a standalone repro server with one accepted-but-idle connection left `wait_closed()`
     still pending after a 3 s timeout, confirming this is a real hang and not merely a theoretical
     reading of the docstring.
@@ -253,8 +254,9 @@ class RunningServer:
 
         Called only from `shut_down`, **after** `self.server.close()` has already run — which is
         what bounds the loop below: `close()` stops the listener from ever accepting a *new*
-        connection, so `self.server._active_count` — the exact private counter `wait_closed()`
-        itself waits on — normally only counts *down* from here. **Normally, not provably**: a
+        connection, so the server's own attached-connection count — the exact quantity
+        `wait_closed()` itself waits on — normally only counts *down* from here. **Normally, not
+        provably**: a
         connection already accepted at the raw-fd level before `close()` ran can still attach
         afterwards, because the event loop accepts the fd synchronously and only then schedules the
         separate task that constructs the transport and calls `Server._attach()`. That race is
@@ -266,29 +268,28 @@ class RunningServer:
         own deadline, and raises `ShutdownTimeoutError` rather than waiting indefinitely if it
         cannot.
 
-        `_active_count` is read directly, once per pass, rather than inferred from
+        The server's own count is read once per pass, rather than inferred from
         `len(self._connections)`: measured directly against the installed Python 3.12.3 asyncio
-        source, a transport's own `_active_count` increments **synchronously** inside its
-        constructor (`_SelectorTransport.__init__`'s `self._server._attach()`), while the callback
+        source, a transport is attached **synchronously** inside its constructor
+        (`_SelectorTransport.__init__`'s `self._server._attach()`), while the callback
         that creates this class's own handler task (`StreamReaderProtocol.connection_made`, called
         from a `loop.call_soon` scheduled by that same constructor) reliably needed **three** bare
         `asyncio.sleep(0)` turns to actually run and reach `serve`'s `connections.add(...)` line,
         measured with a standalone script before writing this loop — not one, and not a number
-        this code should assume stays fixed across Python patch releases. Polling the private
-        counter itself, rather than counting fixed turns or counting entries in `self.
-        _connections`, is what makes this robust to that number changing: whatever it is, this
-        loop cancels every task that *has* registered on each pass and keeps yielding until the
-        server's own count reports nothing further to wait for.
+        this code should assume stays fixed across Python patch releases. Polling the server's own
+        count, rather than counting fixed turns or counting entries in `self._connections`, is what
+        makes this robust to that number changing: whatever it is, this loop cancels every task that
+        *has* registered on each pass and keeps yielding until the server reports nothing further to
+        wait for.
 
-        `self.server._active_count` is a genuinely private attribute — `type: ignore[attr-
-        defined]` at every read below is deliberate, not a suppressed real error, since `asyncio.
-        Server`'s public surface (`sockets`, `is_serving`, `close`, `wait_closed`, `serve_forever`,
-        `start_serving`, `get_loop`) exposes no public equivalent of "how many connections are
-        currently attached" — the private counter is read here only as an observation this loop
-        polls, never mutated, and the alternative considered and rejected (subclassing `asyncio.
-        Server` to override `_attach`) is not reachable at all, since `create_unix_server`
-        hard-codes `base_events.Server` with no factory hook for a caller to substitute a subclass
-        through any public API.
+        **That count has no public accessor, and the private one it is read through is spelled
+        differently across supported Python versions** — an integer counter through 3.12, a set of
+        attached transports from 3.13 — which is why it arrives from
+        `asyncio_compat.attached_connection_count` rather than off the server object here. The
+        alternative considered and rejected long before that (subclassing `asyncio.Server` to
+        override `_attach`) is not reachable at all, since `create_unix_server` hard-codes
+        `base_events.Server` with no factory hook for a caller to substitute a subclass through any
+        public API.
 
         Uses `asyncio.wait(..., timeout=remaining)`, never `asyncio.wait_for(gather(...), timeout=
         remaining)` — confirmed the difference matters by direct measurement before choosing this
@@ -319,12 +320,12 @@ class RunningServer:
             if deadline is None
             else deadline
         )
-        while self.server._active_count > 0:  # type: ignore[attr-defined]
+        while attached_connection_count(self.server) > 0:
             for connection in list(self._connections):
                 connection.cancel()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                active = self.server._active_count  # type: ignore[attr-defined]
+                active = attached_connection_count(self.server)
                 raise ShutdownTimeoutError(
                     f"{active} connection(s) still attached after "
                     f"{_SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS}s of shutdown — a handler task never "
@@ -333,7 +334,7 @@ class RunningServer:
             if self._connections:
                 _done, pending = await asyncio.wait(list(self._connections), timeout=remaining)
                 if pending:
-                    active = self.server._active_count  # type: ignore[attr-defined]
+                    active = attached_connection_count(self.server)
                     raise ShutdownTimeoutError(
                         f"{active} connection(s) still attached after "
                         f"{_SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS}s of shutdown — a handler task "
@@ -402,5 +403,14 @@ async def serve(ctx: ServiceContext, sock_path: str) -> RunningServer:
         connection.add_done_callback(connections.discard)
         await _handle_connection(ctx, reader, writer)
 
-    server = await asyncio.start_unix_server(_on_connect, path=sock_path, limit=_READ_LIMIT)
+    # From 3.13, closing a Unix server unlinks its own socket path unless told not to. On its
+    # self-stop and signal paths this service unlinks the socket itself *before* closing the
+    # listener, so a client arriving during shutdown finds nothing to connect to and starts a fresh
+    # server rather than reaching a dying one. (`run`'s error path closes first and unlinks after,
+    # which is a known and recorded debt.) A second unlinker would make that ordering meaningless
+    # wherever it holds, so the option is switched off — as keyword arguments, because on 3.12 it
+    # does not exist and passing it raises `TypeError`.
+    server = await asyncio.start_unix_server(
+        _on_connect, path=sock_path, limit=_READ_LIMIT, **unix_server_kwargs()
+    )
     return RunningServer(server=server, _connections=connections)

@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from collections.abc import Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Final
 
@@ -218,7 +219,9 @@ def _recorded_lock_pid(project: Path) -> int | None:
     if not found:
         return None
     try:
-        with sqlite3.connect(f"file:{found[0]}?mode=ro", uri=True) as connection:
+        # `closing`, not a bare `with`: `sqlite3.Connection.__exit__` ends the transaction and
+        # leaves the connection open, which from 3.13 raises `ResourceWarning: unclosed database`.
+        with closing(sqlite3.connect(f"file:{found[0]}?mode=ro", uri=True)) as connection:
             rows = connection.execute("SELECT value FROM meta WHERE key = 'lock_pid'").fetchall()
     except sqlite3.Error:
         return None

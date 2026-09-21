@@ -2,8 +2,18 @@
 
 > Written 2026-08-01. Reconciles D1–D32. Companion to `design/architecture.md` (process model, RPC, MCP
 > surface), `design/indexing.md` (chunking contract) and `design/consolidation.md`.
-> Verified locally: stdlib `sqlite3` 3.45.1 on Python 3.12.3 has **FTS5 compiled in** and
-> `enable_load_extension` available for `sqlite-vec`.
+> Verified locally on **each tested Python version, because the SQLite library is bundled with the
+> interpreter rather than chosen here** and so varies with how that interpreter was obtained: **FTS5
+> compiled in** and `enable_load_extension` available for `sqlite-vec` on a distribution-packaged
+> 3.12.3 (SQLite **3.45.1**) and on downloaded 3.13.15 and 3.14.7 builds (SQLite **3.53.1**), the
+> latter two checked with a real `vec0` nearest-neighbour query rather than only for the attribute's
+> presence. **Neither property is guaranteed by the Python version**: the extension-loading capability
+> is a compile-time option, off in some widely used distributions, so a new interpreter is a new
+> measurement. Full-text ranking is a function of the linked library, which is why the service logs
+> both versions at startup.
+>
+> *This sentence read "stdlib `sqlite3` 3.45.1 on Python 3.12.3" while `requires-python` pinned that
+> one version. Widening the range made a single-point verification read as a universal one.*
 
 ## The main structural decision: one table, not two
 

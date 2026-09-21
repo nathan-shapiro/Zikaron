@@ -226,9 +226,46 @@ what it will be told when it is wrong. Public API only; a docstring on a three-l
 
 ## 6. Dependencies
 
-**`venv`, latest stable, pinned exactly.** Those are not in tension: resolve to current stable versions, then
-pin them exactly in a lock file so a build is reproducible, and bump deliberately rather than drifting. An
-unpinned range means a green run today and a red one tomorrow with no change of ours.
+**The interpreter is the first dependency, and it is a floor with no cap.** `requires-python` is
+`>=3.12`. The floor is real — the package uses PEP 695 type-parameter syntax, which is 3.12+. A cap is
+deliberately absent: it makes a resolver backsolve to older, possibly broken releases of everything
+else rather than failing with a clear message about the interpreter.
+
+**Tested versions: 3.12, 3.13, 3.14.** "Supported" means "tested", and "tested" means the versions
+`check-matrix.sh` runs — there is no looser sense of the word applied to a Python version anywhere in
+this repository. Adding a version to that script is what makes it supported.
+
+**Every stdlib difference between tested versions lives in `zikaron/service/asyncio_compat.py`, as one
+row per behaviour change, keyed by the version that introduced it.** Nothing else under `zikaron/` or
+`tests/` reads the running version, and a source-scanning test over both trees enforces that. Rows are
+keyed by behaviour change rather than by supported version, so the module's table is the record of
+which releases changed what; a release that changed nothing needs no row. A difference in a stdlib
+module other than `asyncio` is a decision about where that seam widens, to be taken deliberately —
+not a second compatibility module appearing beside the first.
+
+**A version newer than the tested set is installable and untested.** `>=3.12` means an install on a
+release newer than anything here has run against will succeed, and that is intended: the seam applies
+its newest row, so a further change to a private name it depends on fails loudly at the first shutdown
+rather than being absorbed by a fallback. Refusing such a version at startup was rejected — it is the
+cap above, wearing a different hat.
+
+**Deprecations are errors in `check-matrix.sh` only, never in `pyproject.toml`.** The local gate runs
+one interpreter, so a deprecation raised only on a newer version is invisible to it whatever the
+filter says; error-on-deprecation belongs where the interpreter varies.
+
+**`venv`, latest stable, pinned exactly.** Resolve to current stable versions, pin each **direct**
+dependency exactly in `pyproject.toml`, and bump deliberately rather than drifting: an unpinned range
+means a green run today and a red one tomorrow with no change of ours.
+
+**How far that pin reaches, and where it stops.** The transitive set is resolved when a virtualenv is
+built. `requirements-lock.txt` records one full resolution and **nothing installs from it** — not the
+README's instructions, not `check-matrix.sh` — so two virtualenvs built on different days can carry
+different transitive versions, and the outcome the direct pin prevents for direct dependencies is
+still open for transitives: under error-on-deprecation, a transitive's deprecation on a newer
+interpreter can redden the matrix with no change of ours. Measured 2026-09-21: `pip install
+--constraint requirements-lock.txt -e '.[dev]'` does resolve on 3.14, so adopting the lock file is
+available and is the obvious fix; it is not taken here because it changes what every virtualenv
+installs and needs its own verification on each version.
 
 **`zikaron-core`'s SQL runs through `aiosqlite`, never bare stdlib `sqlite3`.** Not a preference: a handler
 that calls the blocking sqlite3 API directly can hold the single-threaded event loop for as long as SQLite's
@@ -258,6 +295,25 @@ equivalent `finally`. And the test suite makes a violation **loud** rather than 
 instead of hanging. Marking the thread a daemon was considered and rejected — it needs private-attribute
 surgery on a pinned dependency to hide a convention we can simply hold, and it would trade a loud hang for a
 silent exit, when the loud version is what found this in the first place.
+
+**A test that opens a raw `sqlite3` connection wraps it in `contextlib.closing`, or closes it in a
+`finally`. `with sqlite3.connect(...)` is not closing it.** That form is a *transaction* context
+manager: it commits or rolls back and leaves the connection open, which the module's own
+documentation states and which five sites in this suite got wrong anyway.
+It is invisible on 3.12, which emits nothing for an unclosed connection,
+and on 3.13+ it emits `ResourceWarning: unclosed database` — **attributed to whichever test the
+garbage collector happened to be inside, and not reliably to the test that opened it**, because since
+3.11 the connection is held back by its own statement cache and survives until the cyclic collector
+reaches it. Measured here: five sites, **47–49 warnings on 3.13 and 48–56 on 3.14 against 0 on 3.12**,
+the count moving between runs of one tree because collection timing moves, and filed against two test
+files that contained none of them. The leak detector above cannot see this class at all — it watches
+`aiosqlite` worker threads, and a raw connection has none — and the project virtualenv is 3.12, which
+says nothing, so in this repository only `./check-matrix.sh` reports it, and it reports it in the
+wrong place. It never *fails* a run: both gate filters error on deprecations alone.
+**The enumeration is `grep -rn 'sqlite3\.connect(' tests/` — nine lines today — and then reading each
+hit for a `closing(` or a `finally`**, because two of the nine wrap across lines and show neither on
+the matching line. The grep locates; the reading decides. Reading only the modules where such a
+connection *ought* to be is a third thing, and it is what missed the fifth site.
 
 **Minimal surface in the hook is a design constraint, not a preference — and it does not extend to the MCP
 client.** `zikaron-hook` is stdlib-only because its measured interpreter cost is the argument for the whole
@@ -320,11 +376,39 @@ definition into something that can be wrong in a detectable way.
 
 ## 9. The check gate
 
-One command runs everything: format check, lint, type check, unit tests with coverage. It must pass before any
-milestone is called done.
+One command runs everything: format check, lint, type check, unit tests with coverage. `./check.sh` is the
+per-edit gate and the definition of done for a change; `./check-matrix.sh`, which runs that whole script once
+per version in §6's tested set, is additionally required before a milestone lands.
 
 ```
-ruff format --check .   &&  ruff check .   &&  mypy --strict zikaron  &&  pytest --cov=zikaron/core
+ruff format --check .  &&  ruff check .  &&  mypy --strict zikaron tests  &&  pytest --cov  # every package
 ```
+
+The type check covers the tests as well as the package, and the coverage floor covers **every** package under
+`zikaron/` — one `--cov` flag each, checked against the tree by a test rather than maintained from memory.
+`check.sh` is the authority on the exact flags; the line above is its shape, not a second copy of it.
+
+`check-matrix.sh` adds one thing beyond running under each version: it turns deprecations into errors. That
+belongs there and not in `pyproject.toml` — see §6.
+
+**`--parallel` runs every tested version at once and is the normal form**, about 3.5 minutes on a warm tree
+against roughly nine sequential. Each version gets its own coverage file and tool caches
+(`ZIKARON_CACHE_SUFFIX`, which `check.sh` reads), because otherwise three runs share one `.coverage` and a
+floor computed from three interleaved runs is not a floor. Virtualenv preparation stays sequential: an
+editable install writes one `zikaron.egg-info/` at the project root, which concurrent installs would race.
+Given version arguments instead it runs only those and labels its last line `SUBSET RUN`; a subset is not a
+milestone gate.
+
+**The milestone gate is every tested version green on one tree identity**, which the script prints on its
+last line after `on`. Three subset runs are a gate only if their identities match — otherwise they are three
+results about three different trees, which looks identical to three results about one.
+
+**A sweep is also voided by an edit landing during it, whatever the file.** The script samples the identity
+before and after and refuses if they differ, and the identity covers every difference from `HEAD` plus every
+untracked file — so a review round appending to `reviews/`, or a note added to `FINDINGS.md`, costs the whole
+set even though no reader of either is in the gate. Spawn writers after the last version reports, not into a
+running sweep. Both halves of that have already happened here, once by an edit and once by a review round.
+**`--parallel` removes the cross-run half of this** — one invocation samples the identity once, so there is
+nothing to reconcile between versions — but not the during-a-run half, which is why the rule stays.
 
 Formatter output is authoritative; formatting is not reviewed.

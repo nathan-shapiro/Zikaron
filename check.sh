@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
-# The check gate. Nothing is done until this exits 0.
+# The check gate. This is the per-edit gate and the definition of done for a change;
+# `./check-matrix.sh`, which runs this whole script once per supported Python version, is
+# additionally required before a milestone lands.
+#
+# `ZIKARON_VENV` selects which virtualenv to run in, defaulting to `.venv`. That exists so
+# `check-matrix.sh` can reuse this script rather than keep a second copy of the four commands below —
+# the `--cov` list in particular is checked against the tree by a test, and a second copy of it would
+# be a second place for it to go stale.
+#
+# `ZIKARON_CACHE_SUFFIX` gives this run its own coverage file and tool caches, so that several runs
+# can share a working tree at the same time. Empty by default, which keeps a plain `./check.sh`
+# writing exactly the paths it always did. `check-matrix.sh` sets it per Python version, because
+# otherwise three concurrent runs write one `.coverage` between them — and a coverage floor computed
+# from three interleaved runs is not a floor.
 #
 # The formatter's output is authoritative: a `format --check` failure means running
 # `.venv/bin/ruff format .`, not adjusting the code by hand to satisfy it.
@@ -10,7 +23,26 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-venv=.venv/bin
+venv="${ZIKARON_VENV:-.venv}/bin"
+
+# Every path a concurrent run would otherwise share. With an empty suffix these are the defaults,
+# spelled out rather than left implicit so that the set is visible in one place: anything added here
+# later that writes to a fixed path has to join this list or parallel runs corrupt it.
+suffix="${ZIKARON_CACHE_SUFFIX:-}"
+export COVERAGE_FILE=".coverage${suffix}"
+export RUFF_CACHE_DIR=".ruff_cache${suffix}"
+export MYPY_CACHE_DIR=".mypy_cache${suffix}"
+pytest_cache_dir=".pytest_cache${suffix}"
+
+# `pytest-cov` writes one data file per process as `${COVERAGE_FILE}.<host>.<pid>.<n>` and combines
+# every `${COVERAGE_FILE}.*` it finds at the end. Any death that skips that combine — a `SIGKILL`, a
+# power loss, an OOM kill, and the `TERM` the matrix's own interrupt sends, since coverage saves only
+# at exit while subprocesses that had already exited have saved theirs — leaves those fragments
+# behind, and the *next* run folds them into its own report. Erasing them first makes each run's
+# coverage its own. Guarded on the suffix so a plain `./check.sh` touches nothing it did not before.
+if [[ -n "$suffix" ]]; then
+    rm -f "${COVERAGE_FILE}".*
+fi
 
 "$venv/ruff" format --check .
 "$venv/ruff" check .
@@ -42,10 +74,20 @@ venv=.venv/bin
 # the same tests would go green on a machine whose harness behaved differently. Run them by name
 # when you mean to: `.venv/bin/pytest -m integration_kiro`. Nothing is covered *only* there; see
 # `design/coding-standards.md` §"five tiers".
+#
+# **One deliberate exception to that hermeticity, and it is outside this script.** `check-matrix.sh`
+# needs an interpreter per version it runs — a uv-managed one, an explicit `ZIKARON_PYTHON_3_13`, or
+# a bare `python3.<minor>` on `PATH` as the last resort — machine state, which this script
+# depends on nothing of. What it alone covers is the two version-dependent rows in
+# `zikaron/service/asyncio_compat.py`: each is unexecuted on the interpreters that do not select it,
+# so only a run under each version exercises both. This script stays hermetic and stays the gate for
+# an ordinary edit.
+#
 # **Every package under `zikaron/`, and the list is checked rather than maintained by memory.** It
 # was six for a while and should have been seven: `zikaron/knowledge` — the command that creates and
 # builds corpora — was under no ratchet at all, which is invisible from a green gate, because a
 # package nobody measures reports nothing rather than reporting zero. A test asserts this line names
 # every package that exists, so the next one to be added fails here instead of being forgotten.
-timeout 600 "$venv/pytest" --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
+timeout 600 "$venv/pytest" -o "cache_dir=${pytest_cache_dir}" \
+    --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
     --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness --cov=zikaron/knowledge

@@ -20,13 +20,27 @@ from typing import Final
 _ROOT: Final = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT: Final = _ROOT / "zikaron"
 _CHECK_SCRIPT: Final = _ROOT / "check.sh"
+_MATRIX_SCRIPT: Final = _ROOT / "check-matrix.sh"
 _STANDARDS: Final = _ROOT / "design" / "coding-standards.md"
+_README: Final = _ROOT / "README.md"
 
 #: A `--cov=zikaron/<package>` flag as `check.sh` spells it.
 _COV_FLAG: Final = re.compile(r"--cov=zikaron/([A-Za-z_]+)")
 
 #: The floor as `coding-standards.md` states it, in the one sentence that states it.
 _STATED_FLOOR: Final = re.compile(r"The floor is \*\*(\d+)%\*\*")
+
+#: The version list as `check-matrix.sh` spells it, in the one array that drives the loop.
+_MATRIX_MINORS: Final = re.compile(r"^minors=\(([^)]*)\)", re.MULTILINE)
+
+#: The tested set as prose states it, in the one sentence each of `coding-standards.md` and
+#: `README.md` uses. Both are checked, because a reader picks whichever document they opened.
+#:
+#: Each version is matched as a dotted pair rather than as a run of digits, dots and commas: the
+#: looser form has to be non-greedy to avoid swallowing the sentence's final full stop, and then it
+#: stops at the *first* dot instead — parsing "3.12, 3.13, 3.14." as the single version "3", which
+#: reads as a plausible list right up to the comparison.
+_STATED_TESTED_SET: Final = re.compile(r"[Tt]ested versions: (\d+\.\d+(?:, \d+\.\d+)*)\.")
 
 
 def _packages() -> set[str]:
@@ -56,3 +70,42 @@ def test_the_configured_floor_is_the_one_the_standards_state() -> None:
     assert stated is not None, "coding-standards.md no longer states the coverage floor"
     configured = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert configured["tool"]["coverage"]["report"]["fail_under"] == int(stated.group(1))
+
+
+def _matrix_versions() -> list[str]:
+    """The versions `check-matrix.sh` actually loops over, read from the script."""
+    found = _MATRIX_MINORS.search(_MATRIX_SCRIPT.read_text(encoding="utf-8"))
+    assert found is not None, (
+        "check-matrix.sh no longer declares its version list as `minors=(...)`"
+    )
+    return found.group(1).split()
+
+
+def _stated_versions(document: Path) -> list[str]:
+    """The tested set as one document states it in prose."""
+    stated = _STATED_TESTED_SET.search(document.read_text(encoding="utf-8"))
+    assert stated is not None, f"{document.name} no longer states the tested versions"
+    return [part.strip() for part in stated.group(1).split(",")]
+
+
+def test_the_matrix_runs_exactly_the_versions_the_prose_calls_tested() -> None:
+    """Three statements of one list — the script, the standards, the README — and a reader trusts
+    whichever they happened to open. Which versions are tested is also what "supported" means, so
+    a version quietly dropped from the script would narrow a promise made in two documents."""
+    running = _matrix_versions()
+    assert running == _stated_versions(_STANDARDS)
+    assert running == _stated_versions(_README)
+
+
+def test_the_version_discovery_can_actually_see_a_version() -> None:
+    """Both oracles above compare parsed lists, so two empty parses would agree and pass."""
+    assert "3.12" in _matrix_versions()
+    assert "3.12" in _stated_versions(_STANDARDS)
+    assert "3.12" in _stated_versions(_README)
+
+
+def test_the_floor_the_standards_state_is_the_one_the_packaging_requires() -> None:
+    """`requires-python` and §6's floor sentence are two statements of one number."""
+    configured = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert configured["project"]["requires-python"] == ">=3.12"
+    assert "`>=3.12`" in _STANDARDS.read_text(encoding="utf-8")

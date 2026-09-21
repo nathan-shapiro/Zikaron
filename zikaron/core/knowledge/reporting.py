@@ -29,6 +29,7 @@ from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ZikaronError
 from zikaron.core.knowledge import counters, database, lock, meta, paths, pending, registry, state
 from zikaron.core.knowledge.registry import KnowledgeBase
+from zikaron.core.store.connection import join_abandoned_worker
 
 
 def _reported_skip_name(key: str) -> str:
@@ -371,11 +372,17 @@ async def _breadcrumb(db_path: Path) -> str | None:
     so an edit that later adds a pragma loop here fails loudly instead of quietly converting
     somebody else's database. Reading `meta` needs neither, since it is an ordinary table and the
     vector extension is not loaded.
+
+    Bypassing the shared opener does not mean bypassing what it does about a *failed* connect: a
+    candidate that was listed and then unlinked, or one this process cannot read, leaves a worker
+    thread mid-shutdown exactly as it would there, so the same wait is used here.
     """
     uri = f"file:{quote(str(db_path))}?mode=ro"
+    connector = aiosqlite.connect(uri, uri=True)
     try:
-        db = await aiosqlite.connect(uri, uri=True)
+        db = await connector
     except (aiosqlite.Error, OSError):
+        await join_abandoned_worker(connector)
         return None
     try:
         raw = await database.read_meta(db)

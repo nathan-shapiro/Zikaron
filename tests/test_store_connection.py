@@ -1,11 +1,15 @@
 """`open_connection`'s own job: establish a connection, or leave nothing behind.
 
-The two properties that matter to every caller are here rather than in either database's own
-suite, because both databases depend on them and neither owns them: a failure after
-`aiosqlite.connect` has already succeeded must close what it opened, and a failed *connect* is
-named by the caller rather than by this module.
+The properties that matter to every caller are here rather than in either database's own suite,
+because both databases depend on them and neither owns them: a failure after `aiosqlite.connect`
+has already succeeded must close what it opened, a failed *connect* is named by the caller rather
+than by this module, and a failed connect must not leave its worker thread running past the event
+loop it was made on. The last of those reaches into a private attribute of the driver, so the
+attribute itself is pinned here too.
 """
 
+import asyncio
+import threading
 from pathlib import Path
 
 import aiosqlite
@@ -14,6 +18,70 @@ import pytest
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.ddl import PRAGMAS
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_failed_connect_leaves_no_thread_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connect that fails must not leave its worker thread running past the loop it was made on.
+
+    Written as a measurement rather than as an assertion about the code, because nothing else in
+    the gate can tell the two states apart: both branches of the wait run either way, so coverage
+    cannot move, and the version matrix errors only on deprecations.
+
+    Two independent signals, from one loop.
+
+    * **The thread's own death.** Abandoned, it calls `call_soon_threadsafe` on a closed loop,
+      raises `RuntimeError: Event loop is closed`, fails the same way reporting that, and dies
+      unhandled — which pytest raises as `PytestUnhandledThreadExceptionWarning`, made a failure
+      by the marker above. **Reliable in this position**: with the wait removed from
+      `open_connection`, this test was red on 5 runs of 5, and green on 5 of 5 with it.
+    * **The thread still running when the call returns.** The wait joins it, so a pass here is
+      deterministic; a failure is not guaranteed without the wait, which is what the twenty
+      iterations are for. Measured by a separate probe at 50 iterations — not by this test, which
+      runs 20 — with the wait bypassed: 3, 5 and 11 threads still alive across three trials,
+      against 0 of 50 on every trial with it.
+
+    Neither signal fires on every iteration, which is why both are here and why the count is twenty
+    rather than one. Synchronous on purpose: each iteration needs its own event loop, closed while
+    the abandoned thread would still be draining, and `asyncio.run` is what gives it.
+    """
+    connectors: list[aiosqlite.Connection] = []
+    real_connect = aiosqlite.connect
+
+    def _recording(database: str | Path, *, uri: bool = False) -> aiosqlite.Connection:
+        connector = real_connect(database, uri=uri)
+        connectors.append(connector)
+        return connector
+
+    monkeypatch.setattr(aiosqlite, "connect", _recording)
+
+    for _ in range(20):
+        with pytest.raises(aiosqlite.Error):
+            asyncio.run(
+                open_connection(tmp_path / "absent.db", pragmas=PRAGMAS, existing_only=True)
+            )
+
+    assert len(connectors) == 20
+    assert [connector for connector in connectors if connector._thread.is_alive()] == []
+
+
+def test_aiosqlite_still_keeps_its_worker_on_the_attribute_we_wait_on() -> None:
+    """Pin the private attribute `join_abandoned_worker` reaches for, so a bump cannot mute it.
+
+    That function tolerates the attribute's absence, which is right for a test that
+    substitutes the connect and wrong for a real library that moved it — there the wait would
+    become a silent no-op and the thread would start outliving its loop again with nothing to say
+    so. This is the test that says so, and it belongs in the matrix because a dependency bump is
+    exactly the change that would trip it.
+
+    The connection is never awaited, so no thread is started and nothing is opened: `__await__` is
+    what starts the worker, and `__del__` returns early while `_connection` is `None`.
+    """
+    connector = aiosqlite.connect(":memory:")
+    assert isinstance(connector._thread, threading.Thread)
+    assert not connector._thread.is_alive()
 
 
 async def test_open_connection_closes_on_a_pragma_failure(

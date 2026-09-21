@@ -62,7 +62,7 @@ and never fails your turn.
 
 - **Linux.** The transport is a Unix domain socket and the paths assume a POSIX filesystem; nothing
   here has ever been run on macOS or Windows.
-- **Python 3.12.**
+- **Python 3.12 or newer.** Tested versions: 3.12, 3.13, 3.14.
 - **A supported harness installed: `kiro-cli` or Claude Code.** Zikaron installs hook and MCP
   entries whose only reader is that harness's own binary, so the installer checks it is on your
   `PATH` and **refuses if it is not** — writing those files where nothing reads them would exit 0
@@ -81,7 +81,7 @@ and never fails your turn.
 From the Zikaron source directory:
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
@@ -456,5 +456,7 @@ config, remove the `hooks`, `mcpServers` and `@zikaron` entries by hand instead.
 
 The full design record is in [`design/`](design/README.md) — start with `design/overview.md`, which
 carries the decision table and the reasoning behind every choice above.
-`design/coding-standards.md` is binding for contributions, and `./check.sh` is the definition of done:
-formatter, linter, `mypy --strict`, and the whole test suite under a coverage floor.
+`design/coding-standards.md` is binding for contributions. `./check.sh` is the per-edit gate and the
+definition of done for a change — formatter, linter, `mypy --strict`, and the whole test suite under a
+coverage floor; `./check-matrix.sh`, which runs all of that once per tested Python version, is
+additionally required before a milestone lands.

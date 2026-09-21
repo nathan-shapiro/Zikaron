@@ -3233,6 +3233,63 @@ Plan:
 
 
 ## References
+- **M27 implementation review** — `reviews/m27-python-range-code-review.md`. Its round 1 found the
+  defect the whole milestone existed to prevent, in the milestone's own gate: **`check-matrix.sh`
+  rebuilt a virtualenv only when `bin/python` was absent, so a deliberate dependency pin bump would
+  have been tested against the *previous* pins on all three versions, and the script would have
+  printed green.** The comment beside it argued the reuse was safe because pins are exact and the
+  install is editable — true of *source*, false of *dependencies*, which is the same shape as
+  §6 proposition 5's own refuted reasoning. Now keyed on a `pyproject.toml` hash stamp written after
+  a successful install, which also repairs an interrupted install leaving a venv with no `ruff` in it
+  — and, from code-review round 10, the base interpreter's `realpath` beside that hash, since a
+  matching *minor* over a different *build* passed the label check and reused the venv, reporting
+  green for an interpreter that never ran.
+  Three more of the same family, and that fourth: nothing verified the **interpreter behind a version
+  label**, so a
+  stray shim or a bad override could run one version three times and report three greens; the
+  deprecation filter reached only the pytest process and not the service, hook and MCP processes the
+  integration tier spawns; and the milestone gate, as the crew is told to run it, was three
+  independent subset runs **with nothing tying them to one tree** — which had already happened here,
+  a test file added between two versions' runs, visible only as a one-test difference in the counts.
+- **M27 brief review** — `reviews/m27-python-range-brief-review.md`, **eight rounds, `APPROVED`**.
+  Findings ran **5 blockers → 4 → 2 → 0 → 0 → 0 → 0 → 0**, 47 in total, and what the trail is evidence
+  of is **one failure mode repeated five times in one document**: an enumeration, once written down,
+  stops being re-derived and starts being quoted. The unlink-site count went **4 → 5 → 7**, corrected
+  twice by re-reading the note's own table; `main.py:261` was labelled "self-stop" twice against its own
+  code comment saying the signal path owns that unlink; the `_clients` false-positive count was written
+  as "six names … one plus four"; the PEP 695 figure was the *module* count from a `head`-truncated grep;
+  and **`ServiceServer._quiesce` does not exist anywhere in this repository** — invented while first
+  summarising `server.py`, propagated into three documents, and surviving four rounds because every later
+  reference was checked against that summary rather than the tree. A `grep` refutes each in seconds.
+  **The other recurring class was the fix cascade**: three of round 2's four blockers, and both of
+  round 3's, were artifacts of the *previous* round's fixes — including, once, a duplicated sentence
+  created inside the edit that was removing a duplication. Rounds 3–8 found **zero** blockers while still
+  producing 27 findings, so the late rounds bought precision rather than correctness; a reader planning a
+  review budget should expect that shape.
+- **Python distribution and portability, 2026-09-20.** Two notes, and they should be read in this
+  order. `research/python-portability-probes.md` is **measured on this machine** — the 3.13/3.14
+  gate runs, the `asyncio.Server._active_count` → `_clients` change, the `sqlite-vec`/FTS5 probe on
+  uv-managed interpreters, `uv tool install`'s artefact shape, and the `uv run` per-invocation tax.
+  `research/python-distribution-portability.md` is **delegated literature and prior art**: which
+  CPython distributions build with `--enable-loadable-sqlite-extensions` (python.org macOS and
+  conda-forge **off**; Arch, Fedora, Docker official, Homebrew **on**), the approach-by-approach
+  comparison (uv / pipx / PyInstaller / shiv / conda / Docker / embedding python-build-standalone),
+  what `aider-chat` and `llm` actually ship, the community case against `requires-python` upper
+  bounds, and macOS specifics. **The second note's own stated biggest unknown — whether
+  python-build-standalone enables loadable SQLite extensions — is closed by the first, empirically
+  and on the exact artefact `uv python install` downloads.** Its unverified items are flagged in
+  place; the macOS Gatekeeper question and the onnxruntime macOS-x86_64 drop date both remain so.
+  A third note, `research/python-313-314-porting-audit.md`, sweeps the stdlib surface this package
+  imports for **changed defaults and changed semantics** in 3.13/3.14 — the `cleanup_socket` shape,
+  not removals — ranked by how likely each is to pass a test suite silently. **Eight candidates; six
+  do not apply to us and each was checked against the code rather than taken on the note's word**
+  (`sqlite3.version` removed — unread by us and by aiosqlite; FTS5 secure-delete's one-way
+  compatibility — never enabled; `row_factory` no longer deletable and negative `arraysize` now
+  raising — neither used; placeholder-mismatch escalating to `ProgrammingError` on 3.14 — would have
+  reddened the 3.14 gate and did not; `get_event_loop()`'s fallback hardening — zero uses in the
+  package). Its one caveat worth carrying: it **could not confirm the `_active_count` → `_clients`
+  rename from any primary source**, which does not weaken the finding — that one was read from both
+  interpreters' own `asyncio` source and reproduced behaviourally.
 - **M25 fusion-sweep review** — `reviews/m25-fusion-sweep-review.md`, **four rounds, no `APPROVED`
   verdict**: round 4 found no blocker and closed *"I would approve on those being made"*, which they
   were. 23 findings, 7 blockers, **3 of which moved a conclusion**. Artefacts:
