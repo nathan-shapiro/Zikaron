@@ -47,7 +47,7 @@ _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zi
 
 #: Kiro's rendering of the skill: the identity tool vocabulary, so every name is spelled exactly as
 #: the shipped prose writes it. Every assertion below that was written against the old module-level
-#: constant is an assertion about *this* text, and it must stay byte-identical to what M12 shipped —
+#: constant is an assertion about *this* text, and it must stay byte-identical to what kiro ships —
 #: `TestKiroArtefactsAreUnchanged` in `tests/test_install_targets.py` is what holds that.
 _KIRO_SKILL = skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)
 
@@ -57,8 +57,8 @@ def _flat(text: str) -> str:
 
     Every prose assertion below goes through this. The shipped texts are hard-wrapped, so a clause
     that spans a line break is invisible to a plain substring test — and rewrapping a paragraph,
-    which
-    happens whenever one is edited, would otherwise silently disarm the guard that defends it.
+    which happens whenever one is edited, would otherwise silently disarm the guard that defends
+    it.
     """
     return re.sub(r"\s+", " ", text)
 
@@ -178,9 +178,8 @@ class TestTheSharedRulesAreInBothTexts:
         self, text: str
     ) -> None:
         """The fourth shared rule, and the one the consolidator was missing: it rewrites gists
-        during
-        a merge, so it can strip a condition the write policy required — recreating the measured
-        failure where an expired prohibition was recalled as a permanent one.
+        during a merge, so it can strip a condition the write policy required — recreating the
+        measured failure where an expired prohibition was recalled as a permanent one.
         """
         flat = _flat(text)
         assert "permanent rule" in flat
@@ -389,6 +388,35 @@ class TestTheTrackedArtefactsInThisRepository:
         for key in ("name", "description", "model", "prompt", "tools", "allowedTools"):
             assert document[key] == generated[key], f"tracked config has drifted on {key}"
 
+    def test_the_tracked_consolidator_config_is_byte_for_byte_what_the_installer_would_write(
+        self,
+    ) -> None:
+        """The value comparison above cannot see how the file is *written*, and that is the half
+        `CLAUDE.md` actually claims: this file is "the reference for what the shipped product still
+        installs", which is a statement about bytes. `json.loads` normalises away the encoding of
+        every non-ASCII character, the indent, the key order and the trailing newline — so a
+        tracked copy written with `ensure_ascii=False` compares equal to an installer that escapes,
+        for every value, forever.
+
+        **Measured: the committed copy carried literal em dashes where `shipped_files` emits
+        `\\u2014`**, and the guard above was green over it. Its sibling three lines below compares
+        the tracked `SKILL.md` as *text*, which is why the skill half of this pair has never drifted
+        and this half could.
+
+        The one machine-specific value — the absolute path to `zikaron-mcp`, which is a fact about
+        whoever last ran the installer here — is taken from the tracked file itself rather than
+        pinned, so this asserts the *shape* around it without pretending the path is portable.
+        """
+        tracked = self._tracked("zikaron-consolidator.json")
+        if not tracked.is_file():
+            pytest.skip("this checkout has no tracked consolidator config")
+        on_disk = tracked.read_text(encoding="utf-8")
+        mcp = Path(json.loads(on_disk)["mcpServers"][MCP_SERVER_NAME]["command"])
+        generated = consolidator_agent_config(
+            Commands(hook=mcp.with_name("zikaron-hook"), mcp=mcp), model=KIRO.consolidator_model
+        )
+        assert on_disk == json.dumps(generated, indent=2) + "\n"
+
     def test_the_tracked_skill_matches_the_shipped_text(self) -> None:
         skill = Path(__file__).resolve().parent.parent / ".kiro/skills/zikaron-consolidate/SKILL.md"
         if not skill.is_file():
@@ -397,7 +425,7 @@ class TestTheTrackedArtefactsInThisRepository:
 
     def test_the_tracked_dogfood_config_selects_the_memory_tools(self) -> None:
         """The measured failure this repository would hit first: an agent whose `tools` omits the
-        server reports no memory tools at all."""
+        server reports no Zikaron tools at all."""
         tracked = self._tracked("zikaron-dogfood.json")
         if not tracked.is_file():
             pytest.skip("this checkout has no dogfood config")
@@ -447,10 +475,19 @@ class TestTheConsolidatorPromptsSpillGuidance:
 
     def test_the_guidance_keeps_read_scoped_to_the_spilled_file(self) -> None:
         """The widening of D32 is bounded by prose alone, because this harness has no per-subagent
-        path rule — so the prose has to actually be there."""
+        path rule — so the prose has to actually be there, **and has to say that it is prose**.
+
+        *This asserted the phrase "reaches that file and nothing else", which claims a mechanical
+        scope the harness cannot provide — the exact thing the docstring above already knew. A test
+        pinning the reassuring phrasing over the true one is how a false absolute survives in
+        shipped text: the guard was holding it in place.*
+        """
         prompt = consolidator_prompt(identity_vocabulary(), can_read_files=True)
 
-        assert "reaches that file and nothing else" in prompt
+        assert "the only thing `Read` is for here" in prompt
+        assert "It is not scoped to it" in prompt, (
+            "the prompt must say the bound is a convention, not a mechanism"
+        )
         assert "not a legal target" in prompt
 
     def test_no_placeholder_survives_either_way(self) -> None:

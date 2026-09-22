@@ -118,8 +118,7 @@ def connect_once(
     at the identical path. `architecture.md`'s own five steps are one race-safe *unit*: connect,
     lock, recheck, spawn-if-still-absent, release. Nothing here retries that whole unit a second
     time if it still fails after the lock is released; the "single attempt" property is about not
-    looping the
-    five-step unit, not about omitting a step inside it.
+    looping the five-step unit, not about omitting a step inside it.
 
     Returns:
         A connected, unverified-timeout socket — `push.py` sets its own request timeout before

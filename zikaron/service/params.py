@@ -13,7 +13,7 @@ than a protocol-level failure that would suggest the transport itself misbehaved
 """
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import aiosqlite
 
@@ -102,11 +102,44 @@ def require_bool(params: dict[str, object], name: str, *, default: bool) -> bool
     return value
 
 
+#: `schema.md` §Bounds' `uuids` row: 1 to 50 per call, and the bound is all-or-nothing — a call
+#: naming 0 or more than 50 uuids is rejected whole and returns nothing.
+#:
+#: *Stated rather than quoted, deliberately. The first version put that row inside quotation marks
+#: and silently substituted two characters — the row's en dash and em dash became hyphens —
+#: because `ruff`'s RUF003 refuses ambiguous Unicode in a comment. **A constraint that prevents an
+#: exact quotation is a reason not to quote, not a licence to approximate inside quotation marks.**
+#: This repository treats that distinction as load-bearing elsewhere: `tests/design_tables.py`
+#: exports `EN_DASH` as a shared constant so two guards cannot disagree about what a range
+#: separator is.*
+#:
+#: **This bound was stated in three places and enforced in none**: the normative row above,
+#: `architecture.md`'s own inline `uuids` range comment, and `zikaron_memory_fetch`'s description,
+#: which tells a model "1-50 per call". `require_uuid_list` checked list-ness and string-ness and
+#: returned. So `fetch(uuids=[])` answered `{records: [], missing: []}` and a 500-uuid call ran 500
+#: loads, 500 receipt mints and 500 `fetch` event rows in one transaction. **The §Bounds preamble
+#: is what makes this a defect rather than a documentation choice** — it says bounds are "enforced
+#: at the tool/RPC boundary, so a rejection is an immediate, actionable error rather than silent
+#: truncation", and nothing here was enforcing it.
+#:
+#: Deliberately the same spelling as `retrieval/reads.py`'s `limit` rejection, so the two `bounds`
+#: payloads a caller may see for a range violation read identically.
+UUIDS_MIN: Final = 1
+UUIDS_MAX: Final = 50
+
+
 def require_uuid_list(params: dict[str, object], name: str) -> list[str]:
-    """`params[name]` if it is a list of strings, else `bounds`."""
+    """`params[name]` if it is a list of 1 to 50 strings, else `bounds`."""
     value = params.get(name)
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ZikaronError(ErrorCode.BOUNDS, field=name, limit="a list of strings", actual=value)
+    if not UUIDS_MIN <= len(value) <= UUIDS_MAX:
+        raise ZikaronError(
+            ErrorCode.BOUNDS,
+            field=name,
+            limit=f"{UUIDS_MIN}-{UUIDS_MAX}",
+            actual=len(value),
+        )
     return value
 
 

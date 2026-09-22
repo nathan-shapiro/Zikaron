@@ -171,10 +171,9 @@ class ServiceContext:
                 surfaces at the first access that needs the artifact and through the watch on the
                 deferred load, which stops the service. A reader diagnosing an open-path startup
                 that never became reachable should therefore not be looking for a model failure
-                here. Any
-                store this function itself opened or created is closed before either propagates,
-                and it is the **original** failure that propagates even if closing the store
-                itself also fails — a caller diagnosing why startup failed is owed the
+                here. Any store this function itself opened or created is closed before either
+                propagates, and it is the **original** failure that propagates even if closing the
+                store itself also fails — a caller diagnosing why startup failed is owed the
                 construction error, not a close error that only exists because construction had
                 already failed.
         """

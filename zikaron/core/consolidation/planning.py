@@ -15,8 +15,7 @@ this order, and the order is what enforces invariant 15:
 3. **Plan and persist the groups.** Membership is frozen here. Planning is a pure function of the
    store plus the effective config, so a run is reproducible from its inputs.
 4. **Emit `planned`**, and — when the journal was empty — close the run `complete` immediately,
-since
-   a run with no groups has nothing left to serve.
+since a run with no groups has nothing left to serve.
 
 **Replanning is never incremental.** A new run always plans from scratch, which is safe precisely
 because undispositioned members stay `tier='journal' AND active=1`: nothing was lost by the run

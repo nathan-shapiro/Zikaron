@@ -1014,7 +1014,7 @@ ourselves too early; we return the uuid, but we measured the agent preferring pr
 **4. Five-per-context with no global cap is an unbounded injection.** Ten contexts, fifty chunks,
 `chunkSize` user-settable to 1024, and no truncation at the tool boundary — `MAX_TOOL_RESPONSE_SIZE`
 is enforced in three other tools and not this one. Zikaron's fusion depth and output budget are
-separated deliberately (`design/retrieval.md` §"fusion depth vs output budget") and M14's
+separated deliberately (`design/retrieval.md`, *"Depth and budget are two different numbers"*) and M14's
 `GIST_MAX_CHARACTERS = 1024` gives the injected block a *provable* ceiling. **This is the concrete
 thing that bound buys**: Q has the same class of unbounded-content risk we closed in open question
 11, and closed it nowhere. The parallel to M18 is also exact — Q's search result is the payload

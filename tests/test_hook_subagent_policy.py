@@ -1,7 +1,7 @@
 """`zikaron.hook.subagent_policy`: the write policy delivered to a subagent, and the one exclusion.
 
 `design/harness.md` §Subagents is normative. The spawn trigger fires once per session, so without
-this path a subagent inherits the memory tools having never seen the write policy — and the
+this path a subagent inherits Zikaron's tools having never seen the write policy — and the
 exclusion is exact here rather than a blanket suppression, because this payload carries the agent
 identity the other harness's cannot express.
 """
@@ -42,7 +42,7 @@ class TestTheConsolidatorIsExcluded:
 
 class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
     """The payload is untrusted JSON, and the safe direction to be wrong in is delivering a policy
-    that was not needed rather than withholding one that was: an agent holding the memory tools and
+    that was not needed rather than withholding one that was: an agent holding Zikaron's tools and
     never told the write policy is the exact failure this path exists to prevent.
     """
 

@@ -279,3 +279,28 @@ async def test_fetch_rejects_a_non_list_uuids_field(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
         with pytest.raises(ZikaronError):
             await dispatch.fetch(ctx.store.connection, ctx, envelope(), {"uuids": "not-a-list"})
+
+
+@pytest.mark.parametrize(
+    ("count", "why"),
+    [(0, "names nothing"), (51, "names more than the bound")],
+)
+async def test_fetch_rejects_a_uuid_list_outside_the_stated_bound(
+    tmp_path: Path, count: int, why: str
+) -> None:
+    """`schema.md` §Bounds says 1-50 per call, all-or-nothing. Nothing enforced it.
+
+    **Three sites promised this bound and none checked it**: the normative §Bounds row, an inline
+    comment in `architecture.md`, and `zikaron_memory_fetch`'s own tool description — which is
+    shipped verbatim to a model as "1-50 per call". `require_uuid_list` verified list-ness and
+    string-ness and returned, so an empty list answered `{records: [], missing: []}` and a
+    500-uuid call ran 500 loads, 500 receipt mints and 500 `fetch` event rows in one transaction.
+
+    §Bounds' own preamble is what makes that a defect rather than a documented choice: bounds are
+    "enforced at the tool/RPC boundary, so a rejection is an immediate, actionable error rather
+    than silent truncation".
+    """
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(ZikaronError) as raised:
+            await dispatch.fetch(ctx.store.connection, ctx, envelope(), {"uuids": ["u"] * count})
+    assert raised.value.code is ErrorCode.BOUNDS, why

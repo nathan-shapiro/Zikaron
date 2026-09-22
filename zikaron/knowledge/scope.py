@@ -5,10 +5,12 @@ a second copy of this would let them disagree about which project they were poin
 a silent, destructive kind of disagreement: two stores, two registries, and a knowledge base that
 exists to one command and not to the other.
 
-**These commands open `memory.db` directly** rather than going through the memory service. Neither
+**These commands open `memory.db` directly** rather than going through the service. Neither
 is on a latency path, both run when no harness process need exist, and their writes are small
-transactions against a table the service does not read — which is what WAL and `busy_timeout` are
-for. Requiring a service would make managing and building corpora depend on a harness being live.
+transactions — which is what WAL and `busy_timeout` are for. The service reads the same registry,
+and writes it too on the management verbs, so this is concurrent access between two writers rather
+than a table with a single owner. Requiring a service would make managing and building corpora
+depend on a harness being live.
 """
 
 import asyncio

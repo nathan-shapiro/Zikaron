@@ -18,9 +18,8 @@ lock* admits only a holder that is provably gone. *Is a build running* admits ev
 that, foreign locks included, and is what decides whether a corpus reports itself mid-scan and
 whether it may be removed. *May an operator clear this by hand* refuses only a holder that is
 answering to that pid. Each is a different reading of `probe`, and each is wrong in the other's
-place —
-which is why none of them is the mere presence of the rows: a killed build leaves those behind
-deliberately, and the signal they carry outlives the process that wrote them.
+place — which is why none of them is the mere presence of the rows: a killed build leaves those
+behind deliberately, and the signal they carry outlives the process that wrote them.
 """
 
 import os
@@ -165,8 +164,7 @@ def is_provably_live(holder: LockHolder, *, host: str) -> bool:
     provably live, and the two questions differ in who is asking. An indexer deciding whether to
     start may take a lock only whose holder is gone; an operator clearing one by hand is refused
     only where a process on this host answers to that pid, because everything else is a judgement
-    they are
-    better placed to make than this process is.
+    they are better placed to make than this process is.
     """
     return probe(holder, host=host) is True
 
@@ -243,8 +241,8 @@ async def force_release(db: aiosqlite.Connection, *, host: str) -> LockHolder | 
 
     So the judgement moves to whoever knows what else is running, and this refuses only where their
     judgement is contradicted by evidence: a process on this host answers to that pid. Everything
-    else
-    is cleared, including a lock whose pid is unreadable, which no other path can resolve either.
+    else is cleared, including a lock whose pid is unreadable, which no other path can resolve
+    either.
 
     **The refusal rests on a pid, and a pid is not an identity.** All the probe establishes is that
     *some* process answers to that number on this host. After a crash the number is free, and on a

@@ -110,11 +110,11 @@ async def test_a_second_request_reuses_the_held_connection_without_respawning(
 async def test_recovery_from_a_dead_service_respawns_and_the_next_call_succeeds(
     connection: ServiceConnection,
 ) -> None:
-    """M10's own done-when, and the operator's own instruction: the service may die (crash, or
+    """The service may die (crash, or
     idle self-stop) between two tool calls, and `ServiceConnection` must recover rather than fail
-    the next call outright — `architecture.md`'s own client rule, "retry once through the full
-    start-if-absent sequence before falling back," exercised here against a service actually
-    killed out from under a held connection rather than only reasoned about.
+    the next call outright — `architecture.md`'s rule for *this* client, "`zikaron-mcp` retries
+    once through the full start-if-absent sequence before falling back", exercised here against a
+    service actually killed out from under a held connection rather than only reasoned about.
     """
     first_pid = await _health_pid(connection)
 

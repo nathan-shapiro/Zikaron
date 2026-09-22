@@ -228,8 +228,8 @@ class RunningServer:
     keeps its socket open (exactly what `architecture.md` §"Both clients resolve the same label"
     describes as the norm: "the client adopts the returned label and reuses it for its process
     lifetime") blocks `wait_closed()` **forever**, on both the idle-self-stop path and the signal
-    path, since both call `shut_down()` (`main.py`), which calls the identical `close()`/`wait_
-    closed()` pair. Measured directly on Python 3.12.3 before writing
+    path, since both call `shut_down()` (`main.py`), which calls the identical
+    `close()`/`wait_closed()` pair. Measured directly on Python 3.12.3 before writing
     this fix: a standalone repro server with one accepted-but-idle connection left `wait_closed()`
     still pending after a 3 s timeout, confirming this is a real hang and not merely a theoretical
     reading of the docstring.
@@ -256,15 +256,15 @@ class RunningServer:
         what bounds the loop below: `close()` stops the listener from ever accepting a *new*
         connection, so the server's own attached-connection count — the exact quantity
         `wait_closed()` itself waits on — normally only counts *down* from here. **Normally, not
-        provably**: a
-        connection already accepted at the raw-fd level before `close()` ran can still attach
-        afterwards, because the event loop accepts the fd synchronously and only then schedules the
-        separate task that constructs the transport and calls `Server._attach()`. That race is
-        deliberately **not** closed here — doing so would mean replacing `asyncio.start_unix_server`
-        with a hand-rolled accept loop — and is covered instead by the operator-directed process
-        fallback (`design/architecture.md` §"Idle self-stop", `main._force_exit_after_failed_
-        graceful_shutdown`). What this loop *does* guarantee is narrower and is the whole of what it
-        claims: it drains every attached transport and registered handler it can observe, under its
+        provably**: a connection already accepted at the raw-fd level before `close()` ran can
+        still attach afterwards, because the event loop accepts the fd synchronously and only then
+        schedules the separate task that constructs the transport and calls `Server._attach()`.
+        That race is deliberately **not** closed here — doing so would mean replacing
+        `asyncio.start_unix_server` with a hand-rolled accept loop — and is covered instead by the
+        operator-directed process fallback (`design/architecture.md` §"Idle self-stop",
+        `main._force_exit_after_failed_graceful_shutdown`). What this loop *does* guarantee is
+        narrower and is the whole of what it claims: it drains every attached transport and
+        registered handler it can observe, under its
         own deadline, and raises `ShutdownTimeoutError` rather than waiting indefinitely if it
         cannot.
 
@@ -296,14 +296,14 @@ class RunningServer:
         one: `wait_for`'s own docstring states plainly that "if the task suppresses the
         cancellation and returns a value instead, that value is returned," and `gather(...,
         return_exceptions=True)` does exactly that for a child that keeps swallowing
-        `CancelledError` — so a handler that resists indefinitely (not merely once) leaves `wait_
-        for` itself waiting forever for the `gather` future it was meant to bound, never reaching
-        this method's own `TimeoutError`. `asyncio.wait` is documented plainly not to raise on
-        timeout at all — "Futures that aren't done when the timeout occurs are returned in the
-        second set" — handing control straight back to this loop's own deadline check regardless
-        of whether the underlying tasks ever finish cancelling, which is what makes the deadline
-        genuinely this method's own decision rather than something it merely hopes `wait_for`
-        will honour.
+        `CancelledError` — so a handler that resists indefinitely (not merely once) leaves
+        `wait_for` itself waiting forever for the `gather` future it was meant to bound, never
+        reaching this method's own `TimeoutError`. `asyncio.wait` is documented plainly not to
+        raise on timeout at all — "Futures that aren't done when the timeout occurs are returned in
+        the second set" — handing control straight back to this loop's own deadline check
+        regardless of whether the underlying tasks ever finish cancelling, which is what makes the
+        deadline genuinely this method's own decision rather than something it merely hopes
+        `wait_for` will honour.
 
         This `ShutdownTimeoutError` is deliberately allowed to propagate rather than being caught
         here: **directed by the human operator**, given a narrow, low-severity accept-pipeline
@@ -349,13 +349,13 @@ class RunningServer:
         is what makes the final `wait_closed()` resolve without depending on any client's own
         behaviour.
 
-        **One absolute deadline spans this whole method**, not one per step: `_SHUTDOWN_QUIESCENCE_
-        DEADLINE_SECONDS` is the budget for *shutdown*, so it is computed once here and threaded
-        into `close_all_connections`, which leaves `wait_closed()` only whatever remains. A
-        version that instead restarted a fresh full budget at each step would let the single "5 s
-        deadline" the operator's directed policy names take nearly ten seconds in practice before
-        the force-exit path ran, since two steps would each get their own full allowance rather
-        than sharing one.
+        **One absolute deadline spans this whole method**, not one per step:
+        `_SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS` is the budget for *shutdown*, so it is computed
+        once here and threaded into `close_all_connections`, which leaves `wait_closed()` only
+        whatever remains. A version that instead restarted a fresh full budget at each step would
+        let the single "5 s deadline" the operator's directed policy names take nearly ten seconds
+        in practice before the force-exit path ran, since two steps would each get their own full
+        allowance rather than sharing one.
 
         The final `wait_closed()` is bounded rather than awaited unbounded: `close_all_connections`
         above having succeeded makes it *expected* to return immediately, but "expected" is not

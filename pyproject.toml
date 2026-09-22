@@ -4,8 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zikaron"
-version = "0.0.0"
-description = "Tribal-knowledge memory for coding agents"
+# Semver, and `0.x` for as long as the *install contract* may still change — the shapes and
+# locations of the artefacts the installer writes into a harness's config. The one rule that
+# matters for an upgrade: **a release whose installed artefacts differ in shape from the previous
+# one is a minor bump, never a patch**, because those paths are written into harness config that an
+# upgrade has to be able to refresh, and a patch bump tells a reader nothing needs refreshing.
+# `design/distribution.md` §"The version scheme" is normative.
+version = "0.1.0"
+# What a package index renders as the one-line summary, so it must name both stores: the memory
+# store, for what was learned by working here, and the knowledge index, for what the project already
+# wrote down.
+description = "Memory and searchable project knowledge for coding agents"
+readme = "README.md"
+# An SPDX expression plus `license-files`, which is the PEP 639 shape. **No
+# `License :: OSI Approved :: MIT License` classifier**, deliberately: setuptools ≥ 77 deprecates
+# the classifier when a licence expression is present, and this project pins `setuptools==84.0.0`,
+# so the pair would warn rather than merely duplicate.
+license = "MIT"
+license-files = ["LICENSE"]
+
 # A floor, with no cap. The floor is real: the package uses PEP 695 type-parameter syntax, which is
 # 3.12+. A cap is deliberately absent — it makes a resolver backsolve to older, possibly broken
 # releases of everything else instead of failing with a clear message about the interpreter, and a
@@ -27,18 +44,33 @@ dependencies = [
     "fastmcp==3.4.7",
 ]
 
-# The two commands a shipped kiro config names, and the reason they are console scripts rather
-# than `python -m` command lines: a hook entry's `command` and an `mcpServers` entry's `command`
-# each need one absolute path, and a console script's shebang pins the interpreter Zikaron is
-# installed into — which is also the interpreter start-if-absent will spawn the service with, via
-# `sys.executable`. Measured, so the choice costs nothing: a full hook process through the script
-# form is 68.6 ms median against 70.0 ms through `-m` (architecture.md §"The install contract").
+# Absent until now, which is why the PyPI page M30 will publish would have rendered blank. The
+# `https` form rather than the `git@` one: this table is metadata a package index renders as links,
+# and an SSH remote is not a link anyone but the owner can follow.
+#
+# **Placed after `dependencies` deliberately, and this comment is the scar.** A first attempt put
+# this table directly under `license-files`, which is valid TOML and silently wrong: every key after
+# a table header belongs to that table, so `requires-python` and `dependencies` were absorbed into
+# `project.urls` and vanished from `project`. The file parsed, the install succeeded, and the
+# package simply had no dependencies and no interpreter floor. Caught by printing the parsed
+# `[project]` table rather than by checking that the file parsed — a distinction worth keeping,
+# since "it parses" was true throughout.
+[project.urls]
+Homepage = "https://github.com/nathan-shapiro/Zikaron"
+Repository = "https://github.com/nathan-shapiro/Zikaron"
+Issues = "https://github.com/nathan-shapiro/Zikaron/issues"
+
+# The two commands a shipped harness config names — either harness — and the reason they are console
+# scripts rather than `python -m` command lines: a hook entry's `command` and an `mcpServers` entry's
+# `command` each need one absolute path, and a console script's shebang pins the interpreter Zikaron
+# is installed into — which is also the interpreter start-if-absent will spawn the service with, via
+# `sys.executable`. Measured, so the choice costs nothing: the two forms differ by about 1.4 ms
+# median over a full hook process (architecture.md §"The install contract").
 #
 # `zikaron-service` is deliberately *not* here. No config names it: it is spawned by
 # `sys.executable -m zikaron.service.main` from whichever client finds the socket absent, which is
 # the path the service and hook clients are already tested against. An entry point nothing invokes
-# is one more shipped surface with no
-# test behind it.
+# is one more shipped surface with no test behind it.
 [project.scripts]
 zikaron-hook = "zikaron.hook.main:main"
 zikaron-mcp = "zikaron.mcp.main:main"

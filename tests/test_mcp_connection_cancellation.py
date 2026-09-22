@@ -31,16 +31,16 @@ async def test_cancelling_during_send_closes_the_socket_so_a_later_call_gets_a_f
     connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The exact orphaned-worker scenario: `_send_request` is still "inside" its own blocking
-    call (modeled with a real `threading.Event` a worker thread waits on, since `asyncio.
-    to_thread` genuinely runs it on a separate OS thread) when the awaiting `request()` call is
-    cancelled. The held socket must be detached from `self._sock` and closed at that point, so no
-    subsequent, separate call through the same connection is ever handed that same socket object
-    — this test proves detachment and non-reuse specifically, not that `close()` promptly wakes
-    the orphaned worker's own blocked call: on Linux, closing a descriptor from another thread is
-    not a reliable interrupt for an already-blocked `send`/`recv`, so the fake worker here is
-    released explicitly by the test itself (`worker_may_proceed.set()`), exactly modelling that
-    the real orphaned worker's eventual exit is bounded by its own socket timeout, not by this
-    close.
+    call (modeled with a real `threading.Event` a worker thread waits on, since
+    `asyncio.to_thread` genuinely runs it on a separate OS thread) when the awaiting `request()`
+    call is cancelled. The held socket must be detached from `self._sock` and closed at that point,
+    so no subsequent, separate call through the same connection is ever handed that same socket
+    object — this test proves detachment and non-reuse specifically, not that `close()` promptly
+    wakes the orphaned worker's own blocked call: on Linux, closing a descriptor from another
+    thread is not a reliable interrupt for an already-blocked `send`/`recv`, so the fake worker
+    here is released explicitly by the test itself (`worker_may_proceed.set()`), exactly modelling
+    that the real orphaned worker's eventual exit is bounded by its own socket timeout, not by
+    this close.
     """
     worker_may_proceed = threading.Event()
     worker_finished = threading.Event()

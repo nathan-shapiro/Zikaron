@@ -2,13 +2,14 @@
 
 The distinction this module exists to make is already fully resolved by the wire response itself,
 not by which error code a rejection happens to carry: `architecture.md`'s tool surface returns a
-conflict (`{conflict: true, current: ...}`) as an ordinary **successful** RPC result — `core.write.
-tools.Amended | Conflict` never raises for a conflict — while every other rejection (`store_busy`,
-`no_read_receipt`, `bounds`, …) comes back as a JSON-RPC `error` object. So this module's whole job
-is: a `result` becomes the tool's plain return value, and an `error` becomes a raised `ToolError`,
-which is what makes FastMCP mark the call `is_error=True` and put the message in front of the model
-that made it — exactly the outcome a rejection like `store_busy` or `no_read_receipt` needs, since
-those are not shapes any tool's documented return type includes, unlike a conflict.
+conflict (`{conflict: true, current: ...}`) as an ordinary **successful** RPC result —
+`core.write.tools.Amended | Conflict` never raises for a conflict — while every other rejection
+(`store_busy`, `no_read_receipt`, `bounds`, …) comes back as a JSON-RPC `error` object. So this
+module's whole job is: a `result` becomes the tool's plain return value, and an `error` becomes a
+raised `ToolError`, which is what makes FastMCP mark the call `is_error=True` and put the message
+in front of the model that made it — exactly the outcome a rejection like `store_busy` or
+`no_read_receipt` needs, since those are not shapes any tool's documented return type includes,
+unlike a conflict.
 """
 
 from fastmcp.exceptions import ToolError
@@ -20,8 +21,7 @@ class ServiceRejectionError(ToolError):
     Carries the wire `code` and `data` verbatim rather than only the message, so a model that
     receives this can see *why* — `store_busy` invites a retry, `no_read_receipt` says which uuids
     need `zikaron_memory_fetch` first — the same information the RPC error payload already states,
-    just
-    surfaced through the one channel FastMCP guarantees reaches the model
+    just surfaced through the one channel FastMCP guarantees reaches the model
     (`ToolError`'s own contract: its message is shown "regardless of `mask_error_details`").
     """
 

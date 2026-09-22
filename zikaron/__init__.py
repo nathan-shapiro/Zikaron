@@ -1,1 +1,1 @@
-"""Zikaron: the tribal knowledge a project accumulates, made retrievable by its coding agent."""
+"""Zikaron: a memory store for tribal knowledge, a knowledge index for institutional knowledge."""

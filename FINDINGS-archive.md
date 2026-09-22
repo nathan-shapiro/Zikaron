@@ -12,9 +12,11 @@
 > Append to this file rather than rewriting it: it is a record of what was believed and when.
 > Claims withdrawn in `FINDINGS.md` keep their original text here, with the refutation beside them.
 >
-> **Sections, so you can jump rather than scroll 190 kB:** §"Build history" · §"Build plan — start
-> here when writing code" · §"The Claude Code probe, and the documentation reading it refuted" ·
-> §"M15 as built" · §"Dogfooding notes" · §"References".
+> **This file's own `##` headings are its index — grep them rather than scrolling.** *A list used to
+> sit here, naming six sections and a size of "190 kB". Six more sections have been moved in since,
+> and the file is now three times that. `FINDINGS.md`'s header carried the mirror-image defect and
+> was fixed one round earlier — **the pointer was repaired and the pointee was left**, which is this
+> corpus's two-sites failure in its purest form: the fix went to the site somebody was reading.*
 
 ## Build history
 **Phase: design complete, independently reviewed to approval, operator-reviewed. M0 (spikes), M1 (skeleton
@@ -1771,10 +1773,25 @@ installer's own comment claiming a plain `[A-Za-z0-9._-]+` covers every id eithe
 > Moved verbatim, byte-for-byte, when `FINDINGS.md` had reached **~83–89k tokens — well past the
 > ~49k that forced this file's own creation.** *That figure was written here as "~60k", from an
 > estimate of 4 bytes per token; a `/context` reading the same day put this corpus at **2.7–2.9**,
-> and `FINDINGS.md` §"Track C" carries the measurement and the method. The byte counts were always
+> and ~~`FINDINGS.md`~~ **`FINDINGS-archive.md` §"M25, and the last three pre-knowledge-index
+> milestones"** §"Track C" carries the measurement and the method. The byte counts were always
 > right; only the conversion was wrong.* Each of these six milestones is DONE and APPROVED;
 > what they built is normative in `design/knowledge-index.md` and what they *taught* is here.
-> **M25's block stays in `FINDINGS.md`** because it is live.
+> ~~**M25's block stays in `FINDINGS.md`** because it is live.~~ **— true on 2026-09-18 and false
+> two days later: M25's block moved into this file on 09-20, taking "Track C" with it.**
+>
+> *Both corrections above are to the **reading note**, not to moved text, and that distinction is
+> what licenses editing them. This file's append-rather-than-rewrite rule protects what a block
+> **believed when it was written**; a reading note is the archiver speaking to a future reader in
+> the present tense, and a navigational claim that now sends that reader to the wrong file is
+> simply broken. **The pointer guard could not see this class when this was written**:
+> `tests/test_design_pointers_resolve.py` tested `section in target_body`, and `FINDINGS.md` still
+> contained the string `§"Track C"` — inside a pointer of its own into this file — so the broken
+> pointer resolved against a quotation of itself. Measured over every pointer in the corpus:
+> **exactly one** resolved only that way, and it was this one. **`_defining_text` closed it in the
+> same sweep round**, and the pointer is now carried as an explicit evidence exemption. *Written in
+> the present tense about a guard the same pass was changing — so the correction two paragraphs
+> above and the claim beneath it disagreed within one edit.*
 >
 > **Read "this file" below as `FINDINGS.md`.** These blocks say *this file* or *the always-loaded
 > file* **16 times**, and every one of them was written about `FINDINGS.md`, where this text lived
@@ -2867,7 +2884,7 @@ change. No amount of additional grepping reaches it. **Deriving does**: state th
 before/after pair, write down what the old proposition licensed, and decide per conclusion whether
 it still holds.
 **And the reviewer was doing my reasoning for me, which is what the budget actually bought.** M23's
-three blockers all lived in one eight-cell table — interrupted before/after the drop and before/after
+three blockers all lived in one table whose axes the feature already named — interrupted before/after the drop and before/after
 the first file commit × configuration reverted or seen through × same width or different — and I
 never built that table. I walked a cell when a review round handed me one. For a milestone whose
 entire subject is crash recovery, enumerating that matrix was the first thing to do and it costs an
@@ -3233,6 +3250,22 @@ Plan:
 
 
 ## References
+- **M28–M30 distribution briefs review** — `reviews/m28-m30-distribution-briefs-review.md`, three
+  rounds, ending NEEDS_CHANGES with **no blocker outstanding** and its residue applied. Round 1's four
+  blockers were all real and two were errors of *reasoning* rather than prose: an arithmetic slip
+  (45 for 48) copied into three documents, and a "safe by construction" claim about the socket path
+  that held only for the branch macOS takes while the other branch prepended an unbounded,
+  user-controlled `$XDG_RUNTIME_DIR`. It also found the publication sweep had no credential pattern in
+  a tree carrying four tracked harness environment dumps, and that a SHA allowlist without a pinned
+  HF **revision** re-downloads 64 MB forever the first time upstream commits.
+  **Two process lessons, both already in this corpus and both re-earned here.** *A correction arriving
+  inside a review finding is still a claim* — the reviewer withdrew three of its own findings across
+  the trail and I had applied each as given, one of which converted a correct done-when item into a
+  false one. And *a grep for a variable **name** cannot establish that a **value** is present*, which
+  is how "verified independently here" came to stand above a claim that was wrong about one of its
+  four files. Round 2's findings were almost entirely in the prose written to describe round 1's
+  fixes, which is this project's standing observation about the tail of a review restated on a new
+  artefact.
 - **M27 implementation review** — `reviews/m27-python-range-code-review.md`. Its round 1 found the
   defect the whole milestone existed to prevent, in the milestone's own gate: **`check-matrix.sh`
   rebuilt a virtualenv only when `bin/python` was absent, so a deliberate dependency pin bump would
@@ -3542,7 +3575,9 @@ Plan:
   every measured point, which is worth recording precisely because this project's two previous probes
   both refuted their documentation readings — `research/claude-code-install-artefact-contract.md`.
 - Prior Grok brainstorm — framing, D1–D9, unverified benchmark list — `research/initial-brainstorm-transcript.md`
-- **Knowledge-index design, 2026-09-14** — `design/knowledge-index.md`, **APPROVED after ten rounds**;
+- **Knowledge-index design, 2026-09-14** — `design/knowledge-index.md`, **APPROVED after twelve rounds**
+  (`grep -c '^## Round'` on the trail is the count; "ten" was true for one round before two more landed,
+  and disagreed with four sibling sites);
   trail `reviews/knowledge-index-review.md`. Supporting measurements:
   `research/cross-kb-ranking-probe.md` (BM25 is not comparable across corpora: **−4.21 vs −0.00** for
   identical text in same-size corpora; `ATTACH` limit **10**; FTS5 `MATCH` cannot be aliased) with
@@ -3835,6 +3870,74 @@ Plan:
   do accept a per-trigger flag), and an exported-but-empty session variable silently suppressing every
   push because the seam forwarded `""` while the service treats it as no label —
   `reviews/m14-harness-seam-review.md`.
+- **The two M28 delegations, both 2026-09-21, and both changed the brief they were dispatched to
+  confirm.** `research/github-actions-macos-runners.md`: the arm64 macOS labels are `macos-14`,
+  `macos-15` and `macos-26`, standard-tier and **free on public repositories** where they are
+  otherwise ~10× Linux; `macos-13` was sunset; **`macos-latest` migrated to macOS 26 mid-2026**, so
+  the workflow names a version explicitly rather than the floating label; and **the image ships no
+  `coreutils`, so there is no GNU `timeout`** — searched in the runner image's own readme, zero
+  matches for `coreutils`, `timeout` and `gtimeout` alike. The remedy needs *both* halves,
+  `brew install coreutils` **and** the `$(brew --prefix coreutils)/libexec/gnubin` prepend, since
+  without the second only `gtimeout` is on `PATH` and `check.sh` calls `timeout`.
+- **M28 publication review** — `reviews/m28-publication-review.md`, **three rounds, ending
+  `NEEDS_CHANGES` with its residue applied**: 18 findings, then 13, then 6. Every one accepted.
+  **What the trail is evidence of.** Round 1's two blockers were both real and one was a product
+  defect a user would have hit on first install: the recommended `uv tool install` command lacked
+  `--managed-python`, so on a fresh machine uv falls back to a host interpreter — the exact build
+  whose `enable_load_extension` may be off. **The recommendation had been argued from a probe run
+  under an explicit flag while the documented command carried none.** Round 2 then caught the *fix*
+  resting on `uv python find --managed-python`, which never downloads by design, so it still said
+  nothing about what `uv tool install` would do — **the same rule broken twice, one round after the
+  corpus wrote it down.** Settled by running the documented command.
+  **The other recurring shape was a fix landing in the artefact and not in the document beside it.**
+  Round 2: the `runner`-context mechanism corrected in three artefacts and left standing in
+  `FINDINGS.md`; `D1–D32` surviving at two `design/README.md` sites under a sentence claiming the
+  range was "now simply not written anywhere" — a universal written over the two files that had been
+  checked. Round 3's single blocker was the same class in its purest form: the cache's `if: always()`
+  removed from the workflow and forbidden by the test, still prescribed by **`design/distribution.md`,
+  the document whose own header says it wins every disagreement**, two lines above a sentence claiming
+  the tests assert it.
+  **And three assertions were weaker than their docstrings**, each passing over the failure it named:
+  a substring check for `cache-hit` that a renamed `id` defeats, an export matched as a substring that
+  a plain `export` satisfies, and a model literal in the fetch step tied to nothing. **Twenty
+  mutations across the three rounds, all caught.**
+  `research/onnxruntime-macos-wheels.md`: the 1.23.2 cutoff this corpus carried from a secondary
+  report is **confirmed from PyPI** (2025-10-22, last with `macosx_13_0_x86_64`; dropped at 1.24.1,
+  announced in its own release notes; there is no 1.24.0 on PyPI), and no universal2 wheel exists
+  anywhere near it. **Two findings contradict the brief rather than confirming it**, and the second
+  is the load-bearing one — see `design/distribution.md`, which carries the corrected form.
+  **A follow-up the next day checked the three GitHub Action majors the workflow pins, and all three
+  were wrong.** `actions/checkout` is at **v7** (written as v5), `actions/cache` at **v6** (written as
+  v4) — both merely stale. **`astral-sh/setup-uv` is at v10 and is the dangerous one**: astral
+  maintains **no floating major tag**, so `@v10` is a 404 and only full patch tags exist. The `@v7`
+  first written here therefore resolves — to a tag frozen before `v8` was cut, three majors and about
+  a year behind, missing the cache-poisoning hardening `v10` made the default. **A 404 fails loudly;
+  this would have gone green running unmaintained code.** Now pinned `@v10.2.0`, guarded by
+  `tests/test_ci_workflow.py`, and both guards mutation-verified.
+
+### Also on file, indexed here so nothing under `reviews/` or `research/` is unreachable
+
+**Found 2026-09-22 by enumerating both directories against this section** — thirteen files existed
+that no index named, several of them the review trail for a decision still in force. The entries
+below are deliberately one line each: they are pointers, and a pointer nobody can find is the defect
+being fixed, not the brevity. **The check is one command** (`ls reviews/ research/` against a grep
+of this file) and it is worth re-running whenever either directory grows.
+
+| File | What it is |
+|---|---|
+| `reviews/claude-code-harness-design-review.md` | M13's design delta — `design/harness.md` and the D34 amendments. Three rounds, APPROVED |
+| `reviews/claude-code-port-plan-review.md` | the port plan, `build-plan.md` §§M13–M16. Three rounds, ending NEEDS_CHANGES — the plan was superseded by the build rather than re-reviewed |
+| `reviews/d17-store-scope-review.md` | D17's store scoping: one resolver for both clients. Five rounds, APPROVED |
+| `reviews/embedder-precision-eval-design.md` | the embedder-precision eval design. A critique, not a round-structured trail, so it carries no `VERDICT:` line |
+| `reviews/m12-dogfooding-delta-review.md` | everything changed after M12 landed, from using the system on two real stores. Two rounds, APPROVED |
+| `reviews/recall-trigger-review.md` | the 2026-08-14 recall-trigger rewrite — four detectable occasions, the sufficiency illusion, and the gate. Two rounds, APPROVED |
+| `reviews/service-signal-ordering-review.md` | `main.run()` installing its signal handlers **before** the bind. Three rounds, APPROVED |
+| `research/chunking-for-retrieval.md` | prior art on chunking for retrieval — the note whose structure-aware/passage-level split M26 underweighted and then reproduced |
+| `research/cockroachdb-architecture-questions.md` | the ten questions the M26 end-to-end trial was run on, gathered from public sources rather than chosen by whether an RFC answers them |
+| `research/fastmcp-api-shape.md` | the FastMCP API as it actually is, read before the MCP clients were written |
+| `research/m26-rerank-preregistration.md` | the reranker preregistration — **written but never reviewed**, and its within-corpus half is on weak ground while its cross-corpus half is not |
+| `research/publication-sweep.md` | the four-family pre-publication sweep: method, every hex run classified, and the decisions with their reasons |
+| `research/trial-corpus-candidates.md` | how the trial corpus was chosen, and the contamination risk the choice carried |
 
 ## M25, and the last three pre-knowledge-index milestones (moved out of FINDINGS 2026-09-20)
 
@@ -4285,6 +4388,13 @@ almost certainly temp stores from test runs leaking into the real runtime direct
 `tests/test_hook_main.py:195` reads `os.environ.get("XDG_RUNTIME_DIR", "/tmp")`, which is a plausible
 source and not proven to be the only one. Costs no disk, leaks inodes in tmpfs. **A lead, not a
 finding.**
+**Re-measured 2026-09-22 and still accumulating: 1,388.** No cliff anywhere in the distribution —
+370 on 09-21 is the single highest day — so nothing ever fixed it and the lead was never taken up.
+Two things the re-measurement settled: the non-unlink in `lifecycle.py` is **correct** (unlinking a
+flock target is racy, so a detached inode would silently end the mutual exclusion), and a real user
+is unaffected, their count being bounded by project count rather than by suite runs. Any remedy is
+in the tests' choice of runtime directory. See `FINDINGS.md` — that re-measurement was an
+accidental re-derivation of this entry, which is its own dogfooding record. **The lead is closed: fixed 2026-09-22** by a session-scoped `XDG_RUNTIME_DIR` redirect in `tests/conftest.py`, mutation-verified, with the accumulated files removed.
 **Grepping a transcript for tool names overcounts, and M25's own instrument is the transcript.**
 `grep -o '"name":"mcp__zikaron__zikaron_knowledge_[a-z_]*"'` reported 3 `add`, 5 `list`, 1 `refresh`,
 3 `search`, 1 `status`; parsing actual `tool_use` blocks gives **2, 4, 0, 2, 0**. The surplus is tool
@@ -4560,9 +4670,10 @@ written about *milestones*, and milestones were never what made the file large. 
 or RESOLVED years of milestones ago**, in full, because nothing in the rule said to move an open
 question that had stopped being open.
 
-**Each entry below leaves a numbered stub behind in `FINDINGS.md`.** The numbers are load-bearing:
-open questions are cited by number from `design/`, `research/` and `reviews/` files, where a silent
-renumber would be undetectable. A stub records what the answer was and points here.
+**Each entry below left a numbered stub behind in `FINDINGS.md` when it moved. Those stubs were
+later deleted, and the numbers were not reused.** The numbers are load-bearing: open questions are
+cited by number from `design/`, `research/` and `reviews/` files, where a silent renumber would be
+undetectable. So a citation to 4, 10, 11, 13 or 15 resolves here rather than to a live question.
 
 **Moved byte-for-byte, and "this file" inside them means `FINDINGS.md`**, where they were written.
 
@@ -4574,7 +4685,7 @@ complete) and question 12 (consolidation merging, the largest single live entry 
 |---|---|---|
 | 3 *(superseded original)* | the real length distribution of memories is unknown | superseded in place by the measured distribution, which stays live |
 | 4 | hook→service transport | resolved 2026-08-01 by M0 spike 3; what remained was integration-test material for M9, not a design question |
-| 10 | consolidation-lease takeover | caller specified, both premises measured 2026-08-02; one narrow liveness item stayed open and is in the stub |
+| 10 | consolidation-lease takeover | caller specified, both premises measured 2026-08-02; one narrow liveness item stayed open and is in the full entry below |
 | 11 | nothing bounds a gist's length in bytes | CLOSED in M14 by a **character** bound, its unit then measured in M16 by astral bisection |
 | 13 | two write-policy scope rules disagree | RESOLVED and shipped 2026-08-16 — a general fact enters as the decision it forced here |
 | 15 | records cross-reference each other by gist prose | RESOLVED and shipped 2026-08-16 — point at a record by its subject, never by quoting its gist |
@@ -4775,10 +4886,11 @@ Amazon Q source traces, that arc having been closed by the kiro head-to-head:
 | item 6, a known load-dependent intermittent | FIXED 2026-09-16 in the product, not the test |
 | the Amazon Q integration and engine traces | superseded by `research/kiro-knowledge-head-to-head.md`, and re-read as evidence about one rushed implementation rather than about the design space |
 
-**Each leaves a stub in `FINDINGS.md`** carrying whatever is still live — item 3's arithmetic is
-cited by the injection-budget work, item 6's coverage-variance measurement still governs whether
-`fail_under` may be raised, and the Amazon Q entry still owes its one genuinely portable idea.
-**The `0.`/numbered scheme is preserved**: these items are cited by number from `design/`,
+**Each left a stub in `FINDINGS.md` carrying whatever was still live; those stubs were later
+deleted, so the detail lives here alone** — item 3's arithmetic is cited by the injection-budget
+work, item 6's coverage-variance measurement still governs whether `fail_under` may be raised, and
+the Amazon Q entry still owes its one genuinely portable idea. **The `0.`/numbered scheme is
+preserved and its numbers are not reused**: these items are cited by number from `design/`,
 `research/` and `reviews/`, where a silent renumber is undetectable.
 
 **Moved byte-for-byte. "This file" inside them means `FINDINGS.md`**, where they were written.
@@ -4882,7 +4994,7 @@ cited by the injection-budget work, item 6's coverage-variance measurement still
    localised — no cross-run per-file diff was taken — so do not read this as a prediction that
    pinning the intermittent above would end the flap. **The consequence is about the ratchet, not
    the tests:** `fail_under` is now **95%** (raised from 90 at M22, `pyproject.toml`) against a
-   measured 96.85–98.07% spread, so the margin that absorbs the flap is **under two points** rather
+   measured 96.85–98.12% spread, so the margin that absorbs the flap is **under two points** rather
    than the ~7 an earlier revision of this line implied by quoting the old floor. That margin is the
    only thing preventing a red gate for reasons unrelated to the change under
    test, and this project has already been burned once by a floor that was not doing its job
@@ -4977,7 +5089,8 @@ implementation there but a total absence.** Detail: `research/amazon-q-knowledge
 - **And a failure this project has already been burned by, in their code**: `contexts.json` is
   written with `fs::write` and read with `unwrap_or_default()`, so a crash mid-write **silently
   reports zero contexts** while every directory sits on disk — the same silent-truncation class as
-  the `cp memory.db` finding above.
+  `FINDINGS.md`'s *"Never snapshot a store with `cp memory.db`"*, which stayed live when this block
+  was archived and left this deictic pointing at nothing.
 - Note for anyone retracing this: `knowledge_beta_improvements_agents` is a **0-byte regular file**,
   not a directory of design material. The real intent document is `docs/knowledge-management.md`.
 
@@ -4986,3 +5099,1054 @@ documented behaviour), `research/amazon-q-knowledge-engine.md` (indexing, chunki
 vector store, staleness — traced from source) and `research/amazon-q-knowledge-integration.md` (the
 agent-facing surface, tool description text, gating, scoping). Source is the open-source predecessor
 `aws/amazon-q-developer-cli`, cloned read-only to `~/amazon-q-developer-cli` (shallow, 18 MB).
+
+## The gist-as-abstract fix, and M27 (moved out of FINDINGS 2026-09-22)
+
+Both blocks below stopped being live when their work landed: the read-path fix shipped 2026-09-20,
+and M27 landed as *"M27: requires-python widened to >=3.12, the two stdlib differences held as data,
+and a gate that runs every version"*. Moved byte-for-byte, per this archive's append-rather-than-
+rewrite rule, so **"this file" inside them still means `FINDINGS.md`**, where the text was written.
+
+**One obligation inside the first block is still open and is restated in `FINDINGS.md` rather than
+buried here**: the pre-change share of surfaced uuids fetched before their session's next write, over
+LeibaTrader. The full specification of that measurement — its bounds, its unit, and the four
+decisions already taken inside it — is in the moved text below and is not repeated there.
+
+### The gist was being read as the finding — a production report, and the fix
+
+**Reported 2026-09-20 by an agent using Zikaron for real work in `~/Trading/LeibaTrader`, in its
+own words**: because only gists surface and a gist is condensed, it *"takes the gist as a truthful
+fact even if content of the memory is more nuanced"*, and treats that as *"a license to not think
+critically"* — answering with a claim derived from the gist alone, sometimes inaccurate, which the
+operator describes as reading *arrogant and ignorant*.
+
+**The two records it named**, both of which it says it had never fetched — its own account, relayed
+by the operator in conversation with no transcript copied, and not checked against the store's
+`surface`/`fetch` rows:
+
+| uuid | gist |
+|---|---|
+| `247ec4ee` | "Recurring failure here: asserting analytical claims without measuring them, then defending the frame" |
+| `97250485` | "This store is selection-biased toward failures — treat a uniformly negative retrieval as a property of the sample, and NEVER as a reason not to try something" |
+
+**Both are conclusion-shaped and both are about the reading agent's own behaviour**, which is the
+class where a gist-only read misleads hardest: an agent has no independent check on a verdict about
+itself, and such a record reshapes a posture rather than being "stated as fact" in any step the
+agent can observe itself taking. That is also the class this fix is weakest for, and
+`design/retrieval.md` §"Push output format" says so beside the fix rather than after it.
+
+**The corpus already held the mechanism and had only fixed the write half.**
+`design/write-policy.md` §1 records the 2026-08-03 incident in the same terms — *"every memory has
+a gist/content boundary, the gist is the half that gets injected, and a qualifier on the far side
+of that boundary is a qualifier that will be recalled without its claim… The content cannot rescue
+a gist that has already been believed."* The rule added then was write-side (*"if a claim expires,
+the gist has to say so"*). Nobody did the read side for the seven weeks between that rule and this one.
+**And that incident caps what the read side can buy**: the agent there *did* fetch, read the
+qualifier, and kept the gist's framing anyway.
+
+**Shipped 2026-09-20 across three surfaces** — the injected block, `zikaron_memory_search`'s
+description, and the write policy's recall paragraph — plus the untrusted-reference frame on
+`zikaron_memory_search` and `zikaron_memory_fetch`, the latter the surface this fix sends more
+reads to. The recall paragraph had been
+asserting the opposite (*"The records themselves are not suspect — the choice of which five you
+were shown is"*). Each of the three names a gist as an abstract of a longer record and ties the
+fetch to a **detectable occasion** — *before you state one as fact, or act on one* — rather than
+to a resemblance judgement, which is the trigger shape the write policy already had to abandon
+once. Review trail: `reviews/gist-abstract-read-path-review.md`.
+
+**Owed — stated in `design/retrieval.md` §"Push output format", tracked here**: the pre-change
+share of surfaced uuids fetched before their session's next write, **over LeibaTrader**, the store
+the direction will be read in (single-harness from its first day, so the 2026-08-16 baseline reset
+cannot bite: its `service.log` begins 2026-08-18, after M15 gave Claude Code an installer, and M17's
+08-19 diagnosis already reads it under `SessionStart`), **over the sessions whose last event has `at`
+before
+`2026-09-20T05:00:00+00:00`** — 2026-09-20 00:00 on the store's machine (`America/Chicago`, UTC−5
+under CDT; it would be 06:00Z under CST), written as the UTC instant because `event.at` is UTC
+(`core/clock.py`). A bare `at < '2026-09-20'` on that last event cuts five hours **early**, dropping
+any session that ended in the evening of 09-19 local from the pre-change side; it cannot admit
+anything post-change.
+**Midnight is safe because the fix's first edit to any shipped file came after it**: `block.py` at
+`2026-09-20T07:35:13.666Z` = 02:35:13 local, `primary.py` 54 seconds later, and `write_policy.py`
+within the hour (this session's transcript, `cc39b148-fca0-447f-b75b-5e011621d1dd.jsonl` lines 1672
+and 1717). Nothing that **ended** before local midnight could have carried new text on any surface,
+so the bound is conservative by at least 2 h 35 min. (A session that *started* before midnight and
+ran on could carry it after the restart — which is why such sessions are straddlers, excluded whole
+by the rule below.) **Neither bound is ever a bare date**, and **both
+sides are sets of sessions rather than dates**. The block is rendered in the service,
+so it reached that store at the first *service* start after the edit — on the 30-minute idle default
+a session running through the edit keeps the old block until its next idle gap — while the policy
+and the search description reach a session at *its* own start, and no event records which text a
+push or a session carried.
+**That restart has happened and its instant is checked, so this is a number rather than a
+procedure**: `~/Trading/LeibaTrader/.zikaron/service.log` records the first start after the
+block's last write (`block.py`, 03:01:57 local — `write_policy.py` and `primary.py` were last
+written later, at 03:32:22, a one-line rewrap of both policy copies, and 03:43:47, a byte-identical
+restore after a mutation run whose last *content* change was earlier; **all three precede this
+start**, which is what the rule below needs) at
+**2026-09-20 04:40:06.416 local = `2026-09-20T09:40:06.416+00:00`**,
+pid 2401132, launched from `/home/nathan/Zikaron/.venv` as every LeibaTrader client is — its
+`.mcp.json` names that venv's `zikaron-mcp` for both servers and `.claude/settings.local.json` its
+`zikaron-hook` on all three triggers — so any start-if-absent from that project resolves `block.py`
+to this working tree. **Count as post-change every session whose first event has `at` at or after that instant, and
+as pre-change every session whose last event has `at` before the pre-change bound.** Every other
+session — one that began between the two bounds, or one with events on both sides of either —
+belongs to neither side, **whole**: a session is never split between sides, because the unit below
+is a pair whose window runs to its session's end. The cost is **every session on neither side** —
+any with an event between the two bounds, and any whose events sit on both sides of the gap with
+none inside it, which is the shape of an overnight session resumed after 04:40 — **plausibly at
+least one**, since the log shows the store active between them (a
+start at 01:09:29 local, and a last request near 04:04:36 by subtraction from `idle_for=1804.1s` at
+the 04:34:40 stop), though it records neither which request nor whether that request wrote an
+`event` row at all — and its size is one query, reported beside the share. The 09-19 log's overnight
+restarts show the habit is not a one-off, though that night lies wholly inside the pre-change side.
+*(`service.log` appends across restarts and stamps in **local** time — it logs both
+the startup config dump and the idle stop — so any later re-derivation converts the same way.)*
+"Before" and "after" between rows are `event.id` order, which is authoritative
+because two rows can share an `at`.
+
+**Unit, stated so no decision is left in it**: distinct `(session_id, memory_uuid)` pairs among
+`surface` rows whose `session_id` is **harness-labelled** — a `zk-`-prefixed label is one the
+service minted for a single client process, which a hook cannot share with an MCP client, so such a
+row is a one-push "session" that can never hold its own `fetch` and would score unfetched by
+construction; those are reported by count and left out. The unit is pairs rather than `surface`
+rows, which are one per push and would count a re-surfacing of an already-fetched record as
+unfetched. A pair counts as fetched if a `fetch` row for that uuid and
+session falls after the pair's first `surface` row and before that session's first `remember`,
+`amend` or `retire` after it, or the session's end. **Pairs whose session later amends or retires
+the uuid are counted separately**: D26 requires a receipt for those, so the write path forces the
+fetch whatever the agent read it for, and pre-change they are plausibly most of the numerator. That
+bucket is taken first, whatever the fetch's timing, and left out of the share — the direction is
+read from pairs fetched in-window over all pairs not in it, with the bucket's size reported beside
+it. Without that precedence a session that surfaces `X`, writes `Y`, fetches `X` and amends `X`
+would score the pair unfetched, the window having closed at the unrelated write. A
+`fetch` preceding the first `surface` does not count — that is a pull-path read, and this
+instruction is about the lines the block printed.
+
+**`~/Memory` can add a second, informational number only if the operator supplies its harness
+cutover.** This corpus does not record whether that store ever moved harness, and its events
+cannot say: `event` carries `client_kind` and deliberately no harness field, and both harnesses'
+session ids are uuid4. Its rows through 2026-08-14 are kiro-era in any case, with a large,
+unmeasured share of its reads from a different model family (open question 1), and this file's
+08-16 decision says not to compare across that boundary.
+
+That LeibaTrader share is the change's only signal, the same join under a different projection
+would settle whether the two records above were really never fetched, and **no baseline has been
+taken**.
+
+**`97250485` is a second, unfixed defect and it is on the write side.** *"…and NEVER as a reason
+not to try something"* is an order, and the policy's own rule is **"Write observations, not
+orders"**, whose stated reason is that *"a memory phrased as a command will be obeyed by someone
+with less context than you have"*. The policy's §1 already records that prohibition failing to
+catch an imperative once; this is the second instance, in production. Not fixed here.
+
+### Distribution: a version cap that was hiding two defects, and M27
+
+**Opened 2026-09-20 on an operator question** — Zikaron installed as a source checkout plus
+`python3.12 -m venv`, with `pyproject.toml` carrying `requires-python = "==3.12.*"`, so it assumed a
+host Python this project does not control. **Widening the range is decided, briefed as
+`design/build-plan.md` §M27 (APPROVED after eight review rounds,
+`reviews/m27-python-range-brief-review.md`) and built, the implementation **first APPROVED at
+code-review round 11**, with later rounds confirming the code unchanged, in
+`reviews/m27-python-range-code-review.md`; how Zikaron is *obtained* is still open.**
+**What this review trail is evidence of, since it ran long even by this project's standards.**
+Rounds 1–6 found defects in the product and the gate. **Rounds 7–9 and 11 found nothing behavioural; round 10 found
+one gap in the gate's reuse key** — a different *build* of the same minor kept the old venv, so a
+repointed `ZIKARON_PYTHON_3_13` ran the previous interpreter and printed green, which the archive
+files as the *fourth* member of round 1's "green for an interpreter that never ran" family — **and
+one enumeration drift older than the round before it**. Every other finding in rounds 7–11 was
+corpus consistency in prose that the *previous round's own fix* had disturbed; two of those were
+errors the reviewer had introduced and I had copied without re-deriving. **That class produced a
+finding in every round from 7 through 14**, the later ones cascading from the previous round's
+corrections to this very paragraph.
+*(Round 12 added a shape the cascade does not cover: its leading findings were in prose written
+**fresh** after round 11's approval — a false universal, an incomplete list — which no earlier fix
+had disturbed. Round 13's was different again: a rule added to `py-runner.md` sat a few lines above
+an older, untouched sentence that had licensed the very defect the rule names — the neighbour class,
+in a file **six earlier rounds had read** for its matrix bullet, before there was a rule for that
+sentence to contradict. Prose written to summarise a review is as defect-prone as prose edited
+during one.)*
+*A closed interval, not a "consecutive" cardinal, and that is round 14's point: the count was
+written as "six" at round 13 and was seven before the ink dried, in a sentence whose own round
+extended it. **Any tally of an open trail is stale on arrival.***
+*And the reviewer-introduced error runs to four: "in a file no review had read" was round 14's
+phrase, copied here unchecked, and rounds 1–5 and 8 had all read `py-runner.md` — one `grep` over
+the review file, which is what round 15 ran. **A correction arriving inside a finding is still a
+claim, and the rule applies to the clause as much as to the number.** This paragraph is now its own
+fourth example, which is the point at which it had better stop being extended.*
+*~~"Rounds 7–11 found nothing behavioural at all"~~ — **withdrawn at round 12**, which caught it
+against this corpus's own archive entry, edited in the same session to say the opposite. A universal
+written to make a lesson land, one round after the counterexample was taken as a code change. The
+lesson survives the correction; the universal did not, and this is the two-sites failure committed
+inside the paragraph about the two-sites failure — `CLAUDE.md`'s "14 of 18" a second time.*
+**The transferable part: a fix to a heavily cross-referenced
+corpus is itself an edit with a defect rate, and the tail of a review is that rate, not the
+artefact's.** The cheap counter is the one `CLAUDE.md` already states and which I ran only from
+round 7 on — state the change as a before/after pair and ask what the old proposition licensed —
+plus the rule the reviewer's own two mistakes teach: **re-derive every number you are handed, from
+the thing it describes.**
+Measurements: `research/python-portability-probes.md`; prior art:
+`research/python-distribution-portability.md` and `research/python-313-314-porting-audit.md`. All are
+indexed in `FINDINGS-archive.md` §References. **Numbers live in the probe note, not here.**
+
+**The cap had no rationale anywhere in this corpus** (no version read in the package, and D19 says
+only *"latest stable versions"*), and it was hiding **two** defects. The first:
+`RunningServer.close_all_connections` read `asyncio.Server._active_count`, a **private** attribute
+CPython replaced with `_clients` in 3.13 — 18 tests red, ruff/mypy/coverage green. The second was
+**silent**, and it is the one that matters: 3.13 added `cleanup_socket` to `create_unix_server`
+**defaulting to `True`**, so a Unix server now unlinks its own socket file on close, and `serve`
+passed no such argument. **2,847 tests passed straight through it.**
+**The dangerous instance is defended by CPython** — its cleanup carries an **inode guard**, verified
+by probing this service's own ordering: a dying service does not delete its successor's live socket
+on any version. What changed is that the file no longer survives `close()`, which falsified
+`main.run`'s *"the socket is unlinked exactly once"* — the sentence three neighbouring comments
+reason from — while **nothing in the suite pinned it**: every test asserts the socket is *gone* after
+shutdown, an end state identical on both versions whoever did the unlinking.
+**Newly visible, and worse than it first looked**: asyncio's 3.13+ cleanup is **the only unlink in
+this system that checks the inode**. Of seven socket-path unlinks under `zikaron/service/` and
+`zikaron/hook/`, **five are bare `unlink(missing_ok=True)` with no vet at all** — in `main.run`, its
+signal path, its error path and its force-exit helper, plus the two self-stop paths in
+`lifecycle.py` — while the two that do vet check ownership and type, not identity.
+*That count read "four" in the probe note and "three plus two" here before being re-derived from the
+tree; both earlier figures were read off a document's own table rather than grepped, which is the
+enumeration-drift failure this corpus keeps recording, committed twice in one day on one list.*
+
+**The transferable half: a version cap is not a compatibility policy, it is a way of never finding
+out.** The private-API dependency was written with a `type: ignore` on it, reviewed, and shipped; the
+pin then guaranteed no run would contradict it. **And the two breaks differ in the way that matters**
+— one was loud and one passed 2,847 tests — so lifting a cap means auditing the stdlib surfaces the
+code depends on *behaviourally*, not merely running the suite and reading the failures.
+
+**The search for further traps came back clean.** A deprecation run on 3.14 turned up **one**
+deprecation — `asyncio.get_event_loop_policy()`, removal in 3.16, 14 call sites, all in tests, none
+in the package — and a stdlib behaviour-change audit produced eight candidates of which **six do not
+apply**, each checked against the code rather than believed. **The residual is not zero and its shape
+is named**: that method cannot prove completeness, which is the standing argument for a version
+matrix over enumerate-and-fix.
+
+**One thing no seam can absorb**: SQLite is bundled with the interpreter (3.45.1 on a
+distribution-packaged 3.12 against 3.53.1 on downloaded 3.13/3.14 builds), so FTS5 ranking can vary
+by host. Pinning a **statically-linked** interpreter is the only fix short of vendoring the library
+itself — and the adjective is load-bearing, added at review round 12: a distribution build loads the
+system `libsqlite3.so`, so pinning `/usr/bin/python3.12` pins nothing about SQLite, while a
+python-build-standalone build links it in and the interpreter does identify it. *The escape clause
+is round 13's: a `pysqlite3`-style wheel carrying its own statically-linked SQLite, reached through a
+`sys.modules["sqlite3"]` shim since `aiosqlite` imports the stdlib module by name, would pin SQLite
+without pinning the interpreter. Outside M27's fence and not proposed — recorded so "only" does not
+over-weight the managed-interpreter route in §"Still open".* **M27 made it observable rather than solved**: the
+service logs both versions at startup, and `design/schema.md`'s opening sentence — which verified
+FTS5 and `enable_load_extension` on one build and read as universal — now records all three measured
+builds and says extension loading is a *compile-time* option, off in some widely used distributions,
+so a new interpreter is a new measurement. **That sentence is the one site M27's brief never named**,
+found by the before/after sweep rather than by any grep.
+
+**Decisions taken with the operator, in this order.** Widening is done **irrespective of** how
+Zikaron is obtained, and the build is **a version seam, not a version branch** — operator's framing,
+and the better one. **`cleanup_socket=False` follows from it**, since that is what makes behaviour
+identical on every version. **"As data" turned out to be mechanical rather than stylistic**, measured
+here: with mypy's `python_version = "3.12"`, a deliberate type error inside
+`if sys.version_info >= (3, 13):` is **not reported** — and `warn_unreachable` is silent about it —
+while both rows of a keyed table are. A version *branch* would ship the 3.13+ row un-typechecked on
+every interpreter.
+**Deliberately dropped**: the shutdown perturbation walk. **Recorded as a debt, not a nothing** — the
+cells predate any version work and `cleanup_socket=False` leaves them as they were. The sharpest,
+stated concretely because the label it used to carry (`P2`) was defined nowhere: `main.run`'s error
+path calls `shut_down()` **before** its own unlink, so in between the socket exists and refuses, a
+client takes `hook/connect.py`'s vet-and-unlink and spawns a successor, and the old process's unlink
+— bare, with no vet at all — can remove the successor's live socket.
+*Line numbers were dropped from this paragraph after going stale twice in one session against code
+the same change was editing.*
+**Supporting a range is the expensive choice** — it buys a seam, a matrix and a porting audit every
+October, where shipping a single managed interpreter would buy none of them and pin SQLite for free.
+Its justification is **defect discovery**, not reach or cheapness.
+
+**M27 as built, 2026-09-21.** `zikaron/service/asyncio_compat.py` holds both differences as a table
+keyed by the version that *introduced* each — two keys, `(3,12)` and `(3,13)`, greatest-key-≤ lookup
+taking an explicit version tuple so the untested-version rule is falsifiable at all.
+`server.py`'s three private reads and its `start_unix_server` call go through it. Guards: a
+**textual** tree scan (`tests/test_version_seam.py`, patterns assembled from fragments so it cannot
+match itself, both import styles covered, allowlist of two files) and the socket-survives-close test
+through `server.serve`. `check-matrix.sh` runs the whole gate per version, reusing `check.sh` through
+`ZIKARON_VENV` so the `--cov` list stays in one place. **It took version arguments** because the
+*sequential* loop outlasted a single py-runner command; **`--parallel`, added on operator
+instruction, brings the whole set inside one call** — ~3.5 minutes warm against ~9 sequential, and
+one tree identity sampled once instead of three to reconcile. Arguments remain for debugging a
+single version, and such a run labels itself `SUBSET RUN`.
+**Six things the build taught that eight review rounds of the brief did not.**
+(a) **Done-when 4 named the wrong exception.** The caller mutation fails, but with a bare
+`TimeoutError`: `shut_down`'s 5 s deadline and the oracle test's own final `wait_for` start
+microseconds apart and the test's won. Withdrawn in place.
+(b) **The brief's `file:line` citations went stale because the milestone edited the files they point
+into**, twice in one session. Replaced with names. A brief that cites lines into the code it changes
+falsifies itself by succeeding.
+(c) **`log.py` had no test file at all**, so the new startup line would have been unpinned exactly as
+its sibling still was — coverage proves a log call *ran*, never that it said anything.
+(d) **The gate's own reuse logic was the milestone's bug, and it was wrong twice.** Code review
+round 1: `check-matrix.sh` rebuilt a venv only when `bin/python` was absent, so a deliberate pin bump
+would have been tested against the *previous* pins on all three versions and printed green. Fixed
+with a `pyproject.toml` hash stamp written after a successful install. **Round 10 found the other
+half**: the stamp said nothing about the *base interpreter*, so pointing `ZIKARON_PYTHON_3_13` at a
+different 3.13 build kept the venv already there — the label check passes on a matching minor, the
+stamp matches, and the run reports green for an interpreter it never used. That is the one axis no
+seam can absorb, since SQLite comes with the interpreter (3.45.1 against 3.53.1 between the
+two builds on this machine). The stamp is now the hash **and** the base interpreter's `realpath`.
+**Verified by mutation rather than asserted**: an unchanged run does not rebuild, `/usr/bin/python3.12`
+over a uv-built venv does, and pointing back does again. **And `realpath` turned out to buy the
+upgrade case for free** — uv's managed directory is a *minor*-named symlink into a patch-named one,
+so the stamp records `cpython-3.12.14-…`, and a `uv python upgrade` moves the target and rebuilds
+without the version ever being read.
+(e) **A parallel run could not be stopped from the terminal at all.** Bash starts `&` jobs with
+**SIGINT ignored**, and an ignored disposition survives `exec` — so `check.sh`, `timeout` and
+`pytest` all inherited it and CPython never installed its own handler. Ctrl-C killed the parent and
+left three full gates running, whose coverage the next run then merged into its own. The first fix
+walked descendants and worked only for a terminal Ctrl-C, which is the one shape where those shells
+survive to be walked; a group-delivered `TERM` reparents `timeout`/`pytest` beyond any walk.
+**Measured both ways on the same reproduction: six orphans with the walk, zero with a token in the
+process environment.** **And then the handler failed for a reason that had nothing to do with
+finding the processes**: its first statement announced the interrupt on stderr, and a hangup is
+generated *by* the terminal or ssh session going away — so that write fails, `set -e` applies inside
+a trap action, and the handler exited one line in. Measured with `/dev/full` standing in for the
+hung-up pty, which fails every write deterministically: **nine surviving processes** — three
+`timeout`/`pytest` pairs, two `zikaron.knowledge.indexer` subprocesses and one `zikaron.knowledge`
+CLI, the last three spawned by tests — against zero once the kill runs before the message.
+*This read "ten" at three sites until review round 7 added up the breakdown printed beside it — and
+the breakdown was wrong too, "three indexer subprocesses" being two plus a `zikaron.knowledge` CLI,
+so the old **breakdown** summed to nine — the right number — only by coincidence, beside a total that
+said ten. The survivor list sat in the scratchpad the
+whole time and **neither** number had been read off it. Also corrected in round 8: the comment
+credited those three to the explicit-`env=` path, and not one of the suite's knowledge spawns passes
+`env=` — they inherit, which is the simpler case the same paragraph already covers.*
+**The lesson is about where a guard's own failure can hide**: this
+one was reachable only through the delivery shape that also destroys the channel the guard reports
+on, so every test of it through a live terminal passed.
+(f) **`ruff format` reaches into Markdown.** `*.md` is in its default `include`, so it rewrites
+Python fences inside prose — a review round's quoted snippet turned the gate red. Worse than noise:
+those fences quote code *as it was*, including code quoted in order to show it was wrong, so
+formatting them edits the record. Dropped by file type rather than by directory, which is what also
+protects `FINDINGS.md`, `design/` and `.kiro/`; a directory exclusion additionally, and silently,
+stopped linting `.py` files in the excluded trees.
+
+**The first matrix run caught its own operator.** It reported 2,881 tests on 3.12 and 2,882 on 3.13
+and 3.14, which reads exactly like version-dependent collection — the thing the seam rule says cannot
+happen. It was not: a test file was added *between* the 3.12 run and the 3.13 one, so the three
+versions were not run against one tree. `--collect-only` gives **2,882 on both**. **The lesson is the
+gate's, not the suite's**: "every version green" means nothing unless the versions saw the same tree.
+`check-matrix.sh` now prints a tree identity on its last line — and a bare `-dirty` marker was not
+enough, since this repository is normally uncommitted while work is in progress, so it hashes every
+difference from `HEAD`, staged or not, plus untracked contents.
+**It also samples that identity before and after the run and refuses if they differ, and that half
+earned itself immediately: it caught its own author.** Minutes after writing "no edits until the run's
+guard is satisfied", I edited `CLAUDE.md` while a 3.12 run was live and the run refused. **The lesson
+is that the discipline is not sufficient and the guard is not redundant with it** — an agent
+interleaving edits with long-running verification will break that rule, because the two activities
+have no shared clock. Anything that reports a result about "the tree" has to establish which tree it
+means, in the tool rather than in the operator's memory.
+
+**Running the versions in parallel found a flaky gate that had been latent for the life of the
+suite, and the diagnosis inverted twice.** The first parallel sweep went red on 3.13 and 3.14 with
+2,882 passed and one *teardown error* each, from the suite's own autouse leak detector: *"1 aiosqlite
+connection thread(s) still running: this test left a store open."* It read as a 3.13+ regression.
+**It is neither 3.13+ nor a leak.** Isolated, the same file reported **1, 0, 0, 2 and 1 errors across
+five identical runs on the local `.venv` (3.12.3)**, and across interpreters it was *worse* on 3.12.14
+(3 errors) than on 3.13 (1), with 3.14 clean — so it is not version-correlated at all.
+**What it actually is**: when a connect *fails*, `aiosqlite`'s own `_connect` calls `stop()`, which
+sets a flag and queues a sentinel but **never joins**. The thread is alive for a few more milliseconds
+while it drains and exits, and the detector — which compares a thread count before and after — caught
+it mid-exit and failed a test that had done nothing wrong. Full-suite runs stayed green only because
+later tests gave the thread room; parallel load took that room away.
+**Fixed in the detector, which waits on the threads rather than on a clock**: `Thread.join` with one
+deadline spanning the set, so an exiting thread costs the microseconds it needs and a genuinely
+leaked one — blocked on its queue forever — still fails, having been going to fail anyway. That makes
+the headroom free, so the bound is a generous 5 s rather than a tuned number. **Both properties were
+verified, and the second mattered**: six runs of the formerly flaky file are clean at a steady
+~870 ms, and a deliberately leaked connection still errors — but only when a reference is *held*, since
+without one the garbage collector finalises it and `__del__` stops the thread. A first probe passed
+and looked exactly like a disabled guard.
+
+**And the matrix earned itself on its first real run — then the warnings it surfaced turned out to be
+real, and are fixed.** Same suite: **3.12 reported 0 warnings, 3.13 between 47 and 49, 3.14 between
+48 and 56** — every one a `ResourceWarning: unclosed database` naming a raw `sqlite3.Connection`, and
+the count moved between runs because a `ResourceWarning` fires wherever the collector reaches the
+object.
+**The version split had a single cause: Python 3.13 added `ResourceWarning` for an unclosed
+`sqlite3.Connection`, and 3.12 emits nothing at all** (measured directly on both interpreters). So
+these were genuine open handles the whole time, and 3.12 simply never said so — the matrix's purpose,
+demonstrated.
+**The defect is the classic `sqlite3` trap, and it was in tests only**: `with sqlite3.connect(...)`
+commits or rolls back the transaction and leaves the connection **open**. Four helper sites in
+`test_knowledge_indexer.py` and `test_knowledge_detach.py`, each called by many tests, which is how
+four sites became fifty warnings. Product code opens no raw `sqlite3` connection anywhere, which is
+the claim `coding-standards.md` §6 makes; three modules do import the module, for its error codes
+(`store/transactions.py`, `knowledge/registry.py`) and for `sqlite_version` in the startup line M27
+added (`service/log.py`). Fixed with `contextlib.closing`; those files now report **zero** on 3.13.
+**Two things worth keeping.** The warnings were *attributed* to `test_knowledge_git.py`, which
+contains none of the offending sites — a `ResourceWarning` names where collection happened, not where
+the handle was opened, so that attribution is never the lead. And the suite's own aiosqlite leak
+detector could not see any of this: it watches worker threads, and these were raw connections with no
+thread at all.
+
+**A second, unrelated defect was a connect outliving its event loop, and it is fixed in product
+code.** `aiosqlite.connect()` starts a worker thread, and a *failed* connect leaves it mid-shutdown:
+the library's own failure path calls `stop()`, which only **queues** a sentinel and returns. A caller
+that tolerates a failed connect returns at once, so the loop closes while that thread is still
+draining; the thread then delivers through `call_soon_threadsafe` on a dead loop, raises *"Event loop
+is closed"*, fails identically while reporting that, and dies with the exception unhandled — which a
+test run surfaces as `PytestUnhandledThreadExceptionWarning`. `open_connection` and the knowledge
+report's orphan probe both join that worker off the event loop now.
+~~**One bug, two symptoms.**~~ ~~and drops the `sqlite3.Connection` it was carrying, with nobody left
+to close it~~ — **withdrawn 2026-09-21, and the correction is the useful part.** A connect that
+*failed* never produced a `sqlite3.Connection` for anything to drop: `sqlite3.connect` raised instead
+of returning one, and CPython assigns the database handle only after `sqlite3_open_v2` succeeds, so
+there is nothing for 3.13's finalizer to warn about either. Read against the installed library, the
+worker's next queued item on this path is `close_and_stop`, which finds `_connection is None` and
+closes nothing. **So this path has one symptom, the dying thread — and the `ResourceWarning` count
+belongs entirely to the `closing` conversions above.** The two were counted in one breath because
+they were found in one afternoon, which is how an afternoon's narrative becomes a causal claim.
+*(There is a real path that does drop a live handle — a connect that **succeeded** on the worker
+after its loop died, i.e. cancellation rather than failure — and neither the join nor the
+`except aiosqlite.Error` around it reaches that one. Not observed here; recorded so the next person
+does not re-derive it.)*
+**Measured, and the per-run count is load-dependent rather than a constant**: twenty failed connects
+on twenty loops leave **0 to 13** threads dying unhandled with the wait bypassed and **0 of 20** with
+it, across ten standalone trials. The number that matters is the one taken where the test lives:
+`test_store_connection.py::test_a_failed_connect_leaves_no_thread_behind` is red on **5 runs of 5**
+with the wait removed from `open_connection` and green on **5 of 5** with it, and red again when the
+private attribute it reaches for is renamed. **A statistical guard needs its reliability measured in
+the position it will actually run in**, because the standalone rate says nothing about that — one
+standalone trial scored 0 of 20, which is a guard that would have passed over the bug it exists for.
+**Two lessons from the fix, both about estimating.** The bug was first written off as needing "an
+hour on a library race that doesn't reproduce in isolation" — an estimate taken from the *symptom's*
+flakiness (1 in 2,882) when the *mechanism* had already been written down correctly. **A mechanism is
+a recipe: if the claim is "a connect outliving its loop", the experiment is twenty connects and
+twenty loops.** It took twelve lines. And the first version of the fix assumed `_thread` exists,
+which broke a test that substitutes `aiosqlite.connect` with a plain coroutine — ~~**reaching into a
+private attribute means tolerating its absence**, not merely justifying the reach.~~ **— half right,
+corrected 2026-09-21 in code review.** Tolerating *bare* absence makes the guard silent in the one
+case it most needs to be loud: a library version that moves the attribute would turn the wait into a
+no-op and bring the defect back with nothing to announce it. The tolerance is now typed — absent *or
+not a `threading.Thread`* returns, which is exactly the substituted-coroutine case — and a separate
+test pins `aiosqlite.connect(":memory:")._thread` as a real thread, so a bump that moves it reddens
+the matrix. **Reaching into a private attribute means tolerating its absence *and* pinning its
+presence**, which is two edits, not one.
+
+~~**One `ResourceWarning` survives on 3.13 and 3.14, and the hunt for it is stopped deliberately.**
+Every site that opens a connection has been read and closes correctly — `groups.py`, `reporting.py`,
+`lifecycle.py`, `KnowledgeDatabase.open`'s validation path, and the shared test fixture — so reading
+will not find it, and the GC attribution names whichever test the collector was inside rather than
+the opener. **The instrument that would name it destroys it**: a full suite under `tracemalloc`
+reported **zero** occurrences and took 18m35s against 3m10s, a 6× slowdown that changes exactly the
+collection timing this depends on. That is a closed avenue, not an unlucky run. Cost of the residue
+is one line in a green run; cost of continuing is unbounded and the next step is unknown. **Not
+introduced by M27** — nothing it touched is in that path, and the 3.12 run of the identical tree is
+clean — and not a gate failure, since the filter errors only on deprecations. **But it is exactly the
+class `design/coding-standards.md` §6 calls "a rule about process exit, not about tidiness"**: an
+unclosed connection holds a non-daemon thread and can keep a process alive after its work is done.
+**Two cautions before anyone chases it.** The warnings are attributed to
+`tests/test_knowledge_files.py`, and that attribution is **not** the leak site — a `ResourceWarning`
+surfaces wherever the collector happens to run. And whether 3.13 *added* the warning or merely
+changed collection timing is unmeasured. **Out of M27's fence, recorded rather than fixed**; start by
+running the suite under 3.13 with `tracemalloc` on.~~
+**— FOUND AND FIXED 2026-09-21, and how it was found is worth more than the fix.** It was a raw
+`sqlite3.connect(foreign)` used as a temporary in `tests/test_knowledge_invariants.py`, two lines
+below a connection the same test closes in a `finally`. A **fifth** site of the class described
+above, missed because it runs once rather than from a helper many tests call, so it produced one
+warning instead of fifty. `contextlib.closing` fixed it, and two consecutive
+`./check-matrix.sh --parallel` runs on one tree identity now report **0 `ResourceWarning`s on 3.12,
+3.13 and 3.14**, 2,884 tests passing on each.
+**The stopped hunt's premise was false, and checkably so.** *"Every site that opens a connection has
+been read"* enumerated four **product** modules plus one test fixture. The site was in neither group,
+and `grep -rn 'sqlite3\.connect(' tests/` returns **nine** lines in seconds — every one of which was
+then opened and read for a `closing(` or a `finally`, since two of the nine wrap across lines and
+show neither on the matching line — of which exactly one was unclosed. **The audit searched where the
+mechanism was expected to be; the grep searches where it can be** — and only the second is a coverage
+claim, and only after the reading. That is `CLAUDE.md`'s *"grep locates candidates, it does not decide
+coverage"* inverted: reasoning about where a bug should live, with no cheap mechanical enumeration
+underneath it, produced a confident *"reading will not find it"* about something reading found in one
+command. **The reviewer ran that grep; the hunt that had spent an 18-minute `tracemalloc` run did
+not.** *(Also struck above: the unmeasured-warning sentence, refuted by the "measured directly on
+both interpreters" sentence earlier in this same section — an unedited tail under an edited head.)*
+**And the count in this paragraph was itself wrong twice over, which is the part to keep.** It read
+*"seven"* — the reviewer's round-6 figure, copied here rather than re-derived, inside the paragraph
+whose entire lesson is *run the command instead of trusting the reasoning*. Round 7 corrected its own
+number to nine. **The rule the corpus already has does not say "trust the grep"; it says run it
+yourself, and the number you did not produce is somebody's recollection whoever they are.**
+**DOGFOODING, and it makes the reviewer's other half sharper than it knew.** The command was first
+written here without `-r`. It works in this agent's shell and fails in a reader's: `grep` in a Claude
+Code session is a shell **function** that execs the harness's bundled `ugrep`, which recurses into a
+directory operand by default, while `/usr/bin/grep` (GNU 3.11) answers `grep: tests/: Is a
+directory`. **An agent that verifies a documented command in its own shell can certify a command the
+human it wrote it for cannot run** — and nothing announces the substitution; `type grep` is the only
+tell. Worth checking wherever this corpus prescribes a shell command as a procedure.
+**Two claims inside the struck block are still true and are the reason it is kept whole.** The
+`tracemalloc` result stands as the reason not to reach for that instrument: zero occurrences in
+18m35s against 3m10s, a 6× slowdown that moves exactly the collection timing the warning depends on.
+And the GC attribution really does name whichever test the collector was inside rather than the
+opener — which is why these warnings were filed against `test_knowledge_git.py` and later
+`test_knowledge_files.py`, neither of which contained a single offending site.
+**A third was false on its own terms, independently of the hunt, and nobody caught it for two
+rounds.** The struck block files the residual under §6's *"a rule about process exit, not about
+tidiness"* — *"an unclosed connection holds a non-daemon thread"*. **A raw `sqlite3.Connection` holds
+no thread**, which the paragraph above recording the raw-`sqlite3` defect says in those words
+(*"raw connections with no thread at all"*), so the residual could never keep a process alive and
+was never that class. So the block that stopped the hunt had also mis-classed what it was hunting:
+it reached for the nearest rule in the corpus and the rule did not apply. **Two paragraphs of one
+section, a screen apart, contradicted each other about the same object** — this file's own
+neighbour-contradiction class, committed against a distinction it had drawn correctly.
+
+**The three matrix interpreters *were* in the session scratchpad; that is fixed, and the hazard is
+kept here because this is the only place its mechanism is written down.** Measured from
+`pyvenv.cfg` at the time: `.venv-matrix/3.13` and `3.14` were based on interpreters
+under `/tmp/claude-1000/.../scratchpad/uvprobe/pythons/`, and **3.12 is too** despite a `home` of
+`~/.local/bin` — its `executable` is in the scratchpad and `~/.local/bin/python3.12` is itself a
+symlink there, ahead of `/usr/bin` on `PATH`. The scratchpad is session-scoped and `/tmp`-resident,
+so all three dangle on the next reboot. **What that used to do was wedge the gate permanently**: a
+dangling `bin/python` makes `test -x` false, `-m venv` run over the directory does not replace an
+existing symlink (reproduced), and the script then died at its label check on a bare "No such file
+or directory" with no remedy named, every run, forever — the rebuild condition is now "a directory
+that is not a finished venv, stamped for this `pyproject.toml`, on the live base interpreter it was
+stamped with", which covers it.
+**Done the same day, on operator instruction, overriding the reason above.** That reason — that where
+an operator's toolchain lives is his decision, not something a milestone writes into his home
+directory — was a real principle and he overruled it, which is the evidence that it does not bind
+here. `uv` is installed durably; `uv python install --no-bin 3.12 3.13 3.14` put all three under
+`~/.local/share/uv/python/`; the `~/.local/bin/python3.12` shim **this agent had created**, which
+shadowed `/usr/bin/python3.12` on `PATH`, is removed; and all three `pyvenv.cfg` files were re-read to
+confirm they now name durable paths. `check-matrix.sh` asks `uv python find --managed-python
+--no-project` before falling back to `PATH` — **both flags required**, since the plain form answers
+with the *project* virtualenv. Setup: `CLAUDE.md` §"Setting up a development environment", verified
+end to end, including that `uv venv` ships no `pip` and so needs `--seed`.
+
+~~**Still open: how Zikaron is obtained.** Shipping a managed interpreter (which would pin SQLite for
+free) and publishing to PyPI are each their own milestone, as is macOS — where the missing
+`onnxruntime` x86_64 wheel, the 104-byte `sun_path` limit and the absent `$XDG_RUNTIME_DIR` are all
+larger than anything M27 covers.~~
+
+**— DECIDED 2026-09-21 with the operator, and the struck sentence's last clause is *partly* refuted.**
+Of the three macOS items it calls *"larger than anything M27 covers"*: the absent `$XDG_RUNTIME_DIR` is
+**near-nothing** and took one command to retire; the `onnxruntime` wheel is **real and upstream's**; and
+the `sun_path` limit is **both** — the branch macOS actually takes has 48 bytes of headroom, while the
+XDG branch it does not take turned out to hold a real unbounded hole nobody had looked for. So the
+original sentence was oversized about one item, right about one, and pointing at the wrong half of the
+third.
+**An earlier revision of this line said "two of the three are near-nothing" and that was itself the
+error it was describing** — a tidy summary of a mixed result, written before the XDG branch was read.
+Review round 1 caught it. It is the shape `CLAUDE.md` names, in both directions: a plausible worry
+restated until its size is assumed, and a dismissal restated until *its* size is assumed.
+
+
+## M26, and the pre-knowledge-index milestones in brief (moved out of FINDINGS 2026-09-22)
+
+M26 closed 2026-09-20 shipping **nothing** — neither the reranker nor any chunking change — and
+landed as *"M26: the reranker was the wrong build, a chunking win that reversed on real queries, and
+the stack measured against a competitor at last"*. A milestone whose result is "do not build this"
+is finished the moment it is written down, so its block stopped being live then; it stayed in
+`FINDINGS.md` for two more days because the archiving rule fires when somebody notices.
+
+Moved byte-for-byte, so **"this file" inside it still means `FINDINGS.md`**, where the text was
+written. The trailing paragraphs about M25, M18, M17, M16 and M15 travel with it: each was already
+only a pointer at an earlier archive section, and a pointer to history is history.
+
+**Four things inside this block are still live and are restated in `FINDINGS.md` rather than left
+here**: the standing rule that *before choosing a query set, go read what the system's real callers
+actually send*; the three design questions M25's dogfooding opened and this move does not close
+(intra-document supersession, the `git_mode` default, and who owns scan scheduling); the two
+claims in `design/build-plan.md` §M26 now known false; and **the one positive result, the
+head-to-head against kiro's `knowledge` tool**. Everything else below is record.
+*It read "Three" until a later sweep round de-duplicated the head-to-head figures down to one live
+site, chose `FINDINGS.md` as that site, and did not come back to this enumeration — so a count
+written to describe a move went stale to the move's own follow-up.*
+
+**M26 CLOSED 2026-09-20, ships nothing, and the day's work is worth reading before proposing any
+retrieval change.** Four things were measured and three are negative:
+
+1. **The reranker is the wrong build.** §M26's brief claims its target is *"a ranking failure
+   inside a document retrieval already found"*. On this corpus that class is 17–23% of queries
+   where the answering chunk **was never a candidate at all** — reranking reorders what the arms
+   returned and cannot admit what they did not. Its real ceiling is the **16.6%** sitting at ranks
+   6–20. Feasibility itself is fine (it does rerank, ~57 ms/pair, bounded by a 4,096-character
+   slice); the *justification* is not.
+2. **Section-first chunking looked like it doubled quality and made it worse.** 0.267 → 0.593 on
+   heading queries; **0.698 → 0.566 on the queries agents actually send.** Overturned the same day.
+3. **Query shape was the dominant variable in every measurement**, larger than any chunking or
+   ranking difference, and three self-authored oracles were each wrong differently — one of them
+   **inverting** the answer rather than merely mis-scaling it.
+4. **The one positive: our retrieval stack beats kiro's shipped `knowledge` tool** on the same
+   corpus and the same real queries — 0.717 against 0.585, and 0.529 against 0.314 under
+   chunking-independent gold. It earns its complexity against the obvious alternative; it just does
+   not respond to the levers tried here.
+
+**The standing rule this produced, and it binds the next retrieval milestone:** *before choosing a
+query set, go read what the system's real callers actually send.* The recorded `tool_use` blocks
+in the M26 trial transcripts are the instrument; they existed the whole time and nobody opened them.
+
+~~**What is uncommitted**: this file, plus `research/` notes (`m26-chunking-levers.md`,
+`kiro-knowledge-head-to-head.md`, `chunking-for-retrieval.md`, `m26-rerank-preregistration.md`,
+`cockroachdb-architecture-questions.md`, `trial-corpus-candidates.md`), four `experiments/m26_*.py`
+harnesses and three `spikes/spike_*cross_encoder*`/`spike_real_chunk_lengths.py`.~~ **— stale state,
+corrected 2026-09-21: all of it landed**, as *"M26: the reranker was the wrong build, a chunking win
+that reversed on real queries, and the stack measured against a competitor at last"*. **No product,
+test or design file changed**; `design/knowledge-index.md` §4.3 is untouched. The gist-as-abstract
+fix landed separately, as *"The gist read as the finding, a fetch tied to an occasion, and a policy
+that said the opposite"*, and is unrelated.
+*(That sentence cited the gist fix by hash. Replaced with its subject, per this file's own M13-hash
+rule — which the same paragraph was violating while stating a list that had itself gone stale.)*
+
+**`design/build-plan.md` §M26 still carries two things that are now known false** and should be
+rewritten or struck if the milestone is ever reopened: the `≤250 ms at p50 for a five-corpus
+search` bar, which was invented with no measurement behind it (commit `a8cdd87`, whose own subject
+is *"a bar fixed on the wrong quantity"*), and the claim that a cross-encoder is *"the standard fix
+for exactly that shape"*.
+
+**The design worked out 2026-09-20 and never written down until now — none of it reviewed, and
+`design/knowledge-index.md` is normative and does not yet mention any of it:**
+
+1. **Service-owned, loaded lazily once**, a handle on `ServiceContext`; first use loads under an
+   `asyncio.Lock` in `asyncio.to_thread`. **Not eager**: the hook spawns a service on every session
+   and most sessions never search knowledge, so an eager load puts an 80–150 MB model into every
+   service process — and M17 fought hard for that cold start. Lazy also means the default-off path
+   loads nothing, structurally. A test must show the load function runs exactly once across N
+   searches; a per-search load is disqualifying.
+2. **One config key, `retrieval.knowledge_rerank_model`, string, default `""` = off**, read from
+   `EffectiveConfig` at search time and **not** seeded into per-KB `meta`. §10's own criterion is
+   *does it describe how the index was built?* — a reranker changes no stored byte. M25 recorded
+   `rrf_k`/`fusion_depth` being in the seeded group by an argument that does not apply to them; do
+   not repeat it. Empty-disables is `embed_prefix_query`'s existing idiom, not a new one.
+3. **Rerank the top N of the fused pool, before the per-file cap**, so the cap acts on the final
+   order. `search_one` already loads `_stored_chunks` for the whole pool before `_capped`, so the
+   stage costs **zero extra queries**. Pool smaller than N reranks what exists. **N = `4 ×
+   limit_per_kb` = 20**, a module constant rather than a second key, and it is now justified by the
+   headroom measurement below rather than by the latency figure this line used to cite: N=20
+   captures 70% of what N=50 would at 40% of its cost.
+4. ~~**`Result.score` stays a cosine and group order stays best-cosine.** §7.2/K3/K4 settle cross-KB
+   ordering and M19 spike C measured it; this milestone's oracle is within-KB and cannot speak to
+   it.~~ **— the second half is withdrawn on operator challenge 2026-09-20, and the challenge
+   found something real.** Cross-corpus ordering is the ranking §7.2 *itself* calls *"approximate"*,
+   accepting in writing that *"an agent reading only the first group may miss a better result in
+   the third"*. **A cross-encoder score is cross-corpus comparable for exactly the reason cosine is
+   — a function of a query and one passage, nothing corpus-relative — and it is a far stronger
+   function.** BM25 can never cross that boundary. And once each corpus's candidates are rescored
+   for the within-corpus ordering, the group key costs **no additional inference**: it is a
+   different line, not a second model. So the group key is now a *measured* question with its own
+   arm and its own bar. **`Result.score` does stay a cosine** — a new field costs bytes against the
+   24,000 cap. Cosine is the incumbent on evidence (M19 spike C: 0.74 against fused's 0.57), so a
+   tie leaves it in place. Observable consequence still needing its own test: changing which chunks
+   survive can change a group's max cosine and so group order.
+5. **Degraded mode**: a missing or unloadable model, or a scoring failure, logs once to
+   `service.log` and returns today's ranking. Never fails the search. §11 is the pattern and gains
+   a row.
+6. ~~**What text the reranker sees — `text` alone vs `path + "\n" + text` — is measured, not
+   assumed.**~~ **— superseded 2026-09-20: that framing would have shipped a silent truncation on
+   either arm of the choice.** `chunks.text` is unbounded (max 1,072 tokens measured against a 450
+   budget), so the question is not which string but **what bounds it**. Answer: `path + "\n" +
+   text`, **sliced to 4,096 characters before tokenization** — a cost guard, since tokenizing an
+   8 MiB line costs 10 s and the slice makes it 3.4 ms at any input size — after which the model's
+   own tokenizer cuts at its 512-token window on a token boundary, truncating the longer member of
+   the pair, which is always the document. The path is already what the dense arm embeds, so this
+   is the existing convention rather than a new one.
+7. **Query-time only: no schema change, no new stored column, no reindex** — operator constraint
+   2026-09-20, and it is sharper than anything above. It must work against every knowledge base
+   already on disk. It also forecloses the tempting optimisation of precomputing a rerank-ready
+   body per chunk, which would force a rebuild of every corpus to turn a ranking tweak on.
+
+~~**The feasibility question that can still kill it, and it is unanswered.** The brief's bar is
+**≤250 ms added at p50 for a five-corpus search** — 50 ms per corpus. If a cross-encoder can only
+score ~10 pairs in that budget, this is D23's *"reranking 5 candidates is operationally pointless"*
+again.~~ **— ANSWERED 2026-09-20, and the bar is withdrawn rather than met.**
+
+**The 250 ms bar was invented.** I wrote it into `design/build-plan.md` §M26 in commit `a8cdd87`
+with no measurement behind it — in the same commit whose subject is *"a bar fixed on the wrong
+quantity"*. Operator challenge, and it is correct: a single model turn costs minutes, a pull-path
+tool call is one the agent chose to make and is blocked on the way it is blocked on a grep, and
+nothing is watching a spinner. **Milliseconds are the wrong unit.** What replaces it is
+**boundedness** — work per search must not grow without limit in the number of corpora named or in
+the size of a chunk — plus cost reported with the machine's load beside it. `design/build-plan.md`
+§M26's done-when item 2 needs rewriting; the other two stand.
+
+**Measured** (`spikes/spike_cross_encoder_latency.py`, `spike_cross_encoder_budget.py`,
+`spike_real_chunk_lengths.py`):
+- **It reranks.** Only **2 of the pool's top 5** survive into the reranker's top 5, on both
+  candidate models independently. That was the operator's stated kill condition and it is cleared.
+- **~57 ms per (query, 450-token) pair**, flat across pool sizes 10/25/50, so cost is linear in
+  candidates and in tokens shown. `jinaai/jina-reranker-v1-tiny-en` is within noise of
+  `Xenova/ms-marco-MiniLM-L-6-v2`; model choice buys nothing. Threads: `2` costs 112 ms/pair and
+  `4` costs 71.5 against 57 at auto, so pinning is a 25–100% tax rather than free.
+- **The first instrument was invalid and the second is why we know.** Sequential runs on a machine
+  carrying a moving 4.3-core `java` load put one configuration at **1,229 ms** and the identical
+  configuration at **1,647 ms**. Configurations are now **interleaved** — one timed call each per
+  round — so contention lands across the grid, and the **minimum** is reported beside the median.
+  Operator caught this; every figure in the first table was withdrawn.
+- **`chunks.text` is not bounded by `chunk_max_tokens`** — max **1,072** tokens against a 450
+  budget, because a single line longer than the budget is stored whole and only its head embedded
+  (6 of 2,700 chunks). Feeding that to a cross-encoder truncates silently, and tokenizing an
+  8 MiB line costs **10 s**. **Slicing to 4,096 characters first makes it 3.4 ms regardless of
+  input size**, after which the model's own tokenizer cuts at 512 on a token boundary, truncating
+  the longer member of the pair, which is always the document.
+- **The 512-token window has less headroom than it looks.** Real chunk p50 is 408 tokens and the
+  embedded form maxes at 473 — but that bound was proved for a sequence holding *only* prefix and
+  text. A cross-encoder adds the query: at 9 words nothing overflows, at 36 words 6 of 2,700 do.
+
+**The gate that actually decided the within-corpus half, run 2026-09-20**
+(`experiments/m26_headroom.py`, output in the session scratchpad). **Operator's challenge: reranking
+results from one corpus sounds like a tautology — why not rank them correctly to begin with?** The
+answer is that the first stage is *constrained to be precomputable* (a chunk's vector is built at
+index time, so query and passage are never in one forward pass) and a cross-encoder is not — but
+that only pays if fusion is **recall-good and precision-poor**, which was unmeasured. It is:
+
+| family | hit@1 | hit@5 | hit@10 | hit@20 | hit@50 | ever in pool |
+|---|---|---|---|---|---|---|
+| `heading` | 0.200 | 0.387 | 0.473 | **0.553** | 0.633 | 0.687 |
+| `masked-100` | 0.193 | 0.433 | 0.660 | **0.833** | 0.940 | 0.973 |
+| `masked-50` | 0.480 | 0.713 | 0.860 | **0.987** | 1.000 | 1.000 |
+| `verbatim` | 0.687 | 0.873 | 0.967 | **1.000** | 1.000 | 1.000 |
+
+**The pattern holds in every family, including the least heading-like**, so the conclusion does not
+rest on the oracle the operator rejected. On `heading` the median rank when found is **4** while the
+mean is **13.7** and p90 is **44** — a long tail sitting just outside what a caller sees.
+**Headroom at N=20 over today's post-cap hit@5: `heading` +0.187, `masked-100` +0.400, `verbatim`
++0.133.** N=20 captures **70% of what N=50 would at 40% of the cost**, which is what justifies it.
+**And 31.3% of `heading` queries never retrieve truth at any depth** — a *retrieval* failure no
+reranker can touch, outside M26's fence. It is close to the withdrawn "33% right file not
+retrieved" and is **not** a reproduction of it: this counts a chunk absent from a 400-deep pool,
+that counted a file absent from a post-cap top five.
+
+**No rebuild was needed** — `~/zk-m26-cockroach/cockroach/.zikaron` already holds the corpus at
+commit `13cb3eb2`: 2,700 chunks, 188 files, shipped defaults, `*.md` only, so cleaner than M25's
+build, which indexed 20 `.puml`/`.svg` chunks.
+
+**THE RERANKER IS SUSPENDED, 2026-09-20, on a measurement that says it is the wrong build — and
+the operator got there first.** His challenge, after the headroom table: *"we should try better
+chunking or other approaches. It seems we're chasing something you happened to find convenient
+because it seems like making the progress, while it is not."* He is right, and the diagnosis that
+followed (`experiments/m26_miss_diagnosis.py`) shows the brief's central claim is false on this
+corpus.
+
+**Where retrieval actually fails**, `heading`, n=150, shipped configuration:
+
+| outcome | top 5 | top 20 | top 400 |
+|---|---|---|---|
+| answer found | 0.387 | 0.553 | 0.687 |
+| **right file found, the answering section never returned** | 0.227 | 0.187 | **0.173** |
+| right file never returned at all | 0.380 | 0.240 | 0.113 |
+| an adjacent chunk of the right section | 0.007 | 0.020 | 0.027 |
+
+**§M26's brief says the reranker's target is *"a ranking failure inside a document retrieval
+already found, and a cross-encoder is the standard fix for exactly that shape."* That is wrong
+here.** When the right file is found and the answering section is not, **the answering chunk is
+not in the pool at all** — the file is represented there by a *different* chunk of itself. A
+reranker reorders what the arms returned; it cannot pull in what they did not. So that entire
+class, 17–23% by depth, is **unreachable by reranking at any N**. What reranking can actually
+reach is the band where the answer sits at ranks 6–20: **16.6%**.
+
+**And the pointer to what *would* work.** Where a chunk of the right file reached the top 20
+without the answer, the two are **within 1–2 chunks in 16 of 31 cases**. The answer is adjacent to
+something already retrieved. That is a question about where the cuts fall, not about how the
+candidates are sorted.
+
+~~**Eight levers compared, and section-first cutting wins decisively.**~~ **— OVERTURNED the same
+day by testing the queries agents actually send. Nothing from M26 ships. The table below is
+measured correctly and answers the wrong question; it is kept because the reversal is the finding.**
+
+**The reversal.** Real agents do not send the user's question and do not send headings. They send
+short keyword queries and reformulate — **55 distinct queries over 10 questions, 2 to 16 each**,
+extracted from the M26 trial transcripts' own `tool_use` blocks, which this project had already
+copied out of the harness's pruning window for a different purpose and never read:
+
+| the user asked | the agent searched |
+|---|---|
+| "How does the CockroachDB approach not deadlock? Surely retrying could…" | `deadlock detection transaction locking` |
+| "Timestamp cache is critical in providing the guarantee that…" | `timestamp cache availability lease transfer low water mark` |
+
+Scored on those, against trial citations **mechanically validated 57/57** (real file, real line
+range):
+
+| arm | all gold (n=53) | control-only gold (n=51) |
+|---|---|---|
+| **baseline (shipped)** | **0.698** | **0.412** |
+| section | 0.566 | 0.353 |
+| section_overlap_crumb | 0.547 | 0.333 |
+
+**The shipped chunker wins under both.** Bias was real — the margin narrows 13 → 6 points under
+chunking-independent gold — and the ordering does not change. **q03 drops 2/3 → 0/3** under
+section-first: its answer is one bullet under a `# Future work` heading, and cutting at every
+heading isolates it into a small chunk stripped of context. **Section-first helps broad conceptual
+queries find a topical section and hurts specific queries whose answer is one line inside a short
+one** — exactly the split `research/chunking-for-retrieval.md` reported (structure-aware wins for
+finding the *document*, reverses for finding the *passage*), collected that morning and
+underweighted because a self-authored oracle disagreed.
+
+**The transferable rule, which is worth more than the result.** Query shape was the **dominant
+variable in every measurement made this day**, larger than any chunking or ranking difference.
+Three oracles were used and each was wrong differently: chunk-id + headings (not comparable across
+differently-cut indexes, and heading-shaped); line-range + headings (comparable, still
+heading-shaped — **inverted the answer**); line-range + verbatim questions (real questions, wrong
+*form*). Only the recorded agent queries matched reality. **Before choosing a query set, go read
+what the system's real callers actually send** — not the user's words, not a plausible paraphrase,
+not a mechanically-derived family. Every one of those oracles was defensible in advance and three
+of four were wrong. The operator challenged the heading oracle in M25 and twice more this day
+before it was tested.
+
+**A second correction, also operator-prompted.** An earlier revision here called "agents issue many
+queries per question" a product problem. The agents' own verdicts refute it — q05: *"The first
+search was wasted effort… The second search actually landed the useful document"*; q06 concluded
+correctly that the corpus holds no founding design rationale. **A low per-query hit rate with
+successful convergence is what working search looks like.** Withdrawn.
+
+Original table and reasoning, superseded — n=150 per family, `heading` the target and `verbatim` the
+guard:
+
+| arm | chunks | heading | verbatim | chars |
+|---|---|---|---|---|
+| baseline (shipped) | 2,720 | 0.267 | 0.640 | 5,702 |
+| `no_overlap` *(control)* | 2,440 | 0.253 | 0.527 | 5,784 |
+| overlap | 3,129 | 0.320 | 0.827 | 5,784 |
+| breadcrumb | 2,440 | 0.320 | 0.527 | 5,785 |
+| section | 4,007 | 0.553 | 0.773 | 4,056 |
+| section+overlap | 4,273 | 0.567 | **0.847** | 4,220 |
+| **section+overlap+breadcrumb** | 4,273 | **0.593** | 0.827 | 4,174 |
+| neighbours | 2,720 | 0.540 | 0.933 | **22,584** |
+
+**Target 0.267 → 0.593, guard 0.640 → 0.827, and 27% *fewer* characters delivered.** Costs are
++57% chunks and 366 s → 481 s to build, neither of which a caller experiences. **`neighbours` is
+disqualified by cost**: 22,584 characters against the 24,000-byte response cap, so it would sit at
+the ceiling dropping groups.
+
+**Three things the run established that argument would not have.**
+**(a) The control earned its place.** The variants pack *lines* where the product packs
+*paragraphs*, so `overlap` against `baseline` confounded the overlap with the packing unit — and
+line-greedy is itself *worse* than paragraph-greedy. Overlap's real effect is **+0.067/+0.300
+against its own control**, not the +0.053 it appeared to gain.
+**(b) The breadcrumb is free and its mechanism is visible.** No extra chunks, 4 s of build. Its
+`heading` *any*-coverage gain, **0.793 → 0.853**, means it reaches sections never touched before —
+chunks whose prose never names their subject now carry it — rather than covering the same sections
+more fully. **The top two arms differ by less than the n=150 standard error of ≈0.04**, so they are
+not separated by these numbers.
+**(c) Stitching is a no-op, which corrects an objection of mine.** Merging same-file results whose
+ranges touch changes **no hit rate and at most ~1% of delivered characters**, because the per-file
+cap admits two chunks per file and a file's two best chunks are rarely adjacent. **So the cost I
+raised against overlap — duplicate lines, a wasted cap slot — is much smaller than I claimed**, not
+because stitching fixes it but because it seldom arises. Operator proposed stitching; the idea was
+sound and the situation it addresses is rare.
+
+**Residual floor whatever wins: 11.3%** never retrieve the right file at any depth — query
+construction, untouched by chunking or reranking, and the next thing to measure.
+
+~~**The product change is ~30 lines**, because `chunking.py` is already shaped for it~~ — **true,
+and not being made.** Recorded only so nobody re-derives it: `_Unit` gains `starts_section`,
+`_paragraph_units` sets it from a boundary detector defaulting to `False`, `_pack` flushes before
+such a unit, `_Packer.flush` retains tail units for overlap. The default path would be provably
+unchanged and no migration would be needed. **`design/knowledge-index.md` §4.3 is untouched**, and
+its *"no gap and no overlap"* sentence stands.
+
+~~**Owed before §4.3 changes**: re-run the winning arms against the 18 real human questions.~~ —
+**done, and it measured the instrument rather than the product.** The verbatim questions were the
+wrong *form* too; the recorded agent queries settled it. See the reversal above.
+
+**THE ONE POSITIVE RESULT OF THE DAY, and it came from asking whether any of this is worth it.**
+Failing all day to improve retrieval raised a question nobody had asked: **does our stack beat a
+simple one at all?** Measured against **kiro's shipped `knowledge` tool**, same corpus, same 53
+real agent queries, file-level (kiro returns no line ranges):
+
+| gold source | kiro | ours |
+|---|---|---|
+| all citations (n=53) | 0.585 | **0.717** |
+| control-only, grep-derived (n=51) | 0.314 | **0.529** |
+
+**Same direction under both; the chunking-independent gold *widens* our margin rather than
+narrowing it.** Not a cutoff artifact — ours is identical at top-3 and top-5, where kiro returned a
+mean of 3.9 results. Asymmetry is lopsided: **kiro missed 9 queries we found, we missed 2 it
+found**, and its misses cluster on all five deadlock queries (it never surfaces
+`select_for_update.md`, even for a query containing that file's key phrase almost verbatim) and
+five multi-Raft queries. **Those are the cases where one arm is confidently wrong and fusion
+rescues it** — what a hybrid is for, and what M25 measured independently (+0.0764 over
+lexical-only, CI excluding zero).
+**A second advantage needing no score: kiro's results carry no line ranges.** Its agent cited
+`range_leases.md:3` and `closed_timestamps_v2.md:6:1-3` — chunk indices dressed as citations. Ours
+carry real ranges, which is the only reason the trial's citations were checkable at all.
+Full method, the kiro agent definition, and five stated caveats — including that **kiro's
+`Best`/`Fast` index mode was never verified from disk** — are in
+`research/kiro-knowledge-head-to-head.md`. **So the retrieval stack earns its complexity against
+the obvious alternative; what it does not do is respond to the levers tried here.**
+
+**The oracle had to change, and this is the transferable part.** Every earlier measurement scored
+*is the truth chunk id in the top five*, which **cannot compare two indexes that cut the corpus
+differently** — their chunk ids describe different things. Truth is now a **line range**: the body
+of the section a heading names, read from the file rather than from any index, with the heading
+line itself excluded since it contains the query verbatim. A hit is **≥50% of those lines reaching
+the caller**. Identical across all four arms, independent of chunking, and closer to what a caller
+needs than any chunk identity. **Delivered characters are reported beside the hit rate**, because
+neighbour widening buys coverage with bytes and a comparison that ignored size would recommend it
+every time.
+
+**A process failure worth more than the result, caught by the operator twice in one session.**
+First: *"why don't you want assistant to lookup online how people generally chunk their texts…
+I don't think this problem is novel."* I had written two chunking variants from first principles
+with `memory-assistant` sitting unused, against a standing instruction that **all** literature and
+prior-art search is delegated to it. Chunking for retrieval is a heavily-studied problem and I
+treated it as a blank page. Brief dispatched; target `research/chunking-for-retrieval.md`.
+Second, earlier: I invented the `≤250 ms` bar, then spent a third of the session defending it.
+**The common shape is optimising inside a frame instead of checking the frame** — I challenged
+this milestone's bar and its oracle and never once asked whether a reranker was the right thing to
+build, which is the question that actually mattered.
+
+~~**And the honest framing for the note**: the 28% band that originally motivated this is
+**unreproducible** (below), so the reranker is not justified by it. It is being built because a
+cross-encoder is a standard, dependency-free precision lever on a pull path D23 leaves explicitly
+open.~~ **— still true about the 28%, and overtaken: "standard precision lever" was doing the work
+of a justification and it is not one.** Whatever is built has to be preregistered against a
+quantity that survives — M25's lesson is that preregistration protects the threshold and not the
+quantity — and, added here, **against a failure the mechanism can actually reach.**
+
+**What survives for the reranker if it is resumed**: the design in items 1–7 above, the
+feasibility measurements, and `research/m26-rerank-preregistration.md`, which is written but
+unreviewed. Its within-corpus half is now on weak ground; **its cross-corpus half is not**, since
+group ordering by best cosine is §7.2's own stated approximation and a cross-encoder score is
+cross-corpus comparable. That half is untouched by this diagnosis.
+
+~~**M26 attacks the 28% with a cross-encoder reranker on the pull path**, which D23 leaves
+explicitly open and which needs no new dependency (`fastembed 0.8.0` ships `TextCrossEncoder`).
+The 33% is a different problem — embedder or query construction — and is fenced out.~~
+
+| ~~outcome, shipped config, post-cap top 5~~ | ~~share~~ |
+|---|---|
+| right section returned | 39% |
+| **right file, wrong section** | 28% |
+| right file not retrieved at all | 33% |
+
+**— withdrawn in place, on two counts, and the second is the one that matters.**
+
+**(a) Two of those three numbers cannot be reproduced.** Only the 39% exists in the committed run
+(`experiments/results/m25_fusion_sweep.json`, `hit5_capped_heading = 0.3867`). The 28/33 split
+appears in this file and in the §M26 brief and **nowhere else**; the JSON is chunk-level
+throughout and carries no file-level breakdown, and the sweep store it would be recomputed from
+was a scratchpad that is gone. A whole milestone was briefed on an unreproducible split — this
+corpus's own *name the quantity* rule, committed in the document that justifies the next build.
+
+**(b) The instrument does not measure the task.** M25's queries are section **headings** lifted
+out of the corpus — `"Range leases"`, 2–3 word noun-phrase labels the corpus chose for itself.
+The only real knowledge-base queries in this corpus, from the LeibaTrader dogfooding, are
+`"does a trailing stop or any underwater stop improve results"` and `"does abandoning an
+underwater position or any stop level pay"` — 9–11 word **decision questions** in the agent's own
+vocabulary, the second a reformulation of the first. Those are different tasks. So *"39% is bad"*,
+the sentence that creates M26, is not established, and the bar is wrong in the same direction:
+heading queries hand the lexical arm 0.5950 term overlap with their own answer, where a
+cross-encoder earns its keep precisely when query and passage share no words. ~~The heading oracle
+therefore **understates** what reranking buys as surely as it misstates the need for it.~~
+**M25's own note said this** — *"a real agent asking 'how do I configure the retry budget' is not
+doing known-item retrieval"* — and the next brief drew a product conclusion from it anyway.
+
+**The struck sentence is refuted, 2026-09-20, and the correction is stronger than the claim.**
+"Understates" assumes the oracle points the right way and merely mis-scales. **It does not: on the
+chunking comparison it inverted the answer outright** — section-first cutting scored 0.267 → 0.593
+on heading queries and **lost** to the shipped chunker, 0.566 against 0.698, on the queries agents
+actually issue. A heading-shaped query favours an index cut at headings; nothing about that is a
+scaling error. **A self-authored oracle can be wrong in direction, not only in magnitude**, and the
+only fix that worked was reading what real callers send — recorded all along in the trial
+transcripts' `tool_use` blocks. Also corrected by the same measurement: those two LeibaTrader
+queries are cited above as "the only real knowledge-base queries in this corpus", which was true
+when written and is no longer — **53 real agent queries are now on record**, and their form is not
+the decision-question form this entry assumed either. Detail:
+`research/m26-chunking-levers.md` §§10–11.
+
+**M26 is replaced by an end-to-end trial, and D14's condition is what licenses it**: task-benefit
+evaluation was stoved *"until an implementation exists"*, and one now does. Design settled with
+the operator 2026-09-18:
+
+- **Subject.** A `cockroachdb/cockroach` clone at HEAD (`~/zk-m26-cockroach/cockroach`), Zikaron
+  installed for real, `docs/RFCS` indexed. A **top-level** `claude -p --agent` session on sonnet,
+  never a subagent — M16 measured that a subagent gets no MCP registration of its own.
+- **Steering, honest and in the repo's own `CLAUDE.md`**: these are design documents, they may be
+  behind the code, use them for the *why* and verify the *what* against the source. That artefact
+  is itself under test — inventing it is currently the user's job (§16 item 6).
+- **Control, run separately: index versus `grep`, not index versus nothing.** The control keeps
+  the RFC files on disk and the same steering minus the corpus paragraph. D1's scope test asks
+  *could you learn this by reading the code*; the analogue here is *could you get there by
+  grepping `docs/RFCS`*, and if yes at similar cost the index is not earning its keep. It also
+  preserves grader blinding, which stripping the RFCs would destroy — only one arm could cite them.
+- **Questions.** Ten real architectural questions about CockroachDB internals, gathered from Stack
+  Overflow and the like (`research/cockroachdb-architecture-questions.md`), **not** selected by
+  whether an RFC answers them, which would rig the trial.
+- **Two turns per session**, because asking for the verdict inside the answer contaminates both:
+  turn 1 the question, answer plus citations to RFC paths and source file:line; turn 2, separately,
+  *did the design documents help you, mislead you, or neither — be blunt*.
+- **Correctness and cost are co-primary and are never reported apart.** Cheap-and-wrong is the
+  outcome that matters most and is invisible if only cost is measured. Cost is denominated as
+  **new context ingested** (`input_tokens + cache_creation_input_tokens`), with `total_cost_usd`
+  and wall clock beside it — cache reads are nearly free and would otherwise price "more turns" as
+  "more waste". `claude -p --output-format json` carries all of it plus `session_id`.
+  **`usage` and `modelUsage` are different quantities** — measured 10 against 909 input tokens on
+  one run — so establish which is which before quoting either.
+- **Correctness is graded by a separate opus session per answer**, no knowledge base, codebase
+  access, given only the question and the answer — not the arm, not the transcript, not the
+  self-report. Per claim: supported / contradicted / unverifiable, each with the grader's own
+  `file:line`, and a distinct flag for *true of the design document, not of the current code*.
+  **Unverifiable must not collapse into wrong** — this project rejected LoCoMo for excluding
+  abstention from its grading. Every verdict carries a citation so a non-expert can spot-check
+  three rather than read twenty.
+- **The shared blind spot stays on the record**: subject and grader are one model family on one
+  codebase, so a misconception they share is invisible. This is the `memory-reviewer` independence
+  loss again, with a shared corpus on top.
+- **The row the trial exists to produce**: agent says *helped*, grader says *contradicted*. That is
+  misled-and-did-not-notice, which no self-report can catch alone and no ranking metric can see.
+
+**Run 1 is done — 10 questions × 2 arms × 3 repeats, artefacts in `~/zk-m26-cockroach/` — and it
+has two results, one of them about the trial rather than about the product.**
+
+**(a) On cost the arms are indistinguishable, and the within-cell noise is the reason.** New
+context ingested, median of per-question medians: **KB 24,452 against control 26,002**, a 6%
+difference, with per-question ratios running **0.40 to 2.39 in both directions**. Totals $4.38
+against $4.76. **An n=1 pilot on the same question had shown the index 2.3× cheaper and that was
+sampling noise**: q01's three KB runs are 20,357 / 17,951 / 9,340 and its control runs 47,785 /
+26,576 / 16,877. The widest single cell is q02's control arm at **3,240 to 32,558 — 10× on one
+question in one arm** — and one q16 control run ingested **2** new-context tokens, answering
+from the model's own memory with no tool call at all. **Three repeats is the minimum that makes
+this visible and is not enough to measure a small effect through it.**
+
+**(b) The corpus is contaminated for this design, and that is the finding worth keeping.** The
+agent already knows the CockroachDB tree at file-name granularity, so the control never pays for
+the exploration the index exists to save. Measured from the transcripts: in **12 of 30** control
+runs the *first* tool call greps a specific subsystem path with no prior listing —
+`pkg/kv/kvserver/closedts`, `pkg/config/zonepb` (all three runs), `pkg/kv/kvserver/replica_tscache.`
+— and one run opens by naming a specific RFC **filename**, `docs/RFCS/20180603_follower_read…`,
+before searching anything. It is not the instruction file: CockroachDB's own `CLAUDE.md` names
+only `pkg/util/log`, `pkg/sql` and `pkg/clusterversion`, and carries no directory map.
+**This is `FINDINGS` open question 9's django/django threat, walked into with the note already in
+the corpus** — *"the most pretrained-on repo in the set, where an external store of its
+conventions is least likely to add anything"*. The corpus was inherited from §M25's brief, where
+it was only a retrieval target and the choice was sound; it stops being sound the moment a
+model's own recall is the control arm.
+**Scope the damage rather than writing the run off**: contamination bites hardest on **cost**,
+because an agent that need not explore cannot be saved the exploration. It bites far less on
+**rationale**, which is what an RFC holds and which is much less memorised than file layout — the
+control grepped `docs/RFCS` in 12 of 30 runs and mostly discarded what it found, while the KB arm
+pulled `20171024_select_for_update.md:75-87` and used it. So the correctness half is still worth
+grading; the cost half is not evidence about the product.
+**Run 2 goes to a repository the model does not already know**, and the instruction file is
+stripped to generic content plus the knowledge paragraph first, so the arms differ in one thing.
+
+**Whether a reranker is the right build is downstream of this and is not currently decided.**
+**Do not open another measurement milestone before something ships.** M25's own accounting is
+that rounds 1–2 of its review earned their cost and rounds 3–4 bought hygiene; the milestone
+produced four artefacts, a closed open question and **zero product change**. That was the right
+outcome for a sweep and is the wrong pattern to repeat — and this trial avoids it only if its
+output is a decision about what to build, not another table.
+
+M25's own block **moved to `FINDINGS-archive.md` 2026-09-20**, into §"M25, and the last three
+pre-knowledge-index milestones". The three design questions its dogfooding opened are **still
+unresolved and are not closed by that move**: **intra-document supersession** (withdraw-in-place
+documentation is adversarial to chunk retrieval, and this repository writes that way), the
+`git_mode` default, and who owns scan scheduling.
+*This header previously read "every milestone in `design/build-plan.md` is landed… the next work is
+not a milestone", which was true when M18 was the last one and was never revised as the knowledge
+index added M19–M25 beneath it. Corrected rather than withdrawn in place: it is stale **state**, not
+a refuted finding, and this file's own header says state gets edited. Worth one line anyway, because
+it is this corpus's two-sites lesson in its purest form — a summary at the top of a document
+contradicted by 1,500 lines of the document, surviving six milestones because nobody edits the part
+they are not working in.*
+The pre-knowledge-index milestones, in brief. M18 landed 2026-09-14, APPROVED after 24 rounds, as
+"M18: the result that did not fit, and the path that did"; every question its done-when asked is
+answered by measurement.
+M17 landed 2026-08-25, APPROVED after seven rounds
+— four on the brief and three on the code — and its A/B is `research/m17-cold-start-ab.md`. M16
+landed 2026-08-16, APPROVED after five rounds; its dogfooding evidence is
+`research/claude-code-dogfood-checkpoint.md`. M15 (the installer adapter) landed 2026-08-16,
+APPROVED after six rounds; what it built and what its rounds taught is in `FINDINGS-archive.md`
+§"M15 as built" — history, not a starting point.

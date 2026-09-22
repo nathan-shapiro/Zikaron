@@ -1,18 +1,19 @@
-# Architecture — four components, RPC, lifecycle, MCP surface
+# Architecture — components, RPC, lifecycle, MCP surface
 
 > Written 2026-08-01. Companion to `design/schema.md`. Implements D9 (MCP + skill + hooks), D12 (push and
 > pull), D18 (`agentSpawn` instructions), D22 (**the hook must never load a model**), D10 (manual
-> consolidation), and settles the **shape** half of Open question 4 — the integration measurements stay open,
-> see §"Open, and now narrower".
+> consolidation), and settles the **shape** half of the hook→service transport question — the integration
+> measurements stay open, see §"Open, and now narrower".
 
 ## Components
 
 | | What it is | Loads a model? |
 |---|---|---|
-| **`zikaron-core`** | Library. All logic: store, hybrid retrieval, chunking, embedding, dedup, consolidation grouping. No process concerns, no transport. | yes, on demand |
-| **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DB. Serves local RPC. Self-stops after idle. | **yes — the only one** |
+| **`zikaron-core`** | Library. All logic for **both stores**: the memory store (retrieval, chunking, embedding, dedup, consolidation grouping) and the knowledge index (`core/knowledge/` — KB storage, scan, git change detection, its own chunker and retrieval arms). No process concerns, no transport. | yes, on demand |
+| **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DBs. Serves local RPC. Self-stops after idle. | **yes — the only long-running one** |
 | **`zikaron-mcp`** | MCP server, built on the `fastmcp` framework. Translates MCP tool calls to RPC. Starts the service if absent. | no |
-| **`zikaron-hook`** | Thin hook executable for `agentSpawn` and `userPromptSubmit`. Starts the service if absent. | no |
+| **`zikaron-hook`** | Thin hook executable for the spawn and user-message triggers. Starts the service if absent. | no |
+| **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8) — **by the service** on a `knowledge_*` call, and **by `python -m zikaron.knowledge`** directly when a person starts a build from a shell, which opens the store itself and never goes through RPC. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
 
 The service exists for exactly one measured reason: cold whole-process `bge-small` is **783 ms**, and D12
 puts retrieval on the critical path of every user message. Keeping the model resident moves that to a warm
@@ -75,8 +76,9 @@ handling — writer B's `waited_s` reflects real serialization through `busy_tim
 **The identical failure mode recurs on the client side of this same RPC, and `zikaron-mcp` closes it the
 same way `aiosqlite` closes it for the service — by running the blocking call off the event loop, through
 `asyncio.to_thread`, rather than by convention.** `zikaron.mcp.connection.ServiceConnection` is `async def`
-throughout, but its own socket I/O — `socket.send`, `socket.recv`, and `service.lifecycle.
-connect_start_if_absent` itself, which `lifecycle.py`'s own docstring states is "blocking, deliberately" for
+throughout, but its own socket I/O — `socket.send`, `socket.recv`, and
+`service.lifecycle.connect_start_if_absent` itself, which `lifecycle.py`'s own docstring states is
+"blocking, deliberately" for
 the short-lived, single-connection-attempt processes it was originally written to serve — are all
 synchronous. `zikaron-mcp` is not that kind of client: M10 holds one connection across many tool calls in one
 long-running process, so a blocking call anywhere inside its own request path holds the *same*
@@ -227,10 +229,15 @@ over — a consolidation run or a delegated task is not a session that should sh
 `client.kind` still distinguishes *who* wrote. The corresponding hook behaviour is the opposite and needs a rule
 of its own: see §"Subagent sessions — the push hook suppresses itself".
 
-The `service.log` records each label resolution — which rung won — at the call that resolved it, so an analysis
-never has to infer it. That is per **first request from a client**, not per client startup: under the bootstrap
-form the service has no knowledge of a client until it calls. The log is a convenience only; the durable record
-is the label itself, from which `label_source` is a pure function.
+~~The `service.log` records each label resolution — which rung won — at the call that resolved it, so an analysis
+never has to infer it.~~ **— nothing logs it, and nothing needs to.** `service/log.py` has exactly four
+writers — `configure_service_log`, `log_runtime_versions`, `log_resolved_config`, `log_self_stop` — and
+none concerns a session label; `label_source` has **no production caller at all**, only tests.
+An analysis reads the rung off `event.session_id` directly: a `zk-` prefix is `minted`, anything else
+`harness`. Resolution happens per **first request from a client**, not per client startup: under the bootstrap
+form the service has no knowledge of a client until it calls. The durable record
+is the label itself, from which `label_source` is a pure function — which is *why* no log line is needed,
+and is what made the missing one invisible.
 
 - **`op_id`** is minted per call by the client (or by the service if absent) and stamped on every `event`
   row the call emits, which is what correlates a `remember` with the `dedup_offered` rows it produced.
@@ -282,8 +289,9 @@ is the label itself, from which `label_source` is a pure function.
   table.
 
   `zikaron-hook` never bootstraps under kiro: the id is in its payload and in its environment. `zikaron-mcp`
-  bootstraps only when `KIRO_SESSION_ID` is absent, which under kiro does not happen. The `service.log` records
-  which rung produced the label. Worst case a session is labelled by the service rather than by the harness:
+  bootstraps only when `KIRO_SESSION_ID` is absent, which under kiro does not happen. ~~The `service.log` records
+  which rung produced the label.~~ **Nothing logs it; the label's own prefix is the record** (above).
+  Worst case a session is labelled by the service rather than by the harness:
   single-client signals (dedup resolution, retire count, write sizes, conflict rate) are unaffected, because
   they join only `mcp` events — but the two **cross-client** signals are not computable for that session, and
   `schema.md` §"Linked sessions" excludes it and counts it against link coverage. Saying instead that one stable
@@ -362,6 +370,9 @@ rescuing, because the prefix test is the only test.
 
 ## Paths
 
+- **Knowledge bases:** `<scope>/.zikaron/knowledge/<uuid4>.db`, one per corpus, registered in
+  `memory.db`. Absent until the first is created. Same permissions as the store (§"Filesystem
+  security"), and a knowledge base holds the **verbatim text of every file indexed into it**.
 - **Store:** `<scope>/.zikaron/memory.db`, where `<scope>` is `HarnessSpec.store_scope_dir` — the
   harness's own project directory where it names one, else the working directory (D17, **amended
   2026-08-18**; `design/harness.md` D34 row "Project-directory variable"). `.zikaron/` is already in
@@ -372,8 +383,8 @@ rescuing, because the prefix test is the only test.
   (128 bits) of the sha256 of the `realpath`-resolved store path** — long enough that accidental collision
   is not a design concern, short enough to keep the path under the ~108-byte `sun_path` limit. One service
   per store.
-- **Logs: one file per process, never shared.** `<cwd>/.zikaron/service.log` (the long-running service),
-  `<cwd>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<cwd>/.zikaron/hook.log` (the
+- **Logs: one file per process, never shared.** `<scope>/.zikaron/service.log` (the long-running service),
+  `<scope>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<scope>/.zikaron/hook.log` (the
   `userPromptSubmit` hook's own failure record). Three distinct processes, three distinct files, by design:
   Python's `logging.FileHandler` has no cross-process append locking, so two independent processes writing the
   same path through `logging` is a real corruption risk `logging`'s own documentation does not paper over —
@@ -392,7 +403,7 @@ config** per store.
 |---|---|---|
 | 1. built-in defaults | in `zikaron-core` | every key has one; the v0 values are the tables in `design/schema.md` §"Configuration keys" |
 | 2. system-wide | `${XDG_CONFIG_HOME:-~/.config}/zikaron/config.toml` | this machine's preferences, and the defaults for every *new* store |
-| 3. project override | `<cwd>/.zikaron/config.toml` | this project only |
+| 3. project override | `<scope>/.zikaron/config.toml` | this project only |
 
 *"System-wide" is read as **user-level**, not `/etc`.* Zikaron installs into a per-user venv (D19) and already
 keeps its socket under `$XDG_RUNTIME_DIR`, so a machine-wide layer would add a third file and a permissions
@@ -419,7 +430,7 @@ idle_timeout = 3600          # I keep long sessions
 fusion_depth = 50
 rrf_k = 60
 
-# <cwd>/.zikaron/config.toml — this project only
+# <scope>/.zikaron/config.toml — this project only
 [retrieval]
 rrf_k = 30                   # amends [retrieval]; fusion_depth = 50 survives
 ```
@@ -485,10 +496,41 @@ severities:
   vector was produced by the recorded model, and D20 established that a same-dimension swap corrupts `vec0`
   with no schema protection.
 - **Soft — `chunk_max_tokens`.** The file governs **new** writes; `meta` records what the existing chunks were
-  cut at. A mismatch is logged and the store is simply heterogeneous — old chunks remain valid vectors of
-  valid text, so refusing to start would be disproportionate. `indexing.md`'s `token_count` and `truncated`
-  instrumentation already makes the heterogeneity visible.
+  cut at. ~~A mismatch is logged and~~ **A mismatch is not detected at all — nothing compares the two.**
+  `Store.create` seeds `meta` from the file; `Store.open` re-validates `embed_model` and `embed_dim` and
+  says nothing about this key, and `IndexingContext` reads the file value independently. The store is
+  simply heterogeneous — old chunks remain valid vectors of valid text, so refusing to start would be
+  disproportionate. `indexing.md`'s `token_count` and `truncated`
+  instrumentation already makes the heterogeneity visible, and it is the **only** thing that does.
+  *"Logged" stood here and in `design/schema.md`'s table for as long as the key has existed, describing
+  an observability that was never built. `StoreCoupling` is a declarative enum: outside `keys.py` nothing
+  reads it.*
 - `schema_version`, `store_id` and the transient `reindexing` sentinel are never settable from a file at all.
+
+**A knowledge base has its own `meta`, under a different policy, and this section governs `memory.db`
+alone.** A corpus seeds **six** config-derived values into its own metadata when it is created —
+`embed_model`, `embed_dim`, `chunk_max_tokens`, `rrf_k`, `fusion_depth` and
+`knowledge_max_file_bytes` — **under two opposite policies, and the split is the point**
+(`design/knowledge-index.md` §10 is normative for it):
+
+- **Absorbed and never compared again — `chunk_max_tokens`, `rrf_k`, `fusion_depth`,
+  `knowledge_max_file_bytes`.** A corpus is chunked, fused and size-capped at the values it was
+  created with, and a later file change is not applied, not refused and **not detected**: nothing
+  compares them. `rrf_k` and `fusion_depth` are read back out of `meta` on every search and
+  `max_file_bytes` on every build, which is why they are seeded at all.
+- **Inverted — `embed_model`, `embed_dim`.** A disagreement is not absorbed. It puts the corpus in
+  `reindex_required` and the next `refresh` rebuilds it whole — degraded rather than refused at
+  startup, since a corpus's own database is opened per call and never when the service starts.
+
+The hard/soft severities above do not apply to any of it.
+*(This sentence named four of the six for as long as it existed; correcting the **count** then
+attached one consequence to all six, which flattened exactly the distinction `encoder_matches_config`
+spells out in its own docstring — "Every other tuning key is deliberately not compared… Same seeding
+mechanism, opposite policy." **A count fixed without its predicate is a new claim, not a repair.**)*
+*(The code has always known this — `core/config/keys.py`'s `StoreCoupling` docstring scopes itself to
+the memory store explicitly, "because it is not the only database Zikaron owns". The normative
+section a reader is sent to did not say so until 2026-09-22, so "the store-coupled keys" read as a
+complete account of configuration/storage coupling.)*
 
 **At store creation the effective config is what gets frozen into `meta`.** That gives layer 2 a real use:
 setting `embed_model` there makes it the default for every *new* store on the machine, while a project
@@ -502,10 +544,13 @@ different store. So identity is checked rather than inferred:
 - `health()` returns `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}`. It carries
   **no `client` envelope and resolves no session label** — see below.
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
-  write.** A mismatch is not a retry: the client logs it, treats the socket as foreign, and — for the hook —
-  goes through the same degraded path as any other failure (§"Degraded modes"): one line to `hook.log`
-  plus a model-facing relay on stdout, never a read. The mismatch is not special-cased into a fallback read
-  of a store the client has no way to know is the right one.
+  write.** A mismatch is not a retry: the client ~~logs it, treats~~ **treats** the socket as foreign,
+  and — for the hook — goes through the same degraded path as any other failure (§"Degraded modes"):
+  one line to `hook.log` plus a model-facing relay on stdout, never a read. **Only the hook logs**,
+  which is the same split §"Idle self-stop" already draws for the two clients' fallbacks —
+  `zikaron/mcp/` imports no logger, so there the mismatch propagates and surfaces as an ordinary MCP
+  tool error the calling model sees, recorded nowhere. The mismatch is not special-cased into a
+  fallback read of a store the client has no way to know is the right one.
 - **Nothing is adopted from an unverified service, session labels included.** This is why `health()` is outside
   the label ladder (§"`label_source` is derived, not stored"). If the handshake resolved a label, a client
   reaching a *foreign* service would adopt a label that service minted, discard the socket on the mismatch it
@@ -546,10 +591,12 @@ draft of this document gave only to the socket.
 
 | Path | Mode | Rule |
 |---|---|---|
-| `<cwd>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it and logs |
+| `<scope>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it ~~and logs~~ **silently — `permissions.py` imports no logger, and on the service's own path it could not: `ensure_store_dir` runs in `service/main.py` as the argument to `configure_service_log`, so the correction happens before any handler is attached** |
 | `memory.db`, `-wal`, `-shm` | **0600** | created under an explicit umask (`os.umask(0o077)`) around store creation, because SQLite creates the WAL/SHM itself and will otherwise inherit a permissive umask |
 | `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). Each is written by exactly one process, never shared |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
+| `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
+| `knowledge/<uuid4>.db`, `-wal`, `-shm` | **0600** | created under the same explicit umask as `memory.db`, for the same reason. **A knowledge base holds the verbatim text of every file indexed into it**, so it is at least as sensitive as the memory store and is named here rather than left implied — this table enumerated neither until 2026-09-22, while `knowledge-index.md` asserted the mode from a document that is not normative for it |
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
 | `<h>.sock` | 0600 | |
@@ -706,7 +753,11 @@ must be read that way: they bound the wait for an open store, never for the firs
 is a client, not a server: the harness spawns it over stdio at session start and it lives exactly as
 long as that session, with no idle timeout and nothing to self-stop. So a machine running three
 Claude Code sessions shows **six** `zikaron-mcp` processes plus at most one service per store, and
-that is the design working rather than a leak — observed being mistaken for one. Two consequences
+that is the design working rather than a leak — observed being mistaken for one. **Add to the
+census, while a knowledge base is building, a detached `python -m zikaron.knowledge.indexer` per
+in-flight build**, which outlives the caller that started it and will saturate a core until it
+finishes: the shape most easily misread as a runaway, in a paragraph whose entire purpose is to
+stop a reader misreading a process listing. Two consequences
 worth stating together: a client that has never called a tool opens no socket and starts no service
 at all, and a *long-lived* client does not pin a service open either, because `may_stop` keys on
 requests in flight and time since the last one, never on open connections.
@@ -797,15 +848,18 @@ alone used to be the only exception either mechanism routed anywhere.
 **`_surface_any_genuine_task_failure` must not itself become a second masking site — and checking only
 *whether* a primary was already active was itself found insufficient.** It runs from inside a `finally`
 block, and `raise outcome` there runs unconditionally regardless of whether a *different* exception was
-already propagating into that block — from `asyncio.wait` itself, or from `_raise_if_any_task_genuinely_
-failed` — which would otherwise **replace** that earlier, primary failure with whatever a task being
+already propagating into that block — from `asyncio.wait` itself, or from
+`_raise_if_any_task_genuinely_failed` — which would otherwise **replace** that earlier, primary
+failure with whatever a task being
 cancelled happens to raise from its own teardown handler, surviving only as the secondary's `__context__`
-rather than as what the caller actually sees. This is the identical class `_close_context_preserving_any_
-active_failure` already guards against for the *outer* cleanup, applied here for this *inner* one: the
+rather than as what the caller actually sees. This is the identical class
+`_close_context_preserving_any_active_failure` already guards against for the *outer* cleanup,
+applied here for this *inner* one: the
 caller reads `sys.exc_info()[1]` as the very first statement in the `finally`, before cancelling anything,
 and passes that exception *object* into `_surface_any_genuine_task_failure` explicitly — not only a boolean
-that one is active. A version keyed on a boolean was itself found wrong: `_raise_if_any_task_genuinely_
-failed`'s own raise leaves the failing task still `done()` and still holding that identical exception object,
+that one is active. A version keyed on a boolean was itself found wrong:
+`_raise_if_any_task_genuinely_failed`'s own raise leaves the failing task still `done()` and still
+holding that identical exception object,
 which `gather` genuinely reports again during cleanup for the *ordinary* case where nothing else concurrently
 failed — a boolean-only check could not distinguish that reappearance from a genuinely distinct secondary
 failure, and logged the ordinary case as a misleading "secondary failure" on every single lifecycle-task
@@ -970,7 +1024,12 @@ it. There is no failure classification left to make, because there is no case wh
 So `zikaron-hook` for `userPromptSubmit`, in order:
 
 0. **Subagent check** — if `KIRO_SESSION_ID` is present and differs from the payload's `session_id`, **print
-   nothing, stop** (§"Subagent sessions"). No RPC, no log line. This is unrelated to the failure path below;
+   nothing, stop** (§"Subagent sessions"). **No RPC. Under kiro, no log line either** — but under
+   Claude Code payload and environment are invariantly equal, so a divergence means the harness was
+   misdetected, and the branch writes one `session_env_mismatch` line to `hook.log` via
+   `tripwire.record_if_misdetected` (`harness.md` §"The tripwire"). *"No log line" was unqualified in
+   a numbered sequence that serves both harnesses, in a section carrying no harness-delta note.*
+   This is unrelated to the failure path below;
    it is not a failure at all.
 1. RPC `memory_surface(prompt, limit=5)`. On success, print what the service returned.
 2. **On any failure — transport, startup, contention, identity, or a store error** — `ENOENT`, `ECONNREFUSED`,
@@ -993,8 +1052,13 @@ confidence a config error or an in-progress reindex haven't already invalidated 
 safe read would need to check first — and a client that has to re-derive the service's own preconditions before
 it can act on them is not a fallback, it is an unsupervised second copy of the service. Logging the failure
 kind is strictly better for diagnosing *why* pushes are degraded than a silent, sometimes-successful read would
-have been: `hook.log` now says "reindexing" or "bad_config" or "ECONNREFUSED" in the exact moment it
-happened, rather than leaving an operator to infer the cause from an intermittently missing injection.
+have been: `hook.log` now says "reindexing" or "bad_config" or ~~"ECONNREFUSED"~~ **"transport"** in
+the exact moment it happened, rather than leaving an operator to infer the cause from an
+intermittently missing injection.
+**`ECONNREFUSED` is never a word `hook.log` holds**: `hook/connect.py` folds it and `ENOENT` into one
+absent-server signature, and `hook/push.py` degrades every unreachable-service case to the fixed word
+`transport`, which is what keeps the file to the closed vocabulary this section's error table names
+rather than arbitrary exception text.
 
 **Failure reporting went through three shapes before landing here, and the final one is measured
 rather than reasoned about.** The first shape was total silence on every channel, with the theory
@@ -1073,8 +1137,9 @@ document is formatted — which is why the line bound exists rather than being i
 why a record too long to serialize within it is **refused loudly** rather than written into a file whose tail
 nobody can reach.
 
-**Consolidator mode only, and gated on harness data rather than on a branch.** `HarnessSpec.
-consolidator_can_read_files` decides both whether the agent config grants a file-reading tool and whether the
+**Consolidator mode only, and gated on harness data rather than on a branch.**
+`HarnessSpec.consolidator_can_read_files` decides both whether the agent config grants a
+file-reading tool and whether the
 client spills at all — one field, because the mismatches are what hurt: the tool without the file widens that
 agent's reach for nothing, and the file without the tool hands it a path it cannot open. Under kiro it is
 false, and what kiro does with an over-large result stays **unmeasured** rather than guessed at. The primary
@@ -1452,7 +1517,7 @@ whoever owns it**, in the precise sense defined below.
   freshly spawned consolidator's own first tool call is `next_group`, which refuses a live foreign run — so
   without a bridge the second skill invocation reaches the refusal and takeover is unreachable, leaving the
   case it exists for unsolved. The bridge: **`zikaron-mcp`, when it starts under the consolidator agent
-  config, calls `plan_groups` with its own `(session_id, pid)` — **lazily, immediately before the first
+  config, calls `plan_groups` with its own `(session_id, pid)` — lazily, immediately before the first
   `next_group` it forwards, never when the client starts, and at most once *successfully* per client
   process.** The bound is on successes rather than on attempts, for the reason the state table below gives:
   a failed plan rolls back and displaces nobody, so it must not consume the guard. The *client process* makes that call, never the
@@ -1704,7 +1769,17 @@ The blanket phrase "every error mutates nothing" was too strong and contradicted
 requires elsewhere. The precise rule, in three parts:
 
 - **No domain mutation, ever.** A rejected call changes no row of `memory`, `memory_fts`, `memory_chunk`,
-  `memory_vec`, no `version`, and no `consolidation_group*` status or disposition. **Mutating** batches and
+  `memory_vec`, no `version`, and no `consolidation_group*` status or disposition — **and no
+  knowledge-base row either**: not its `knowledge_bases` registry entry, nor a corpus's `files`,
+  `chunks`, `chunks_fts` or `chunks_vec`. ~~The four `knowledge_base_*` codes in the error table below
+  are decided before any write.~~ **— three of the four are; `knowledge_base_exists` is decided *from
+  the rejected write itself*, and a second implementation must copy that rather than the sentence.**
+  `registry.insert` lets the `knowledge_bases` table's own `UNIQUE` constraint refuse the `INSERT`
+  and `registry.rename` does the same with its `UPDATE`, **deliberately, because a preceding `SELECT`
+  could race**. The bullet's rule still holds for it — `lifecycle.add` runs the insert inside
+  `in_one_transaction`, which rolls back — so nothing is mutated, but the reason is the rollback and
+  not an earlier decision. *(This enumeration named the memory tables only until 2026-09-22, so a
+  second implementation reading it was told nothing about the other store.)* **Mutating** batches and
   multi-row mutations are all-or-nothing: `merge`, `promote` and `discard` validate every named row before
   touching any, and one bad row mutates nothing.
 - **All-or-nothing is a rule about mutations, not about reads, and stating it unqualified contradicted
@@ -1723,8 +1798,11 @@ requires elsewhere. The precise rule, in three parts:
 
 ### Validation precedence — fixed, because the order is observable
 The order is part of the contract, because different orders return different errors — and, for the
-consolidator, different orders leak different amounts of the store. There are **two ladders**, one per verb
-class.
+consolidator, different orders leak different amounts of the store. There are **two ladders** here, one per
+memory verb
+class. **The knowledge index's verbs are not a third ladder and are specified elsewhere**
+(`knowledge-index.md` §§8.4, 8.6): they name no rows, mint no receipts, and reach only `bounds` and
+the `knowledge_base_*` codes. Rung 0 applies to them as it does to every enveloped method.
 
 **Both ladders share rung 0: label resolution.** The envelope's `session_id` is normalized to a non-null label
 *before* rung 1 of either ladder (§"Resolution is a preamble, not a step of the method"). It has to precede
@@ -1836,7 +1914,7 @@ could not both hold.
 |---|---|---|---|
 | −32000 | `not_found` | `amend`/`retire` on an unknown uuid; unknown `superseded_by` target | `{uuid}` |
 | −32001 | `version_conflict` | presented version ≠ current | `{current: [{...}]}` — every conflicting row; **mints a receipt for each and logs an event for each** |
-| −32002 | `no_read_receipt` | no receipt for `(session_id, client_kind, memory_uuid, version)` (invariant 9) | `{uuids, hint:'fetch it first'}` — **logs an event per uuid** |
+| −32002 | `no_read_receipt` | no receipt for `(session_id, client_kind, memory_uuid, version)` (invariant 9) | `{uuids, hint:'re-read it through fetch or next_group'}` — **logs an event per uuid**. One hint for both modes, each of which has exactly one of those two verbs |
 | −32003 | `inactive_row` | `amend` or `retire` of a row that is already `active=0` | `{uuid, state}` with `state ∈ superseded \| retired` — the two `active=0` members of the tool surface's `live \| superseded \| retired` vocabulary (§"MCP tool surface"). Never `live`: this code fires only on a row already `active=0`, and `live` means `active=1`, so a raise site that produced it would itself be the bug this payload exists to catch |
 | −32004 | `bad_supersession` | self-edge, cycle, target retired-outright, edge already set, or depth cap hit | `{uuid, target, reason}` |
 | −32005 | `bounds` | gist over `gist_max_tokens`, empty gist or content, `limit` or list size out of range — and, on the `knowledge_*` methods, a blank knowledge-base name, a `knowledge_add` `path` that is absent, is not a directory, or is degenerate (`knowledge-index.md` §8.6), or a `knowledge_add` `max_file_bytes` outside the range configuration declares. Those three reuse this code rather than minting their own because this is the rejection of a *parameter value*, decided with no store state consulted: the root check reads the filesystem, but nothing about its answer depends on what any corpus holds, and the remedy for all three is the same call with a different value for the field `data` names. **The size cap is the one worth naming explicitly**, since its range comes from the configuration schema and `bad_config` is therefore the easy mistake — that code means a *stored or configured* value is unusable and points at a file to fix, which is the wrong place to send a caller that typed a number | `{field, limit, actual}` |
@@ -1847,9 +1925,9 @@ could not both hold.
 | −32014 | `bad_merge_target` | `merge` target is not in this group's persisted authorization set, or is no longer `tier='long_term' AND active=1` | `{group_id, uuid, reason}` with `reason ∈ not_authorized \| not_targetable`. `not_authorized` covers every uuid outside the authorization set **whether or not it exists**, deliberately, so the two cases are indistinguishable to the caller |
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
 | −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
-| −32021 | `index_failed` | embedding or index maintenance failed; the transaction rolled back | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
+| −32021 | `index_failed` | embedding or index maintenance failed; nothing was written. Only the `index_write` stage runs inside a transaction — `prepare` raises the other three before `BEGIN` | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
 | −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook never reads the store on this, like every other failure (§"Degraded modes") |
-| −32023 | `bad_config` | **either source**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`), **or** a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration") | `{source:'meta'\|'file', file, key, value, expected}` — `file` is the layer the offending key came from, absent for `source:'meta'`, and it is required because with two layers "which file has the typo" is otherwise a hunt — the hook never reads the store on this, like every other failure |
+| −32023 | `bad_config` | **any of three sources**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`); a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration"); **or** a **derived** path — `store_dir` or `runtime_dir`, neither of which is a configuration key | `{source:'meta'\|'file'\|'derived', file, key, value, expected}` — `file` is the layer the offending key came from and is required for `source:'file'`, because with two layers "which file has the typo" is otherwise a hunt; it is absent for the other two sources, which have no file to name — the hook never reads the store on this, like every other failure |
 | −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 | −32040 | `knowledge_base_unknown` | a `knowledge_*` method named a corpus the registry has no row for | `{name}` — the **normalized** spelling, since that is what the registry stores and what `list` reports |
@@ -1916,7 +1994,7 @@ The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `me
   starts, and at most once *successfully* per client process** (it may re-attempt while it has not yet
   succeeded), since taking the consolidation lock before the model has asked for work
   would displace a live worker on a spawn that then does nothing. That call is the takeover, and it is the only
-  reason the takeover path is reachable at all (§"Consolidation lifecycle") (§"Consolidation lifecycle", `schema.md` invariant 17). An
+  reason the takeover path is reachable at all (§"Consolidation lifecycle", `schema.md` invariant 17). An
   effectively-active run belonging to a **different `(session_id, pid)` owner** yields
   `{busy: true, holder_session, holder_pid, expires_at}` from `next_group` — but an **explicit**
   `plan_groups` call **takes that run over**, closing it `taken_over`, because a human invoking the skill
@@ -2083,8 +2161,11 @@ things and refuses rather than guesses when it cannot.
   start-if-absent spawns the service as `sys.executable -m zikaron.service.main`, so the *interpreter* the
   client runs under must be the one Zikaron is installed into. A console script's shebang guarantees exactly
   that, which a `python -m` command line only guarantees if whoever wrote it also spelled the interpreter
-  absolutely. Measured cost of the console-script form against `-m`: **68.6 ms vs 70.0 ms** median for a full
-  hook process, i.e. the choice is free.
+  absolutely. Measured cost of the console-script form against `-m`: the two differ by **~1.4 ms** median
+  over a full hook process, i.e. the choice is free. *The absolutes that used to stand here — 68.6 against
+  70.0 ms — were taken before the hook stopped round-tripping its `client` envelope through the service's
+  parser, which moved the same path to ~50 ms; the difference between the two forms was never re-measured
+  and only that difference was ever load-bearing.*
 - **`timeout_ms` and `max_output_size` are stated in every object-format entry**, from one declaration
   each in `zikaron/hook/limits.py` that the installer reads rather than transcribes. `timeout_ms` is
   **10000** — the same value as the documented default, stated so that a future change to that default
@@ -2092,18 +2173,24 @@ things and refuses rather than guesses when it cannot.
   is **65536**, deliberately well above the 10240 default, and what that margin does and does not buy is
   worth stating precisely, because an earlier version of this paragraph claimed more than was true.
 
-  **What is measured.** The shipped `agentSpawn` output is the write policy at **6162 bytes** (6134
+  **What is measured.** The shipped `agentSpawn` output is the write policy at **6599 bytes** (6569
   characters), which fits 65536, the 10240 an array install inherits, and Claude Code's 10,000-unit
   budget. It read 2950 until the recall-trigger and search-gate paragraphs were added to the shipped
-  constant, and 5487 as last measured on 2026-08-14. **It was 5942 immediately before the 2026-09-20
+  constant, 5487 as last measured on 2026-08-14, 6098 until 2026-09-22, when naming the *second*
+  gist bound — 1,024 characters alongside the 64 tokens — added 132 bytes, and 6230 until the same
+  day's correction of the recall paragraph, which had told **every Claude Code subagent** that gists
+  are injected ahead of each message it receives when that population receives none — the policy is
+  delivered to subagents there and the push is not. **It was 5942 immediately before the 2026-09-20
   recall rewrite, which added 220 bytes** — so the 08-16 policy edits (the subject-reference
   paragraph and the general-fact clause) had already moved it by ~450 with nobody re-measuring, and
   an earlier version of *this sentence* blamed the whole 5487 → 6143 jump on the 09-20 change — and
-  6143 was itself an intermediate figure, two reviewer-driven rewordings before the 6162 above. That
-  is a third instance of the hazard the paragraph exists to describe, committed inside the paragraph
-  describing it: the
-  suite asserts the *fits* rather than the figure, so the number went stale without failing anything. A push block of five rows whose gists are ordinary
-  prose at the largest `gist_max_tokens` any configuration permits (256) is a few kilobytes, and fits.
+  6143 was itself an intermediate figure, two reviewer-driven rewordings before 6162, which is what
+  this sentence said until D1's amendment finally reached the shipped constant and removed the
+  "a separate system covers code structure, symbols and layout" clause — 64 bytes, and **a fourth
+  instance of the hazard this paragraph exists to describe, committed inside the paragraph describing
+  it**: the suite asserts the *fits* rather than the figure, so the number goes stale without failing
+  anything, every time. A push block of five rows whose gists are ordinary prose at the largest
+  `gist_max_tokens` any configuration permits (256) is a few kilobytes, and fits.
 
   **What tokens do not bound, and the second bound that does.** `gist_max_tokens` bounds *tokens*, and
   tokens bound neither characters nor bytes: measured against the deployed tokenizer, an unbroken
@@ -2140,7 +2227,7 @@ things and refuses rather than guesses when it cannot.
   granting a tool is a permission decision that belongs to whoever owns the config.
 - **An install is refused when its own harness is not on `PATH`**, and as of M15 that is **one rule for
   both harnesses** rather than kiro's alone. The entries being installed name that binary's own hook and
-  MCP mechanisms, so writing them where it is absent produces exit 0, no memory tools, and nothing
+  MCP mechanisms, so writing them where it is absent produces exit 0, no Zikaron tools, and nothing
   anywhere saying why — the same working-looking-inert outcome the harness-resolution refusal exists to
   prevent, which made permitting it for one harness and refusing it for the other an inconsistency rather
   than a design.
@@ -2181,10 +2268,11 @@ put the server in the workspace. Both clients now resolve through `HarnessSpec.s
 requirement is met by one function rather than by two mechanisms that happened to agree.
 
 ## Open, and now narrower
-Open question 4 asked what the hook→service transport should be and what happens when the server is absent.
-This document settles the **shape**: transport, paths, start-if-absent, idle self-stop, degraded chain,
-permissions, error codes. It does **not** close the question, and `FINDINGS.md` keeps the rest of it open on
-purpose. Still unmeasured:
+The hook→service transport question — what the transport should be, and what happens when the server is
+absent — was closed by M0 spike 3; `FINDINGS-archive.md` §"Open questions that closed" has it. This
+document settles the **shape**: transport, paths, start-if-absent, idle self-stop, degraded chain,
+permissions, error codes. What is listed below is measurement this document does not claim, not an open
+decision. Still unmeasured:
 
 - real RPC round-trip latency, end to end, from a hook process;
 - behaviour under concurrent requests from two sessions sharing one store, including whether `busy_timeout`

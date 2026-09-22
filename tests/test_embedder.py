@@ -1,4 +1,4 @@
-"""The `Embedder` protocol — the only thing this milestone needs from "embedding"."""
+"""The `Embedder` protocol — the only thing the store layer needs from "embedding"."""
 
 from zikaron.core.store.embedder import Embedder, FakeEmbedder
 

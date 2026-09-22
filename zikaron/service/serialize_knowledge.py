@@ -170,10 +170,10 @@ class KnowledgeBuildResult(RpcResult):
     One shape for both verbs and for both of `refresh`'s forms, so a caller parses one thing rather
     than three. Each entry is the **`list` projection** — name, description, state, files indexed,
     files remaining — in `status`'s own field names and vocabulary, which is what lets an agent
-    read the result it already holds instead of learning a second one. The twenty diagnostic fields
-    are deliberately not here: a verb that starts a build has no more of them to report than
-    `list` does, and `add`'s own description points a caller at `zikaron_knowledge_status` for the
-    detail.
+    read the result it already holds instead of learning a second one. The eighteen diagnostic
+    fields are deliberately not here: a verb that starts a build has no more of them to report
+    than `list` does, and `add`'s own description points a caller at `zikaron_knowledge_status`
+    for the detail.
 
     `git_modes` is `add`'s own creation-time probe and is absent for a refresh, which runs none. It
     sits beside the per-corpus entries rather than inside them, under its own names —

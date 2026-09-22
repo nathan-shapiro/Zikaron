@@ -8,8 +8,7 @@ holds because the fallback is in-process, not because nothing is attempted
 (`architecture.md` §"The install contract").
 
 Why an override exists at all: the design ships this text as a *draft to be experimented against*,
-and an
-experiment that requires editing installed Python is an experiment nobody runs.
+and an experiment that requires editing installed Python is an experiment nobody runs.
 
 Transcribed rather than read from disk by default: the design document is not shipped alongside
 the installed package, and `design/write-policy.md` itself is drafted for revision, so a test
@@ -30,8 +29,8 @@ from zikaron.hook import failure
 from zikaron.service.paths import hook_log_path, store_dir, write_policy_override_path
 
 #: The override's own file name, derived from the one place its path is constructed so the two
-#: cannot
-#: disagree. A name rather than a path, because it is opened relative to a directory descriptor.
+#: cannot disagree. A name rather than a path, because it is opened relative to a directory
+#: descriptor.
 _OVERRIDE_FILENAME = write_policy_override_path(Path()).name
 
 #: Fixed `hook.log` labels for the four conditions under which an override is not simply used as
@@ -49,14 +48,17 @@ This directory has a memory store holding **tribal knowledge**: what has been le
 here that the source code does not tell you. It persists across sessions, and other agents will
 read what you write.
 
-**Look things up before you spend time.** A few relevant gists are injected ahead of each message
-you receive, but they were selected for the *user's words*, not for the problem as you understand
-it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
-gists arrive, and nothing tells you the set has stopped covering the problem. The records
-themselves are not suspect, but you are not shown the records: each line is a gist, a one-sentence
-abstract written to help you choose what to read, and the conditions a finding held under usually
-live in the entry behind it. So before you state one as fact, or act on one, fetch it. The
-injected set is a starting point, never evidence that memory has already been consulted.
+**Look things up before you spend time.** If you are the session's main agent, a few relevant
+gists are injected ahead of each user message, selected for the *user's words*, not for the
+problem as you understand it now. A few turns into a task the framing has usually moved and the
+selection has not: nothing new arrives until the user speaks again, and nothing tells you the set
+has stopped covering the problem. **If you were spawned as a subagent, nothing is injected for you
+at all** — the push rides on a user message, and you never receive one — so searching is the only
+way memory reaches you here. The records themselves are not suspect, but you are not shown the
+records: each line is a gist, a one-sentence abstract written to help you choose what to read, and
+the conditions a finding held under usually live in the entry behind it. So before you state one
+as fact, or act on one, fetch it. The injected set is a starting point, never evidence that memory
+has already been consulted.
 
 Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
 — effort feels like progress, so that judgement arrives too late to act on:
@@ -74,8 +76,7 @@ about what must happen now: a recorded failure tells you what to re-check, not w
 drop, so confirm its conditions still hold before letting it rule anything out.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
-it out — a separate system covers code structure, symbols and layout. This store is for what cost
-someone time to discover.
+it out. This store is for what cost someone time to discover.
 
 Worth recording:
 - How to build, test, run and deploy — especially the step that is not in the README
@@ -119,9 +120,12 @@ you, so you do not need to check first.
 read further. Lead with the observable symptom or situation rather than the conclusion:
 "integration tests flake on CI unless PGHOST is set" beats "notes on test configuration".
 
-**Keep a gist to one sentence of about 20 to 25 words.** The limit is 64 tokens — roughly 50 words
-of ordinary prose — and a write over it is rejected outright, costing you the call. If a gist
-strains toward that limit it is usually carrying content that belongs in `content`.
+**Keep a gist to one sentence of about 20 to 25 words.** Two bounds apply and the first you
+cross rejects the write: 64 tokens by default — roughly 50 words of ordinary prose — and a fixed
+1,024 characters, which only binds if the gist carries a long unbroken string. The token bound is
+this project's to configure and may be lower here; the rejection names the limit it applied.
+A write over either is rejected outright, costing you the call. If a gist strains toward either
+limit it is usually carrying content that belongs in `content`.
 
 **Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
 its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
@@ -144,15 +148,13 @@ def _read_override(store_directory: Path) -> str:
     earlier version called `store_directory.stat()`, returned a verdict, and then opened
     `store_directory / "write-policy.md"` — two resolutions of one pathname with a window between
     them. In a writable project parent another local user could swap the directory after it passed
-    the
-    ownership and mode check, or create an attacker-owned `.zikaron` after an absent one had been
-    accepted, and the second resolution would read a policy out of the replacement. This text goes
-    straight into a model's context, so that window is the whole risk.
+    the ownership and mode check, or create an attacker-owned `.zikaron` after an absent one had
+    been accepted, and the second resolution would read a policy out of the replacement. This text
+    goes straight into a model's context, so that window is the whole risk.
 
     So: open `.zikaron` with `O_DIRECTORY | O_NOFOLLOW`, check ownership and mode on **that
     descriptor**, then open the override *relative to it* with `O_NOFOLLOW`. Every check applies to
-    the
-    inode that is actually read.
+    the inode that is actually read.
 
     Raises:
         FileNotFoundError: no store directory, or no override in it — the ordinary case.
@@ -185,8 +187,8 @@ def _require_private(directory: int, store_directory: Path) -> None:
     any remaining writer must be the same uid, which is false of a store directory that is group- or
     world-writable for whatever reason. Another local user could then leave an ordinary
     `write-policy.md` there — no symlink involved, nothing `O_NOFOLLOW` can see — and this would
-    print
-    it into a model's context. `architecture.md` §"Filesystem security" draws the `0700`/ownership
+    print it into a model's context. `architecture.md` §"Filesystem security" draws the
+    `0700`/ownership
     boundary for exactly that.
 
     Tightening a mode stays the warm helper's job (`ensure_store_dir`): doing it here would put a
@@ -201,9 +203,9 @@ def _read_regular_file(name: str, *, directory: int) -> str:
     """`name`'s text, opened relative to `directory` without following a link, confirmed regular.
 
     `O_NOFOLLOW` and then `fstat` on the descriptor, rather than `is_symlink()`/`is_file()` followed
-    by
-    a read: those are two resolutions of one name, and whatever is decided about the first can be
-    replaced before the second. Here the descriptor being read *is* the one whose type was checked.
+    by a read: those are two resolutions of one name, and whatever is decided about the first can
+    be replaced before the second. Here the descriptor being read *is* the one whose type was
+    checked.
 
     Opening a fifo would otherwise block the one path that must never fail, which `O_NONBLOCK` and
     the
@@ -251,15 +253,13 @@ def read_policy(store_directory: Path, *, spec: HarnessSpec) -> Policy:
     - **absent** — the ordinary case. The constant, no label.
     - **a symlink, reached through a `.zikaron` that is a symlink, or found in a store directory any
       other user could have written into** — refused; `_read_override` holds the whole condition,
-      and
-      it checks the directory it actually reads from rather than a pathname. The store directory is
-      `0700`, so this is defence in depth rather than a live threat, but the cost of being wrong is
-      specific: this text is printed straight into a model's context, so a link pointing at a
-      private
-      key or an `.env` file would exfiltrate exactly what the policy's own "never record a secret"
-      paragraph exists to keep out of the store. The final component is refused by `O_NOFOLLOW`,
-      which
-      speaks for that component only — hence the separate check on the directory above.
+      and it checks the directory it actually reads from rather than a pathname. The store directory
+      is `0700`, so this is defence in depth rather than a live threat, but the cost of being wrong
+      is specific: this text is printed straight into a model's context, so a link pointing at a
+      private key or an `.env` file would exfiltrate exactly what the policy's own "never record a
+      secret" paragraph exists to keep out of the store. The final component is refused by
+      `O_NOFOLLOW`, which speaks for that component only — hence the separate check on the directory
+      above.
     - **not a regular file** — refused, same reasoning; and a fifo would additionally block the one
       path `architecture.md` promises cannot fail, which `O_NONBLOCK` and the `fstat` together
       prevent.

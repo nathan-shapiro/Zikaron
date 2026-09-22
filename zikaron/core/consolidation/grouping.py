@@ -96,8 +96,7 @@ def order_key(members: Sequence[Entry]) -> str:
 
     Raises:
         ValueError: `members` is empty. A group with no members has no order and could not be
-        served;
-            refusing to name one is what keeps an empty group from being written at all.
+        served; refusing to name one is what keeps an empty group from being written at all.
     """
     if not members:
         raise ValueError("a group with no members has no order key")

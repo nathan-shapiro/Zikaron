@@ -1,4 +1,4 @@
-"""Method dispatch for the five primary-agent verbs, `health`, and their typed result shapes.
+"""Method dispatch for the five memory verbs, `health`, and their typed result shapes.
 
 One function per RPC method, each translating a resolved envelope plus raw JSON params into a
 call into `core`, and returning a typed `RpcResult` — never a bare `dict[str, object]` — that
@@ -9,13 +9,20 @@ every module docstring in `zikaron/core/write`, `retrieval` and `records`.
 `health()` is the one method with no envelope at all, dispatched separately by `server.py` before
 any of this module's envelope-carrying handlers run.
 
+The knowledge index's seven methods live in `dispatch_knowledge.py`, split on the **subsystem**
+line rather than on the primary/consolidator line the split below follows. They are the primary
+agent's too, which is why this docstring says *memory verbs* rather than *primary-agent verbs* —
+the primary agent's surface is larger than this module, and `mcp/tool_names.py` declares it as
+data so no count is written here.
+
 The five consolidator RPC methods (`memory_plan_groups`, `memory_next_group`,
 `memory_apply_merge`, `memory_apply_promote`, `memory_apply_discard`) live in
 `dispatch_consolidation.py`: this module would otherwise cross
 `coding-standards.md` §1's ~400-line guideline, and the split falls exactly on `architecture.md`'s
 own primary-agent-versus-consolidator line. Five RPC methods, not D32's "four consolidator
-tools" — `memory_plan_groups` is deliberately excluded from that count (`architecture.md`:
-"`memory_plan_groups` is a service RPC and not one of D32's four consolidator tools"), since the
+tools" — `memory_plan_groups` is deliberately excluded from that count (`architecture.md`, naming
+the operation rather than the wire method: "`plan_groups` is a service RPC and not one of D32's
+four consolidator tools"), since the
 *tool* surface the consolidator model is given and the *RPC* surface behind it are two different
 things one figure must not be quoted for both.
 
@@ -312,7 +319,8 @@ async def fetch(
 
 
 #: Every primary-agent method this module handles, by its wire name. `dispatch_consolidation.py`
-#: contributes the other five; `server.py` merges both tables and adds `health` separately, since
+#: contributes the other five and `dispatch_knowledge.py` the seven knowledge methods; `server.py`
+#: merges all **three** tables and adds `health` separately, since
 #: `health` takes no envelope and so does not fit this table's own shape.
 PRIMARY_METHODS: dict[str, Handler] = {
     "memory_remember": remember,

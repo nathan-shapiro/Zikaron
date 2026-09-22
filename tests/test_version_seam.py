@@ -13,6 +13,7 @@ written as literals, so this file does not match itself; and the allowlist is tw
 and the module it guards.
 """
 
+import itertools
 import re
 from pathlib import Path
 from typing import Final
@@ -66,14 +67,42 @@ def _scanned_files() -> list[Path]:
     )
 
 
-def test_only_the_seam_reads_the_running_python_or_its_private_asyncio_names() -> None:
-    offenders = [
-        f"{path.relative_to(_ROOT)}:{number}: {line.strip()}"
-        for path in _scanned_files()
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-        for pattern in _FORBIDDEN
-        if pattern.search(line)
+#: Strips a wrapped prose line's continuation marker, so a name broken across two comment lines
+#: rejoins into the name it actually spells.
+_CONTINUATION: Final = re.compile(r"^\s*(?:#:|#)?\s*")
+
+
+def _searchable(lines: list[str]) -> list[tuple[int, str]]:
+    """Each line, plus each adjacent pair rejoined — because a line break defeats a textual guard.
+
+    **Measured here, 2026-09-22, and it is the sharpest thing this guard has taught.** A comment in
+    `test_service_server.py` named the private transport counter and **passed this scan for as long
+    as a line wrap happened to split the name in two**: `_active_` ended one comment line and
+    `count` began the next, so no single line contained the string, and nothing reported the gap.
+    Re-flowing that paragraph — a purely cosmetic edit — is what made the guard finally fire.
+
+    **The general rule, which applies to every string-matching guard in this repository**: a check
+    that reads one line at a time is checking the *layout* as much as the content, and layout is
+    the thing an ordinary edit changes for free. Joining adjacent pairs covers a name broken across
+    one break, which is the shape wrapping actually produces; a name broken across two would still
+    escape, and that is named here rather than left to be assumed covered.
+    """
+    numbered = list(enumerate(lines, start=1))
+    joined = [
+        (number, f"{line.rstrip()}{_CONTINUATION.sub('', following)}")
+        for (number, line), (_, following) in itertools.pairwise(numbered)
     ]
+    return numbered + joined
+
+
+def test_only_the_seam_reads_the_running_python_or_its_private_asyncio_names() -> None:
+    offenders = sorted(
+        f"{path.relative_to(_ROOT)}:{number}: {text.strip()}"
+        for path in _scanned_files()
+        for number, text in _searchable(path.read_text(encoding="utf-8").splitlines())
+        for pattern in _FORBIDDEN
+        if pattern.search(text)
+    )
     assert not offenders, (
         "version reads and private asyncio names belong only in asyncio_compat:\n"
         + "\n".join(offenders)

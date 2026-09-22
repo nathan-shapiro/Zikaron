@@ -28,7 +28,7 @@ _WRITE_POLICY_FILENAME = "write-policy.md"
 
 
 def store_dir(scope_dir: Path) -> Path:
-    """The `.zikaron` directory for the store scoped to `scope_dir` (D17, amended 2026-08-18).
+    """The `.zikaron` directory for the store scoped to `scope_dir` (D17).
 
     Callers resolve `scope_dir` through `HarnessSpec.store_scope_dir`: the harness's own project
     directory where it names one, else the fallback the caller passes — `zikaron-mcp`'s own process

@@ -156,11 +156,9 @@ async def test_merge_refuses_a_target_outside_the_authorization_set(tmp_path: Pa
         member = await c.write(gist=_A[0], content=_A[1], minute=2, degrees=10.0)
         served = await _serve_one(c)
         # A journal member is the row that can *never* be in the authorization set: members are
-        # what a
-        # group is dispositioned over and candidates are what it is shown against, and the two sets
-        # are
-        # disjoint by construction. A merely unrelated long-term record would be a weaker fixture,
-        # since the candidate query authorizes up to four of those.
+        # what a group is dispositioned over and candidates are what it is shown against, and the
+        # two sets are disjoint by construction. A merely unrelated long-term record would be a
+        # weaker fixture, since the candidate query authorizes up to four of those.
         assert member not in {uuid for uuid, *_ in await c.authorization_rows(served.group_id)}
         with pytest.raises(ZikaronError) as raised:
             await verbs.merge(
@@ -474,7 +472,7 @@ async def test_a_conflict_does_not_refresh_the_lease(tmp_path: Path) -> None:
 
 
 async def test_a_missing_receipt_raises_and_still_commits_its_audit_events(tmp_path: Path) -> None:
-    """Invariant 10's carve-out, re-asserted for this milestone's verbs: a rejected call commits no
+    """Invariant 10's carve-out, re-asserted for the consolidation verbs: a rejected call commits no
     domain mutation but **does** commit its audit events. The version is right and the receipt is
     not, which is exactly what D26 exists to catch — an agent that guessed a version it never
     read."""

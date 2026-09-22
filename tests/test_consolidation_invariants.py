@@ -1,4 +1,4 @@
-"""Invariant tests for M7: `schema.md` invariants 12-17 and 19, plus 2 and 10 for these verbs.
+"""Invariant tests for the consolidation verbs: `schema.md` invariants 12-17 and 19, plus 2 and 10.
 
 `coding-standards.md` §4 makes these first-class and non-optional: each is named for the invariant
 it defends and each **fails if that invariant is violated**. Several of the properties are also
@@ -6,9 +6,9 @@ exercised incidentally by the behaviour tests in the sibling files; these exist 
 session can find the guard by the invariant's number rather than by guessing which behaviour
 happened to cover it.
 
-Invariants 2 and 10 are cross-cutting. `build-plan.md` says M4, M6 and M7 each re-assert them for
-their own verbs rather than assuming an earlier milestone covered them, because a milestone that
-adds a write path adds a way to violate them.
+Invariants 2 and 10 are cross-cutting: the indexing, write-tool and consolidation layers each
+re-assert them for their own verbs rather than assuming a lower layer covered them, because every
+new write path is a new way to violate them.
 """
 
 import inspect

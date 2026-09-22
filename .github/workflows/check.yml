@@ -1,0 +1,259 @@
+# The continuous instrument. `design/distribution.md` §"What CI asserts" is normative.
+#
+# **This is not a third gate.** `check.sh` is the per-edit gate; `check-matrix.sh` is what a
+# milestone needs locally. This workflow asserts *the matrix's own claim* — every supported version
+# green on one tree — against a commit rather than a working tree, by running `check.sh` once per
+# version rather than by running `check-matrix.sh` at all.
+#
+# **It is strictly stronger than the matrix on one axis and strictly weaker on another.** Stronger:
+# the matrix has to build a fingerprint over `HEAD` plus every staged, unstaged and untracked
+# difference and sample it twice, because a local tree moves while a run is in flight — it caught its
+# own author editing `CLAUDE.md` mid-run. A job checks out one commit, so *every version saw the same
+# tree* is guaranteed by the SHA. Weaker: no live harness, so `integration_kiro` and
+# `integration_claude` stay local-only and nothing here exercises a real session pushing or
+# searching.
+#
+# **`FASTEMBED_CACHE_PATH` is set in a `run:` step rather than in an `env:` block, and the reason is
+# a context-availability rule.** The `runner` context is available only at *step* level — not in
+# workflow-level `env:` and not in `jobs.<id>.env:`. `${{ runner.temp }}` at either of those levels
+# is a reference to a context outside its availability, which GitHub rejects when it validates the
+# workflow — the whole run is refused, no job in the file starts. (Documented behaviour, unobserved
+# here until the first push.) Either way the export belongs in a `run:`, where `$RUNNER_TEMP` is an
+# ordinary environment variable; `$GITHUB_ENV` then carries it to every later step, `./check.sh`
+# included. `tests/test_ci_workflow.py` stops anyone moving it back, before a push is spent finding
+# out.
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer irrelevant, and these jobs download a
+# 64 MB model.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux / ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One red version is a fact about that version, and cancelling the others discards it.
+      fail-fast: false
+      matrix:
+        # Tied to `check-matrix.sh`'s `minors=(...)` by `tests/test_ci_workflow.py`.
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      # **`setup-uv` is pinned to a full patch version, and that is not fussiness.** astral does not
+      # maintain a floating major tag: `astral-sh/setup-uv@v10` is a 404, and only full patch tags
+      # exist. So a bare major here is not "the latest v10" — it either fails to resolve or, worse,
+      # resolves to a **frozen historical tag** — whatever that major pointed at when it was last
+      # moved, which can be years and several majors behind, missing every hardening default since.
+      # A missing tag fails loudly; this fails silently, running stale code and reporting green.
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Point fastembed at a cacheable directory
+        # The embedder is 64 MB and fastembed otherwise caches it under `tempfile.gettempdir()`,
+        # which on a macOS runner is a per-session `/var/folders/…` path `actions/cache` cannot name
+        # at authoring time — it works on Linux only by accident. `$RUNNER_TEMP` rather than the
+        # workspace, so 64 MB of untracked model does not land inside the checkout at all. The
+        # walkers it would otherwise reach are `test_design_pointers_resolve.py`'s document map,
+        # which `rglob`s every `*.md` in the tree and would pick up a model snapshot's own README,
+        # and `check-matrix.sh`'s tree identity, which hashes every untracked non-ignored file.
+        # *This comment named `test_version_seam.py` and ruff instead, and both were wrong: the
+        # seam scan walks `zikaron/` and `tests/` only, and ruff's `include` matches no snapshot
+        # file. A reason given for a guard is as checkable as the guard, and this one was not
+        # checked.*
+        run: echo "FASTEMBED_CACHE_PATH=$RUNNER_TEMP/fastembed_cache" >> "$GITHUB_ENV"
+
+      # **The interpreter comes from `uv`, and this is not a detail.** `enable_load_extension` is a
+      # compile-time option, `actions/setup-python`'s builds are unverified in this corpus, and
+      # `research/python-portability-probes.md` §4 verified the flag on exactly the
+      # python-build-standalone builds `uv` fetches — which are also what a `uv tool install` user
+      # gets. So this is what makes the `load_extension` evidence about *the binary users will run*.
+      # `--no-bin` for the reason `CLAUDE.md` gives: a `python3.x` in `~/.local/bin` shadows the
+      # system one for everything on the machine, not just this project.
+      - run: uv python install --no-bin ${{ matrix.python }}
+
+      # **The cache is restored, filled by an explicit fetch, and saved — all before the gate runs.**
+      #
+      # The obvious shape is a combined `actions/cache` around the whole job, and it is wrong twice
+      # over. Its save is a post step gated on job success, so a red job caches nothing: on the
+      # advisory macOS job below, whose red state is expected while that platform is unverified,
+      # that means re-downloading 64 MB every run indefinitely.
+      #
+      # **And the obvious repair — split it and put `if: always()` on the save — is worse, which is
+      # why this comment is long.** `always()` runs the step *even when the run is cancelled*, and
+      # `cancel-in-progress: true` above cancels on every new push to the same ref. If the fetch were
+      # still inside the gate, a cancel mid-download would leave `huggingface_hub`'s `.incomplete`
+      # blobs beside the finished ones, and `always()` would upload that partial directory under a
+      # key that **never refreshes**, because a cache writes only on a key miss. Every later run
+      # would restore the partial snapshot, re-fetch the missing part, and report nothing. That is
+      # the silent-cost class this whole arrangement exists to remove, reintroduced by the fix for it.
+      #
+      # So the fetch is hoisted out of the gate into its own step, and the save is gated on
+      # `cache-hit != 'true'` with **no** `always()`: a cancelled or failed fetch skips the save by
+      # default step semantics, a completed one is saved before the gate can go red, and a restore
+      # hit skips the save instead of re-uploading 64 MB to be told the key already exists. The
+      # advisory-red argument disappears entirely, because the cache no longer depends on the suite.
+      #
+      # **Expect two "Unable to reserve cache" warnings on the first run, and after any key change.**
+      # The key carries no Python version — correct, the model is interpreter-independent — so all
+      # three matrix jobs share it, all three miss on a cold key, all three fetch, and all three try
+      # to save. The first wins and the other two log *"another job may be creating this cache"*.
+      # That is a warning, never a failure, and it is what a cold cache looks like rather than a
+      # defect.
+      - name: Restore the embedding model
+        id: model-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/fastembed_cache
+          # The model and the library that fetches it. A cache saves only on a key miss, so a key
+          # that does not name everything deciding the download goes stale permanently rather than
+          # refreshing — when the model revision is pinned, it belongs in this key too.
+          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+
+      - name: Build the virtualenv
+        run: |
+          uv venv --seed --python ${{ matrix.python }} .venv
+          .venv/bin/pip install -e '.[dev]'
+
+      - name: Fetch the embedding model
+        # Hoisted out of the gate so the save below can complete before anything can redden or be
+        # cancelled. The model id is Zikaron's own default, from `core/config/keys.py`; the drift
+        # test ties that default to the cache key so a changed default cannot keep serving the old
+        # model out of cache.
+        run: .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+
+      - name: Save the embedding model
+        # No `always()`, deliberately — see the block above the restore step.
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/fastembed_cache
+          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+
+      - name: Record what SQLite this interpreter brought
+        # SQLite is bundled with the interpreter and FTS5 ranking can vary by host, which is the one
+        # axis no seam can absorb. The service logs this at startup for the same reason; here it puts
+        # the version in the run's own record, so a ranking difference between two green runs has
+        # somewhere to be read from.
+        run: .venv/bin/python -c "import sqlite3, sys; print(sys.version); print('sqlite', sqlite3.sqlite_version)"
+
+      - name: The gate
+        # **The deprecation filters are scoped to this step, not to the job or the workflow, and the
+        # scope is the point.** `check-matrix.sh` applies them around `./check.sh` alone and builds
+        # its virtualenv without them. Setting them wider here would apply them to `pip install`, its
+        # PEP 517 backend subprocess and setuptools' editable build — so a `DeprecationWarning` from
+        # inside pip on 3.13/3.14 would redden CI's *install* step on a tree the matrix passes,
+        # making CI the **stricter** definition of done for a reason that is not this code. That is
+        # the mirror of the looser-CI failure this workflow exists to avoid, and equally wrong.
+        env:
+          PYTEST_ADDOPTS: "-W error::DeprecationWarning -W error::PendingDeprecationWarning"
+          PYTHONWARNINGS: "error::DeprecationWarning,error::PendingDeprecationWarning"
+        run: ./check.sh
+
+  macos:
+    # **Advisory.** macOS is untested until M29 and this job exists to find out how untested. It must
+    # not gate anything, and there is no branch protection today, so nothing blocks on it either way.
+    name: macos / 3.12 (advisory)
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to a full patch version for the reason given in the linux job — there is no floating
+      # `v10` tag, and a bare major silently resolves to a frozen historical one.
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Point fastembed at a cacheable directory
+        # See the header — `runner` is step-level only, so this comes from `$RUNNER_TEMP` rather than
+        # from a context reference the workflow would be refused for. It matters most here: the
+        # macOS default is a per-session `/var/folders/…` path.
+        run: echo "FASTEMBED_CACHE_PATH=$RUNNER_TEMP/fastembed_cache" >> "$GITHUB_ENV"
+
+      # **`check.sh` wraps pytest in GNU `timeout`, and macOS has no such binary on `PATH`.** The
+      # runner image's own readme lists no `coreutils` among its installed packages, and macOS ships
+      # BSD userland with no `timeout(1)` — so nothing provides it. (The readme lists packages rather
+      # than `/usr/bin`, so the second half is the documented absence of `timeout` from BSD userland
+      # rather than a reading of that file; the proof step below settles it on the runner either
+      # way.)
+      #
+      # **Both halves are required.** Homebrew installs the GNU tools `g`-prefixed, so without the
+      # `gnubin` prepend only `gtimeout` is on `PATH` and `check.sh` still dies in the shell before a
+      # single test runs — an advisory job reporting "red, as expected" while having tested nothing.
+      - name: Guarantee GNU timeout
+        run: |
+          brew install coreutils
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Prove `timeout` is the GNU one
+        # Asserted rather than assumed: the step above is the whole reason this job can run, and a
+        # silent `PATH` failure would look exactly like a macOS incompatibility. Under GitHub's
+        # `bash -eo pipefail`, a BSD `timeout` — which has no `--version` — fails this step.
+        run: |
+          command -v timeout
+          timeout --version | head -1
+
+      # 3.12 — the floor, and the version a macOS user is likeliest to already have, which is the
+      # case M29 exists to make work. Not a wheel-availability choice: `onnxruntime` cp314 macOS
+      # arm64 wheels have existed since 1.24.1 (`research/onnxruntime-macos-wheels.md`), and the
+      # earlier reason given here rested on their absence.
+      - run: uv python install --no-bin 3.12
+
+      # Restore → fetch → save, all before the gate, for the reason spelled out in the linux job.
+      # **It matters most here**: this job is expected to be red while macOS is unverified, so a
+      # cache tied to the suite's outcome would never be written at all.
+      - name: Restore the embedding model
+        id: model-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/fastembed_cache
+          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+
+      - name: Build the virtualenv
+        run: |
+          uv venv --seed --python 3.12 .venv
+          .venv/bin/pip install -e '.[dev]'
+
+      - name: Fetch the embedding model
+        run: .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+
+      - name: Save the embedding model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/fastembed_cache
+          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+
+      - name: Record what SQLite this interpreter brought
+        run: .venv/bin/python -c "import sqlite3, sys; print(sys.version); print('sqlite', sqlite3.sqlite_version)"
+
+      - name: The gate
+        # Scoped to this step for the reason given in the linux job.
+        env:
+          PYTEST_ADDOPTS: "-W error::DeprecationWarning -W error::PendingDeprecationWarning"
+          PYTHONWARNINGS: "error::DeprecationWarning,error::PendingDeprecationWarning"
+        run: ./check.sh
+
+      - name: Say so in the summary
+        # **"Visible" is operationalised rather than asserted.** Whether `continue-on-error` still
+        # renders this job red in the checks UI is not knowable before the first real run, so the
+        # word *advisory* is written where a reader will see it regardless, and the first run records
+        # in `design/distribution.md` what the UI actually showed.
+        if: always()
+        run: |
+          echo "## macOS 3.12 — advisory" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Outcome: \`${{ job.status }}\`. This job is **advisory** and gates nothing." >> "$GITHUB_STEP_SUMMARY"
+          echo "macOS is untested until M29; a red result here is the instrument working." >> "$GITHUB_STEP_SUMMARY"

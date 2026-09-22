@@ -109,3 +109,24 @@ def test_the_floor_the_standards_state_is_the_one_the_packaging_requires() -> No
     configured = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert configured["project"]["requires-python"] == ">=3.12"
     assert "`>=3.12`" in _STANDARDS.read_text(encoding="utf-8")
+
+
+def test_the_project_table_still_holds_the_keys_a_later_table_can_swallow() -> None:
+    """Every key after a TOML table header belongs to that header, so a table inserted in the middle
+    of `[project]` silently moves everything below it.
+
+    Observed: placing `[project.urls]` under `license-files` absorbed `requires-python` *and*
+    `dependencies` into it. The file parsed. The editable install succeeded. The package simply had
+    no dependencies and no interpreter floor. The test above would have caught the floor by
+    `KeyError`; nothing at all pinned the dependency list, which is the half that would have
+    shipped.
+
+    Checked by shape rather than by contents — the four runtime pins are stated in `pyproject.toml`
+    with their reasons and this file is not a second copy of them. What is asserted is that they are
+    still *in `[project]`*, which is the property an inserted table destroys.
+    """
+    project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    for key in ("name", "version", "readme", "license", "requires-python", "dependencies"):
+        assert key in project, f"`{key}` has left [project] — a table header was inserted above it"
+    assert len(project["dependencies"]) == 4, "the runtime dependency list changed size"
+    assert set(project["scripts"]) == {"zikaron-hook", "zikaron-mcp"}

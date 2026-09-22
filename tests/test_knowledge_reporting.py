@@ -7,6 +7,7 @@ a count only under a rule with a persisted discriminator in it, because "the wal
 nothing changed" and "the walk is still running" are otherwise byte-identical states.
 """
 
+import dataclasses
 import os
 import uuid
 from pathlib import Path
@@ -495,3 +496,35 @@ class TestWhatCountsAsABuildInFlight:
         report = await self._report(tmp_path)
         assert report.summary.state is KnowledgeState.OK
         assert report.summary.files_remaining is None
+
+
+def test_the_diagnostic_field_count_is_what_the_prose_about_it_says() -> None:
+    """`Details`, its serialized form and two prose sites have to agree on one number.
+
+    **Two of the four said twenty; it is eighteen.** `serialize_knowledge.py`'s docstring for the
+    diagnostic half and `design/knowledge-index.md` §8.5's rationale both carried "twenty
+    diagnostic fields", while `_details_payload` emits one key per `Details` field and §8.5's *own
+    enumeration* lists eighteen. A number explaining why a surface is shaped the way it is,
+    disagreeing by two with the dataclass that shapes it.
+
+    Pinned against the dataclass rather than by a third copy of the literal. `primary.py`'s
+    "roughly twenty fields per knowledge base" is deliberately **not** covered: that is a whole
+    `status` entry — 5 summary plus 18 diagnostic — and is hedged.
+    """
+    declared = len(dataclasses.fields(reporting.Details))
+    spelled = {18: "eighteen", 20: "twenty"}.get(declared, str(declared))
+    repo = Path(__file__).resolve().parent.parent
+    for relative, phrase in (
+        ("zikaron/service/serialize_knowledge.py", f"The {spelled} diagnostic fields"),
+        ("design/knowledge-index.md", f"{spelled} diagnostic fields per corpus"),
+    ):
+        # Whitespace-collapsed before matching, and that is not defensive tidiness: the first
+        # version compared raw text, the fix for this very finding pushed the phrase across a line
+        # break to stay under the line limit, and the guard went red on a correct tree. `_flat` in
+        # `test_design_pointers_resolve.py` exists for the identical reason. **A guard that matches
+        # a prose phrase must assume the phrase wraps**, because the next edit to the sentence
+        # around it decides where.
+        body = " ".join((repo / relative).read_text(encoding="utf-8").split())
+        assert phrase in body, (
+            f"{relative} should say {declared} diagnostic fields; `Details` declares that many"
+        )

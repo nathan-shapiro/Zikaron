@@ -156,4 +156,6 @@ def require_all(uuids_with_receipt: Sequence[str], *, uuids: Sequence[str]) -> N
     held = set(uuids_with_receipt)
     missing = [uuid for uuid in uuids if uuid not in held]
     if missing:
-        raise ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=missing, hint="fetch it first")
+        raise ZikaronError(
+            ErrorCode.NO_READ_RECEIPT, uuids=missing, hint="re-read it through fetch or next_group"
+        )

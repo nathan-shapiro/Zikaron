@@ -218,7 +218,9 @@ async def _require_receipts(
             db, uuid=row.uuid, ctx=call.ctx, verb=verb, presented_version=row.expected_version
         )
     raise ZikaronError(
-        ErrorCode.NO_READ_RECEIPT, uuids=[row.uuid for row in missing], hint="fetch it first"
+        ErrorCode.NO_READ_RECEIPT,
+        uuids=[row.uuid for row in missing],
+        hint="re-read it through fetch or next_group",
     )
 
 

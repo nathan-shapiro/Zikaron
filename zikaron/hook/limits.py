@@ -46,9 +46,16 @@ TIMEOUT_MS: Final = HOOK_TIMEOUT_SECONDS * 1_000
 #: test reads.
 #:
 #: Its margin is what makes overrun unreachable rather than merely unlikely, and both real worst
-#: cases are asserted in the suite rather than estimated: the shipped policy text is ~6.1 kB, and a
-#: five-row push block is bounded by the `gist` character bound at 6,429 UTF-16 code units — at most
-#: ~19 kB of UTF-8 at the 3-bytes-per-unit ceiling. Both figures are stated in the unit they are
-#: measured in, which this module of all places has to get right: a units count wearing a byte
-#: suffix is exactly the conflation the runtime budget check exists to prevent.
+#: cases are asserted in the suite rather than estimated: the shipped policy text is 6599 bytes, and
+#: a five-row push block is bounded by the `gist` character bound at 6,429 UTF-16 code units — at
+#: most 19,287 bytes of UTF-8 at the 3-bytes-per-unit ceiling. Both figures are stated in the unit
+#: they are measured in, which this module of all places has to get right: a units count wearing a
+#: byte suffix is exactly the conflation the runtime budget check exists to prevent.
+#:
+#: **Exact counts rather than a rounded `kB`, and the policy figure is pinned.** It read `~6.1 kB`
+#: across a change that moved the policy from 6098 to 6230 bytes, and was defensible either way —
+#: 6098 decimal and 6230 binary both round to 6.1 — so no reader could tell a live figure from a
+#: stale one. A prefix that means two things is the same conflation the paragraph above claims to
+#: have avoided, one level down. `architecture.md` carried the fifth staleness of this one number
+#: and is guarded; this was its unguarded second site.
 MAX_OUTPUT_SIZE: Final = KIRO.injection_budget

@@ -1,1 +1,1 @@
-"""The library: every memory behaviour, with no transport and no process concerns."""
+"""The library: every behaviour of both stores, with no transport and no process concerns."""

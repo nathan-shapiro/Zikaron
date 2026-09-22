@@ -51,7 +51,7 @@ class TestTheWholeLifecycle:
     async def test_a_knowledge_base_survives_create_rename_list_and_remove(
         self, tmp_path: Path
     ) -> None:
-        """The milestone's headline clause, asserted end to end with the file watched throughout —
+        """The lifecycle's headline clause, asserted end to end with the file watched throughout —
         it has to appear on create and be gone after remove, since a registry that agreed with
         itself while the filesystem did not is exactly the desync this ordering exists to bound."""
         async with open_store(tmp_path) as (store_dir, db):

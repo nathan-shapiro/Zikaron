@@ -5,17 +5,17 @@ test process. `test_service_lifecycle_integration.py` covers the real-subprocess
 decisions directly, against a real `ServiceContext` and a real `RunningServer`.
 
 `idle_self_stop` itself never captures its own baseline — it takes `original_store_inode` as a
-required parameter. Production reads that value from `ctx.store.opened_inode`, a field `Store.
-open`/`Store.create` set from a plain `db_path.stat()` inside `zikaron.core.store.connection.
-open_connection`, immediately after its own `aiosqlite.connect()` returns (that module's own
-docstring has the full history of what was tried before landing there, and the accepted,
-human-authorized gap it deliberately leaves open — round 4 through round 10 of this milestone's
-own review record the full trail). Every test below instead reads a fresh `ctx.store.path.stat()`
-of its own, explicitly, before starting the poll task — this is **not** an attempt to reproduce
-where production actually captures the value; it exists purely to construct a real, valid input
-for `idle_self_stop`'s own parameter, isolating this file's own job (does the poll loop compare
-and react correctly, given *some* baseline) from `open_connection`'s own, separately tested job
-(is the baseline itself trustworthy at the moment it is captured).
+required parameter. Production reads that value from `ctx.store.opened_inode`, a field
+`Store.open`/`Store.create` set from a plain `db_path.stat()` inside
+`zikaron.core.store.connection.open_connection`, immediately after its own `aiosqlite.connect()`
+returns (that module's own docstring has the full history of what was tried before landing there,
+and the accepted, human-authorized gap it deliberately leaves open). Every test below instead
+reads a fresh `ctx.store.path.stat()` of its own, explicitly, before starting the poll task —
+this is **not** an attempt to reproduce where production actually captures the value; it exists
+purely to construct a real, valid input for `idle_self_stop`'s own parameter, isolating this
+file's own job (does the poll loop compare and react correctly, given *some* baseline) from
+`open_connection`'s own, separately tested job (is the baseline itself trustworthy at the moment
+it is captured).
 """
 
 import asyncio
@@ -63,7 +63,7 @@ async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_ac
 async def test_idle_self_stop_detects_a_replacement_that_already_happened_before_it_started(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The exact race round-4 review named directly: `memory.db` replaced **before**
+    """The exact race: `memory.db` replaced **before**
     `idle_self_stop` is even created, not merely before its first poll fires. This is what
     distinguishes "the baseline is captured at the right moment" from "the check works once
     running" — the first version of this fix could have passed the test above (which replaces
@@ -150,8 +150,8 @@ async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recre
 async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rather_than_exiting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only absence or a changed inode counts as "replaced" — round-4 review found the first
-    version of `_store_path_now_differs` folded *every* `OSError` into an unconditional shutdown
+    """Only absence or a changed inode counts as "replaced". An earlier version of
+    `_store_path_now_differs` folded *every* `OSError` into an unconditional shutdown
     decision, which would make a genuine `PermissionError` (or any other unrelated stat failure)
     indistinguishable from an actual store replacement. Forced by monkeypatching `Path.stat` to
     raise a `PermissionError` deterministically, rather than trying to construct a real permission

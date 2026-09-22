@@ -36,7 +36,7 @@ _MAX_CREATE_ATTEMPTS = 10
 def _not_a_real_directory(path: Path) -> ZikaronError:
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
+        source=BadConfigSource.DERIVED,
         key="runtime_dir",
         value=str(path),
         expected="a real directory, not a symlink — refused rather than followed",
@@ -46,7 +46,7 @@ def _not_a_real_directory(path: Path) -> ZikaronError:
 def _wrong_owner(path: Path, *, found_uid: int, expected_uid: int) -> ZikaronError:
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
+        source=BadConfigSource.DERIVED,
         key="runtime_dir",
         value=str(path),
         expected=f"owned by uid {expected_uid}, found {found_uid}",
@@ -56,7 +56,7 @@ def _wrong_owner(path: Path, *, found_uid: int, expected_uid: int) -> ZikaronErr
 def _wrong_mode(path: Path, *, found_mode: int) -> ZikaronError:
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
+        source=BadConfigSource.DERIVED,
         key="runtime_dir",
         value=str(path),
         expected=f"mode {oct(_RUNTIME_DIR_MODE)}, found {oct(found_mode)}",
@@ -66,7 +66,7 @@ def _wrong_mode(path: Path, *, found_mode: int) -> ZikaronError:
 def _too_many_create_attempts(path: Path) -> ZikaronError:
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
+        source=BadConfigSource.DERIVED,
         key="runtime_dir",
         value=str(path),
         expected=(

@@ -1,16 +1,14 @@
 """D15's write-time dedup: search after the write, hand back candidates, never block it.
 
 `architecture.md`'s `zikaron_memory_remember` contract is normative. After a row is written, this
-module
-runs the same hybrid search the read path runs — reusing the new row's own first-chunk embedding
-for the dense arm and its own `gist + content` for the lexical one, so the search costs no second
-embed call — and reports up to `dedup_max` near-duplicates at or above `dedup_threshold`, each a
-row the agent may choose to resolve by amending it and retiring the one just created. The search
-runs **inside the same transaction** as the write it reports on, because it queries the vectors
-that write just inserted, and it never rejects: `zikaron_memory_remember` "writes unconditionally,
-then
-reports" is D32's never-lose guarantee, and refusing a write on a dedup match would be exactly the
-prevention D15 explicitly declines to do.
+module runs the same hybrid search the read path runs — reusing the new row's own first-chunk
+embedding for the dense arm and its own `gist + content` for the lexical one, so the search costs
+no second embed call — and reports up to `dedup_max` near-duplicates at or above `dedup_threshold`,
+each a row the agent may choose to resolve by amending it and retiring the one just created. The
+search runs **inside the same transaction** as the write it reports on, because it queries the
+vectors that write just inserted, and it never rejects: `zikaron_memory_remember` "writes
+unconditionally, then reports" is D32's never-lose guarantee, and refusing a write on a dedup match
+would be exactly the prevention D15 explicitly declines to do.
 
 **`dedup_threshold` is a floor on `s(new row → candidate)`, and that quantity is exact, not
 whatever the dense arm's bounded overfetch happened to surface.** The definition, and the one

@@ -1,10 +1,13 @@
 """What a knowledge-base lifecycle call refuses, and why.
 
 Deliberately **not** `ZikaronError`. That type carries the numeric codes two independently written
-clients agree on over the wire, and every one of them describes something a client asked the
-memory service to do. A knowledge-base name that is already taken, a corpus root that does not
-exist, or a database an indexer is holding are none of those, and giving them wire codes would put
-values on that contract no RPC can return.
+clients agree on over the wire; these classes are the **lifecycle** refusals, raised down in `core`
+where no wire shape exists yet.
+
+The boundary that gives them codes is `service/dispatch_knowledge.py`, and it does so on the
+exception's **type** — `KNOWLEDGE_BASE_UNKNOWN`, `_EXISTS`, `_BUSY` and `_CONFIRM_REQUIRED` are
+the four a caller can branch on. Raising `ZikaronError` here instead would put the wire contract
+in the layer that cannot know whether it is being reached over one.
 
 One class per refusal rather than one class with a reason field. Each carries a message naming
 what to do about it, which is what the command prints, and the split is what lets the caller that

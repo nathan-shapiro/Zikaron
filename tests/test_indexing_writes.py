@@ -1044,7 +1044,7 @@ async def test_for_store_takes_its_identity_from_meta_and_its_bounds_from_the_co
 
 
 # ---------------------------------------------------------------------------
-# The composition seam the write-path milestone needs
+# The composition seam the write path needs
 # ---------------------------------------------------------------------------
 
 

@@ -844,7 +844,7 @@ class TestRefresh:
 
 
 class TestTheWholeLifecycleThroughTheTools:
-    """The milestone's own done-when, as one path: create a corpus, fill it, search it, rename it
+    """The six verbs as one path: create a corpus, fill it, search it, rename it
     and destroy it, without any step reaching for the command line.
 
     The build is the one step done in-process rather than through the spawn, because the spawn is

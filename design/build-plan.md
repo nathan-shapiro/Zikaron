@@ -4,6 +4,10 @@
 > session needs to actually do one. Read `design/coding-standards.md` first — the check gate in §9 is the
 > definition of "done" for every milestone below: `./check.sh` is the per-edit gate and the definition of
 > done for a change, and `./check-matrix.sh` is additionally required before a milestone lands.
+> **CI is not a third thing a milestone must run.** `.github/workflows/check.yml` asserts the matrix's own
+> claim against a commit, by running `check.sh` once per version rather than `check-matrix.sh` at all — so
+> a milestone's local obligation is unchanged, and what CI adds is that the tree identity comes from the
+> SHA. `design/distribution.md` §"What CI asserts" is normative.
 >
 > **How to use this:** pick the lowest-numbered incomplete milestone, read its brief, read the design sections
 > it names as normative, build it, make the check gate pass, then update the status line in `FINDINGS.md`.
@@ -15,10 +19,12 @@
 the opposite choice is defensible for smaller systems:
 
 - Core is roughly the whole system's logic — store, config, records, chunking, retrieval, write path,
-  consolidation, signals. One-shot, that is a few thousand lines with **no verifiable intermediate state**, and
-  the first end-to-end test arrives only after all of it exists. Every bug then surfaces at once, in a stack
+  consolidation, signals, and, since D1's amendment, the knowledge index. One-shot, that is a few
+  thousand lines with **no verifiable intermediate state**, and the first end-to-end test arrives
+  only after all of it exists. Every bug then surfaces at once, in a stack
   where no layer has ever been exercised alone.
-- The design already supplies natural seams: twenty invariants, each attached to a specific layer, plus two
+- The design already supplies natural seams: an invariant per layer, in `schema.md` for the memory store
+  and `knowledge-index.md` §13 for the knowledge index, plus two
   validation ladders and a state machine. Those seams are what make intermediate states *checkable* — a
   milestone is done when its invariants have tests that fail when violated.
 - Each milestone below is independently testable with a fake at its lower boundary, so none waits on the next.
@@ -29,7 +35,7 @@ coordination overhead around a few hundred lines.
 
 **M0 comes first and is throwaway.** Four assumptions underpin the architecture and none has been exercised in
 code. Discovering a broken one after M2 means rewriting the store; discovering it in a 50-line spike costs an
-afternoon. This is `FINDINGS.md` open question 4 turned into a task.
+afternoon. This is the hook→service transport question turned into a task.
 
 ---
 
@@ -197,7 +203,7 @@ others.
 
 ---
 
-## M7 — Consolidation — **complete**
+## M7 — Consolidation
 
 **Shipped and reviewed to `APPROVED`** (`reviews/m7-consolidation-review.md`), as
 `zikaron/core/consolidation/`: `context`, `runs`, `groups`, `rowstate`, `grouping`, `planning`,
@@ -405,7 +411,7 @@ What the probe settled, each item changing a settled statement rather than addin
   subagents at all, so the door D32 guards is closed by the harness. The rule stays in the code for kiro and
   is documented as a no-op under Claude Code.
 - **The write policy reaches subagents, precisely — through the *other* output channel.** `SessionStart`
-  fires once, so a subagent would otherwise inherit the memory tools having never seen D30's policy.
+  fires once, so a subagent would otherwise inherit Zikaron's tools having never seen D30's policy.
   `SubagentStart` carries `agent_type`, so the policy can be injected for every subagent **except
   `zikaron-consolidator`** — the exact rule §"Subagent sessions" wanted and could not express under kiro,
   where the payload carried no agent identity. **The mechanism is not the one the rest of this design uses,
@@ -495,7 +501,7 @@ that result is the phase's first priority. Open question 2 (fusion) is not opene
 
 ---
 
-## M14 — The harness seam, both clients, and the gist character bound — **complete**
+## M14 — The harness seam, both clients, and the gist character bound
 
 Normative: `design/harness.md`; `design/schema.md` §Bounds; `design/architecture.md` §"Degraded modes",
 §"Subagent sessions".
@@ -588,7 +594,7 @@ machine-local by construction for exactly the reason the install contract's cons
 would break every other clone of the repository. (b) `.mcp.json` servers are **project-scoped and require
 per-user approval before they load** *(documented only, unmeasured — `contract` §"Per-server pre-approval";
 M16's end-to-end run verifies it implicitly, since no tool loads until approval)*, so a fresh install can
-silently have no memory tools at all until the
+silently have no Zikaron tools at all until the
 user approves them. The installer states the approval step in its output, the same way M12's already states
 the `subagent`-tool requirement under kiro rather than editing the user's permissions for them.
 
@@ -805,8 +811,9 @@ is one push per idle gap, indefinitely.
 
 **Attempt (2026-08-19): defer `FastEmbedEncoder.load()` to a background thread so the socket binds
 first.** A `BackgroundLoadedEncoder` satisfying the sync `Encoder` protocol, started on a daemon
-thread at construction, every protocol member blocking on a `threading.Event`; `ServiceContext.
-assemble` split so the **open** path used it and the **create** path stayed eager. It works in
+thread at construction, every protocol member blocking on a `threading.Event`;
+`ServiceContext.assemble` split so the **open** path used it and the **create** path stayed eager.
+It works in
 isolation — construction returns in 0.2 ms against 1059 ms, first access blocks ~985 ms, subsequent
 calls ~4 ms — and `assemble` itself drops from **~1100 ms to 245 ms** on the open path.
 
@@ -897,7 +904,7 @@ is cheaper than a discovered dead end.
 
 **Three things are therefore common cost, and none of them is any option's marginal price:** the
 wrapper itself; a *latched-failure channel*, because `FastEmbedEncoder.load` fails after the bind
-for reasons that have nothing to do with identity — `encoder.py:151-155`'s two `BAD_CONFIG`
+for reasons that have nothing to do with identity — `encoder._artifact_failure`'s two `BAD_CONFIG`
 artifact failures, plus download and disk failures on a cold fastembed cache — and that exception
 must be caught in the thread and re-raised on access; and the *self-stop*, because the
 resident-zombie state that follows a latched failure is identical under every option. What the
@@ -919,7 +926,7 @@ over today buried here, worth stating: the in-flight caller's hook normally rece
 `transport`.
 
 **`Store.open` already performs the config-vs-store comparison, on every open, with no encoder in
-hand.** `zikaron/core/store/store.py:472-475` compares `config.get_str("embed_model")` and
+hand.** `Store.open` compares `config.get_str("embed_model")` and
 `config.get_int("embed_dim")` against `meta` and raises `BAD_CONFIG` — invariant 11, named in
 `open`'s own docstring. It runs before the socket exists and before `IndexingContext` is ever
 constructed. So the **operator-error** case — someone editing `embed_model` against an existing
@@ -1128,7 +1135,7 @@ self-healing loss for a permanent resident process per project.
 ## M18 — A group too big to deliver, and a file the consolidator can actually read
 
 Normative: `design/architecture.md` §Components and §"Filesystem security"; `design/harness.md`
-§"The D34 table"; `design/consolidation.md` §"Candidate construction". Evidence:
+§"The table"; `design/consolidation.md` §"What `candidates` actually is". Evidence:
 `research/claude-code-mcp-result-truncation.md` for every harness measurement, and
 `research/consolidation-payload-sizes.md` for how large a group actually gets in a real store —
 including what the rejected trimming alternative would have cost.
@@ -1456,7 +1463,7 @@ patch if it turns out otherwise. Everything after M19 is construction against me
 
 ---
 
-## M19 — Spikes: the three mechanisms that could force a redesign — **complete**
+## M19 — Spikes: the three mechanisms that could force a redesign
 
 Normative: §3.2, §4.1, §5.2, §5.6, §7.2, §8.4.
 
@@ -1515,7 +1522,7 @@ sizes K8's argument but cannot change the design, so it rides along in M21.
 
 ---
 
-## M20 — The registry, and knowledge-base lifecycle without indexing — **complete**
+## M20 — The registry, and knowledge-base lifecycle without indexing
 
 Normative: §3.1, §3.1a, §3.2, §8.4, §8.6, §9, §11; invariants 11, 14, 15.
 
@@ -1586,7 +1593,7 @@ own, and what `remember` accepts is unchanged.
 
 ---
 
-## M21 — Discovery, filtering, and change detection — **complete**
+## M21 — Discovery, filtering, and change detection
 
 Normative: §4.1, §4.2, §5.1–§5.6, §6.2, §6.3, §6.4, §7.5 (the `pending` half), §8.5's skip breakdown.
 
@@ -1698,7 +1705,7 @@ and sets `groups_dropped`; the consolidator mode cannot name the search tool.
 
 ---
 
-## M23 — The detached indexer, progress, and the repair paths — **COMPLETE**
+## M23 — The detached indexer, progress, and the repair paths
 
 Normative: §6.1–§6.4, §8.4's repair rules, §8.5's state machinery, §11 in full, §9's `--force-unlock`;
 invariants 8, 12.
@@ -1729,7 +1736,7 @@ lock is never auto-reclaimed and `--force-unlock` clears it while refusing a liv
 
 ---
 
-## M24 — The MCP management surface — **COMPLETE**
+## M24 — The MCP management surface
 
 Normative: §8.2, §8.4, §8.5, §12.
 
@@ -1833,7 +1840,7 @@ moves in lockstep with the design's block quotes and the parity tests that compa
 
 ## M26 — Rerank the pull path, because retrieval finds the document and picks the wrong passage
 
-Normative: `design/retrieval.md` §"No reranker" and **D23**, whose rejection is scoped to the *push*
+Normative: `design/retrieval.md` §"Reranking" and **D23**, whose rejection is scoped to the *push*
 path and which says in terms that the pull path is **not** rejected. Knowledge search is the pull
 path. `knowledge-index.md` §7.2 (within-KB ranking) and §16 items 1 and 7.
 
@@ -2200,7 +2207,7 @@ nothing further surfaced.)*
 `(3, 13)` row on 3.12, so `show_missing` lists whatever lines those bodies occupy **on their own** —
 none if the rows are lambdas inside the table literal, one or more if they are `def`s — and the matrix
 produces three coverage measurements against one `fail_under = 95`. **Accepted, with no pragma**
-whichever shape the rows take: a row or two is far inside the measured 96.85–98.07% spread, and a
+whichever shape the rows take: a row or two is far inside the measured 96.85–98.12% spread, and a
 `# pragma: no cover` would suppress exactly the signal worth having if the seam ever grows a row
 nothing exercises.
 
@@ -2215,26 +2222,65 @@ distro-packaged set works equally, but **uv becomes a development dependency in 
 stating plainly, because shipping a managed interpreter to *users* was considered and not chosen, and
 this brings a piece of that machinery in for *developers* through the back door.
 
-### The definition of done is stated in seven places
+### The definition of done is stated in nine places (seven when this was written)
 
 `CLAUDE.md`, `README.md`, this file's own header, `.claude/agents/memory-researcher.md`,
-`design/coding-standards.md` §9 (which defines the gate without using the phrase), **`check.sh`'s own
+`design/coding-standards.md` §9 (~~which defines the gate without using the phrase~~ — **false; it
+carries the phrase verbatim, which is what this same section's "the grep returns seven" requires
+and `tests/test_definition_of_done_sites.py` now pins**), **`check.sh`'s own
 header** — *"The check gate. Nothing is done until this exits 0."* — and, once it existed,
 **`check-matrix.sh`'s header**, which states the same rule about itself. The brief's own rule is that
 a silently incomplete rule is worse than an inconvenient one, so **all seven change**, and the sweep
 is over the *claim* — not over the filename. *(Six until `check-matrix.sh` was written; the seventh
-is the file the rule is about, which is the easiest one to forget.)* A grep for the phrase returns
+is the file the rule is about, which is the easiest one to forget.)* ~~A grep for the phrase returns
 nine lines, the seven sites plus this section and done-when 11 — expected, and said here so the next
-person counting does not re-derive it. **Three traps in
+person counting does not re-derive it.~~ **— no line count is written here; run the grep, and say
+which grep you ran.** *Two exist and they are not the same quantity: `additionally required before
+a milestone lands` returns the sites that carry the phrase, which is what done-when 3 nominates as
+the count; `definition of done` returns a much larger set including every discussion of the rule,
+this section among them. Both move with every edit to this corpus.*
+*~~The struck sentence was wrong in every part: the phrase returns 29 lines, 19 outside `reviews/`;
+it does not occur inside this section's heading; and the second extra `build-plan.md` hit is
+done-when 3.~~ **— that correction was itself wrong in all three parts, which is the finding.** It
+silently switched to the *other* grep to get its totals; the heading it says lacks the phrase is
+"The definition of done is stated in nine places"; and the hit it reassigns is the one in done-when
+**11**, exactly where the original put it. *That clause first carried a line number, which was
+stale within the same session — the correction's own insertions had already moved the line it
+named. **Fourth generation**, and the first three were counts. A line number is a count of lines;
+writing one into the paragraph whose subject is that hand-maintained numbers decay is the defect
+rather than an instance of it.* **A stale count was replaced by a wrong one,
+inside the paragraph whose subject is that hand-maintained counts decay — the third generation of
+one defect.** The numbers are gone rather than corrected a third time.* **Three traps in
 that grep, each of which costs or adds a site if unstated**: `build-plan.md:5` writes it as
 `definition of "done"` **with quotation marks**, so a search for the bare phrase misses it;
 `check.sh:2` states the claim in *different words entirely* and no phrase-grep returns it, which is
-CLAUDE.md's own find-by-meaning-not-by-match lesson landing on this very sweep; and the grep does
-return `FINDINGS-archive.md:773`, which **stays as written**, the archive's rule being that it records
-what was believed and when.
+CLAUDE.md's own find-by-meaning-not-by-match lesson landing on this very sweep.
+~~And the grep does return `FINDINGS-archive.md:773`, which **stays as written**, the archive's rule
+being that it records what was believed and when.~~ **— struck: the archive carries no occurrence of
+the phrase, in the tree or at `HEAD`, and `:773` is a section heading.** Trap three described a hit
+that has never existed, while `tests/test_definition_of_done_sites.py` says in as many words that
+the archive "currently filters nothing". *Of the two, the guard is the one that ran.*
+*Withdrawn in place rather than renumbered, because this brief has landed and because the way it
+went stale is the finding. **It is nine sites since M28**, which added `design/distribution.md` §4
+and `.github/workflows/check.yml`'s header, neither existing when the seven were counted.
+~~both stating the rule in the same words~~ **— backwards, and it matters because done-when 3
+nominates a phrase-grep as the authoritative count.** Neither M28 site carries
+`additionally required before a milestone lands`: `distribution.md` §4 writes "required before a
+milestone lands" without the adverb, and `check.yml`'s header says "`check-matrix.sh` is what a
+milestone needs locally". **So the two are different quantities**: the grep returns the sites
+carrying the phrase, pinned by name in `tests/test_definition_of_done_sites.py::PHRASE_SITES`,
+while the larger set is the sites *stating the rule in any words* — those plus
+`design/distribution.md` §4 and `.github/workflows/check.yml`. Name which one you mean before
+quoting either, and **write neither number**: they read *seven* and *nine* here until the kiro
+mirror gained the gate rule and made them eight and ten, which is the fifth generation of one
+count. Reconciling the two sets means adding the phrase to the two M28 sites or accepting that the
+grep under-counts by them, and neither has been done. **And trap two is now refuted by the file it is about**:
+`check.sh:2` reads "the per-edit gate and the definition of done for a change", so a phrase-grep
+does return it. The paragraph warning that a hand-maintained count decays was itself a
+hand-maintained count, and both halves decayed within one milestone.*
 
 Two things travel with that edit. **The hermeticity claim becomes false by omission, in two files**:
-`CLAUDE.md:57–62` and `check.sh:38–44` carry it near-verbatim — the gate is hermetic and *"nothing is
+`CLAUDE.md` §"The check gate" and `check.sh`'s own hermeticity comment carry it near-verbatim — the gate is hermetic and *"nothing is
 covered only there"* — and after M27 the 3.13/3.14 rows are exercised only in the matrix, which needs
 three interpreters, i.e. machine state, precisely what those paragraphs promise the gate does not
 depend on. **Both** gain a sentence naming the matrix as the deliberate exception: what it needs, what
@@ -2392,17 +2438,25 @@ false once the seam owns the read. And `tests/test_service_server.py:148` reads
     normative document — the operator's rule that a design document states what we are doing, with the
     history in the trail. Proposition 2's sentence is the one done-when 9's drift test parses, so it is
     written together with the regex.
-    Then: all six definition-of-done sites ~~carry the two-script sentence from §"The matrix"
+    Then: every definition-of-done site pinned in `tests/test_definition_of_done_sites.py::PHRASE_SITES` ~~carry the two-script sentence from §"The matrix"
     **verbatim**~~ — **withdrawn as built**: every site adapts the wording to its own context and none
     is verbatim. What was wanted is what shipped: each carries the claim with the phrase
     **`additionally required before a milestone lands`** intact, so one grep for that phrase returns
-    every site. `check.sh:2` included and `FINDINGS-archive.md:773` deliberately untouched; **both** hermeticity
-    paragraphs — `CLAUDE.md:57–62` and `check.sh:38–44` — name the matrix as the deliberate exception;
+    every site. `check.sh:2` included — and **not** `FINDINGS-archive.md:773`, struck in §"The
+    definition of done…" above: the archive carries no occurrence of the phrase, in the tree or at
+    `HEAD`, and `:773` is a section heading. *The sentence contradicted itself inside one clause —
+    "one grep for that phrase returns every site" and then a site that grep has never returned — and
+    the claim had already been struck 187 lines earlier in this same brief.* **Both** hermeticity
+    paragraphs — `CLAUDE.md` §"The check gate" and `check.sh`'s hermeticity comment — name the matrix as the deliberate exception;
     `coding-standards.md` §9's command block is corrected to match `check.sh` and names
-    `check-matrix.sh` and when it runs; `README.md:65` reads *"Python 3.12 or newer — 3.12, 3.13 and
-    3.14 are the tested set"* and `README.md:84`'s install command becomes `python3 -m venv .venv`.
-12. `FINDINGS.md` §"Open: distribution…" records the outcome and the review trail, and its status line
-    moves off "briefed". **Its four internal contradictions were fixed when this brief landed rather
+    `check-matrix.sh` and when it runs; the root `README.md`, under Requirements, states Python 3.12
+    or newer with 3.12, 3.13 and 3.14 as the tested set, and its install command is
+    `python3 -m venv .venv`.
+    *(Both line numbers had rotted — 65 and 84 now land on the knowledge paragraph and the indexer
+    table row. Every proposition still holds; only the navigation was wrong, and this brief's own
+    done-when 3 already prescribes naming the passage instead.)*
+12. `FINDINGS.md` §"Current state — resume here" records the outcome and the review trail, and its
+    status line moves off "briefed". **Its four internal contradictions were fixed when this brief landed rather
     than deferred into the milestone** — it had said *"Nothing is decided"* sixty lines above
     *"Decisions taken with the operator"*, prescribed `filterwarnings = error` (a `pyproject.toml`
     setting, which is the outcome the matrix decision exists to avoid), and written
@@ -2431,22 +2485,864 @@ a debt rather than as a nothing.** Those cells are socket-lifecycle questions th
 work and that `cleanup_socket=False` leaves exactly as they were. The sharpest one, stated concretely
 so it can be read cold: `main.run`'s `except BaseException` path calls `shut_down()` **before**
 its own `sock_path.unlink`, so between `server.close()` and that unlink the socket file exists and
-refuses connections; a client then takes `hook/connect.py:237`'s vet-and-unlink and spawns a
+refuses connections; a client then takes `hook/connect.py`'s `_vet_and_clear_stale_socket` and spawns a
 successor; and the old process's own unlink, running after the close, can then remove the
 **successor's** live socket.
 **That unlink is a bare `sock_path.unlink(missing_ok=True)` with no vet at all** — as are the four
 other bare ones: `main.run`'s signal path (per its own comment) and its force-exit helper, and
-the two self-stop paths at `lifecycle.py:116` (idle) and `:182` (encoder failure), which are the
+the two self-stop paths, `lifecycle.py`'s `idle_self_stop` and `stop_on_encoder_failure`, which are the
 *"self-stopping tasks"* `main.run`'s docstring names. Of the **seven** socket-path unlinks under
 `zikaron/service/` and `zikaron/hook/`, only two vet anything —
-`service/lifecycle.py:430` and `hook/connect.py:238`, each behind
-`security.vet_socket_for_unlink` at the line above. So the hazard is one step worse than
+`service/lifecycle.py`'s and `hook/connect.py`'s `_vet_and_clear_stale_socket` — identically named
+in both — each of which calls `security.vet_socket_for_unlink` immediately before its `unlink()`. So the hazard is one step worse than
 "unguarded against inode identity": even the client-side vet that does exist checks ownership and type
 and **not** inode identity, while asyncio's own 3.13+ cleanup — the thing we are switching off — is the
 only unlink in the system that checks the inode.
 `research/python-portability-probes.md` §5b item 3 records that asymmetry. `CLAUDE.md`'s rule is
 triggered by *editing* lifecycle code, which the seam does, so this is a decision to skip a required
 step rather than an absence of one.
+
+---
+
+## M28 — Publication: a licence, a sweep, and a continuous instrument
+
+Normative: creates **`design/distribution.md`**, which becomes normative for supported platforms, how
+Zikaron is obtained, and what CI asserts — at least §"Platforms" (which M29's Normative line already
+points at), §"Acquisition", §"The version scheme" and §"What CI asserts". Amends `design/overview.md`
+§4 with **D35** (supported platforms) and **D36** (distribution and acquisition).
+`design/coding-standards.md` §9 gains a CI row beside `check.sh` and `check-matrix.sh`, **stating what
+CI is rather than adding a third thing to run** — done-when 3 carries the exact distinction, and the
+risk this row exists to avoid is a site that merely appends "and CI" and so makes the drift worse.
+Prior art: `research/python-distribution-portability.md` §§2a, 3. Measurements:
+`research/python-portability-probes.md` §§4, 6, 7.
+
+This milestone publishes the repository and builds the instrument the next one needs. **It ships no
+product code.** The ordering is the operator's decision of 2026-09-21 — *publish, then macOS, then
+polish* — on the argument that nothing platform-coupled should be fixed by reasoning when a runner
+could check it. The cost of that order is stated rather than hidden: the first public commits are
+packaging chores, and the corpus goes public with sections mid-argument.
+
+### The decisions this milestone writes down
+
+Settled with the operator 2026-09-21. **Recorded here because `design/distribution.md` does not exist
+yet**; once it does, the document wins wherever the two disagree. **Deliberately not counted in this
+heading** — a numbered list under a heading that states its own length is an enumeration with no test
+behind it, which is the drift this corpus keeps recording; the list below is the count.
+
+**Each decision carries what was rejected, and that is load-bearing rather than decorative.** The
+operator's rule is that a design document states what we are doing *with rejected alternatives at the
+end*, and `distribution.md` will be written from this brief — so a rejection recorded only in
+`FINDINGS.md`'s index, which is explicitly not normative, would not survive into the document that is.
+
+1. **Platforms: Linux and macOS arm64.** ~~Intel Macs are out and it is not ours to fix — `onnxruntime`
+   stopped publishing macOS x86_64 wheels (reported at 1.23.2; verify against PyPI's release history
+   before quoting the number).~~ **— verified 2026-09-21, and the number survives while the reasoning
+   does not** (`research/onnxruntime-macos-wheels.md`). 1.23.2 (2025-10-22) is indeed the last release
+   carrying a `macosx_13_0_x86_64` wheel, dropped at 1.24.1 with its own release note saying so, and no
+   universal2 wheel exists near it. **But the stack still installs on an Intel Mac for two of the three
+   interpreters we support**: `fastembed==0.8.0` excludes only specific broken point releases rather
+   than everything below 1.24.2, so a resolver backtracks to 1.23.2 on cp312 and cp313. Only **cp314**
+   forces `>=1.24.2` and so fails outright. **The decision is unchanged and its justification is
+   restated**: Intel Macs are out because supporting them means supporting a year-stale pinned
+   `onnxruntime` on two of three interpreters and a hard failure on the third — not because no wheel
+   exists. *(The instructive part is that this brief told its executor to verify the number, and the
+   number was the half that held; what was wrong was the sentence beside it that nobody flagged.)*
+   Windows is out **by transport**: AF_UNIX plus asyncio's POSIX-only Unix
+   transports, so supporting it means a second transport behind the RPC seam and is its own milestone,
+   not a flag.
+2. **`uv` is the recommended acquisition path and host Python stays supported.** Install-time uv only
+   — `uv run`/`uvx` at call time costs **+20 ms** on a process that runs once per user message (probe
+   note §7), which is the one budget this design has repeatedly paid to protect.
+   **Rejected: requiring `uv` outright**, which is tempting because macOS is exactly where a host
+   interpreter fails the `enable_load_extension` test, but reach matters more than a clean single path;
+   and **shipping our own python-build-standalone build**, which would pin SQLite for free and remove
+   the host question entirely, but reimplements what `uv` already does correctly. The second is kept as
+   a later option rather than refuted — see §"Still open" in `FINDINGS.md`.
+3. **MIT.** Every runtime dependency is permissive — `aiosqlite` MIT, `sqlite-vec` MIT/Apache-2.0
+   dual, `fastembed` and `fastmcp` Apache-2.0 — so nothing in the tree constrains the choice.
+   **Rejected: Apache-2.0**, whose patent grant and NOTICE mechanism corporate review prefers and which
+   half the dependency tree uses, on the grounds that for a SQLite-and-ONNX CLI the grant buys little
+   against MIT's shorter, more widely-recognised terms; and **AGPL-3.0**, which would keep the design
+   out of a closed product but which most companies' policies forbid installing at all, so for a
+   locally-run developer tool it mainly blocks the intended users — and would not bind a harness vendor
+   reimplementing the ideas from the public design documents anyway.
+4. **Public repository now, PyPI in M30.** Public repo ≠ published package: `uv tool install zikaron`
+   before M30's front door exists would ship a release whose installer is unreachable (see M30
+   §"The front door"). Until then the documented path is `uv tool install --managed-python git+…`; probe note §6
+   measured that artefact shape on a **local tree copy**, and the `git+` form differs only in where the
+   source comes from, so the absolute-path shebangs the install contract needs are established for it
+   by inference rather than directly.
+   **Rejected: a private repository plus PyPI only**, which keeps the working corpus private but gives
+   up the free macOS runner — the only instrument available for the platform this work commits to; and
+   **a public-code / private-corpus split**, which would get both, at the cost of a maintained
+   duplication whose second site is the one nobody edits. That last failure mode is this project's own,
+   recorded repeatedly in `FINDINGS.md`.
+5. **Model files are fetched and never redistributed** — operator's constraint, stricter than the
+   licence requires. `bge-small-en-v1.5` is recorded as MIT in
+   `research/embedding-models-technical-prose.md`, which is our own note rather than a primary
+   reading; M30 re-verifies it against the model card before shipping a fetcher. The constraint
+   forecloses vendoring the weights in a wheel, which was the option that would have removed the
+   network from first run.
+6. **CI is the only macOS instrument.** No Apple hardware is available. What that buys and what it
+   does not is §"What CI can and cannot prove" below.
+7. **And the order: publish → macOS → polish.** So nothing platform-coupled is fixed by reasoning when
+   a runner could check it. **Rejected: local work first**, which would land the front door and the
+   model fixes against today's green gate but ship the macOS milestone on reasoning alone, with
+   publication then re-opening it; and **paying for private macOS runner minutes** at the 10×
+   multiplier, which would keep publication a deliberate act rather than a prerequisite, at the cost of
+   money and of an instrument only the operator can see.
+
+### The sweep, and why it is first
+
+Publication exposes the working corpus, so the sweep gates everything else here. **Measured
+2026-09-21 over tracked files at `HEAD`:**
+
+| pattern | files | hits |
+|---|---|---|
+| `/home/nathan` | 19 | 76 |
+| `LeibaTrader` | 7 | 60 |
+| `~/Trading` | 7 | 22 |
+| `zk-dogfood` | 6 | 11 |
+| `zk-m26-cockroach` | 4 | 6 |
+| the operator's email address | **0** | 0 |
+
+**`zikaron/` itself is clean.** Every `/home/nathan` hit is in `reviews/` (6), `experiments/` (5),
+`spikes/` (2), `research/` (2), `.kiro/` (2), `design/` (1) and `FINDINGS.md` (1). So the shipped
+package needs no redaction and the question is entirely about the evidence directories.
+
+**Use `git grep`, not a ripgrep-family tool, and the difference is not cosmetic.** Two of the tracked
+files below are `.log`, which `.gitignore`'s `*.log` hides from every tool that honours ignore files —
+so `rg` reports **17 files / 61 hits** where `git grep` reports 19 / 76. **The files it drops are
+exactly the ones carrying the credentials below**, which is as adverse as a tool difference gets. A
+future sweep run with the wrong tool will silently under-count and will look clean.
+
+**The table above is necessary and was not sufficient, which review round 1 established and which is
+this milestone's most important correction.** It sweeps five path strings and an address — none of
+which is a secret — and an earlier draft concluded from it that history could be accepted as it stands.
+**It never ran a pattern for a credential.** Measured:
+
+| tracked file | carries |
+|---|---|
+| `spikes/claude-code-harness/hook.log` | `CLAUDE_CODE_MESSAGING_TOKEN` (32 hex), `CLAUDE_CODE_SESSION_ID` |
+| `spikes/claude-code-harness/mcp.log` | the same |
+| `research/kiro-mcp-lifecycle-probe.jsonl` | a `kiro_env` object **with values**, on all 21 lines: `KIRO_USER_ID`, `KIRO_TELEMETRY_CLIENT_ID`, `KIRO_TUI_READY_TOKEN`, `KIRO_SESSION_ID` |
+| `research/kiro-session-id-probe.jsonl` | **key *names* only** — an `env_kiro_keys` list — plus one value, `env_KIRO_SESSION_ID` (a uuid4) |
+
+**Three are per-process environment dumps** — the `/proc/<pid>/environ` reads D31's own history
+describes — and **the fourth is a key listing**, whose only live-capable content is a session uuid.
+~~A session-scoped messaging token is plausibly long dead and a telemetry client id is an identifier
+rather than a credential, **but this brief cannot say either, because nothing looked.**~~ **— looked,
+2026-09-21, on operator challenge: none of it is a risk.** `CLAUDE_CODE_MESSAGING_TOKEN` pairs with
+`CLAUDE_CODE_MESSAGING_SOCKET=/run/user/1000/cc-socks/<pid>` — **a Unix socket named by pid, on tmpfs,
+under a 0700 directory**. Gone at process exit, wiped at reboot, and even live reachable only by that uid
+on that machine, who needs no token to use it. The session ids and `KIRO_TUI_READY_TOKEN` are uuid4s and
+local handshake values naming local files. **Two are genuinely not ephemeral** — `KIRO_USER_ID` (`d-…`,
+a stable AWS Builder ID directory user) and `KIRO_TELEMETRY_CLIENT_ID` (a stable per-install id) — but
+neither authenticates anything, and both disclose less than the committer metadata every commit in a
+public repository carries.
+**So: no redaction and no history rewrite.** What survives of the finding is narrow and still correct:
+*accept history* had been decided **without the relevant class on the table**, which made it uninformed
+rather than wrong. It is now decided with looking, and the sweep's job is to record *"looked, nothing
+live"* rather than to find something.
+**The over-weighting is its own lesson, and the cheaper half was available throughout: a 32-hex string
+beside the word TOKEN reads alarming, and the ten seconds of reading that dissolve it cost far less than
+the escalation that skips them.** Both the reviewer and I escalated first.
+
+**The fourth row is also a warning about the sweep's own instrument, and it caught both the reviewer
+and me.** Round 1 called all four "environ dumps" and I confirmed it with a grep for variable *names* —
+which matches a name inside a list exactly as well as a name in an assignment, so it could not have
+told the two apart, and I nonetheless wrote "verified independently". **A name-grep cannot establish
+that a value is present.** Family 1's `"[A-Z][A-Z0-9_]+":` pattern inherits the same blind spot from
+the other side: in this file the JSON key is `"env_KIRO_SESSION_ID":`, lowercase-led, and the list
+items are followed by `,` or `]` and never `:` — so the family as written reports **nothing** in a file
+this table names. **Decided: widen it to `"[A-Z][A-Z0-9_]+"`** — any quoted upper-snake string, whatever
+follows. Family 1 is a *signature* family whose job is to flag a file for a human to read, so
+over-matching costs a count while the colon form costs a miss in a file this very table names. *(An
+earlier draft of this paragraph said "but decide" and then did not, which is the same defect one level
+up.)* The other half of the family is right as written: the token assignments in both `.log` files begin
+at column 0, so `^\s*[A-Z][A-Z0-9_]+=` reports them.
+
+**So the sweep gains three pattern families, and the accept-history decision is re-taken on their
+output with the operator:**
+
+1. **Environment-dump signatures** in tracked `.log`/`.jsonl` — `^\s*[A-Z][A-Z0-9_]+=` and
+   `"[A-Z][A-Z0-9_]+"` (the quoted form **without** a trailing colon, per the decision above) — because
+   the unit of exposure here is a dump, not a string.
+2. **Credential-shaped names** — `TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|CLIENT_ID|USER_ID`.
+3. **Credential-shaped values** — 32/40/64-character hex runs, and `-----BEGIN`.
+
+For every hit, record **whether the value is live**, which is the fact that decides between redaction
+and a note. `.gitignore` already names `*.pem`, `*.key` and `.env*`, and `.claude/settings.json`
+carries a deny list, so the project knows this class exists — the sweep simply never ran it.
+
+**Three further things the sweep must not get wrong.**
+
+- **`git grep` reads the working tree, not history.** Every hit above also sits in committed history at
+  whatever revision introduced it, and publishing a repository publishes its history. ~~**This brief's
+  position: accept the history as it stands, redact nothing retroactively, and fix the working tree
+  only where a path is load-bearing.**~~ **— withdrawn as premature, then reinstated once the liveness
+  check was actually run.** The position was never wrong; it was **unsupported**, because nothing had
+  looked at the credential class. Looked 2026-09-21: nothing live, nothing authenticating (see the
+  paragraph above the table). **So accept the history as it stands, redact nothing retroactively, and
+  fix the working tree only where a path is load-bearing** — now on evidence rather than by default.
+  The ordering rule still binds anything *new* the sweep turns up: removing a live token from the
+  working tree while leaving it in history removes nothing, so establish liveness before deciding, and
+  the decision is the operator's, the only remedy being a history rewrite — destructive in exactly the
+  way `CLAUDE.md` forbids an agent to attempt unasked. A home-directory path remains not a secret.
+- **The committer email is in every commit's metadata** and no sweep of file *contents* will find it.
+  Ordinary for an open-source repository, and named here only so it is a choice rather than a
+  discovery.
+- **`LeibaTrader` is a different class from a home-directory path.** It names a private project of the
+  operator's, and several findings quote its store's contents. Redacting the *name* while keeping the
+  quoted material discloses the same thing, so the decision is per-passage and belongs to the
+  operator, not to a grep.
+
+### What CI can and cannot prove
+
+`check.sh` is hermetic — the two harness tiers are excluded because they need a third-party binary
+and somebody else's credential state — so a runner can execute the whole default suite with nothing
+installed but Python, the dependencies, **`git`, GNU `timeout`, and network access to Hugging Face for
+the first model fetch**. That is what makes CI possible here at all, and the three additions are not
+pedantry: `timeout` is not on macOS (done-when 4 guarantees it; M29 owns only the residual class of the
+same kind), and a runner with no network reaches the model download
+and stops.
+
+**CI is strictly stronger than `check-matrix.sh` on one axis and strictly weaker on another.**
+
+- **Stronger: tree identity comes free.** The matrix script had to build a fingerprint over `HEAD`
+  plus every staged, unstaged and untracked difference, and sample it twice, because a local tree
+  moves while the run is in flight — it caught its own author editing `CLAUDE.md` mid-run. A CI job
+  checks out one commit, so *every version saw the same tree* is guaranteed by the SHA rather than
+  asserted by a guard.
+- **Weaker: it cannot dogfood.** No live harness, so `integration_claude` and `integration_kiro` stay
+  local-only and nothing in CI exercises a real session pushing and searching. On macOS that is the
+  residual M29 cannot close.
+
+**The Gatekeeper question is answered by CI, which is worth stating because this project's own first
+framing said otherwise.** The `integration` tier — real fastembed, real sqlite-vec, real sockets,
+real subprocesses — is *in* the default run, so a macOS job performs the full
+pip-install-then-`load_extension` sequence on a real Apple machine. If a pip-extracted `.dylib` were
+quarantined, that job fails. Caveat: a runner's security context is not a desktop's, so this is
+strong evidence and not proof.
+
+**CI must carry the matrix's deprecation filter or it is a second, looser definition of done.**
+`check-matrix.sh` sets `PYTEST_ADDOPTS="-W error::DeprecationWarning -W
+error::PendingDeprecationWarning"` and the matching `PYTHONWARNINGS`; a job that omits them is green
+on a tree the matrix would redden. **One job per version rather than `check-matrix.sh --parallel`**,
+because per-version jobs give clearer failure attribution and CI already supplies the tree identity
+that script's parallel mode exists to provide — but then the env vars are per-job and have to be
+asserted rather than remembered.
+
+**The model download is a per-job cost, and caching it takes one deliberate choice.** The embedder is
+64 MB and, left to fastembed's default, lands under `tempfile.gettempdir()` — which on the macOS runner
+is a per-session path `actions/cache` cannot name at authoring time. So done-when 6 sets
+`FASTEMBED_CACHE_PATH` and caches *that* directory, keyed on the model name and the `fastembed` pin;
+M30's revision pin then joins the key. Named here because a setup that silently pulls 64 MB per job per
+version is the kind of cost nobody measures until it is a bill.
+
+**Done when:**
+
+1. `LICENSE` at the repository root, MIT, with the copyright holder as the operator names himself.
+   **`pyproject.toml` carries `license = "MIT"` — an SPDX expression — plus
+   `license-files = ["LICENSE"]`, and *no* `License :: OSI Approved :: MIT License` classifier**, which
+   setuptools ≥ 77 deprecates when a licence expression is present (this project pins
+   `setuptools==84.0.0`, so PEP 639 is the live shape). Stated exactly because "the classifiers a
+   publishable package needs" was the earlier wording and would have sent the executor to the
+   deprecated combination. Add `readme = "README.md"` and `[project.urls]` in the same pass — both are
+   absent today, and without them the PyPI page is blank.
+2. `version` moves off `0.0.0` to `0.1.0`, and `design/distribution.md` states the scheme: semver,
+   `0.x` while the install contract may still change, and the one rule that matters — **a release
+   whose installed artefacts differ in *shape* from the previous one is a minor bump, never a patch**,
+   because those paths are written into harness config an upgrade must be able to refresh.
+3. `design/distribution.md` exists and is normative for the decisions above, with **D35** and
+   **D36** added to `design/overview.md` §4 and one-line rows in `FINDINGS.md`'s index. `CLAUDE.md`'s
+   design table gains its row.
+   **And every site stating the definition of done says what CI is and is not**, because CI makes a
+   **third** gate and those sites currently name two. **The count is the grep, never a number written
+   here**, and **the set is now pinned by name in `tests/test_definition_of_done_sites.py::PHRASE_SITES`**
+   — read it there rather than re-deriving, because an addition reddens that guard and reddens
+   nothing here. The grep it corresponds to is
+   `grep -rn "additionally required before a milestone lands" --include=*.md --include=*.sh
+   --include=*.json .`.
+   ~~today spanning `check.sh`, `check-matrix.sh`, `CLAUDE.md`, `design/coding-standards.md` §9,
+   `design/build-plan.md`'s own header, `README.md` and `.claude/agents/memory-researcher.md`.~~
+   **— seven names, and there are eight**: `.kiro/agents/memory-researcher.json` joined the set when
+   the gate rule was carried into the kiro mirror, deliberately and with the reason recorded in the
+   guard, **and the `--include` list here could not have seen it** — no `*.json`. *A count-is-the-grep
+   discipline enforced by a grep blind to one of its own sites, with the enumeration beside it short
+   by the same one.* **The grep returns more lines than there are sites, and the
+   difference is not drift**: lines inside `reviews/` are quotations of the claim, and lines inside
+   this file's own briefs are briefs *about* the claim. Reconcile against `PHRASE_SITES` rather
+   than against the line count. **The claim each must carry is the distinction, not the
+   third name**: `check.sh` stays the per-edit gate, `check-matrix.sh` stays what a milestone needs
+   locally, and **CI asserts the *matrix's* claim — every supported version green on one tree —
+   against a commit rather than a working tree, by running `check.sh` once per version rather than by
+   running `check-matrix.sh` at all** (done-when 4). So it is not a third thing to run; it is the same
+   claim with the tree identity supplied by the SHA instead of by a fingerprint. A site that merely
+   appends "and CI" has made the drift worse. **M27's own review trail is
+   the evidence for doing this deliberately**: it found an enumeration of these very sites drifting
+   across four consecutive rounds.
+4. A GitHub Actions workflow runs `check.sh` on Linux for 3.12, 3.13 and 3.14, and on the arm64 macOS
+   runner — **the label verified, not assumed** — for **3.12**, the floor, ~~chosen on wheel-availability
+   grounds since `onnxruntime` cp314 arm64 wheels are unverified in this corpus~~ **— that reason is
+   dead, 2026-09-21: cp314 macOS arm64 wheels have existed since 1.24.1 in February 2026, alongside
+   cp314 Linux x86_64** (`research/onnxruntime-macos-wheels.md`). The version choice is now open rather
+   than forced, and two facts bear on it that the original reason did not: public-repository macOS
+   minutes are **free** on the standard runners, so a second version costs nothing but queue time, and
+   3.12 remains the likeliest *host* interpreter on a Mac, which is the case M29 exists to make work.
+   **Settled with the operator 2026-09-21: it stays 3.12, on that second ground.** The floor is the
+   interpreter a macOS user is likeliest to already have, so it is the version M29's work will be
+   judged on; and three advisory-red jobs on a platform already known broken is noise rather than
+   instrument in the one milestone whose purpose is to *build* the instrument. The reason is now the
+   host-interpreter argument and not a wheel-availability one, and a later milestone widening the
+   macOS matrix is free to do so — the wheels are there.
+   **The label is settled**: `macos-15`, named explicitly — `macos-latest` migrated to macOS 26
+   mid-2026 and `macos-13` is sunset, so the floating label is a moving target
+   (`research/github-actions-macos-runners.md`). Every job exports both
+   deprecation env vars, and **the drift test asserts that per job** rather than asserting the version
+   list alone — the brief's own argument for per-version jobs is that those vars are per-job and must
+   be asserted rather than remembered, and a test that checks only the list leaves the thing the
+   argument was about unchecked. The version list is tied to `check-matrix.sh`'s by the same test.
+   **Each job's interpreter comes from `uv`, by the recipe `CLAUDE.md` §"Setting up a development
+   environment" already gives**: `astral-sh/setup-uv` → `uv python install --no-bin <minor>` →
+   `uv venv --seed --python <minor> .venv` → `.venv/bin/pip install -e '.[dev]'`. **This is not a
+   detail.** `enable_load_extension` is compile-time, `actions/setup-python`'s builds are unverified in
+   this corpus, and probe note §4 verified the flag on exactly the python-build-standalone builds `uv`
+   fetches — which are also what a `uv tool install` user gets. So the recipe is what makes the
+   Gatekeeper and `load_extension` evidence above evidence *about the binary users will run*. It also
+   mirrors `check-matrix.sh`'s own first resolution source.
+   **A macOS-only step must guarantee GNU `timeout`** (`brew install coreutils` plus its gnubin on
+   `PATH`, or equivalent), because `check.sh` wraps pytest in it and macOS ships no such binary.
+   Without it the advisory job dies in the shell script before one test runs, and M28 lands reporting
+   "advisory red, as expected" having built nothing. Workflow-only, so inside the fence.
+   **Confirmed 2026-09-21 and the "or equivalent" is not optional**: the runner image's own readme has
+   zero matches for `coreutils`, `timeout` and `gtimeout` alike, so no Homebrew package provides it,
+   and macOS ships BSD userland with no `timeout(1)` — *(that readme lists installed **packages**
+   rather than `/usr/bin`, so the second half is the documented shape of BSD userland rather than a
+   reading of the file; the job's "prove `timeout` is the GNU one" step settles it on the runner,
+   since under `bash -eo pipefail` a BSD `timeout` has no `--version` and fails there)* — and
+   Homebrew's coreutils installs the GNU tools **`g`-prefixed**, `gtimeout` rather than `timeout`. So both
+   halves are required, `brew install coreutils` **and**
+   `echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"`, and a workflow that runs only
+   the first fails exactly as if it had run neither.
+5. The macOS job is advisory, and **"visible" is operationalised rather than asserted**: an
+   `if: always()` step writes the job's outcome and the word *advisory* to `$GITHUB_STEP_SUMMARY`, and
+   the drift test asserts that step exists. Whether `continue-on-error` still renders the job red in
+   the checks UI is exactly the class done-when 10 admits is untestable before the first push, so the
+   first real run records in `design/distribution.md` what the UI actually showed. **Name the
+   alternative that needs no setting at all**: a plainly failing job that is simply not a required
+   check — there is no branch protection today, so nothing blocks on it either way.
+6. The model cache is cached in the workflow, ~~**and the job sets
+   `FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed_cache` to make that possible**~~ **— that
+   prescribes a form the build then had to reject, corrected 2026-09-22.** The `runner` context is
+   available only at *step* level, not in workflow-level `env:` and not in `jobs.<id>.env:`, so a
+   `job sets FASTEMBED_CACHE_PATH: ${{ runner.temp }}/…` is a reference to a context outside its
+   availability and the job would not start. The built form exports it from `$RUNNER_TEMP` inside a
+   `run:` step, through `$GITHUB_ENV`, which reaches every later step including `./check.sh`. The
+   *reason* below is untouched and still correct — `runner.temp`
+   rather than `github.workspace`, so 64 MB of untracked model does not land inside the checkout where
+   `test_version_seam.py`'s tree scan and ruff both walk; `actions/cache` names either at authoring time
+   equally well, and this one needs no `.gitignore` change. The
+   default is `tempfile.gettempdir()/fastembed_cache`, which on the macOS runner is a per-session
+   `/var/folders/…` path that `actions/cache` cannot name at authoring time — it works on Linux only
+   by accident. fastembed already honours the variable, so this is workflow-only and inside the fence.
+   Key it on the model name **and the `fastembed` pin — until M30 pins a revision, which then joins the
+   key** (M30 done-when 7, and the reason is there: `actions/cache` saves only on a key miss, so a key
+   that does not name the revision goes stale permanently rather than refreshing).
+7. The sweep is run — **all four families: the path strings, and the three credential families above** —
+   its per-pattern counts recorded in `FINDINGS.md`, and every decision written down with its reason.
+   **Two blocker classes, not one**: any hit inside `zikaron/`, and **any live credential anywhere** —
+   the second being a standing guard rather than an expectation, since the four known files were read
+   2026-09-21 and hold nothing live.
+   There are no `zikaron/` hits today and a test asserting that is cheaper than a habit — but **assemble
+   its patterns from fragments**, as M27's version-seam scanner does, or the test file becomes a
+   `/home/nathan` hit in every later sweep and the count drifts by one forever.
+   **State each pattern, because two of them do not reproduce otherwise.** The email row means *the
+   operator's address*: a naive `@` regex returns six hits, all `@example.invalid` placeholders in
+   `spikes/spike_git_shapes.py` and two knowledge-git test files, so the pattern must exclude
+   `.invalid`/`.example` or name the address directly.
+   **And the table's counts are already stale by this brief's own hand.** Writing these sections put
+   `/home/nathan` into `design/build-plan.md` several more times and into `FINDINGS.md` once more, and
+   the other rows moved the same way, because a document that quotes the strings it counts becomes a
+   site. The table is marked *"at `HEAD`"* and is true there. **Reconcile the `design/` and
+   `FINDINGS.md` rows against the quoting rather than reading their growth as new exposure** — the same
+   reason the test above assembles its patterns from fragments.
+8. `README.md`'s install section documents the two supported paths — `uv tool install --managed-python git+…` as
+   recommended, a source checkout plus a host `python3 -m venv` as the alternative — and says plainly
+   that macOS is untested until M29. **The `git+` URL is not knowable until the remote exists**
+   (done-when 10), so README carries the recommended path with the URL as the one placeholder the
+   publishing commit fills in; everything around it is written now.
+9. `./check.sh` and `./check-matrix.sh --parallel` both green on one tree identity.
+   **Expect the first CI run's coverage to sit lower than a local one and do not touch the floor for
+   it.** `fail_under` is 95 against a locally measured 96.85–98.12% spread that moves with load,
+   because the socket-and-timing branches take error paths or not depending on how a race lands; a
+   runner's core count and load differ from this machine's. A red first run on coverage is a fact about the runner, not a
+   regression, and neither raising nor lowering the floor is licensed by one CI reading.
+10. **The repository is prepared for publication; the operator sets the remote and pushes when it is
+    time.** (Operator, 2026-09-21, on an earlier draft that made more of this than it is.) So the
+    **session** brings the tree to a publishable state and stops — the *milestone* closes on a green
+    push, per (b). Two consequences that do matter.
+    **(a) The workflow must name the branch that exists, which is `main`.** ~~The branch name is a
+    decision. The working branch is `master` while this repository's stated main branch is `main`, and a
+    public repository should not carry that disagreement.~~ **— withdrawn 2026-09-21 on operator
+    challenge, and there was no disagreement to withdraw.** "Stated" came from the *harness's* opening
+    git-context line, which is Claude Code's own default guess; checked against the repository, there is
+    **no `main` branch, no `init.defaultBranch` set locally or globally, and no remote**. ~~GitHub takes
+    whatever branch is pushed first as the default, so `master` costs nothing.~~ What remains is the one
+    concrete coupling: `on: push: branches:` names the branch, and a workflow keyed to the other one
+    would simply never fire.
+    **— and the withdrawal was itself refuted the next day, which makes this passage a three-layer
+    record of one fact nobody checked.** On 2026-09-22 the operator reported that **the repository
+    already exists**: `git@github.com:nathan-shapiro/Zikaron.git`, created through GitHub's own UI with
+    an MIT `LICENSE`. Read with `git ls-remote` — which needs no remote configured and writes nothing —
+    it has **one branch, `main`, at commit `67088208`, with `HEAD` pointing at it and no `master` at
+    all**. So "GitHub takes whatever branch is pushed first" never applied: the default was set at
+    creation, before any of this was written. **Local `master` was renamed to `main`** on the operator's
+    decision, `git branch -m`, which moves no commit and discards nothing.
+    *(The instructive part is now the shape of the error rather than the error. Layer one invented a
+    fact from a harness status line. Layer two corrected it by reading the local repository — correctly,
+    and it was still wrong, because the question was never local. Layer three read the remote. **Each
+    layer checked one more thing than the last and each stopped at the boundary of what it thought the
+    question was about.** The brief's own §M28 opening says publication is the subject; the repository's
+    own existence was inside that subject and outside every check.)*
+    **One consequence the milestone must hand over rather than solve**: local `main` and remote `main`
+    share no history, so an ordinary push is refused. Reconciling them — force-push, or merge with
+    `--allow-unrelated-histories` — rewrites or merges published history and is **the operator's, not a
+    session's**, per `CLAUDE.md`'s standing rule. The remote `LICENSE` and this tree's `LICENSE` are the
+    same licence and will resolve to one file either way.
+    **The backup refs are a non-issue and the count here was wrong too.** There are **five** —
+    `backup-pre-m15-recommit`, `backup-pre-rebase`, `-2`, `-3`, `-4` — not the two an earlier draft
+    named, and `git push origin main` sends none of them. Only `--all` would.
+    **(b) The workflow cannot be exercised before the first push, and the push is the operator's.**
+    Every done-when item above except 5's first-run UI record is verifiable locally; these two are not,
+    and a workflow file is notoriously a thing that looks correct and fails on its first real run.
+    **So the session brings every locally-verifiable item to green, lands the files, and stops — and
+    the milestone is not closed until the operator's push has produced a green run**, which the session
+    then records in `design/distribution.md` per done-when 5. An instrument that has never run is not
+    yet one, and **M29 does not start on a workflow that has not gone green.**
+    *(This item said "stops" and "not complete until green" in two paragraphs that restated each other,
+    one of which read as forbidding what the other required — the duplicate arose from trimming the
+    item after the operator's instruction and is exactly the fresh-prose defect this trail keeps
+    finding. Reconciled at review round 2: the **session** stops; the **milestone** closes on green.)*
+
+**Fence.** No product code. No `zikaron` console script, no model-cache change, no SHA pinning, no
+PyPI upload, no macOS fix — each is M29's or M30's, and this milestone's whole value is building the
+instrument *before* the fixes rather than after. **The sweep does not rewrite history**, and no git
+operation that discards work is performed. **`.kiro/` is not edited** even though it carries two of
+the `/home/nathan` hits, per the standing rule.
+
+---
+
+## M29 — macOS green
+
+Normative: `design/architecture.md` §Paths — the `sun_path` sentence and the `$XDG_RUNTIME_DIR`
+fallback. `design/distribution.md` §"Platforms" records what the runner established.
+
+**The macOS job goes from advisory to required.** Everything below was believed to be the work, and
+**measurement retired the largest item on the branch macOS takes while exposing a small product change
+on the branch it does not** — which is why this brief leads both with what is *not* here and with the
+one thing that is.
+
+### The `sun_path` limit: a comment defect on the branch macOS takes, an unbounded input on the other
+
+macOS caps `sun_path` at 104 bytes against Linux's 108, both including the terminating NUL, and
+`service/paths.py`'s comment on `_HASH_HEX_CHARS` sizes the hash against *"the ~108-byte `sun_path`
+limit"*. **Measured 2026-09-21 against the real functions:**
+
+| branch | socket path | length |
+|---|---|---|
+| `$XDG_RUNTIME_DIR=/run/user/1000` | `/run/user/1000/zikaron/<32 hex>.sock` | 60 B |
+| no `$XDG_RUNTIME_DIR` (**the macOS branch**) | `/tmp/zikaron-1000/<32 hex>.sock` | 55 B |
+
+Against macOS's 103 usable bytes (104 with the NUL) that is **48 bytes of headroom on the fallback
+branch**. The only input that moves it is the uid's width: uid `501`, macOS's first user, gives 54 B
+and 49 spare; a ten-digit uid gives 61 B and 42. *(This figure read **45** in three documents until
+review round 1 subtracted it: 103 − 55 = 48, and no subtraction of 55 or 60 from 103 or 104 yields 45.
+An arithmetic slip, propagated by copying rather than re-deriving, inside the pair of documents whose
+argument is that a number you did not produce is somebody's recollection.)*
+
+**The lock path is not a consumer of this bound**, and an earlier draft implied it was by adding its
+five bytes to the figure. `lock_path` is an ordinary file opened for `flock`; `sun_path` bounds only
+what is passed to `bind()`. So the test below covers the socket path, and if it covers the lock path
+too that is tidiness, not a constraint.
+
+**What is safe by construction is the *store* path's contribution, and that is narrower than "the
+design is safe".** The store path is *hashed to 32 hex characters*, never embedded, so no project
+nesting depth can move the number — which answers
+`research/python-distribution-portability.md` §5's request to check the bound *"for deeply-nested
+project directories"*. **But the runtime directory is prepended verbatim, and on the XDG branch that
+input is unbounded and user-controlled.** Worked through at review round 1: the very convention §5
+found in the wild for macOS, `$TMPDIR/runtime-$UID`, gives
+`/var/folders/zz/<~30 chars>/T/runtime-501/zikaron/<32 hex>.sock` ≈ **106 bytes**, over the limit, so
+any user who exports `XDG_RUNTIME_DIR` that way gets `OSError: AF_UNIX path too long` at bind. The
+earlier draft of this brief noted that convention *"would be longer"* and then reasoned only about the
+branch where nobody sets the variable — the exact shape of oversight it accuses `FINDINGS.md` of two
+paragraphs later.
+
+**So the decision is taken here rather than left for the milestone to stop on: an over-length socket
+path is refused, never repaired.** That is `design/architecture.md` §"Filesystem security"'s own rule
+for the runtime directory, and silently falling back to `/tmp/zikaron-<uid>` when the user asked for
+somewhere else would be repair. The refusal is a `bad_config`-class error naming `XDG_RUNTIME_DIR`, the
+computed length and the limit.
+
+**Two specifics, because leaving either open lets an executor build the wrong thing.**
+
+**(a) The check goes in the pure function — and the diagnosis cannot reach every caller, which the
+first draft of this paragraph got wrong.** `socket_path` is reached from `hook/connect.py` and
+`mcp/connection.py`; the service takes its `sock_path` from argv and never computes one. A refusal "at
+bind" would fire *after* a client had already run start-if-absent and spawned a service, so the client
+would see a spawn failure instead. In the pure function it cannot be bypassed and all three callers get
+the same answer. **But "an error naming `XDG_RUNTIME_DIR`, the computed length and the limit" cannot be
+delivered by the hook**: `hook/push.py` funnels every failure into `record_failure`, and `hook.log`'s
+contract — `architecture.md` §"Filesystem security", restated in `failure.py` and `write_policy.py` —
+is *"a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold
+a leaked secret"*. So:
+- the refusal is **a new exception defined in `service/paths.py` itself**, which must stay stdlib-only,
+  since `hook/connect.py` imports that module directly for exactly that reason — it therefore cannot
+  import the store's error types, and "`bad_config`" above names an RPC code the *service* returns, not
+  this;
+- `push.py` maps it to one new **fixed** `hook.log` kind, `socket_path_too_long`, and that label is the
+  whole of what that log may carry;
+- the variable name, length and limit reach the user through the **MCP server's start-up failure** on
+  stderr, and through `zikaron doctor` once M30 lands;
+- `hook/spawn_warm.py` suppresses it, as it suppresses everything, deliberately.
+
+**(b) The limit is per platform, held as data — and four details decide whether the guard is real.**
+CPython refuses `len >= sizeof sun_path`, so usable is **103 on macOS and 107 on Linux**. M27's
+"identical on every version" instinct would pick a single 103, which *tightens Linux by four bytes* and
+would make this milestone's fence false for a path that binds today. So a two-row table
+`{darwin: 104, linux: 108}`, **taking the platform as a parameter so both rows are tested on Linux** —
+and:
+1. **The comparison is `>=` against the sizeof**, which is CPython's own predicate. A `>` against 104
+   admits a 104-byte path that `bind()` then refuses.
+2. **The unit is bytes, not characters**: CPython measures the *encoded* path, and `$XDG_RUNTIME_DIR` is
+   user-controlled and may be non-ASCII. `len(os.fsencode(path))`, never `len(str(path))`.
+3. **The boundary is tested at the boundary.** Done-when 2's two cells sit 42 and 3 bytes from the edge
+   and pin neither of the above; removing the check passes an off-by-one. Add exactly 103 accepted /
+   104 refused under `darwin`, 107 / 108 under `linux`, and one non-ASCII runtime directory whose *byte*
+   length crosses the bound while its character length does not.
+4. **Exact match on `sys.platform`, and the table lives in `paths.py`** beside `_HASH_HEX_CHARS` — *not*
+   in `asyncio_compat`, whose lookup is greatest-key-≤ over an ordered version tuple (platform strings
+   have no order) and whose docstring reserves it for version differences. **An unknown platform takes
+   the smaller row**: it can only refuse what another platform might have accepted, never pass what the
+   kernel will reject, and D35 promises nothing beyond the two named.
+
+**This is a product change and it touches Linux too** — where the same over-length export produces the
+same bare `OSError` today — so it is called out against this milestone's own fence below. The fence's
+"no Linux user is likely to have set this" holds **only** under (b); a single 103 would break paths that
+work.
+
+The rest of the work is to correct the comment from "~108" to 104 and put the bound in
+`architecture.md` §Paths where a test can hold it.
+
+### The absent `$XDG_RUNTIME_DIR` already has a fallback
+
+macOS sets no such variable, so `runtime_dir` takes its `/tmp/zikaron-<uid>` branch — which exists, is
+the branch `security.py` already vets as hostile-by-default, and is *shorter* than the XDG one. The
+convention the research note found in the wild, `$TMPDIR/runtime-$UID`, would be **longer**
+(`/var/folders/…` is deep), so **as a default it buys nothing** — which is a different claim from
+"nothing about that branch needs attention", the inference the section above withdraws. **This brief's
+position: keep `/tmp/zikaron-<uid>` on macOS and say so in `architecture.md` §Paths, rather than adding
+a platform branch for the *default*; the *bound* on a user-exported value is a separate matter and is
+decided above.**
+
+~~**What needs verifying on the runner rather than reasoned about: that `security.py`'s vetting passes
+on macOS's `/tmp`**, which is a symlink to `/private/tmp` — exactly the shape a hostile-directory
+check is built to be suspicious of. **This is the one real risk in the milestone and it is a plausible
+blocker**: if the vet refuses, every store on macOS fails to start, and the fix is a decision about
+what the vet is defending against, not a tweak.~~
+
+**— mis-sized, and answerable by reading, which review round 1 did.** `ensure_runtime_dir` calls
+`path.lstat()` on **the leaf** — `/tmp/zikaron-<uid>` — and refuses only if *that* entry is a symlink.
+`/tmp` is a parent component, which `lstat` traverses exactly as `stat` would. **So the vet is
+expected to pass on macOS**, and the runner's job is to confirm it rather than to discover it. Kept in
+place because the error is instructive: this brief called it *"the one real risk"* one paragraph after
+criticising `FINDINGS.md` for *"a plausible worry restated across documents until its size was
+assumed"* — and the two risks that were genuinely unread, the unbounded XDG branch above and the
+gate script's own portability below, are the ones it did not name. **A brief is not exempt from the
+rule it is citing.**
+
+### Everything else is "run it and see" — with one item that was readable all along
+
+Which is the point of the ordering. But *"run it and see"* is only honest about what reading cannot
+reach, and one item here could have been read: **the gate script's own portability.** `check.sh` wraps
+pytest in GNU `timeout`, which macOS does not ship. If the runner image lacks it, the advisory macOS
+job dies in the shell script before a single test runs — and M28 would land reporting that job
+"advisory red, as expected" while having built no instrument at all. M28's workflow guarantees
+`timeout`; this milestone owns whatever else of the same class turns up (`bash` version, `rm -f`
+globbing, anything assuming GNU coreutils flags).
+
+Candidates genuinely needing the runner, none of them assumed: `onnxruntime`'s minimum macOS version
+against the image; `fastembed`'s download path under a different `TMPDIR`; file-mode assertions where
+macOS's default `umask` or ACLs differ; anything in the suite that assumes `/proc`.
+
+**Done when:**
+
+1. Every platform-coupled fact the runner exposes is fixed in the product, or recorded as a supported
+   difference in `design/distribution.md` — never worked around in a test.
+2. `service/paths.py`'s comment says 104, and `architecture.md` §Paths carries the bound, the reason
+   the *store* path's contribution is safe by construction, and the fact that the runtime directory's
+   is not. **The refusal is built as (a) and (b) above specify** — a stdlib-only exception from
+   `paths.py`, a fixed `hook.log` kind, the detail surfacing through the MCP server and `doctor`, and a
+   per-platform byte bound compared with `>=`. Tests: the fallback branch fits with a ten-digit uid; an
+   over-length `xdg_runtime_dir` is refused rather than left to `bind()`'s bare `OSError` and never
+   silently redirected to the fallback; **plus (b)3's boundary cells** — 103 accepted / 104 refused under
+   `darwin`, 107 / 108 under `linux`, and a non-ASCII runtime directory whose byte length crosses the
+   bound while its character length does not. The function already takes `xdg_runtime_dir` as a
+   parameter, so every test states the environment rather than mutating the process's.
+   **Mutation-verify the refusal** — and note that the two original cells, 42 and 3 bytes from the edge,
+   would pass an off-by-one, which is what (b)3 exists to catch. The hook's own test asserts its
+   `hook.log` line carries the fixed `socket_path_too_long` kind **and nothing else**.
+   **`tests/test_hook_connect.py`'s existing "~108-byte kernel limit on Linux" docstring is read and
+   left**: it hands a 300-character path straight to `_try_connect`, *below* `paths.socket_path`, so it
+   stays reachable and stays true. Add one clause saying it bypasses the new refusal deliberately, so a
+   sweep for "108" neither "fixes" it to 104 nor counts it as drift. **That is the third "~108" site**;
+   the other two are `paths.py`'s comment and `architecture.md` §Paths.
+3. `runtime_dir`'s macOS behaviour is stated in `architecture.md` §Paths, and the `security.py`
+   vetting question is **confirmed** on the runner — expected to pass by reading, since `lstat` vets
+   the leaf and not its parents, so a runner disagreement is the interesting outcome rather than the
+   expected one.
+4. The macOS job loses `continue-on-error`, and M28's workflow comment naming M29 goes in the same
+   commit.
+5. `README.md` stops saying macOS is untested and says exactly what *is* tested: the hermetic gate on
+   arm64, with the live-session wiring named as the residual.
+6. `./check.sh` and `./check-matrix.sh --parallel` green on Linux; the macOS job green on the same
+   commit.
+
+**Fence.** **One deliberate exception, named because the fence would otherwise forbid it:** the
+over-length-path refusal in done-when 2 **does** change Linux behaviour, replacing a bare `OSError` at
+bind with a named `bad_config` error on an input no Linux user is likely to have set. It is in scope
+because the macOS work is what discovered it and because splitting a two-line guard across milestones
+would leave the platform it was found on unprotected. Nothing else Linux-visible moves; a fix that
+alters ordinary Linux behaviour is a different milestone.
+**No Intel-Mac work** — no `onnxruntime` pin gymnastics, no alternate embedder; the platform is arm64
+and the wheel gap is upstream's. **No front-door or model work**, which is M30. If the `security.py`
+vet does refuse on the runner — contrary to the reading above — that is a design decision about what
+the vet defends against, and it is raised and stopped on rather than resolved here.
+
+---
+
+## M30 — The front door, the model on disk, and the release
+
+Normative: `design/distribution.md` gains §"The front door" and §"Model acquisition";
+`design/architecture.md` §"The install contract" is re-read to confirm nothing here changes the
+installed command strings, together with `design/harness.md` §"The installer's two targets".
+*(An earlier draft cited that first section as living in `harness.md`, which has no such heading —
+`harness.md` refers to it by name and it is `architecture.md`'s. A pointer a fresh session cannot
+resolve, found at review round 1.)*
+`design/overview.md` D19/D20 are amended withdraw-style for the pinned artefacts.
+
+Three things, all of which a stranger's first ten minutes depend on.
+
+### The front door
+
+**Two user-facing CLIs are currently reachable only as `python -m`.** `zikaron.install` and
+`zikaron.knowledge` each have a `__main__.py` and no console script; the shipped scripts are
+`zikaron-hook` and `zikaron-mcp` alone. Under `uv tool install` the tool venv's interpreter is not on
+`PATH`, so **the installer and the knowledge CLI are unreachable** without the user finding
+`~/.local/share/uv/tools/zikaron/bin/python`. For a feature that took six milestones to build, that is
+the defect to fix first.
+**Two, not three: `zikaron/knowledge/indexer/__main__.py` is the third `__main__.py` in the tree and is
+deliberately not a console script** — it is machine-spawned through `sys.executable -m`, the same shape
+as the service, so it wants no entry on anyone's `PATH`. Said here so the next reader counting
+`__main__.py` files arrives at the right answer instead of re-deriving the number as three.
+
+**One `zikaron` umbrella** with `install`, `knowledge` and `doctor`. **`zikaron-hook` and `zikaron-mcp`
+are not touched**, deliberately: they are machine-facing, their absolute paths are written into
+harness config, and `design/harness.md` treats the install contract as normative — folding them in
+would change every installed config for a cosmetic gain on two surfaces no human types.
+`python -m zikaron.install` keeps working.
+
+**`doctor` exists because the interpreter decision supports two acquisition paths**, and it names each
+failure **by remedy rather than by symptom**. **Four pass/fail checks and one report, and the
+distinction matters because done-when 2 sets an exit code:**
+
+| | check | fails when |
+|---|---|---|
+| 1 | `enable_load_extension` present | the interpreter was built without it — the python.org-macOS and conda case the research note predicts, which otherwise arrives as a bare `AttributeError` |
+| 2 | FTS5 available | the linked SQLite lacks it |
+| 3 | `sqlite-vec` loads a real `vec0` table | importing succeeds but loading does not — the probe note's own distinction, and the reason a bare import is not the test |
+| 4 | the model cache is **present at the pinned revision and hash-verified** | a file is there *at that revision* and does not match its pinned hash. A cache holding only some *other* revision is the **absent** case below, not a mismatch |
+| — | the linked SQLite version beside the interpreter's | *never* — a report, not a check: this is the axis no seam can absorb (3.45.1 against 3.53.1 between two builds on one machine), and there is no correct value to compare against |
+
+**Check 4's absent case is exit 0, not a failure, and getting this wrong ships a red first run.** With
+no install-time prefetch (this milestone's fence), a stranger's very first `zikaron doctor` finds no
+model at all — so *absent* reports **"not yet fetched; fetched on first service start"** and passes,
+while *present and mismatched* fails. Unstated, the executor picks, and the likely pick greets every
+new user with a non-zero exit before anything is wrong.
+
+### The model on disk
+
+**The 64 MB embedder is cached in a temporary directory and is lost on reboot.**
+`core/indexing/encoder.py` calls `TextEmbedding(model_name=model_name)` with no `cache_dir`, and
+`fastembed/common/utils.py`'s `define_cache_dir` defaults to `tempfile.gettempdir()/fastembed_cache`,
+overridable only by that argument or `$FASTEMBED_CACHE_PATH`. Measured 2026-09-21:
+`/tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q` is **64 MB**, and 340 MB total once
+M26's spike models are counted. **On macOS it is worse rather than better** — `TMPDIR` is a
+per-session `/var/folders/…` path.
+
+This is a product defect independent of packaging, and **M17's cold-start work never covered it**:
+everything that milestone measured was the cost of loading a model already on disk.
+
+**Fix: an explicit cache directory under the user's cache home.** Per-user, never per-store — a
+per-store cache would duplicate 64 MB per project.
+
+**And `$FASTEMBED_CACHE_PATH` becomes Zikaron's to honour — but fastembed does not stop reading it, and
+an earlier draft of this paragraph said it did.** `OnnxTextEmbedding.__init__` runs
+`self.cache_dir = str(define_cache_dir(cache_dir))` **before** the `download_model` call that returns
+`specific_model_path` early, and `define_cache_dir` reads the variable when `cache_dir is None` **and
+`mkdir`s the result**. So passing `specific_model_path` alone would still create an empty
+`tempfile.gettempdir()/fastembed_cache` — the very `/var/folders/…` directory this section objects to —
+on every service start.
+**So pass Zikaron's resolved directory as `cache_dir` *as well as* `specific_model_path`**: the stray
+`mkdir` then lands in the durable directory and `define_cache_dir` never consults the variable at all.
+Our own resolver reads `$FASTEMBED_CACHE_PATH`, for continuity with anyone who already set it.
+**The layout under it is `huggingface_hub`'s** — `models--<org>--<name>/snapshots/<sha>/` — byte-for-byte
+what fastembed's own path writes today, which is the premise that makes M28's CI cache reusable across
+this change at all.
+
+### The pinned artefacts
+
+The **SHA256 allowlist** `FINDINGS` has carried as unbuilt since the Amazon Q teardown: one pinned
+hash per model file **including `tokenizer.json`**, verified before use. ~~the file deleted on mismatch
+so the next run re-downloads rather than failing forever. ~20 lines.~~
+
+**— that remedy is wrong against how `fastembed` actually acquires files, and the "~20 lines" with it.**
+Read at review round 1 against the installed library: `download_files_from_huggingface` resolves
+`model_info(<repo>).sha` — **the repository's current head** — and snapshot-downloads *that*, and
+`TextEmbedding` forwards no `revision`. So a hash allowlist with no pinned revision has a second
+mismatch cause that is not local corruption: **the first time `qdrant/bge-small-en-v1.5-onnx-q` pushes
+any commit, every install deletes 64 MB, re-fetches the same non-matching bytes, and does it again on
+the next service start — forever.** That is precisely the *"failing forever"* the sentence claimed to
+avoid, with a 64 MB download attached to each attempt. Delete-and-retry is correct for a corrupt local
+copy and only for that.
+
+**So Zikaron owns the acquisition, and the pin is a revision *and* a hash set.**
+`huggingface_hub.snapshot_download(repo_id, revision=<sha>, allow_patterns=[…], cache_dir=<durable>)`,
+then verify the allowlist, then hand fastembed the directory through
+`TextEmbedding(model_name, specific_model_path=<dir>)`, which 0.8.0 supports.
+
+**Four mechanics, each read off the installed library rather than assumed.**
+
+**(i) `huggingface_hub` becomes a *direct* dependency and must be pinned.** It is present transitively
+today — `fastembed` imports it — and that settles availability, not policy:
+`coding-standards.md` pins every **direct** dependency exactly and explicitly does not pin transitives,
+which drift between virtualenvs built on different days. Product code calling `snapshot_download` makes
+it direct, and `pyproject.toml` names no `huggingface_hub` at all. It joins `dependencies` with an exact
+pin — **1.26.0** is what this tree resolves today.
+
+**(ii) The revision must be the full 40-character commit sha, never a tag or a short form — and the warm
+call passes `local_files_only=True` first.** `REGEX_COMMIT_HASH` is `^[0-9a-f]{40}$`, and only a
+`revision` matching it **skips `repo_info` entirely**. A tag or short sha costs an HTTPS round-trip on
+*every service start*; with the network **down** that stalls on the 10 s request timeout before the
+`refs/` fallback, while under `HF_HUB_OFFLINE=1` it fails over at once. That lands on the cold-start path
+M17 fought for, once per session.
+**But "zero network calls" does not follow from the sha alone**, and the first draft here implied it
+did: on the *online* path the file listing comes from the on-disk tree cache and, **if
+`trees/<sha>.json` is absent, from one `list_repo_tree` API call** — whose presence is an artefact of
+whichever `huggingface_hub` populated the cache. **With `local_files_only=True` and a commit hash,
+`_raise_if_incomplete_snapshot` simply returns when the tree cache is missing: no API object is touched
+and no request is possible.** That is also the sequence fastembed's own `download_model` uses. So: warm
+call `snapshot_download(revision=<sha>, local_files_only=True)`; on `LocalEntryNotFoundError` or
+`IncompleteSnapshotError`, the online call; the allowlist verifies whichever returned. **This is what
+makes the offline assertion hold by construction rather than by cache state** — and it removes the only
+reason the `huggingface_hub` pin would have had to join M28's cache key.
+
+**(iii) The one re-fetch is `force_download=True`, and nothing of ours deletes anything.** *(The online
+call; the warm call of (ii) stays `local_files_only=True`.)* The cache
+stores content at `blobs/<etag>` with `snapshots/<sha>/<file>` as a symlink to it, and **when the blob
+exists and the pointer does not it re-links without downloading**. So "delete the file and call
+`snapshot_download` again" deletes the symlink, re-links the same corrupt blob, mismatches again, and
+reports *upstream differs* to a user whose **disk** is bad — the two causes' diagnoses swapped. Only
+`force_download` re-downloads an existing destination.
+
+**(iv) Re-fetch is bounded to one per process**, and a second mismatch is a named failure carrying its
+remedy (*"artefact at revision X differs from the pinned hash — upgrade zikaron"*), never another
+download.
+
+**It buys two distinct things and only one is supply chain.** A public package makes an unverified
+64 MB fetch a real exposure. But pinning `tokenizer.json` is also what makes the tokenizer-dependent
+bounds **provable** rather than assumed — `chunk_max_tokens`, the gist character bound and the
+512-token window arithmetic all rest on a tokenizer nobody pinned. **And that is the second reason the
+revision has to be pinned too**: a hash without one proves only that the fetch will eventually fail,
+not that the artefact the bounds were computed against is the artefact in use.
+
+**The operator's constraint is fetch, never redistribute**, so the weights stay a download and only
+the revision and the hashes travel with the package. Re-verify `bge-small-en-v1.5`'s licence against
+the model card first; the corpus records MIT from its own research note rather than from a primary
+reading.
+
+### The release
+
+PyPI, once the front door exists. The name appears available — the operator reports another project
+used it and renamed — which is worth confirming rather than trusting, since a name claimed between
+now and then changes the install command in every document above.
+
+**Done when:**
+
+1. A `zikaron` console script with `install`, `knowledge` and `doctor`; `zikaron-hook` and
+   `zikaron-mcp` unchanged in behaviour **and in the strings the installer writes**, asserted by a
+   test over the install artefacts rather than by inspection.
+2. `doctor` runs the **four checks and one report** of the table above, exits non-zero when any check
+   fails, and every failure names a remedy. **An absent model cache is exit 0**, per that table.
+   **Verified by mutation**: a stubbed-absent `enable_load_extension` produces the remedy line, not a
+   traceback.
+3. The model cache resolves to a durable per-user directory through **Zikaron's own resolver**, which
+   honours `$FASTEMBED_CACHE_PATH` itself (fastembed never reads it once `specific_model_path` is
+   passed), and a test over that resolver asserts the resolved path is not under
+   `tempfile.gettempdir()`, **and that constructing the encoder creates nothing under it** — which is the
+   stronger property, since fastembed's `define_cache_dir` would otherwise `mkdir` there. **State the
+   mutation rather than saying "must fail against today's code"**: today there is no resolver, so such a
+   test fails by `ImportError` and proves nothing. The mutation is *the resolver returning
+   `define_cache_dir(None)`*.
+4. **The revision (full 40-hex sha) and the hash set are both pinned; `huggingface_hub` joins
+   `[project] dependencies` with an exact pin; and the two mismatch branches are proved *distinguishable*
+   rather than merely both present.**
+   **Expect `tests/test_publication_hygiene.py` to go red the moment those pins land, and do not read
+   it as a planted secret.** M28's publication guard forbids 40- and 64-hex runs anywhere under
+   `zikaron/`, which is exactly the shape of a pinned revision and a SHA256 set; its assertion text
+   names "credential-shaped value", so the failure will describe the pin as one. **Choosing the
+   exemption is this milestone's job and was deliberately left here**, because its shape depends on
+   where the pins live — one module, a data file, one constant or several — which M28 could not know.
+   Pick a per-line marker or a single-file allowlist once the tree exists, and say in the guard's
+   docstring which and why. Branch one: a corrupt local copy — corrupted through the snapshot
+   path, so the write reaches the blob — triggers exactly **one** `force_download` re-fetch and then
+   passes. Branch two: a **source** serving wrong bytes twice (a monkeypatched `hf_hub_download`, or a
+   local `HF_ENDPOINT`) fails once, loudly, with its remedy, and downloads nothing further. A test that
+   exercises only the first branch is the defect this item exists to prevent — and an executor who
+   implements the re-fetch as a delete will fail branch one and may "fix" it by relaxing the test.
+   **Plus: a warm start makes no network call**, asserted with `HF_HUB_OFFLINE=1`, which turns any call
+   into `OfflineModeIsEnabled` — so the test proves the online fallback was **not reached**. That is the
+   assertion protecting M17's cold-start budget, and it holds by construction only because (ii)'s warm
+   call passes `local_files_only=True` with a 40-hex sha; the sha alone leaves one `list_repo_tree` call
+   possible whenever the tree cache is absent.
+5. `design/distribution.md` carries both new sections; D19/D20 amended withdraw-style.
+6. `README.md`'s recommended path becomes `uv tool install zikaron`, the git-URL path stays documented,
+   and the distribution is **built and verified locally** — `python -m build`, then an assertion over
+   the sdist and wheel that **no `research/`, `reviews/`, `experiments/`, `.kiro/` or `FINDINGS*.md`
+   content ships**. setuptools' defaults should already exclude them; a test proves it, because this is
+   the one place the publication sweep's conclusions could be quietly undone.
+   **Uploading is the operator's act**, under the same rule as the push: it needs a PyPI credential.
+   Name the mechanism rather than leaving it — trusted publishing from a release workflow, or
+   `uv publish` from the operator's shell.
+7. **The CI cache key gains the pinned revision — `(model name, revision)`.** The `fastembed` pin may
+   leave the key, the on-disk layout under the cache directory being `huggingface_hub`'s rather than
+   fastembed's. **The path does not move**: it stays `$FASTEMBED_CACHE_PATH` as M28 sets it.
+   *(This item read "a no-op by construction — confirm, do not change" for one round, on review round
+   1's finding 8, which review round 2 withdrew as its own defect: that finding predated the revision
+   pin and the two do not compose. **`actions/cache` saves only on a key miss**, so a cache populated at
+   upstream head `H` keeps hitting a key that does not mention the revision, `snapshots/<R>/` is absent,
+   64 MB downloads on every job of every run, and nothing is ever saved back — the exact "cost nobody
+   measures until it is a bill" M28's own paragraph names. **The lesson is the corpus's own and it has
+   now cost a round twice in one trail: a correction arriving inside a review finding is still a claim,
+   and must be re-derived like any other.** I applied this one as given.)*
+8. `./check.sh` and `./check-matrix.sh --parallel` green; the macOS job green.
+
+**Fence.** **No install-time model prefetch and no lexical-only degraded mode** — both were considered
+and deliberately dropped: the first makes the installer need the network, which today it does not; the
+second is a second retrieval configuration to test and document. No vendored weights, which the
+fetch-never-redistribute constraint forecloses anyway. No change to the installed command strings. No
+Windows, no Intel Macs.
 
 ---
 

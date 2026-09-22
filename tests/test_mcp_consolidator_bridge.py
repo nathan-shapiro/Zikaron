@@ -1,5 +1,5 @@
 """The `memory_plan_groups` lazy-takeover bridge (`zikaron.mcp.consolidator._PlanBridge`) — the
-exact three-state machine `build-plan.md`'s M10 done-when states, tested at its own transitions and
+exact three-state machine `architecture.md` states, tested at its own transitions and
 through the real `zikaron_memory_next_group` tool end to end.
 
 Every test constructs a fake `request` that records which RPC methods were called, in order, and
@@ -96,7 +96,7 @@ async def test_ready_forwards_without_calling_plan_groups_again(
 async def test_store_busy_leaves_the_bridge_unplanned_so_a_retry_replans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`architecture.md`'s exact awkward transition, named in M10's own done-when: a first
+    """`architecture.md`'s exact awkward transition: a first
     `plan_groups` answering `store_busy` leaves the client `unplanned` so the retry plans and
     serves — no `next_group` reaching the service in between, and exactly one takeover eventually
     committed."""

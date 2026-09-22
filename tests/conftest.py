@@ -30,10 +30,16 @@ failure of the test that caused it, and the surviving thread is stopped through 
 
 Detection is by thread target rather than by tracking connections, so it covers every test whether
 or not it went through a shared helper. The `gc` walk that finds the objects runs **only** once a
-leak has already been detected, so the ordinary path pays for one `threading.enumerate()`.
+leak has already been detected, so the ordinary path pays for two `threading.enumerate()` calls
+per test — one for the `before` baseline, one for the delta — and nothing else.
+*It said "one" until the baseline was added: the "identity, not arithmetic" rewrite introduced the
+second call and did not revisit the sentence counting them.*
 """
 
 import gc
+import os
+import shutil
+import tempfile
 import threading
 import time
 from collections.abc import Generator, Iterable, Iterator
@@ -45,6 +51,41 @@ from aiosqlite.core import _connection_worker_thread
 
 from zikaron.harness.spec import KIRO, SPECS
 from zikaron.install import harness as install_harness
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _runtime_dir_is_never_the_developers() -> Iterator[None]:
+    """Point `$XDG_RUNTIME_DIR` at a temporary directory for the whole session.
+
+    The socket path is a hash of the store directory, and tests create their stores under
+    `tmp_path` — a fresh path per test, so a fresh hash per test. Start-if-absent creates
+    `<hash>.sock.lock` beside the socket and, correctly, never unlinks it: unlinking a `flock`
+    target is racy, because a process still holding an fd would lock a detached inode while a
+    newcomer creates a fresh one, and the mutual exclusion silently stops existing.
+
+    So every run of this suite leaves one zero-byte lock file per socket it opened, and without
+    this fixture they land in the runtime directory of whoever ran it. Measured before it existed:
+    **1,388 of them**, accumulating over seven weeks, in a directory whose hashed naming exists so
+    that a human debugging one real store can find its socket among the others.
+
+    Session-scoped so the path stays short: `sun_path` is 108 bytes on Linux and 104 on macOS, and
+    a per-test directory deep under pytest's own tree would spend that budget for nothing. The
+    resulting socket path measures well under it.
+
+    `os.environ` directly rather than `monkeypatch`, which is function-scoped; `mkdtemp` already
+    creates the directory `0700`, which is what `security.ensure_runtime_dir` requires of it.
+    """
+    previous = os.environ.get("XDG_RUNTIME_DIR")
+    directory = tempfile.mkdtemp(prefix="zk-rt-")
+    os.environ["XDG_RUNTIME_DIR"] = directory
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("XDG_RUNTIME_DIR", None)
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = previous
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +104,7 @@ def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         if spec.marker_variable is not None:
             monkeypatch.delenv(spec.marker_variable, raising=False)
         monkeypatch.delenv(spec.session_variable, raising=False)
-        # Added 2026-08-18 with D17's amended store scope. This one repoints the **store**, so a
+        # D17's store scope. This one repoints the **store**, so a
         # test that sets a marker and then reaches resolution would otherwise adopt whichever
         # project launched pytest — this repository — and read and write its real memories.
         if spec.project_dir_variable is not None:

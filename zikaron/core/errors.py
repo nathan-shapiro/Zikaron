@@ -60,6 +60,7 @@ class BadConfigSource(StrEnum):
 
     META = "meta"
     FILE = "file"
+    DERIVED = "derived"
 
 
 class RowState(StrEnum):
@@ -172,7 +173,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             "no read receipt for that uuid at the presented version",
             (
                 PayloadField("uuids"),
-                PayloadField("hint", values=("fetch it first",)),
+                PayloadField("hint", values=("re-read it through fetch or next_group",)),
             ),
         ),
         ErrorCode.INACTIVE_ROW: ErrorSpec(
@@ -192,7 +193,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             (PayloadField("group_id"),),
         ),
         ErrorCode.GROUP_EXPIRED: ErrorSpec(
-            "that group's consolidation run is not effectively active",
+            "that group's consolidation run is not active for this caller",
             (
                 PayloadField("group_id"),
                 PayloadField("run_status"),
@@ -228,19 +229,19 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             (PayloadField("verb"),),
         ),
         ErrorCode.INDEX_FAILED: ErrorSpec(
-            "index maintenance failed and the transaction rolled back",
+            "index maintenance failed and nothing was written",
             (PayloadField("stage", values=tuple(IndexStage)),),
         ),
         ErrorCode.REINDEXING: ErrorSpec(
-            "the store is reindexing and cannot be read",
+            "the store is reindexing and cannot be opened",
             (PayloadField("since"),),
         ),
         ErrorCode.BAD_CONFIG: ErrorSpec(
             "a configuration value is missing, unparseable or out of range",
             (
                 PayloadField("source", values=tuple(BadConfigSource)),
-                # A store value has no file to name, and inventing one would point an operator
-                # at a file the bad value did not come from.
+                # Neither a store value nor a derived path has a file to name, and inventing one
+                # would point an operator at a file the bad value did not come from.
                 PayloadField("file", required=False),
                 PayloadField("key"),
                 PayloadField("value"),
@@ -248,7 +249,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             ),
         ),
         ErrorCode.SCHEMA_INCOMPATIBLE: ErrorSpec(
-            "the store's schema version is newer than this build supports",
+            "that database's schema version is newer than this build supports",
             (PayloadField("found"), PayloadField("supported", values=(1,))),
         ),
         ErrorCode.STORE_IDENTITY: ErrorSpec(
@@ -264,7 +265,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             (PayloadField("name"),),
         ),
         ErrorCode.KNOWLEDGE_BASE_BUSY: ErrorSpec(
-            "a build is running against that knowledge base",
+            "that knowledge base's build lock is held by a process this host cannot show is gone",
             (PayloadField("name"), PayloadField("holder")),
         ),
         ErrorCode.KNOWLEDGE_CONFIRM_REQUIRED: ErrorSpec(

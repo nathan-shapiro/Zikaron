@@ -40,8 +40,8 @@ from zikaron.install.writer import (
 _AUTO = "auto"
 
 #: The marker variable Claude Code exports into every process it spawns, **read from the seam**
-#: rather than spelled again here — a review caught the literal, and it is intent 1's own defect
-#: class.
+#: rather than spelled again here: a second copy of the literal is the drift intent 1 exists to
+#: prevent.
 #:
 #: What is deliberately *not* reused is `harness.detect.current_harness`, and the difference is the
 #: whole point: that function answers "which harness am I running under", falling back to kiro when
@@ -83,7 +83,8 @@ def _parser() -> argparse.ArgumentParser:
         "--print-only",
         action="store_true",
         help="print the entries instead of merging them, and write no shipped files either. Use "
-        "to see exactly what an install would add before letting it.",
+        "to see the config an install would add, in full, and which files it would create, "
+        "before letting it. The shipped files are listed by path, not by content.",
     )
     parser.add_argument(
         "--model",
@@ -104,7 +105,7 @@ def _parser() -> argparse.ArgumentParser:
         "--no-trust-tools",
         dest="trust_tools",
         action="store_false",
-        help="do not pre-approve Zikaron's own tools, so every memory write asks permission. The "
+        help="do not pre-approve Zikaron's own tools, so every tool call asks permission. The "
         "default trusts them: per-write prompts push against the write policy the whole store "
         "depends on.",
     )
@@ -161,7 +162,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
     if not project.is_dir():
         raise InstallError(f"{project} is not a directory")
     if agent is not None and not agent.is_file():
-        raise InstallError(f"{agent} does not exist — --agent takes a path to an existing config")
+        raise InstallError(f"{agent} is not a file — --agent takes a path to an existing config")
     if agent is not None and agent.is_symlink():
         # Refused rather than followed, because publishing an atomic rewrite means replacing the
         # directory entry — which would silently sever a config managed as a link into a dotfile
@@ -225,8 +226,8 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         commit_merge(merge, report)
     if not merges:
         # Kiro with no `--agent`: the shipped files land and the entries are printed for the user to
-        # paste, which is what M12 did and what a user re-running to refresh the consolidator still
-        # expects. Expressed as "nothing was merged" rather than as "kiro without --agent" so it
+        # paste, which is what a user re-running to refresh the consolidator expects. Expressed as
+        # "nothing was merged" rather than as "kiro without --agent" so it
         # stays a fact about this install rather than a harness name leaking into shared flow.
         report.notes.append(target.fragment(plan))
     report.notes.extend(target.notes(plan))
@@ -246,7 +247,7 @@ def _resolve_harness(requested: str, project: Path) -> tuple[Harness, list[str]]
 
     **Both present, or neither and no marker, is a refusal.** The alternative is the failure this
     corpus has already paid for once, in an agent whose `mcpServers` was configured and whose
-    `tools` did not select it: a working-looking install, exit 0, and no memory tools anywhere. A
+    `tools` did not select it: a working-looking install, exit 0, and no Zikaron tools anywhere. A
     wrong-harness install has exactly that shape, and it is worse than an install that did not
     happen.
 
@@ -287,8 +288,8 @@ def _resolve_harness(requested: str, project: Path) -> tuple[Harness, list[str]]
     raise InstallError(
         f"could not tell which harness {project} is for — {evidence}. Pass "
         f"--harness {Harness.KIRO.value} or --harness {Harness.CLAUDE_CODE.value}. Guessing here "
-        "would install artefacts the harness never reads, which exits 0 and leaves no memory tools "
-        "at all."
+        "would install artefacts the harness never reads, which exits 0 and leaves no Zikaron "
+        "tools at all."
     )
 
 
@@ -304,7 +305,7 @@ def _refuse_unusable_agent_flag(agent: Path | None, target: HarnessTarget) -> No
     raise InstallError(
         f"--agent has no meaning under --harness {target.name}: its hook and MCP entries go into "
         "fixed project files (.claude/settings.local.json and .mcp.json), not into an agent config "
-        "you name. Drop the flag, or pass --print-only to see exactly what would be written."
+        "you name. Drop the flag, or pass --print-only to see those entries in full."
     )
 
 
@@ -358,6 +359,13 @@ def _print_report(report: Report) -> None:
     for path in report.backed_up:
         print(f"backed up {path}")
     for path in report.skipped:
-        print(f"kept      {path} (already there — pass --force to replace it)")
+        # The three reasons want different advice, and only one of them is still readable from the
+        # file afterwards.
+        if path in report.kept_unbacked:
+            print(f"kept      {path} (differs, but could not be backed up — see below)")
+        elif path.is_symlink():
+            print(f"kept      {path} (a symlink, left unfollowed — pass --force to replace it)")
+        else:
+            print(f"kept      {path} (already exactly what this version ships)")
     for note in report.notes:
         print(f"\n{note}")

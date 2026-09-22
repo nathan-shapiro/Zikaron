@@ -17,15 +17,28 @@ zikaron/
     records/            # Memory, versioning, receipts, supersession
     indexing/           # chunking, FTS5 sync, vector writes
     retrieval/          # arms, fusion, eligibility, rollup, demotion
+    write/              # the write verbs and their validation
     consolidation/      # grouping, run/group state machine, the four verbs
+    knowledge/          # the knowledge index: KB storage, scan, git change
+                        # detection, its own chunker and retrieval arms, lifecycle
     signals/            # D30's six, as SQL
     config/             # layered resolution, declarative key schema
     errors.py           # the wire error codes, one enum
   service/              # asyncio UDS server, JSON-RPC, lifecycle
+  harness/              # the one seam where a harness difference lives, as data (D34)
+  knowledge/            # the detached indexer process and the `python -m` CLI
   mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
-  install/              # the shipped kiro artefacts and the command that writes them (M12)
+  install/              # the shipped artefacts for both harnesses, and the command that writes them
 ```
+
+*(This tree listed neither `core/knowledge/`, `core/write/`, `zikaron/knowledge/` nor
+`zikaron/harness/` until 2026-09-22 — four real packages, one of them thirty modules — while §1's own
+rule is that **package layout mirrors the domain**. A session following it would have put knowledge
+code somewhere that already had a home. The file contradicted itself: §9 below already names
+`zikaron/knowledge` and records that it shipped a milestone with no coverage floor over it. The
+`install/` comment also said "the shipped **kiro** artefacts", stale since M15 gave both harnesses an
+installer.)*
 
 **No `utils.py`, no `helpers.py`, no `common.py`.** Those names are where cohesion goes to die: they attract
 anything that does not obviously belong elsewhere, and within a month nothing can be found or tested in
@@ -164,14 +177,20 @@ is what turns a one-line failure into a session that never exits and never print
 any test that leaks a connection and stops the thread it left, which is what keeps a mistake here reportable
 rather than fatal.
 
-**Invariant tests are first-class and non-optional.** `design/schema.md` names twenty invariants. Each gets at
+**Invariant tests are first-class and non-optional.** `design/schema.md` names the **memory store's**
+invariants and `design/knowledge-index.md` §13 the **knowledge index's**; no count is written here, since
+either document may add one. *(This read "names twenty invariants", which covered the memory store alone
+and left the knowledge index's outside a rule that calls itself non-optional. The practice already
+exceeded the rule — `tests/test_knowledge_invariants.py` exists — which is the tell.)* Each gets at
 least one test that **fails if the invariant is violated**, named for the invariant it defends. These are the
 tests that make the design enforceable rather than aspirational; they are also what lets a later session
 refactor confidently. If an invariant is genuinely untestable, say so in the test file and explain why —
 do not silently skip it.
 
-**Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result — groupordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the same input and
-asserts byte-identical output. "It was deterministic on my machine" is how ordering bugs ship.
+**Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result —
+group ordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the
+same input and asserts byte-identical output. "It was deterministic on my machine" is how ordering
+bugs ship.
 
 **Coverage is measured and gated.** The floor is **95%**, raised from 90% once the measured margin made
 that safe, and it is a ratchet: it may rise, never fall. A test compares this sentence against
@@ -184,8 +203,8 @@ all, the second time this project has lost a package that way. A test now assert
 name every package that exists.
 
 **Two rules about where the floor sits, and they pull in opposite directions on purpose.** It is raised as
-the suite earns it, and it is never set close to the figure a run
-happens to report, because the total is load-sensitive: the socket-and-timing code takes error branches or
+the suite earns it, and it is never set close to the figure a run happens to report, because the total is
+load-sensitive: the socket-and-timing code takes error branches or
 not depending on how a race lands, and three consecutive runs over one unchanged tree measured 97.64%,
 96.85% and 97.64% with everything passing. A floor inside that spread turns a gate into a coin toss.
 
@@ -204,10 +223,44 @@ Optional per-module, valuable where it applies.
 **Comment *why*, never *what*.** If what the code does is not obvious from the code, fix the code. A comment
 restating the line above it is worse than no comment: it doubles the maintenance surface and drifts silently.
 
-**No circumstantial provenance in code. Ever.** No review-round numbers, no `FINDINGS` references, no dates, no
-ticket ids, no "as discussed". The design corpus will be reorganized; a comment pointing into it rots on the
-first move, and a reader who cannot follow the pointer is left worse off than if the reason had simply been
-stated.
+**The shipped product is the code. Commentary is overhead that has to earn its place, and the
+default is not to add it.** A comment is a claim, nothing in the gate compares it to anything, and
+it goes stale silently on the next edit to the code beneath it. Three rules follow, and they bind:
+
+- **Never annotate a repair.** When you correct a defect, correct it. Do not add a paragraph
+  explaining what was wrong, what it used to say, or how it was found — that belongs in the review
+  file or in `FINDINGS.md`, which exist for it. Measured over a thirty-round audit of this
+  repository: each pass's explanatory prose became the next pass's findings, at roughly one new
+  defect per one-and-a-half fixes, while the software itself changed about four times.
+- **Do not restate a fact the reader can get from the code, a constant, or a test name.** A
+  docstring that enumerates what a function checks is a second copy of the function.
+- **State a number, a count or an enumeration in one place only** — the place closest to the code
+  that determines it. A figure repeated in prose is falsified by the next edit and nothing reddens.
+
+**Do not treat the existing commentary in this repository as the standard to match.** It is denser
+than these rules allow, because it accreted under an earlier reading of them. New code is held to
+the rules above, not to the surrounding files; and a passage you are editing anyway is one you may
+shorten.
+
+**No circumstantial provenance in `zikaron/` or `tests/`. Ever.** No review-round numbers, no `FINDINGS`
+references, no dates, no ticket ids, no *completed* milestone ids, no "as discussed". A reader who cannot
+follow such a pointer is left worse off than if the reason had simply been stated — and the referent
+usually stops existing: milestones end, rounds are forgotten, and `M12` means nothing to anyone who was
+not there.
+
+**Nor is a milestone that has not happened yet.** §5's rationale is that the referent stops
+existing — milestones end, rounds are forgotten. That does not hold forward: when a temporary state
+has an end condition, the planned work's name is the only way to say what ends it, and deleting it
+leaves *"macOS is untested until …"* unanswerable. So `check.sh`, `.github/workflows/` and
+`pyproject.toml` may name **planned** work. A milestone that has already happened is provenance and
+goes.
+
+**A normative pointer is not provenance, and this rule does not ban it.** `` `architecture.md`
+§"Filesystem security" is normative `` names the **contract this code implements**, which a reader needs in
+order to decide whether the code or the document is wrong. Provenance says *when and why this was written*;
+a contract pointer says *what this must agree with*. Several drift tests parse exactly those sections, so the
+pointer is load-bearing rather than decorative. **The distinction is stated because the rule's earlier
+wording did not make it, and a sweep of the former nearly took ~350 of the latter with it.**
 
 State the reason on its own terms so it survives:
 
@@ -278,8 +331,9 @@ loading (`sqlite-vec`, via `aiosqlite.Connection.load_extension`, not by reachin
 `vec0` KNN, the FTS5 external-content amend/erasure sequence, and two-writer `busy_timeout` contention — in
 M0 spike 5, `research/spike-results.md` §"Spike 5". `aiosqlite==0.22.1` verified; pin exactly.
 
-**A `Store` is held with `async with`, or closed in a `finally`. That is a rule about process exit, not about
-tidiness.** The dedicated worker thread above is **not a daemon thread**, so a connection nobody closes keeps
+**Any database handle — a `Store` or a `KnowledgeDatabase` — is held with `async with`, or closed in a
+`finally`. That is a rule about process exit, not about tidiness.** The dedicated worker thread above is
+**not a daemon thread**, so a connection nobody closes keeps
 its process alive after all its work is done — and it prints nothing while not exiting, because CPython joins
 non-daemon threads *before* running `atexit` handlers, so there is no hook late enough to rescue it. Measured
 in this repository's own suite: a run whose tests all completed in 0.76 s then hung indefinitely with an empty
@@ -351,7 +405,15 @@ stdlib-thinness argument rests on, and roughly double the hook's bare interprete
 invocation writes at most one line to `hook.log` and then exits; it has no log lifecycle for `logging`'s
 formatters, handlers or levels to manage, so the entire mechanism is `open(path, "a")` and one `.write()` call.
 The rule, stated plainly so a future change has to name it rather than drift into it: **`logging` for anything
-long-running or off the critical path; a direct minimal write for anything that is neither.**
+long-running or off the critical path; a direct minimal write for anything that is neither; and
+*nothing at all* for a process nobody is positioned to read.**
+
+**The third case is the detached indexer, and it was missing until 2026-09-22 — shipped code
+falsifying a binding rule.** `zikaron.knowledge.indexer` runs with all three streams sent to
+`DEVNULL` (`knowledge/indexer/detach.py`). It is off the critical path, so the two-case rule as
+written predicted it would use `logging`. The trade it actually makes: a log file per knowledge base
+is several concurrent writers and a retention policy, bought for a diagnostic that one foreground
+re-run produces on demand.
 
 ## 7. Errors
 
@@ -379,6 +441,17 @@ definition into something that can be wrong in a detectable way.
 One command runs everything: format check, lint, type check, unit tests with coverage. `./check.sh` is the
 per-edit gate and the definition of done for a change; `./check-matrix.sh`, which runs that whole script once
 per version in §6's tested set, is additionally required before a milestone lands.
+
+**CI is a third name and not a third gate, and the distinction is the content of this paragraph.**
+`.github/workflows/check.yml` asserts the **matrix's** claim — every version in §6's tested set green on one
+tree — against a commit rather than a working tree, by running `check.sh` once per version rather than by
+running `check-matrix.sh` at all. The tree identity therefore comes from the SHA instead of from the
+fingerprint `check-matrix.sh` has to sample twice, which is the one axis on which CI is stronger. It is
+weaker on another, and that one does not close: there is no live harness on a runner, so the two harness
+tiers stay local-only. A job carries the matrix's deprecation filters per job, or it is green on a tree the
+matrix would redden. **Appending "and CI" to the two names above, without the distinction, makes the drift
+worse rather than better.** `design/distribution.md` §"What CI asserts" is normative;
+`tests/test_ci_workflow.py` enforces the properties that make the claim true.
 
 ```
 ruff format --check .  &&  ruff check .  &&  mypy --strict zikaron tests  &&  pytest --cov  # every package
@@ -412,3 +485,48 @@ running sweep. Both halves of that have already happened here, once by an edit a
 nothing to reconcile between versions — but not the during-a-run half, which is why the rule stays.
 
 Formatter output is authoritative; formatting is not reviewed.
+
+## 10. Bulk edits to prose in code
+
+Comments and docstrings are the bulk of this codebase's text, and a sweep across many of them —
+renaming a concept, dropping a convention, restating a reason — is an ordinary task. **It is also the single
+most reliable way to introduce defects here**: one such sweep over ~85 files produced defects that four
+successive review rounds were still finding, and a scripted repair of the first batch produced a syntax
+error. The count is whatever the review trail records — the point is the rate, not the number.
+Three rules, each earned; the third is stated as two passes.
+
+**Never run a scripted reflow over mixed code and prose.** A wrapper that strips `#` to rejoin a
+paragraph cannot tell a comment between two statements from the statements themselves. Stripping the
+marker merges real code into prose and yields something that *looks* like a docstring: in the
+measured case, a `# A stand-in for …` comment and the `await store.connection.execute(` beneath it
+became one sentence. Reflow by hand, or leave the wrapping ugly — an awkward line break costs a
+reader nothing, and this costs them a file that does not import.
+
+**`ast.parse` every changed `.py` after a bulk edit.** One command over `git diff --name-only`, and
+it is what caught the case above. The formatter will not: `ruff format` reports a parse failure only
+for the file it is asked to rewrite, and a syntax error inside a string or a mis-merged comment can
+survive it.
+
+**The hunk is where you start, and it is not where the damage ends.** `CLAUDE.md`'s rule for
+ordinary edits — *"after any edit, re-read the changed passage end to end together with the
+passages around it"* — is unaffordable at 85 files, so a bulk edit needs two cheaper passes
+instead of one expensive one.
+
+**Pass one, mechanical, over the added lines.** Flag a line that is a lone connective (`rather`,
+`and`, `which`), one ending in a dangling em dash, one under a dozen characters that is not
+punctuation, and any line beginning lowercase after a closing parenthesis. This catches the
+**cosmetic** half — every mangled wrap from the measured sweep was on that list.
+
+**Pass two, over each changed file, for the damage that is nowhere near the hunk — and this is the
+half that matters.** Deleting a clause orphans whatever pointed at it, and the pointer can be
+hundreds of lines away: a sweep that removed *"the M5 done-when conditions"* from line 1 of a test
+module left *"the five things the build plan asks **this milestone** to demonstrate"* on line 3 and
+*"**the milestone's own done-when**"* on line 243, both now referring to nothing. So after editing
+a file, grep **that file** for the deictics the deleted words were the antecedent of — `this
+milestone`, `that round`, `an earlier version`, `the same`, `the clause`, `this fence` — and read
+every hit.
+
+*An earlier version of this section asserted the damage is "always **in the hunk**", which is the
+convenient claim and the false one: a review round found nine orphans of exactly this shape, none
+of them in a hunk. A rule that licenses not looking is worth checking against the sweep it was
+written from.*

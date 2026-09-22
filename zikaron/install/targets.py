@@ -70,10 +70,9 @@ _JSON_INDENT = 2
 #:
 #: **Brackets are permitted because they were measured, not assumed.** An earlier revision refused
 #: them and its comment claimed "every id and alias either harness serves satisfies it" — an
-#: unmeasured universal, which a review caught and this corpus's own rule forbids. Probing it
-#: refuted it: a subagent whose frontmatter said `model: sonnet[1m]` **spawned normally**
-#: (`research/claude-code-installer-probe.md` §11), so the long-context alias form is a legitimate
-#: value the installer was rejecting.
+#: unmeasured universal. Probing it refuted it: a subagent whose frontmatter said
+#: `model: sonnet[1m]` **spawned normally** (`research/claude-code-installer-probe.md` §11), so the
+#: long-context alias form is a legitimate value the installer was rejecting.
 _MODEL_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]*")
 
 #: The settings key that pre-approves project-scoped MCP servers. Written under the same
@@ -91,15 +90,16 @@ _ALLOW_KEY: Final = "allow"
 
 #: Said whenever a Claude Code install completes, because the failure it warns about is silent and
 #: total: a project-scoped server that has not been approved simply does not load, and the agent
-#: then has no memory tools with nothing anywhere saying why.
+#: then has no Zikaron tools with nothing anywhere saying why.
 _APPROVAL_NOTE: Final = (
     "Claude Code asks for approval twice over, and a default install answers both: "
     f"`{_ENABLED_SERVERS_KEY}` for whether a project-scoped `.mcp.json` server **loads** at all, "
     "and "
     f"`{_PERMISSIONS_KEY}.{_ALLOW_KEY}` for whether each tool **call** goes through without a "
-    "prompt. That either key has the effect intended is documented rather than measured "
-    "(`research/claude-code-installer-probe.md` §8: a headless run approves everything, so the "
-    "property cannot be observed without an interactive session). So if the memory tools are "
+    "prompt. Both were measured to work in an interactive session — no load prompt, and no "
+    "per-call prompt across six writes and eight reads — but nothing in the shipped software can "
+    "check either one, because a headless run approves everything "
+    "(`research/claude-code-installer-probe.md` §8). So if Zikaron's tools are "
     "absent, check `/mcp` for a server pending approval before looking anywhere else — and if they "
     "are present but every write interrupts you, it is the second key that did not take."
 )
@@ -128,8 +128,7 @@ _SPILL_READ_NOTE: Final = (
     "you as a question."
 )
 
-#: The exposure D32 cannot mechanically prevent here, reported rather than passed over in silence —
-#: the same reflex M12 applied to the array format's inherited `max_output_size`.
+#: The exposure D32 cannot mechanically prevent here, reported rather than passed over in silence.
 _EXPOSURE_NOTE: Final = (
     "Your primary agent can see the four consolidation verbs "
     f"(`mcp__{CONSOLIDATOR_AGENT_NAME}__*`) as well as its own tools. That is not a "
@@ -192,7 +191,7 @@ class HarnessTarget(ABC):
         **One rule for both harnesses, parameterized by a seam value** — `harness_binary` — rather
         than two implementations, because the argument does not vary: an install writes files whose
         only reader is that binary, and writing them where it does not exist produces exit 0, no
-        memory tools, and nothing anywhere saying why. That is the same working-looking-inert
+        Zikaron tools, and nothing anywhere saying why. That is the same working-looking-inert
         outcome `_resolve_harness` refuses to *guess* its way into, and refusing one while
         permitting the other was an inconsistency rather than a design.
 
@@ -214,7 +213,7 @@ class HarnessTarget(ABC):
             f"{self.spec.harness_binary} is not on PATH, so nothing on this machine would read "
             f"what a --harness {self.name} install writes. The hook and MCP entries name that "
             "binary's own mechanisms, and installing them where it is absent exits 0 and leaves no "
-            "memory tools at all. Install the harness first, or use --print-only to see exactly "
+            "Zikaron tools at all. Install the harness first, or use --print-only to see exactly "
             "what would be written."
         )
 
@@ -246,9 +245,9 @@ class HarnessTarget(ABC):
 class KiroTarget(HarnessTarget):
     """kiro-cli: two shipped files under `.kiro/`, and one merge into a user-named agent config.
 
-    Byte-for-byte what M12 shipped. That is asserted by a regression guard rather than hoped for:
-    this milestone's whole risk is that generalising the writer quietly changes the working
-    harness's output, and "we did not mean to" is not evidence.
+    Byte-for-byte what kiro already shipped, asserted by a regression guard rather than hoped for:
+    the risk in generalising the writer is that it quietly changes a working harness's output, and
+    "we did not mean to" is not evidence.
     """
 
     spec = KIRO
@@ -284,9 +283,9 @@ class KiroTarget(HarnessTarget):
             indent=_JSON_INDENT,
         )
         caveats = [
-            f"`{TOOL_SELECTOR}` must be in that agent's `tools`, or the memory tools are simply "
+            f"`{TOOL_SELECTOR}` must be in that agent's `tools`, or Zikaron's tools are simply "
             "absent — `mcpServers` configures the server and `tools` selects from it. Put it in "
-            "`allowedTools` as well, or every memory write will interrupt you for approval.",
+            "`allowedTools` as well, or every Zikaron tool call will interrupt you for approval.",
             "The agent also needs `subagent` among its `tools` for the zikaron-consolidate skill "
             "to spawn the consolidator.",
         ]
@@ -418,13 +417,13 @@ class ClaudeCodeTarget(HarnessTarget):
         if plan.trust_tools:
             merged[_ENABLED_SERVERS_KEY] = _with_servers(listed)
         elif not _ZIKARON_SERVERS.issubset(_strings_in(listed)):
-            # **Conditioned on absence, which a review caught.** The merge never *removes* an
+            # **Conditioned on absence.** The merge never *removes* an
             # entry, so a `--no-trust-tools` re-run over a previously-trusting install leaves both
             # grants in the file — and an unconditional note would then assert the opposite of what
             # the file now says. `plan_kiro_merge` already guards its equivalent note this way.
             notes.append(
                 f"`{_ENABLED_SERVERS_KEY}` was **not** written (--no-trust-tools), so you will be "
-                "asked to approve both Zikaron servers before any memory tool loads."
+                "asked to approve both Zikaron servers before any Zikaron tool loads."
             )
         merged[_PERMISSIONS_KEY], allow_notes = _merged_permissions(
             document, trust_tools=plan.trust_tools, path=path
@@ -462,10 +461,14 @@ class ClaudeCodeTarget(HarnessTarget):
         mcp = json.dumps(
             {"mcpServers": claude_mcp_servers_value(plan.commands)}, indent=_JSON_INDENT
         )
+        # The three advisory notes are deliberately *not* appended here, unlike the caveats kiro's
+        # fragment carries. `notes()` below returns them and every caller extends with it, so a copy
+        # here printed each one twice under `--print-only` — the one path that appends the fragment
+        # and the notes. Kiro is unaffected because its fragment's caveats are config-shape advice
+        # its `notes()` does not repeat, which is the arrangement this now matches.
         return (
             f"Add these to {self._settings(plan.project)}:\n\n{settings}\n\n"
-            f"and these to {self._mcp_config(plan.project)}:\n\n{mcp}\n\n"
-            f"- {_APPROVAL_NOTE}\n- {_SPILL_READ_NOTE}\n- {_EXPOSURE_NOTE}"
+            f"and these to {self._mcp_config(plan.project)}:\n\n{mcp}"
         )
 
     def refuse_unknown_model(self, model: str) -> None:
@@ -520,7 +523,7 @@ def target_for(harness: Harness) -> HarnessTarget:
 
 #: Shared by both conflict refusals below. They guard different shapes — a list of hook *groups*
 #: matched by command, and a server *map* matched by key — which is why there are two of them; the
-#: *explanation* is identical, and a review caught it existing as two hand-maintained copies.
+#: *explanation* is identical, so it is written once rather than kept as two hand-maintained copies.
 _ANOTHER_INSTALL: Final = (
     "That usually means another Zikaron install owns them, whose paths may point at a venv this "
     "one knows nothing about. Re-run with --force to replace them."
@@ -530,12 +533,12 @@ _ANOTHER_INSTALL: Final = (
 def _guard_backup_path_if_present(path: Path) -> None:
     """Run the backup-path check **at plan time**, when the target exists.
 
-    `plan_kiro_merge` has done this since M12 and its docstring gives the reason: the backup is the
+    `plan_kiro_merge`'s docstring gives the reason: the backup is the
     last thing a merge does and the shipped files are written before it, so leaving the check where
     it happens means a blocked `<file>.bak` is discovered only after the artefacts have landed — the
-    half-install the plan/commit split exists to prevent. The Claude Code planners omitted it, which
-    a review caught: a **directory** at `.mcp.json.bak` produced two written files, one merged file,
-    and *then* "install refused". The same condition is re-tested at commit; a check and a use are
+    half-install the plan/commit split exists to prevent. Omitting it here has a concrete symptom:
+    a **directory** at `.mcp.json.bak` produces two written files, one merged file, and *then*
+    "install refused". The same condition is re-tested at commit; a check and a use are
     two moments and this one is cheap.
 
     Raises:
@@ -582,10 +585,12 @@ def _merged_permissions(
 
     The primary server follows `--no-trust-tools`, which reproduces kiro's asymmetry exactly.
 
-    **Server-level wildcards rather than nine tool names**, matching the consolidator's frontmatter
-    grant for the same reason: there is no second list to drift from `mcp/tool_names.py`.
+    **Server-level wildcards rather than one entry per tool name**, matching the consolidator's
+    frontmatter grant for the same reason: there is no second list to drift from
+    `mcp/tool_names.py`. No count is written here — a wildcard exists precisely so nobody
+    maintains one.
 
-    That these entries actually remove the per-call prompt is **measured**, interactively, in M16
+    That these entries actually remove the per-call prompt is **measured**, interactively
     (`research/claude-code-dogfood-checkpoint.md` §1; `design/harness.md` §"Three approval gates"):
     no per-call prompt across six writes and eight reads. **The install still states the approval
     step in its output anyway**, and the reason survives the measurement rather than being retired
@@ -615,7 +620,7 @@ def _merged_permissions(
         # previous default install added, so saying it was withheld would be false on a re-run.
         notes.append(
             f"`mcp__{MCP_SERVER_NAME}` was **not** added to `permissions.allow` "
-            "(--no-trust-tools), so every memory write will ask your approval. The consolidator's "
+            "(--no-trust-tools), so every Zikaron tool call asks your approval. The consolidator's "
             "own server is allowed regardless: a subagent has nobody to answer a prompt, so an "
             "unapproved tool there fails at the moment consolidation needs it."
         )
@@ -741,7 +746,7 @@ def _describe_group_difference(group: object, expected: list[dict[str, object]])
     Kiro's `_describe_difference` names the offending fields and its docstring gives the reason:
     naming only the location leaves a user unable to tell **their own edit** from a Zikaron version
     change, and therefore unable to decide whether `--force` is the right answer. The settings
-    refusal named only the trigger until a review pointed at that asymmetry.
+    refusal named only the trigger, which is the asymmetry this wording removes.
     """
     commanded = _commands_in(group)
     wanted = [command for one in expected for command in _commands_in(one)]

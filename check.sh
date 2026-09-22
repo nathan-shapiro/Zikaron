@@ -3,6 +3,13 @@
 # `./check-matrix.sh`, which runs this whole script once per supported Python version, is
 # additionally required before a milestone lands.
 #
+# **CI is not a third thing to run.** `.github/workflows/check.yml` asserts the *matrix's* claim —
+# every supported version green on one tree — against a commit rather than a working tree, by
+# running this script once per version rather than by running `check-matrix.sh` at all. So the tree
+# identity comes from the SHA instead of from a fingerprint sampled twice. What it cannot do is
+# dogfood: no live harness, so `integration_kiro` and `integration_claude` stay local-only.
+# `design/distribution.md` §"What CI asserts" is normative.
+#
 # `ZIKARON_VENV` selects which virtualenv to run in, defaulting to `.venv`. That exists so
 # `check-matrix.sh` can reuse this script rather than keep a second copy of the four commands below —
 # the `--cov` list in particular is checked against the tree by a test, and a second copy of it would
@@ -47,17 +54,17 @@ fi
 "$venv/ruff" format --check .
 "$venv/ruff" check .
 "$venv/mypy" --strict zikaron tests
-# Every shipped package, not only `core`. This said `--cov=zikaron/core` alone from M1, when
-# `core` was the only package there was, and stayed that way when M9 added `service/` — so the
-# ratchet in `[tool.coverage.report] fail_under` was silently not applied to a whole milestone's
-# production code. A floor that does not cover a package is not a floor. `zikaron/mcp` and
-# `zikaron/hook` are each added here at the same time M10 and M11 introduce them, rather than
-# waiting for a coverage gap to surface it the way `service/` was left to.
+# Every shipped package, not only `core`. This said `--cov=zikaron/core` alone while `core` was the
+# only package there was, and stayed that way when `service/` arrived — so the ratchet in
+# `[tool.coverage.report] fail_under` was silently not applied to a whole package's production
+# code. A floor that does not cover a package is not a floor. `zikaron/mcp` and `zikaron/hook` were
+# each added here in the change that introduced them, rather than waiting for a coverage gap to
+# surface it the way `service/` was left to.
 #
 # Wrapped in `timeout`: a real socket/thread/subprocess test that deadlocks — measured directly
-# during M11's own build, not a hypothetical — would otherwise hang this gate indefinitely with
-# no signal at all, which is a worse failure than a bounded one that at least reports "timed out"
-# rather than leaving whoever ran the gate to guess whether it is slow or stuck.
+# while the hook's socket tests were being written, not a hypothetical — would otherwise hang this
+# gate indefinitely with no signal at all, which is a worse failure than a bounded one that at least
+# reports "timed out" rather than leaving whoever ran the gate to guess whether it is slow or stuck.
 #
 # **The number is a hang detector, not a performance budget, so it is set with room to spare.** The
 # whole suite measures ~150 s on this machine, and a large share of that is real model loads and
@@ -68,8 +75,9 @@ fi
 # run and far below the point where a genuine deadlock stops being obvious.
 #
 # **The gate is hermetic, and that is a property worth stating here rather than only in
-# pyproject.** `integration_kiro` and `integration_claude` are excluded by `addopts`, because they
-# need a third-party binary installed *and working* — somebody else's credential state. An expired
+# pyproject.** `manual`, `integration_kiro` and `integration_claude` are excluded by `addopts`. The
+# harness two need a third-party binary installed *and working* — somebody else's credential state.
+# An expired
 # `kiro-cli` token once turned this script red for a reason with no relationship to the code, and
 # the same tests would go green on a machine whose harness behaved differently. Run them by name
 # when you mean to: `.venv/bin/pytest -m integration_kiro`. Nothing is covered *only* there; see

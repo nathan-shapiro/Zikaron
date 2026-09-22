@@ -2,9 +2,14 @@
 
 > **STATUS: proposal, not normative.** Opened 2026-09-14 in response to the operator's question: which
 > public benchmark can evaluate Zikaron, given that LoCoMo-style suites test general-purpose
-> conversational memory rather than engineering tribal knowledge. The substrate choice is pending
-> three research briefs; **§1 and §2 below are derived from this corpus rather than from the
-> literature**, so they stand regardless of what those return. §3 is the part that waits.
+> conversational memory rather than engineering tribal knowledge. **The three research briefs
+> returned 2026-09-14 and are §4.** §1 is derived from this corpus alone and stands on its own.
+> §2's arm definitions rest on `research/agentic-eval-methodology.md` and are defensible defaults
+> rather than settled facts; §3's sizing is now in §5; and §4.1's headline experiment rests on a
+> reading withdrawn 2026-09-22, so it needs restating before it is run.
+> *This header said the briefs were "pending", that §1 and §2 both stand "regardless of what those
+> return", and that §3 "waits" — three states this document had already left, in the paragraph a
+> reader uses to decide which sections are safe to act on.*
 >
 > Governing decision: **D14**, as narrowed — component benchmarking was never stoved, and what waits
 > for a running system is one measure: *does having memory make the agent finish the task better*.
@@ -18,10 +23,10 @@ the design record:
 
 | # | Link | Fails by | Owner |
 |---|---|---|---|
-| 1 | **Write** — the agent records the right thing | recording nothing, or recording trivia | D6, D30; open questions 7, 13 |
+| 1 | **Write** — the agent records the right thing | recording nothing, or recording trivia | D6, D30; open question 7 (question 13 was resolved and shipped 2026-08-16, a month before this table, and is named here no longer) |
 | 2 | **Retrieve** — the right record comes back for a query | ranking failure | D5, D20–D25 — **already measured** |
 | 3 | **Deliver** — it reaches the agent at a moment it can act on | push fires at task framing; the need arrives 20 tool calls later | D12; open question 1 |
-| 4 | **Use** — the agent acts on a record that is in its context | the sufficiency illusion: present and ignored | write policy; open question 1(b) |
+| 4 | **Use** — the agent acts on a record that is in its context | the sufficiency illusion: present and ignored | write policy; **not tracked by any open question** |
 | 5 | **Repair** — a wrong memory gets corrected | silently stale, confidently acted on | D11; open question 6 |
 | 6 | **Consolidate** — merging improves rather than degrades | index-shaped gists lose triage value | D29; open question 12 — **measured, and it degrades** |
 
@@ -75,12 +80,13 @@ Two independent reasons this matters more than it looks:
    passed anyway. Binary success censors exactly the effect being claimed.
 2. **Power.** A binary outcome over a few dozen instances has poor power against a single-digit
    percentage-point difference. A continuous per-instance cost metric on the *same* instances has
-   far more, and supports a paired analysis. Sizing is pending `research/agentic-eval-methodology.md`.
+   far more, and supports a paired analysis. Sizing is **§5**, from `research/agentic-eval-methodology.md` — which returned 2026-09-14; this line said "pending" past the header that redirects to it.
 
 **Known objection to the substrate hypothesis, raised here rather than waited for.** The leading
 candidate — the SWE-bench family — is a poor fit *at its stock settings*, and for a reason that comes
-straight from D1. SWE-bench rewards knowing the code, which Zikaron explicitly excludes as another
-system's job; the environment arrives pre-built and the test command is frequently handed to the
+straight from D1. SWE-bench rewards knowing the code, which the **memory store** excludes by its
+scope test — though since D1's amendment that knowledge is no longer *another system's* job, it is
+the knowledge index's; the environment arrives pre-built and the test command is frequently handed to the
 scaffold, which removes most of the in-scope surface. Whatever substrate is chosen has to leave the
 tribal-knowledge surface **exposed**, or arm C will be flat for a reason that says nothing about
 Zikaron.
@@ -105,10 +111,19 @@ point single-run spread measured for agent scaffolds, so it is a real effect rat
 
 **This must not be read as "memory does not work", and it must not be waved away either.** The
 reported mechanism is retrieval noise polluting exploration-stage decisions — and the memory in
-question was *episodic traces of past repairs*, which is **code-structure knowledge, exactly the
-category D1 excludes as another system's job**. So CTIM-Rover is, read carefully, evidence *for*
-Zikaron's scope line rather than against it: it is the measured cost of storing the thing D1
-refuses to store.
+question was *episodic traces of past repairs*, which is **code-structure knowledge — the category
+D1's memory scope test excludes**. ~~So CTIM-Rover is, read carefully, evidence *for* Zikaron's
+scope line rather than against it: it is the measured cost of storing the thing D1 refuses to
+store.~~
+**— that inference rested on a delegation that no longer exists, and is withdrawn 2026-09-22.**
+It read a published negative result as vindication on the strength of D1 sending code knowledge
+to *another system*; since the amendment, Zikaron ships that capability itself. What CTIM-Rover
+actually measured is the cost of putting code knowledge in an **agent-written, consolidated,
+episodic** store. Zikaron's knowledge index is **agent-read, unconsolidated, and returns file
+fragments with line ranges** — three differences on the axes the paper blames. So the live
+question is sharper than the old one and is not yet answered: *does that difference flip the
+sign?* The proposed headline experiment below rests on the withdrawn reading and needs restating
+before it is run.
 
 That reframes the whole evaluation. The sharpest available experiment is not "does memory help?"
 but:

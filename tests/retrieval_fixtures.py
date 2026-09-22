@@ -11,9 +11,9 @@ process alive at exit. `tests/conftest.py` turns a forgotten one into a failure 
 Rows are written through the **real** write path — `indexing.writes.remember` — so every chunk,
 vector and FTS posting a test retrieves is one the production code produced, and retirement goes
 through the real verb, receipt and all. Two facts the write path cannot set are written directly
-instead, each for a stated reason: `tier`, because the verb that flips it is M7's, and `created_at`,
-because no verb ever sets it and the recency tiebreak needs distinct, ordered values that a
-same-millisecond write burst does not produce.
+instead, each for a stated reason: `tier`, because the verb that flips it is consolidation's, and
+`created_at`, because no verb ever sets it and the recency tiebreak needs distinct, ordered values
+that a same-millisecond write burst does not produce.
 """
 
 import json
@@ -110,7 +110,7 @@ class Harness:
         )
 
     async def set_tier(self, uuid: str, tier: str) -> None:
-        """Set `tier` directly: the verb that flips it is `promote`, which belongs to M7.
+        """Set `tier` directly: the verb that flips it is `promote`, which belongs to consolidation.
 
         A read path only reads the column, so what matters is that the value is one the `CHECK`
         accepts — not how it got there.

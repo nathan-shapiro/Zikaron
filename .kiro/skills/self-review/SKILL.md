@@ -24,7 +24,7 @@ Skip it for routine, low-stakes steps — each loop spends extra model cycles.
 3. **Read the review file.** After the subagent returns, read the review file at the path it reported to get the full findings. Do not rely solely on the summary.
 4. **Apply feedback with judgment.** On `NEEDS_CHANGES`, address each finding: accept and apply the good ones, and reject any you disagree with — but record *why*. Edit the artifact file. If the artifact is an agent config, re-run `kiro-cli agent validate` after editing.
 5. **Iterate to convergence.** Re-spawn the reviewer with the same review file path. It will read prior rounds automatically and avoid re-raising resolved issues. Stop when you get `VERDICT: APPROVED` with no material improvements left, or after **3 iterations** — whichever comes first. If still not converged at 3, summarize the open disagreements for the user rather than looping further.
-6. **Record the outcome.** Note the final verdict and any consequential decisions in FINDINGS.md (or the artifact's own changelog). Keep the `reviews/<slug>-review.md` file — it is the audit trail for the artifact's review history. Add a one-line reference to it in FINDINGS.md so it can be found later.
+6. **Record the outcome.** Note the final verdict and any consequential decisions in FINDINGS.md (or the artifact's own changelog). Keep the `reviews/<slug>-review.md` file — it is the audit trail for the artifact's review history. Add a one-line reference to it in `FINDINGS-archive.md`'s References section so it can be found later.
 
 ## Notes
 - Subagents cannot spawn their own subagents, so the reviewer cannot delegate — it reviews only. That is fine.

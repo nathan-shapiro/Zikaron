@@ -26,8 +26,7 @@ from zikaron.harness.spec import KIRO
 #: The harness binary every shipped entry ultimately depends on. **Read from the seam** rather than
 #: spelled again: `refuse_absent_harness` checks `HarnessSpec.harness_binary` while the calls below
 #: *exec* this constant, so two hand-maintained copies could refuse on one name and then run
-#: another. That is round 1 finding 5's defect class, and it would have been reintroduced right
-#: beside the field created to prevent it.
+#: another — reintroducing the drift the single field exists to prevent, right beside it.
 #:
 #: Resolved through `PATH` rather than pinned to a path — that part is about the *lookup*, not the
 #: name: unlike Zikaron's own console scripts, which must name the interpreter they were installed
@@ -151,11 +150,14 @@ def validate_agent_config(path: Path) -> str | None:
 
     The original returned `None` whenever the exit code was zero, which is *always* — so every
     install reported a clean validation regardless of what it had written, and
-    `architecture.md`'s claim that this "catches a schema mistake in what we just wrote" was false.
-    Nothing caught it because the unit fixtures encoded the belief the real binary contradicts
-    (errors ⇒ non-zero exit) and the one test against the real binary asserted `is None`, which
-    passed for the wrong reason. The non-zero branch is kept anyway: an exit code this command does
-    not currently produce would still mean something went wrong.
+    the claim at the top of this docstring — that this "catches a schema mistake in what we just
+    wrote" — was false. `architecture.md` §"The install contract" records the measurement that
+    settled it: a complaint arrives on **stderr at exit 0**. *That claim was attributed to
+    `architecture.md` and appears in no design document; `git log -S` puts its origin in this
+    file's own docstring.* Nothing caught it because the unit fixtures encoded the belief the real
+    binary contradicts (errors ⇒ non-zero exit) and the one test against the real binary asserted
+    `is None`, which passed for the wrong reason. The non-zero branch is kept anyway: an exit code
+    this command does not currently produce would still mean something went wrong.
 
     **A false positive here is cheap, which is what makes "any output is a complaint" the right
     predicate rather than a lazy one.** If a future kiro wrote a deprecation warning to stderr on a

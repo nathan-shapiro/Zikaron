@@ -9,9 +9,18 @@ unparseable or out of range on open is fatal, never a silent fall-back to a defa
 What differs from the memory store, and it is the whole reason this is a separate module rather
 than a parameterization of that one: the keys are different, several are seeded from configuration
 that the memory store has no opinion about, and **the ranges are read from `CONFIG_KEYS` rather
-than restated here**. That last is deliberate. Four of these values are seeded from a configuration
-key at creation, so a bound written here would be a second statement of one the configuration
-schema already makes — and the two would be free to disagree the first time either moved.
+than restated here**. That last is deliberate. **Six** of these values are seeded from a
+configuration key at creation, so a bound written here would be a second statement of one the
+configuration schema already makes — and the two would be free to disagree the first time either
+moved.
+
+**Four of the six take their bounds from `CONFIG_KEYS` and cannot drift; `embed_model` and
+`embed_dim` are the exception and are restated below** — `"non-empty string"` against
+`StringBounds(non_empty=True)`, `"int >= 1"` and an explicit `< 1` check against `IntBounds(1)`.
+That is the drift this paragraph describes, present and unguarded. `embed_model` cannot be
+converted, since `_config_bounds` raises on non-`IntBounds`; `embed_dim` could be, and the reason
+it has not been is that nothing forced the question. Said here rather than left implicit, because
+the docstring previously said "four" and so described a module with no exception in it.
 """
 
 import json

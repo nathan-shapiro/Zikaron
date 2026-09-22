@@ -143,10 +143,10 @@ def test_run_warms_a_genuinely_fresh_project_whose_zikaron_directory_never_exist
 ) -> None:
     """The exact first-run case a first version of `run()` could not survive: `store_dir` (the
     `.zikaron` directory itself) does not exist at all before this call, not merely `memory.db`
-    within it — the ordinary state of a project that has never run Zikaron. `_configure_warmup_
-    log`'s own `Path.touch()` needs that directory to exist, and an earlier version of `run()`
-    called it before any failure boundary was in scope, so this exact case raised
-    `FileNotFoundError` uncaught and produced no warmup log at all.
+    within it — the ordinary state of a project that has never run Zikaron.
+    `_configure_warmup_log`'s own `Path.touch()` needs that directory to exist, and an earlier
+    version of `run()` called it before any failure boundary was in scope, so this exact case
+    raised `FileNotFoundError` uncaught and produced no warmup log at all.
     """
     sock_path = tmp_path / "test.sock"
     store_dir = tmp_path / "project" / ".zikaron"
@@ -206,10 +206,11 @@ def test_default_server_command_still_used(tmp_path: Path) -> None:
     `warm_helper.py`'s own `main()` wrapper and its `if __name__ == "__main__":` guard are
     exercised behaviourally by `test_hook_spawn_warm.py::test_a_top_level_session_spawns_the_
     warm_helper_with_this_stores_paths` (which asserts the exact argv `spawn_warm.py` builds for
-    this module) and, in real production use, by every real spawn `test_hook_connect_real_service_
-    integration.py`'s own tests trigger — but a subprocess's own execution is not attributable to
-    this test process's coverage data without subprocess coverage instrumentation, which nothing
-    else in this codebase adopts either (`zikaron/service/main.py`'s identical class of gap is the
+    this module) and, in real production use, by every real spawn
+    `test_hook_connect_real_service_integration.py`'s own tests trigger — but a subprocess's own
+    execution is not attributable to this test process's coverage data without subprocess coverage
+    instrumentation, which nothing else in this codebase adopts either
+    (`zikaron/service/main.py`'s identical class of gap is the
     established precedent, per `test_hook_main.py`'s own note on the same question).
     """
     command = default_server_command(tmp_path / "s.sock", tmp_path / "store")

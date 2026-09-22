@@ -2,8 +2,11 @@
 
 import pytest
 
+from zikaron.core.config.keys import CONFIG_KEYS_BY_NAME, IntBounds
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 from zikaron.core.store.meta import (
+    _CHUNK_MAX_TOKENS_MAX,
+    _CHUNK_MAX_TOKENS_MIN,
     CHUNK_MAX_TOKENS_KEY,
     EMBED_DIM_KEY,
     EMBED_MODEL_KEY,
@@ -161,3 +164,28 @@ def test_the_reindexing_sentinel_key_is_not_one_of_the_required_keys() -> None:
 def test_absence_of_the_reindexing_key_does_not_fail_validation() -> None:
     assert REINDEXING_KEY not in _VALID_RAW
     parse_and_validate(_VALID_RAW)  # must not raise
+
+
+def test_the_memory_store_s_chunk_bound_is_the_one_the_config_schema_declares() -> None:
+    """The one pair in this module that can silently disagree with the configuration schema.
+
+    `chunk_max_tokens` is declared in `core/config/keys.py` as `IntBounds(64, 8192)` and restated
+    here as two module constants, because `core/store/meta.py` parses `meta` rows without importing
+    the configuration schema. **That restatement is exactly the hazard
+    `core/knowledge/meta.py`'s own docstring says it exists to avoid** — the knowledge side reads
+    its bounds from `CONFIG_KEYS`, the memory side writes them out — and nothing compared the two.
+
+    Counted when this was written: the pair appears **four** times — `keys.py`, `store/meta.py`,
+    and twice more in this suite as hand-written literals. Three of the four are free; this pins
+    the one that governs whether a real store opens.
+    """
+    declared = CONFIG_KEYS_BY_NAME["chunk_max_tokens"].bounds
+    assert isinstance(declared, IntBounds), "chunk_max_tokens stopped being an integer key"
+    assert (declared.minimum, declared.maximum) == (
+        _CHUNK_MAX_TOKENS_MIN,
+        _CHUNK_MAX_TOKENS_MAX,
+    ), (
+        f"core/store/meta.py enforces {_CHUNK_MAX_TOKENS_MIN}-{_CHUNK_MAX_TOKENS_MAX} while the "
+        f"config schema declares {declared.minimum}-{declared.maximum}; a store would accept a "
+        "value the configuration refuses, or refuse one it accepts"
+    )

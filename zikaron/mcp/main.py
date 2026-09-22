@@ -1,7 +1,7 @@
 """The process entry point: parse which mode this process runs as, build its server, and serve.
 
-Invoked as `python -m zikaron.mcp.main --mode {primary|consolidator}` — the exact shape M12's
-shipped agent configs (`.kiro/agents/zikaron-consolidator.json` and whichever config carries the
+Invoked as `python -m zikaron.mcp.main --mode {primary|consolidator}` — the exact shape the shipped
+agent configs (`.kiro/agents/zikaron-consolidator.json` and whichever config carries the
 primary agent's own `mcpServers` entry) supply as `command`/`args`, one MCP server process per
 agent spawn (`research/kiro-mcp-lifecycle-probe.md`). `--mode` is a required, explicit argument
 rather than an environment variable: the two configs already differ in every other field they

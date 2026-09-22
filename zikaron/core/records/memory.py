@@ -1,9 +1,9 @@
 """`memory` row mechanics: create, amend, retire, fetch — the primitives every write path composes.
 
 Normative: `design/schema.md` §Tables and invariants 4-10; `design/architecture.md`
-§"Validation precedence" (primary-agent ladder). This module's own package docstring
-(`zikaron/core/records/__init__.py`) states why `create`/`amend` do not emit `remember`/`amend`
-events and why `retire`/`fetch` do emit theirs.
+§"Validation precedence" (primary-agent ladder). `design/indexing.md` §"Implementation constraints"
+states why `create`/`amend` do not emit `remember`/`amend` events and why `retire`/`fetch` do emit
+theirs.
 
 `memory_fts`, `memory_chunk` and `memory_vec` are untouched by every function here, per this
 layer's own scope — an external-content FTS5 table is never auto-synced by SQLite itself, so
@@ -374,18 +374,18 @@ async def create(db: aiosqlite.Connection, *, gist: str, content: str, session_i
     """Insert a new `memory` row at `version=1`, `tier='journal'`, `active=1`.
 
     This is the row primitive `zikaron_memory_remember` writes through, after the chunking
-    preflight's
-    `gist_max_tokens` bound and its own dedup search have already run — this function enforces
-    neither, since both need the tokenizer or the indexes this layer does not touch. `content`
-    and `gist` non-emptiness is enforced by the table's own `CHECK` constraints, which SQLite
-    raises as `sqlite3.IntegrityError` rather than a `ZikaronError` — a boundary this layer leaves
-    to its caller, since the chunking preflight refuses empty prose as `bounds` before any SQL runs
-    and is where an agent-supplied value is checked.
+    preflight's `gist_max_tokens` bound and its own dedup search have already run — this function
+    enforces neither, since both need the tokenizer or the indexes this layer does not touch.
+    `content` and `gist` non-emptiness is enforced by the table's own `CHECK` constraints, which
+    SQLite raises as `sqlite3.IntegrityError` rather than a `ZikaronError` — a boundary this layer
+    leaves to its caller, since the chunking preflight refuses empty prose as `bounds` before any
+    SQL runs and is where an agent-supplied value is checked.
 
-    Does not emit a `remember` event: see this package's own docstring for why. Mints no receipt
-    either — invariant 9's `own_write` source is for a row the caller can *already* write, and a
-    row that did not exist a moment ago needs no licence to create. Takes no `CallParams`,
-    unlike every other verb here, precisely because it authorizes nothing and logs nothing.
+    Does not emit a `remember` event: `indexing.md` §"Implementation constraints" says why. Mints
+    no receipt either — invariant 9's `own_write` source is for a row the caller can *already*
+    write, and a row that did not exist a moment ago needs no licence to create. Takes no
+    `CallParams`, unlike every other verb here, precisely because it authorizes nothing and logs
+    nothing.
 
     Opens and commits its own transaction — invariant 2's "exactly one SQLite transaction" for a
     mutation with no rejection path to also commit. Call `create_within_transaction` directly
@@ -602,14 +602,15 @@ async def _reject_no_receipt(
 
     Unlike a version conflict, a missing receipt hands back nothing to re-decide from: the
     caller already named the current version correctly, so the record it holds is not stale —
-    it is simply unlicensed. `schema.md` names the recovery as `fetch it first`, which is exactly
-    what `ERROR_SPECS[NO_READ_RECEIPT]`'s fixed `hint` field states.
+    it is simply unlicensed. `schema.md` invariant 9 is normative for which verbs mint a receipt.
 
     Does **not** commit, for the same reason `_reject_version_conflict` does not — see its
     docstring.
     """
     await record_no_receipt(db, uuid=uuid, ctx=ctx, verb=verb, presented_version=presented_version)
-    raise ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=[uuid], hint="fetch it first")
+    raise ZikaronError(
+        ErrorCode.NO_READ_RECEIPT, uuids=[uuid], hint="re-read it through fetch or next_group"
+    )
 
 
 async def _authorize_mutation(
@@ -623,9 +624,8 @@ async def _authorize_mutation(
     """Rungs 2-4 of the primary-agent ladder: existence, version, receipt — in that order.
 
     `architecture.md`'s primary-agent ladder runs bounds, then existence, then version, then
-    receipt, then state legality, then the mutation itself. Bounds is this function's caller's
-    job (an agent-facing bound like `gist_max_tokens` needs a tokenizer this layer has none of);
-    state
+    receipt, then state legality, then the mutation itself. Bounds is this function's caller's job
+    (an agent-facing bound like `gist_max_tokens` needs a tokenizer this layer has none of); state
     legality is the mutation-specific check `amend`/`retire` each run for themselves, since what
     counts as illegal state differs between them. This function is exactly the three rungs every
     mutating verb shares.
@@ -846,9 +846,9 @@ async def amend(
     rejects a row already `active=0` as `inactive_row`, naming its current `state` — then
     mutates in one transaction with the version bump and the receipt revocation/mint.
 
-    Does not emit an `amend` event: see this package's own docstring. The indexing layer wraps this
-    function with the chunking preflight and emits the composed event, where the size fields it
-    carries have real values.
+    Does not emit an `amend` event: `indexing.md` §"Implementation constraints". The indexing layer
+    wraps this function with the chunking preflight and emits the composed event, where the size
+    fields it carries have real values.
 
     A `version_conflict` or `no_read_receipt` rejection commits its own receipt and event
     (invariant 10's carve-out for a rejected call) — see `_reject_version_conflict` and
@@ -930,8 +930,8 @@ async def retire(
     (invariant 6's "a root is live or terminal, and both are legal").
 
     Emits `retire`'s event — the one mutation kind this layer owns outright, since its `detail`
-    names no
-    chunking-derived field (`from_version`, `to_version`, `superseded_by`, none of which need a
+    names no chunking-derived field (`from_version`, `to_version`, `superseded_by`, none of which
+    need a
     tokenizer or an index).
 
     Opens and commits its own transaction. Call `retire_within_transaction` directly instead if

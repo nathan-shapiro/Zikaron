@@ -124,6 +124,10 @@ class Report:
     created: list[Path] = field(default_factory=list)
     replaced: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
+    #: The subset of `skipped` left alone because its backup failed, not because it was already
+    #: correct. Recorded rather than re-derived: the other two reasons are still readable from the
+    #: file, this one is not.
+    kept_unbacked: list[Path] = field(default_factory=list)
     merged: list[Path] = field(default_factory=list)
     backed_up: list[Path] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -134,8 +138,7 @@ class MergePlan:
     """A merge that has been checked and not yet performed.
 
     `document` is the finished JSON to write. Holding it as a value is what lets the caller order
-    the
-    whole install "check everything, then write everything" — the checks live in the `plan_*`
+    the whole install "check everything, then write everything" — the checks live in the `plan_*`
     functions, which read and refuse, and every write is in `commit_merge`.
     """
 
@@ -232,11 +235,11 @@ def _write_shipped(shipped: ShippedFile, *, plan: Plan, report: Report) -> None:
     path, content = shipped
     exists = path.exists() or path.is_symlink()
     if exists and plan.force and not path.is_symlink() and _read_or_empty(path) != content:
-        # **`--force` backs up too**, which it did not until a review caught it. The
-        # content-comparison trade rests on "nothing is replaced without `<name>.bak` existing
-        # first", and this path made that false exactly where it matters most: `--force` is the
-        # flag the merge-conflict refusals *instruct* people to pass, so it arrives alongside an
-        # unrelated conflict rather than only when someone means "discard my edits". Best-effort:
+        # **`--force` backs up too.** The content-comparison trade rests on "nothing is replaced
+        # without `<name>.bak` existing first", and this path made that false exactly where it
+        # matters most: `--force` is the flag the merge-conflict refusals *instruct* people to pass,
+        # so it arrives alongside an unrelated conflict rather than only when someone means
+        # "discard my edits". Best-effort:
         # a backup that cannot be written must not block an override the user asked for
         # explicitly, so it degrades to a note rather than a refusal.
         try:
@@ -256,6 +259,7 @@ def _write_shipped(shipped: ShippedFile, *, plan: Plan, report: Report) -> None:
             # no copy of it. Keeping a broken consolidator config is recoverable; replacing it
             # unbacked is not, so this reports and leaves it.
             report.skipped.append(path)
+            report.kept_unbacked.append(path)
             report.notes.append(
                 f"{path.name} differs from what this install ships but could not be backed up "
                 f"({exc}), so it was left alone. Move it aside and re-run to get a correct one."
@@ -286,14 +290,12 @@ def _replace(path: Path, content: str) -> None:
 
     Through a temporary file in the same directory and one rename, because for the agent config this
     is a file the user owns: a crash or a full disk part-way through a plain write leaves them with
-    a
-    truncated config the harness then refuses to load, and the `.bak` beside it is a worse remedy
+    a truncated config the harness then refuses to load, and the `.bak` beside it is a worse remedy
     than never having broken it.
 
     The scratch file is created **exclusively, under a name nothing can predict**. A fixed
     `<target>.tmp` would be *followed* if it happened to be a symlink — the same hole the check on
-    the
-    final target closes one component along, and a destination check that leaves its own scratch
+    the final target closes one component along, and a destination check that leaves its own scratch
     file
     open to redirection has closed nothing.
 
@@ -314,17 +316,14 @@ def _write_all(descriptor: int, payload: bytes) -> None:
     """Write every byte of `payload` to `descriptor`, then flush it to the device.
 
     A single `os.write` is **not** enough, and that is the point of this function existing: a write
-    to
-    a regular file may legally return short — the documented case being a partial write when the
-    space
-    for the rest is not there — and ignoring the return value would let a truncated file be renamed
-    over a user's config while the install reported success. That is the exact failure the atomic
-    rewrite was introduced to close, reintroduced one layer down.
+    to a regular file may legally return short — the documented case being a partial write when the
+    space for the rest is not there — and ignoring the return value would let a truncated file be
+    renamed over a user's config while the install reported success. That is the exact failure the
+    atomic rewrite was introduced to close, reintroduced one layer down.
 
     `fsync` before the caller publishes, because the rename is atomic against other *processes* and
     says nothing about a crash: without it, a machine that loses power moments later can come back
-    with
-    the rename applied and the contents not.
+    with the rename applied and the contents not.
 
     Raises:
         OSError: any part of the write or the flush failed. Nothing is published, because the caller
@@ -357,16 +356,15 @@ def _exclusive_temporary(destination: Path) -> Iterator[_Scratch]:
     """A freshly created scratch file beside `destination`, held open, removed on any failure.
 
     Beside it rather than under `/tmp`, so the final rename or link stays on one filesystem —
-    neither
-    is atomic across devices, and `os.replace` raises. Created through `mkstemp`, which opens with
-    `O_CREAT | O_EXCL` under an unpredictable name, so no pre-existing name can redirect it.
+    neither is atomic across devices, and `os.replace` raises. Created through `mkstemp`, which
+    opens with `O_CREAT | O_EXCL` under an unpredictable name, so no pre-existing name can
+    redirect it.
 
     **The descriptor stays open until the publication.** Closing it and reopening the path by name
     would reintroduce exactly the hole the exclusive creation closes: between the close and the
     reopen, anything able to write in that directory could unlink the name and leave a symlink in
-    its
-    place, and the reopen would follow it. Writing through the descriptor means the bytes go to the
-    inode this function created, whatever happens to the name.
+    its place, and the reopen would follow it. Writing through the descriptor means the bytes go
+    to the inode this function created, whatever happens to the name.
     """
     descriptor, raw = tempfile.mkstemp(
         dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp"
@@ -384,19 +382,16 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
 
     The file's own format decides how hooks are written — object stays object, array stays array —
     because the harness rewrites a config in whichever format it read, and a file carrying both
-    shapes
-    has no defined meaning. `plan.hook_format` applies only when the file has no `hooks` key at all.
+    shapes has no defined meaning. `plan.hook_format` applies only when the file has no `hooks`
+    key at all.
 
     Raises:
         InstallError: the file is missing, not a JSON object, carries `hooks`/`mcpServers` in a
-        shape
-            this cannot merge into, or already carries a Zikaron entry that differs from what this
-            install would write. The last is the one worth refusing loudly: it means a previous
-            install from a *different* interpreter, whose paths may point at a venv that no longer
-            has
-            Zikaron in it. Replacing is almost always right, and doing it silently would hide that
-            the
-            user has two installs.
+        shape this cannot merge into, or already carries a Zikaron entry that differs from what
+            this install would write. The last is the one worth refusing loudly: it means a
+            previous install from a *different* interpreter, whose paths may point at a venv that
+            no longer has Zikaron in it. Replacing is almost always right, and doing it silently
+            would hide that the user has two installs.
     """
     document = _load_agent_config(path)
     hook_format = _detect_format(document, path=path, requested=plan.hook_format)
@@ -422,13 +417,13 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
     notes.extend(resource_notes)
     if TOOL_SELECTOR not in _string_list(document.get("tools")):
         notes.append(
-            f"Added `{TOOL_SELECTOR}` to {path.name}'s `tools` — without it the memory tools are "
+            f"Added `{TOOL_SELECTOR}` to {path.name}'s `tools` — without it Zikaron's tools are "
             "simply absent, since `mcpServers` configures the server and `tools` selects from it."
         )
     if not plan.trust_tools and TOOL_SELECTOR not in _string_list(document.get("allowedTools")):
         notes.append(
             f"`{TOOL_SELECTOR}` is **not** in {path.name}'s `allowedTools` (--no-trust-tools), so "
-            "every memory write will ask your permission. Remove that flag, or add it by hand, to "
+            "every Zikaron tool call asks your permission. Remove that flag, or add it by hand, to "
             "let the agent record without interrupting you."
         )
     if "subagent" not in _string_list(document.get("tools")):
@@ -499,8 +494,7 @@ def _guard_mergeable_shapes(document: dict[str, object], *, path: Path) -> None:
     non-list `tools` as absent — and defensive filtering on a *write* path is data loss with a
     reassuring shape. A trigger whose value is an object, or a `tools` value that is a string, is
     something the user put there; this cannot know what they meant by it, and installing over it
-    would
-    destroy something to make room for something.
+    would destroy something to make room for something.
     """
     hooks = document.get("hooks")
     if isinstance(hooks, dict):
@@ -529,10 +523,8 @@ def _guard_crew_shape(document: dict[str, object], *, path: Path) -> None:
     """Refuse a `toolsSettings.crew` this cannot merge into rather than replacing it.
 
     Same rule as every other shape guard here, one level deeper: the crew block gates which agents
-    may
-    be spawned, so quietly rebuilding a malformed one could hand the user a config that spawns more
-    —
-    or less — than they had written down.
+    may be spawned, so quietly rebuilding a malformed one could hand the user a config that spawns
+    more — or less — than they had written down.
     """
     settings = document.get("toolsSettings")
     if "toolsSettings" in document and not isinstance(settings, dict):
@@ -572,8 +564,7 @@ def _guard_existing_entries(
 
     Both halves are checked, and the hook half was the gap: an earlier version guarded only the
     `mcpServers` entry, so a config carrying a stale hook command and no server entry had that
-    command
-    silently replaced. The two are installed together and must be refused together.
+    command silently replaced. The two are installed together and must be refused together.
     """
     servers = document.get("mcpServers")
     if "mcpServers" in document and not isinstance(servers, dict):
@@ -606,20 +597,17 @@ def _differing_zikaron_hooks(document: dict[str, object], commands: Commands) ->
     """Every existing Zikaron hook entry that is not **exactly** what this install would write.
 
     The contract's word is *differs*, and equality of one field is not equality of an entry: an
-    entry
-    carrying the current command with `timeout_ms: 1`, or the reserved name with a changed
-    `trigger`,
-    is something a person chose, and the merge below would replace it. So the comparison is
-    structural, against the generated entry for that entry's own trigger.
+    entry carrying the current command with `timeout_ms: 1`, or the reserved name with a changed
+    `trigger`, is something a person chose, and the merge below would replace it. So the comparison
+    is structural, against the generated entry for that entry's own trigger.
 
     Recognition uses **both** identities the merge uses — an object-format entry by its command's
-    file
-    name, an array-format entry by its reserved `name` — because guarding one while replacing on
-    either is how an entry comes to be rewritten silently.
+    file name, an array-format entry by its reserved `name` — because guarding one while replacing
+    on either is how an entry comes to be rewritten silently.
 
     Returned as descriptions rather than a boolean so the refusal can say *what* differs. That is
-    the
-    only way a user can tell their own edit from a Zikaron version change, and therefore whether
+    the only way a user can tell their own edit from a Zikaron version change, and therefore
+    whether
     `--force` is the right answer.
     """
     hooks = document.get("hooks")
@@ -672,8 +660,7 @@ def _entry_command(entry: object) -> str | None:
     value of a Zikaron entry is `'/path/to/zikaron-hook'` and a caller comparing `Path(...).name`
     against `zikaron-hook` would be comparing against `zikaron-hook'`. A single-token command is
     reported as that token; anything else — a pipeline, several words, unbalanced quotes — is
-    reported
-    verbatim, since it is not a bare executable path and no caller should treat it as one.
+    reported verbatim, since it is not a bare executable path and no caller should treat it as one.
     """
     if not isinstance(entry, dict):
         return None
@@ -696,11 +683,10 @@ def guard_backup_path(path: Path) -> None:
     """Refuse now if this file could not be backed up later. Creates nothing.
 
     Split out of `_back_up_once` and called from `plan_merge` because the backup is the **last**
-    thing
-    a merge does and the shipped files are written before it: leaving this check where it happens
-    would mean a blocked backup path was discovered only after two files had landed, which is the
-    half-install the plan/commit split exists to prevent. The same condition is re-tested at commit,
-    because a check and a use are two moments and this one is cheap.
+    thing a merge does and the shipped files are written before it: leaving this check where it
+    happens would mean a blocked backup path was discovered only after two files had landed, which
+    is the half-install the plan/commit split exists to prevent. The same condition is re-tested
+    at commit, because a check and a use are two moments and this one is cheap.
 
     Raises:
         InstallError: something is at `<path>.bak` and it is not a regular file.
@@ -860,10 +846,8 @@ def _skill_resource(targets: Targets) -> str:
 
 
 #: `toolsSettings.crew` gates which agents the `subagent` tool may spawn. `agent_crew` is a
-#: documented
-#: alias for the same block, so a config using it must be *updated in place* rather than given a
-#: second
-#: block whose relationship to the first is undefined.
+#: documented alias for the same block, so a config using it must be *updated in place* rather than
+#: given a second block whose relationship to the first is undefined.
 _CREW_KEYS: Final = ("crew", "agent_crew")
 
 
@@ -872,19 +856,26 @@ def _merged_tools_settings(
 ) -> tuple[dict[str, object] | None, list[str]]:
     """The agent's `toolsSettings` with the consolidator added to its crew, and what to report.
 
-    **Without this the consolidation skill cannot run at all**, which is how the omission was found
-    —
-    in real use, not in review. The skill spawns `zikaron-consolidator` through the `subagent` tool,
-    and `toolsSettings.crew.availableAgents` gates which agents that tool may spawn: a config
-    listing
-    three of its own agents and not ours answers "Agents not available for crew stages".
+    **Without this the consolidation skill cannot run at all**, which is how the omission was
+    found — in real use, not in review. The skill spawns `zikaron-consolidator` through the
+    `subagent` tool, and `toolsSettings.crew.availableAgents` gates which agents that tool may
+    spawn: a config listing three of its own agents and not ours answers "Agents not available for
+    crew stages".
 
     **The two lists are not symmetric, and treating them alike would break working configs.**
     `availableAgents` is a *restriction*: the harness documents that an absent or empty list means
     every agent is available. So adding our name to an empty one would *narrow* the config from "any
     agent" to "only the consolidator" and silently break every other subagent the user has. It is
-    therefore extended only when it already lists something. `trustedAgents` is a *grant* — empty
-    grants nothing — so adding to it can only widen, and it is created if absent.
+    therefore extended only when it already lists something. **`trustedAgents` is left alone
+    entirely** — it grants a *subagent spawn*, which is wider than Zikaron's own tools, so the
+    install **reports** its absence and leaves the grant to the operator.
+
+    *This read "it is created if absent", which is the opposite of what the body does and of a
+    deliberate decision: the function only reads that key, to append a note; three tests assert it
+    is never written (`test_install_writer.py`, `test_install_main.py`); and `README.md` §Install
+    says the installer "never adds it to `trustedAgents`". **A maintainer reading this docstring as
+    the specification would find no such code, call it a bug, and silently grant the consolidator a
+    spawn permission the design withholds on purpose.***
 
     Returns `(None, notes)` when there is nothing to change, so an install does not add an empty
     `toolsSettings` block to a config that had none.
@@ -922,7 +913,7 @@ def _merged_tools_settings(
             f"Starting a consolidation will ask your permission once, because "
             f"`{CONSOLIDATOR_AGENT_NAME}` is not in `toolsSettings.{crew_key}.trustedAgents`. Add "
             "it there if you would rather it did not — that grants a subagent spawn, which is a "
-            "wider thing than the memory tools and so is left to you."
+            "wider thing than Zikaron's tools and so is left to you."
         )
 
     if not changed:
@@ -938,17 +929,15 @@ def _selecting(document: dict[str, object], key: str) -> list[object]:
     **`tools` is not optional, and that was measured rather than assumed.** An agent carrying the
     `mcpServers` entry and a `tools` list that did not name the server reported its own tools as
     `code, dummy, execute_bash, fs_read, fs_write, glob, grep, todo_list, use_subagent` — every
-    memory
-    tool absent, no warning anywhere. `mcpServers` configures a server; `tools` selects from it.
+    memory tool absent, no warning anywhere. `mcpServers` configures a server; `tools` selects
+    from it.
 
     **`allowedTools` is added too, by default, and the reason is the write policy rather than
     convenience.** Without it, every `remember`, `amend` and `retire` interrupts the user for
-    approval,
-    and the design's whole write posture is "err toward recording" — the prior art's own measured
-    failure was an agent that recorded too *little*. Per-write friction pushes directly against the
-    one
-    behaviour the store depends on, and it trains a user to click through prompts, which is worse
-    than
+    approval, and the design's whole write posture is "err toward recording" — the prior art's own
+    measured failure was an agent that recorded too *little*. Per-write friction pushes directly
+    against the one behaviour the store depends on, and it trains a user to click through prompts,
+    which is worse than
     not asking at all.
 
     What is being trusted is narrow, and worth stating precisely rather than generously: tools that

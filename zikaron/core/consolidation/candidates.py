@@ -34,10 +34,14 @@ from zikaron.core.retrieval.query import PreparedQuery
 from zikaron.core.retrieval.retrieve import retrieve
 
 #: How many long-term records beyond the anchor one serve delivers. `consolidation.md`: "at most,
-# one
-#: anchor plus four candidates — the '5 candidate memories' the consolidator prompt promises". A
-# fixed
-#: number rather than a config key, because it is a claim the shipped prompt makes.
+#: one anchor plus four candidates".
+#:
+#: **A fixed number rather than a config key, because `zikaron_memory_next_group`'s own tool
+#: description commits to it** — "up to four further related long-term records" — so the model is
+#: told this number and a configurable one would make the tool lie. *The comment previously cited
+#: a promise "the shipped prompt makes"; the prompt states no number, saying only "a few further
+#: long-term records". The justification for this being a constant rested on a sentence that does
+#: not exist.*
 MAX_CANDIDATES: Final = 4
 
 #: What joins the served set's gists into the candidate query. The same single newline an internal

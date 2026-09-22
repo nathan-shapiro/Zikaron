@@ -6,7 +6,7 @@ request except `health()`, the service validates the envelope's shape, resolves 
 because rung 1 can itself emit `event` rows and every `event` row carries a non-null `session_id`.
 
 **What this module does not do.** It does not read `KIRO_SESSION_ID` — that is the *client's* job
-(`zikaron-mcp`/`zikaron-hook`, M10/M11), which reads its own environment and sends whatever it
+(`zikaron-mcp`/`zikaron-hook`), which reads its own environment and sends whatever it
 finds as `client.session_id`. The service side of the two-rung ladder is simpler than the whole
 ladder, precisely because the harness-agreement half of it is a client-side fact this module
 never sees: given a conforming string, pass it through; given `null` or a malformed value, mint

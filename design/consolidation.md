@@ -207,8 +207,15 @@ different long-term records from identical inputs and neither would be reproduci
    allowed several readings.
 
 ### What `candidates` actually is
-`zikaron_memory_next_group` delivers, at most, one anchor plus four candidates — the "5 candidate memories" the
-consolidator prompt promises:
+`zikaron_memory_next_group` delivers, at most, one anchor plus four candidates — the *"up to four
+further related long-term records"* its own tool description names:
+*(This read "the '5 candidate memories' the consolidator prompt promises". **The shipped prompt
+promises no number**: `install/assets.py` says only "a few further long-term records that may be
+relevant". The phrase existed in this document and in the comment on `MAX_CANDIDATES` that cites
+it, and nowhere else — a review round had already removed it from §"Consolidator identity and
+model". It mattered because it was load-bearing: `MAX_CANDIDATES` is a constant rather than a
+config key **because** the prompt allegedly committed to it, so the justification was empty. The
+tool description is a real commitment to the model and makes the same argument honestly.)*
 
 - **`anchor`** is the long-term record from step 1, named separately from the list so the model knows which
   record the group was built around and which uuid `merge` should normally target. `null` for orphan groups,
@@ -331,7 +338,10 @@ with compaction at all, so that reason was wrong even though the conclusion hold
 session noise from leaking into consolidation judgment.
 
 **Model is a config value, to be measured, not assumed — and the config it lives in is named.** It is the
-top-level **`model`** field of the shipped `.kiro/agents/zikaron-consolidator.json`, required to be present
+top-level **`model`** field of the shipped `.kiro/agents/zikaron-consolidator.json` — or, **under
+Claude Code, the `model:` key of `.claude/agents/zikaron-consolidator.md`'s frontmatter**, where the
+shipped default is the `sonnet` *alias* rather than a pinned build (`harness.md` §"The consolidator's
+model" is normative) — required to be present
 explicitly, with the v0 default and the no-inheritance / no-fallback rules in `architecture.md`
 §"The consolidator's model is a shipped config field". Deliberately *not* a Zikaron config key: the store does not
 spawn the subagent, so a value there would be read by nothing. Saying "config value" without saying which
@@ -385,7 +395,7 @@ what happened, and no cooperation is required for the guard to hold.
 - **Test the transitive chain case** (A~B, B~C, A≁C) explicitly — against the cohesion pass, which is the
   stage that prevents it.
 - **Survivor rule: keep longest, not newest** — *their* lesson, and deliberately **not a Zikaron
-  requirement.* It applied to `merge_reframes`, which selected a survivor automatically from a cosine
+  requirement.** It applied to `merge_reframes`, which selected a survivor automatically from a cosine
   cluster. Zikaron never does that: `merge` rewrites a target uuid the model names, and `promote` either
   flips one row or writes new prose the model authored. There is no automatic survivor to pick, so importing
   the rule would be cargo cult. Recorded accurately as prior art in `design/prior-art.md`. The nearest live

@@ -12,11 +12,12 @@ schedule.
 
 ## You do not do this yourself
 
-You have `zikaron_memory_search`, `zikaron_memory_fetch`, `zikaron_memory_remember`,
-`zikaron_memory_amend` and `zikaron_memory_retire`.
-The merge, promote and discard verbs are not yours and never will be: consolidation runs as a
-separate agent with its own tool surface, on a fresh context, so that nothing from this session's
-reasoning leaks into judgments that will outlive it.
+You have Zikaron's memory and knowledge tools.
+All four consolidation verbs are not yours — zikaron_memory_next_group,
+zikaron_memory_merge, zikaron_memory_promote and zikaron_memory_discard, **including the one that
+merely asks for a group**: asking claims the run, and a second claim takes an existing one over.
+Consolidation runs as a separate agent with its own tool surface, on a fresh context, so that
+nothing from this session's reasoning leaks into judgments that will outlive it.
 
 ## How to run it
 

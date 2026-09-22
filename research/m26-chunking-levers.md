@@ -345,9 +345,9 @@ are both self-authored** — by §11's rule, that is the first thing to fix if i
 
 Spending a day failing to improve retrieval raised a question nobody had asked: **does the stack
 beat a simple one at all?** Measured against kiro's shipped `knowledge` tool on this corpus and
-these 53 real queries — **ours 0.717 against 0.585**, and **0.529 against 0.314** under
-chunking-independent gold, same direction under both, identical at top-3 and top-5 so not a cutoff
-artifact. Detail, method and caveats: `research/kiro-knowledge-head-to-head.md`.
+these real agent queries — **ours 0.717 against 0.585** over all **53**, and **0.529 against 0.314**
+over the **51** with chunking-independent gold. Same direction under both, identical at top-3 and
+top-5 so not a cutoff artifact. Detail, method and caveats: `research/kiro-knowledge-head-to-head.md`.
 
 So the retrieval stack earns its complexity against the obvious alternative. What it does not do is
 respond to the levers tried here.

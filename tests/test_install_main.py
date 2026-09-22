@@ -126,11 +126,21 @@ class TestASuccessfulInstall:
         assert "merged" in printed
         assert "backed up" in printed
 
-    def test_a_second_run_says_what_it_kept_and_how_to_replace_it(
+    def test_a_second_run_says_what_it_kept_and_does_not_suggest_replacing_it(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The output a user actually sees on re-running the installer, which is also the only place
-        `--force` is suggested to them."""
+        """The output a user actually sees on an ordinary re-run: every shipped file is already
+        byte-identical, so there is nothing to replace and nothing to suggest.
+
+        **This assertion used to be `"--force" in printed`, and that was wrong twice over.** Since
+        staleness became a *content* comparison, a file only reaches `kept` when its bytes already
+        match what this version ships — so "pass `--force` to replace it" was advice to rewrite
+        identical bytes. And the docstring justifying the assertion claimed this was "the only
+        place `--force` is suggested", which `writer.py`'s two merge-conflict refusals and the
+        flag's own `--help` all falsify. **A test can pin a real behaviour for a reason that was
+        never true**; this one did, and the message it pinned outlived the change that made it
+        misleading.
+        """
         project = tmp_path / "project"
         project.mkdir()
         _kiro_install(["--project", str(project)])
@@ -138,7 +148,41 @@ class TestASuccessfulInstall:
         assert _kiro_install(["--project", str(project)]) == 0
         printed = capsys.readouterr().out
         assert "kept" in printed
-        assert "--force" in printed
+        assert "already exactly what this version ships" in printed
+        assert "--force" not in printed
+
+    def test_a_kept_symlink_is_the_one_case_that_does_suggest_force(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The other half of `kept`, and the reason the message is two sentences rather than one.
+
+        A symlink at a shipped path is kept **unfollowed** — `writer._write_shipped` never reads
+        through it — so unlike the byte-identical case there genuinely is something to replace, and
+        `--force` is what replaces it. Reporting both under one sentence is what made the old
+        message wrong in whichever case it was not written for.
+
+        **The symlink has to point at a real file, and that is the whole subtlety of this case.**
+        `_refuse_unwritable_shapes`' guard is `_occupied(target) and not target.is_file()`, and
+        `is_file()` **follows** the link — so a dangling symlink is refused outright ("not a regular
+        file… Move it aside") and never reaches `skipped`, while a symlink to an existing regular
+        file sails through the preflight and lands there. A first draft of this test used a dangling
+        one, concluded from the refusal that the branch was dead code, and was wrong: the two
+        symlink shapes take opposite paths through the installer.
+        """
+        project = tmp_path / "project"
+        project.mkdir()
+        _kiro_install(["--project", str(project)])
+        capsys.readouterr()
+        elsewhere = tmp_path / "somewhere-else.md"
+        elsewhere.write_text("a file the user put there", encoding="utf-8")
+        skill = project / ".kiro" / "skills" / "zikaron-consolidate" / "SKILL.md"
+        assert skill.is_file()
+        skill.unlink()
+        skill.symlink_to(elsewhere)
+        assert _kiro_install(["--project", str(project)]) == 0
+        printed = capsys.readouterr().out
+        assert "a symlink, left unfollowed — pass --force to replace it" in printed
+        assert elsewhere.read_text(encoding="utf-8") == "a file the user put there"
 
     def test_a_config_from_another_install_is_reported_as_replaced(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -310,7 +354,18 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
             _kiro_install(["--project", str(project), "--agent", str(project / "typo.json")]) == 1
         )
         assert not (project / ".kiro").exists()
-        assert "does not exist" in capsys.readouterr().err
+        assert "is not a file" in capsys.readouterr().err
+
+    def test_an_agent_path_that_is_a_directory_is_refused_the_same_way(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        directory = project / "not-a-config"
+        directory.mkdir()
+        assert _kiro_install(["--project", str(project), "--agent", str(directory)]) == 1
+        assert not (project / ".kiro").exists()
+        assert "is not a file" in capsys.readouterr().err
 
     def test_a_missing_harness_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

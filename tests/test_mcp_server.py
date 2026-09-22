@@ -82,7 +82,7 @@ async def test_a_primary_config_has_no_consolidator_tools_either(tmp_path: Path)
 async def test_building_either_server_makes_no_service_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """M10's own done-when: "the client provably makes no service call until the model calls a
+    """The client provably makes no service call until the model calls a
     tool, so a spawn that does nothing takes no lock." `build_server` constructs a
     `ServiceConnection`, but `ServiceConnection.__init__` only resolves paths — it must never
     reach the service by any path, and this test proves that by failing every seam a constructor

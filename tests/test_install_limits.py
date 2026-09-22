@@ -22,10 +22,11 @@ tests below state what is actually true rather than restating the assumption:
 
 import re
 import uuid as uuid_module
+from pathlib import Path
 
 import pytest
 
-from tests.design_tables import table_with_columns
+from tests.design_tables import section_lines, table_with_columns
 from zikaron.core.config.keys import CONFIG_KEYS, IntBounds
 from zikaron.core.indexing.chunking import GIST_MAX_CHARACTERS, utf16_units
 from zikaron.core.indexing.encoder import FastEmbedEncoder
@@ -33,6 +34,7 @@ from zikaron.core.records.memory import Tier
 from zikaron.core.retrieval.block import render
 from zikaron.core.retrieval.ranking import PoolRow, RankedMemory
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook import limits as limits_module
 from zikaron.hook import push
 from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
@@ -43,6 +45,10 @@ _PUSH_LIMIT = 5
 #: The harness's own default, which an array-format entry inherits because that format documents no
 #: `max_output_size` field to state.
 _HARNESS_DEFAULT_OUTPUT_SIZE = 10_240
+
+#: Where the design states the shipped policy's measured size, for the guard below.
+_POLICY_SIZE_DOCUMENT = "architecture.md"
+_POLICY_SIZE_HEADING = "## Distribution artefacts"
 
 _MODEL = "BAAI/bge-small-en-v1.5"
 
@@ -93,6 +99,52 @@ def _block_of(gist: str) -> str:
 
 def test_the_write_policy_fits_inside_the_shipped_output_cap() -> None:
     assert len(WRITE_POLICY_PROMPT.encode("utf-8")) < MAX_OUTPUT_SIZE
+
+
+def test_the_design_states_the_size_the_shipped_policy_actually_is() -> None:
+    """The figure `architecture.md` quotes, against the constant it describes.
+
+    **This number has gone stale four times** and no test saw any of them, because the assertions
+    around it check that the policy *fits* rather than what it measures — and every edit to the
+    prompt's prose moves it. The paragraph that carries the figure says so about itself, three
+    times over, which is what makes leaving it unpinned indefensible rather than merely untidy.
+
+    Both spellings are checked. Bytes bound the harness's output cap; characters are what the
+    paragraph's UTF-16 arithmetic continues from, and an edit that swaps an ASCII character for a
+    multi-byte one moves only the first.
+    """
+    section = "\n".join(section_lines(_POLICY_SIZE_DOCUMENT, _POLICY_SIZE_HEADING))
+    stated = re.search(r"write policy at \*\*(\d+) bytes\*\* \((\d+)\s*\n?\s*characters\)", section)
+    assert stated is not None, (
+        f"{_POLICY_SIZE_DOCUMENT} / {_POLICY_SIZE_HEADING} no longer states the policy's size in "
+        "the form this guard reads; restate it or move the guard, but do not leave it unpinned"
+    )
+    assert (int(stated[1]), int(stated[2])) == (
+        len(WRITE_POLICY_PROMPT.encode("utf-8")),
+        len(WRITE_POLICY_PROMPT),
+    )
+
+
+def test_the_comment_on_the_cap_states_the_size_the_shipped_policy_actually_is() -> None:
+    """The same figure's **second** site, which the guard above never reached.
+
+    The test above pins `architecture.md`. `limits.py`'s own comment states the same quantity to
+    justify the cap's margin, and nothing compared it — so it sat at a rounded `~6.1 kB` across a
+    change that moved the policy from 6098 to 6230 bytes, which that prefix does not distinguish
+    (6098 decimal and 6230 binary both round to 6.1). Guarding one site of a two-site claim is the
+    shape this corpus keeps paying for, and the rounding is what let this half hide.
+
+    Reads the module's **source** rather than a docstring, because the figure lives in a `#:`
+    comment that carries no runtime value to assert against.
+    """
+    source = Path(limits_module.__file__).read_text(encoding="utf-8")
+    stated = re.search(r"the shipped policy text is (\d+) bytes", source)
+    assert stated is not None, (
+        "zikaron/hook/limits.py no longer states the policy's size in the form this guard reads; "
+        "restate it or move the guard, but do not leave it unpinned — and do not round it to a "
+        "`kB` prefix, which is what hid the last staleness"
+    )
+    assert int(stated[1]) == len(WRITE_POLICY_PROMPT.encode("utf-8"))
 
 
 def test_the_write_policy_also_fits_the_default_an_array_install_inherits() -> None:
@@ -163,9 +215,9 @@ def _at_the_gist_bound(filler: str) -> str:
 
 
 def test_a_worst_case_block_fits_every_supported_harnesss_injection_budget() -> None:
-    """The assertion the character bound exists to make possible, and the one M12 could only make
-    by accident: five rows, each gist as long as the write path will accept, measured against each
-    harness in that harness's own unit.
+    """The assertion the character bound exists to make possible, and the one that could previously
+    only be made by accident: five rows, each gist as long as the write path will accept, measured
+    against each harness in that harness's own unit.
 
     Exercised with the cheapest and the most expensive characters the bound admits, because an
     ASCII-only fixture is the *best* case per character and would prove the universal claim only

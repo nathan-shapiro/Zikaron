@@ -110,9 +110,9 @@ def test_every_code_lies_in_the_range_the_design_claims() -> None:
 def test_only_bad_config_may_omit_a_payload_field() -> None:
     """Which fields are optional is stated in the design's prose, not in its `{...}` notation.
 
-    `bad_config` reports either a store value or a file value, and only the file case has a file
-    to name. Every other payload is complete or the raise site is wrong, so the transcription
-    below is deliberately exhaustive rather than a spot check.
+    `bad_config` reports a store value, a file value or a derived path, and only the file case
+    has a file to name. Every other payload is complete or the raise site is wrong, so the
+    transcription below is deliberately exhaustive rather than a spot check.
     """
     optional = {
         f"{code.wire_name}.{field.name}"
@@ -133,7 +133,10 @@ def test_payload_keys_follow_the_declared_order_whatever_order_they_arrive_in() 
 
 def test_a_fixed_value_is_supplied_rather_than_asked_for() -> None:
     error = ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=["a", "b"])
-    assert dict(error.data) == {"uuids": ["a", "b"], "hint": "fetch it first"}
+    assert dict(error.data) == {
+        "uuids": ["a", "b"],
+        "hint": "re-read it through fetch or next_group",
+    }
     version = ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2)
     assert dict(version.data) == {"found": 2, "supported": 1}
 
@@ -231,6 +234,6 @@ def test_a_spec_cannot_declare_one_field_twice() -> None:
 
 
 def test_only_a_single_valued_field_counts_as_a_constant() -> None:
-    assert PayloadField("hint", values=("fetch it first",)).is_constant
+    assert PayloadField("hint", values=("re-read it through fetch or next_group",)).is_constant
     assert not PayloadField("source", values=("meta", "file")).is_constant
     assert not PayloadField("uuid").is_constant

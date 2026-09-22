@@ -1,4 +1,4 @@
-"""The JSON Zikaron adds to a kiro configuration: hook entries, the MCP server, and the
+"""The JSON Zikaron adds to a harness configuration: hook entries, the MCP server, and the
 consolidator agent config.
 
 `architecture.md` §"Two hook formats, both inside the stable agent config" and §"The install
@@ -26,7 +26,7 @@ from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
 #: The `mcpServers` key, and therefore the `@zikaron` selector. One declaration, because the name
 #: appears in three places that must agree — the server map, `tools`, and `allowedTools` — and a
-#: mismatch in the second silently produces an agent with no memory tools at all (measured; see
+#: mismatch in the second silently produces an agent with no Zikaron tools at all (measured; see
 #: `TOOL_SELECTOR`).
 MCP_SERVER_NAME: Final = "zikaron"
 
@@ -44,8 +44,8 @@ CONSOLIDATOR_AGENT_NAME: Final = "zikaron-consolidator"
 _HOOK_SCRIPT: Final = "zikaron-hook"
 _MCP_SCRIPT: Final = "zikaron-mcp"
 
-#: Kiro's two trigger names, **read from the seam rather than spelled again**. A review caught this
-#: file restating them: the harness-table drift guard covers spec↔design and nothing covered
+#: Kiro's two trigger names, **read from the seam rather than spelled again**. A second copy here
+#: would drift: the harness-table drift guard covers spec↔design and nothing covers
 #: spec↔installer, so a trigger renamed in the spec would move the *hook* (whose tests read the
 #: spec) while the *installer* kept writing the old name — an installed config naming a trigger the
 #: hook does not recognise, which fails as no output and exit 0.
@@ -55,13 +55,21 @@ _USER_PROMPT_SUBMIT: Final = KIRO.prompt_trigger
 #: Shared by both harnesses' consolidator definitions, which is why it is a constant rather than a
 #: literal inside either builder: it is the text a harness reads to decide the agent is relevant,
 #: and two copies would let one harness's install drift into describing a different agent.
+#: **"and nothing else" was false under Claude Code**, where `consolidator_agent_markdown` grants
+#: `Read` alongside the four verbs because `consolidator_can_read_files` is true there — the spill
+#: path needs it. The description is the only *prose* statement of this agent's surface and is what
+#: a parent model is shown when choosing a subagent, so it stated the opposite of a deliberate
+#: grant. Restated as the property that actually holds on both harnesses, and that is what D32 is
+#: about: no reach into search or fetch. The `Read` grant stays disclosed where it is actionable —
+#: the frontmatter's own `tools:` block, and the spill guidance that explains its bounds.
 _CONSOLIDATOR_DESCRIPTION: Final = (
     "Consolidates Zikaron's memory journal into long-term records. Spawned by the "
-    "zikaron-consolidate skill; carries the four consolidation tools and nothing else."
+    "zikaron-consolidate skill; carries the four consolidation verbs and no way to search or "
+    "fetch memory."
 )
 
 #: Claude Code's three triggers, derived from the seam for the reason above. `SubagentStart` has no
-#: kiro counterpart and is not optional: M14 built the write-policy-per-subagent path behind it, and
+#: kiro counterpart and is not optional: the write-policy-per-subagent path sits behind it, and
 #: kiro reaches the same place by firing its ordinary hooks *for* a subagent session instead.
 #: Registering only the first two would leave that path dead with nothing failing — no error, no log
 #: line, just subagents that never see the policy. The `is not None` filter is a type narrowing and
@@ -118,10 +126,9 @@ class Commands(NamedTuple):
         `command` does not exist produces no output on the one channel the harness reads.
 
         **Executability, not merely existence.** A console script that exists without the execute
-        bit
-        — a file copied out of a wheel by hand, an install onto a filesystem mounted `noexec` —
-        fails
-        at exactly the moment this check exists to protect, and `is_file()` alone would pass it.
+        bit — a file copied out of a wheel by hand, an install onto a filesystem mounted
+        `noexec` — fails at exactly the moment this check exists to protect, and `is_file()` alone
+        would pass it.
         """
         return tuple(
             path
@@ -135,8 +142,7 @@ def hooks_object(commands: Commands) -> dict[str, list[dict[str, object]]]:
 
     Both triggers point at the same executable, which dispatches on `hook_event_name` from its own
     stdin payload — kiro's hook fields carry no per-trigger argument mechanism, so the payload is
-    the
-    only place the trigger name is available (`zikaron/hook/main.py`).
+    the only place the trigger name is available (`zikaron/hook/main.py`).
     """
     return {
         _AGENT_SPAWN: [_object_entry(commands.hook)],
@@ -172,8 +178,7 @@ def hook_command_string(hook_command: Path) -> str:
     `/home/me/My Projects/.venv/bin/zikaron-hook` produced
     `/bin/bash: line 1: /home/me/My: No such file or directory` and exit 127 from the real harness,
     with the hook contributing nothing — no write policy on spawn, no memories on a prompt — while
-    the
-    install itself had exited 0, because the path *is* an executable file and every preflight
+    the install itself had exited 0, because the path *is* an executable file and every preflight
     passed.
     A single-quoted path was then measured to run correctly.
 
@@ -183,8 +188,7 @@ def hook_command_string(hook_command: Path) -> str:
 
     `mcpServers`' own `command` is deliberately **not** quoted: that field takes a program and a
     separate `args` array, which is exec-style rather than shell-style, and quoting it would make
-    the
-    harness look for a file whose name contains the quotes.
+    the harness look for a file whose name contains the quotes.
     """
     return shlex.quote(str(hook_command))
 
@@ -344,13 +348,12 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
 
     - `tools` is `@zikaron` alone — and it has to be there at all, since `mcpServers` configures a
       server while `tools` is what selects its tools. No `read`, `write` or `shell`: the design's
-      claim is that *code*
-      selects the candidates, and a consolidator that can read the repository can wander outside the
-      group it was handed.
+      claim is that *code* selects the candidates, and a consolidator that can read the repository
+      can wander outside the group it was handed.
     - `allowedTools` repeats it, because a subagent has no user to answer a permission prompt — an
       available-but-not-allowed tool is one that fails at the moment it is needed. (The primary
-      agent's own config gets the same treatment by default, for a different reason: see
-      `writer._selecting`.)
+      agent's own config gets the same treatment by default, for a different reason that
+      `writer._selecting` sets out.)
     - there is **no** `hooks` key. This session must not fire the push hook (it has no `search` to
       spend a result on) and must not print the write policy (its policy is this prompt).
     """

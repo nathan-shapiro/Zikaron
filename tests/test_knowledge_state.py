@@ -120,7 +120,7 @@ def test_a_corpus_is_unbuilt_until_a_completion_instant_is_recorded() -> None:
 class TestTheDesignSaysWhatThisModuleDoes:
     """The state table is the row a reader of `list`'s output goes to, and it is where the cause
     count drifted once already: §8.4 was rewritten to four and the table forty lines below went on
-    saying three, through a whole review round. Counting the causes mechanically is the count-first
+    saying three. Counting the causes mechanically is the count-first
     discipline this corpus prescribes for that class, applied to the one enumeration that has
     actually slipped."""
 

@@ -1,6 +1,6 @@
-"""`search` and `surface` end to end — the M5 done-when conditions, invariants 18 and 20.
+"""`search` and `surface` end to end — invariants 18 and 20.
 
-The five things the build plan asks this milestone to demonstrate are each a test here: a superseded
+The five things this module demonstrates are each a test here: a superseded
 row surfaces demoted and ordered **behind its replacement**; one memory never occupies two of five
 slots; `dense_stop_reason` distinguishes exhausted from cut on a fixture sized to each case; every
 event the read path writes carries the label it was handed; and the arm depths recorded on the event
@@ -110,7 +110,8 @@ async def test_the_block_carries_the_frame_the_order_and_whole_uuids(tmp_path: P
 
 async def test_surface_writes_its_call_row_before_its_per_memory_rows(tmp_path: Path) -> None:
     """One `surface_call`, then one `surface` per returned memory, all sharing one `op_id` — and
-    every row carrying the session label it was handed, which is M5's share of invariant 18."""
+    every row carrying the session label it was handed, which is this layer's share of invariant
+    18."""
     async with fx.harness(tmp_path) as harness:
         first = await harness.write(gist=f"{_TERM} must be set", content=f"{_TERM} {_TERM} {_TERM}")
         second = await harness.write(gist=f"{_TERM} note", content="mentions it once")
@@ -239,7 +240,7 @@ def test_a_search_detail_whose_count_disagrees_with_its_uuids_is_refused() -> No
 async def test_a_superseded_row_surfaces_demoted_and_behind_its_replacement(
     tmp_path: Path,
 ) -> None:
-    """The milestone's own done-when, and D25's measured case: blanket suppression was rejected
+    """D25's measured case: blanket suppression was rejected
     because "why did we pin to 2.3.1 back then" needs exactly the historical record, so the row
     stays eligible — demoted, labelled, and ordered behind the row that replaced it.
 

@@ -28,11 +28,12 @@ from zikaron.service.context import ServiceContext
 async def test_assemble_closes_the_store_when_a_later_construction_step_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A construction step that runs **after** `_open_or_create` succeeds — `IndexingContext.
-    for_store` here — is not hypothetical: `assemble`'s own docstring names "the encoder loading
-    but the store call after it failing" as a real case, and if the store `_open_or_create` had
-    already opened were left open, the non-daemon `aiosqlite` worker thread that backs it would
-    keep the whole interpreter alive after `main.run()` logs the failure and tries to exit.
+    """A construction step that runs **after** `_open_or_create` succeeds —
+    `IndexingContext.for_store` here — is not hypothetical: `assemble`'s own docstring names "the
+    encoder loading but the store call after it failing" as a real case, and if the store
+    `_open_or_create` had already opened were left open, the non-daemon `aiosqlite` worker thread
+    that backs it would keep the whole interpreter alive after `main.run()` logs the failure and
+    tries to exit.
     `tests/conftest.py`'s autouse `_no_leaked_store_connections` fixture is what actually proves
     this: it fails *this* test directly if any store connection is still open when it ends, which
     is a stronger and more honest check than asserting on this module's own internals.

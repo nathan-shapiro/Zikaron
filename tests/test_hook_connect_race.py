@@ -8,14 +8,14 @@ real threads calling the real function concurrently — not merely that the sequ
 in `test_hook_connect.py` still pass, which they would even without the lock, since none of them
 exercise genuine concurrency.
 
-Round-2 review (`reviews/m11-hook-client-review.md`, finding 1) found round 1's version of this
-file asserted only that both callers received a socket — true whether or not the lock exists,
-since a lock-free race can also converge on one winner binding while the loser's own bind fails
-and it falls through to connecting to the winner. Every test below now makes the spawned
-server itself append evidence of having been invoked *before* it attempts anything else, so
-"exactly one spawn happened" is checked directly against that record rather than inferred from
-the outcome — and the second test now forces a genuine interleaving *deterministically*, via a
-monkeypatch-based synchronization point rather than a fixed `time.sleep` delay: an intermediate
+An earlier version of this file asserted only that both callers received a socket — true whether
+or not the lock exists, since a lock-free race can also converge on one winner binding while the
+loser's own bind fails and it falls through to connecting to the winner. Every test below now
+makes the spawned server itself append evidence of having been invoked *before* it attempts
+anything else, so "exactly one spawn happened" is checked directly against that record rather than
+inferred from the outcome — and the second test now forces a genuine interleaving
+*deterministically*, via a monkeypatch-based synchronization point rather than a fixed
+`time.sleep` delay: an intermediate
 version of this test used a sleep to approximate the race and was found, on direct
 experimentation, to pass identically whether the lock was present or removed — for reasons that
 took direct measurement to characterize at all, which is exactly the tell that a fixed delay was
@@ -196,11 +196,11 @@ def test_two_concurrent_callers_race_to_start_exactly_one_service(
     tmp_path: Path, long_running_server_script: Path
 ) -> None:
     """The exact race `architecture.md`'s lock exists to close: both callers observe the socket
-    absent and call `connect_once` at effectively the same instant (forced via a `threading.
-    Barrier` so neither can win by simply going first), and the lock must ensure only one spawn
-    command ever runs — proven directly by counting the marker lines the spawned script itself
-    writes before it does anything else, not merely by both calls eventually succeeding, which a
-    lock-free implementation could also produce if the loser's failed bind fell through to
+    absent and call `connect_once` at effectively the same instant (forced via a
+    `threading.Barrier` so neither can win by simply going first), and the lock must ensure only
+    one spawn command ever runs — proven directly by counting the marker lines the spawned script
+    itself writes before it does anything else, not merely by both calls eventually succeeding,
+    which a lock-free implementation could also produce if the loser's failed bind fell through to
     connecting to the winner.
     """
     sock_path = tmp_path / "test.sock"
@@ -265,7 +265,7 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
     """A caller must not spawn at all if, by the time it acquires the lock, a *different* caller
     has already bound a live socket under it — the connect-again-under-the-lock recheck
     `architecture.md`'s 5-step sequence names. Constructed as a genuine, deterministic race
-    rather than a sleep-based one (round 1's version of this test pre-started a server before
+    rather than a sleep-based one (an earlier version of this test pre-started a server before
     either caller began, which lets both take the warm fast path without ever reaching the
     lock/spawn branch at all — passing identically with the lock removed; a since-discarded
     intermediate version used `time.sleep` to approximate the interleaving, and a second

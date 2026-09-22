@@ -9,13 +9,12 @@ measured.** This module originally reused `zikaron.service.envelope.ClientEnvelo
 verified at the time, and wrong about the cost that matters. Stdlib-only is not the same as cheap:
 measured on this machine, importing `zikaron.core.events` alone costs **28 ms** over a
 socket/json/os/pathlib/subprocess floor and `zikaron.service.envelope` **34 ms** (it pulls in
-`core.events`, `core.errors` and `dataclasses`, whose own `inspect` import is most of it), against a
-whole-process hook budget of ~48 ms without them and ~68 ms with. This client runs **once per user
-message**, so that is a per-turn tax on the exact critical path the design's argument for keeping
-the
-hook thin is about — and `architecture.md` §Components quotes ~20 ms for this client, a figure the
-reuse quietly tripled. `dataclasses` is avoided for the same reason `logging` is: a `NamedTuple`
-gives the same frozen, typed, four-field value for no measurable import.
+`core.events`, `core.errors` and `dataclasses`, whose own `inspect` import is most of it), against
+a whole-process hook budget of ~48 ms without them and ~68 ms with. This client runs **once per
+user message**, so that is a per-turn tax on the exact critical path the design's argument for
+keeping the hook thin is about — and `architecture.md` §Components quotes ~20 ms for this client, a
+figure the reuse quietly tripled. `dataclasses` is avoided for the same reason `logging` is: a
+`NamedTuple` gives the same frozen, typed, four-field value for no measurable import.
 
 Two copies of a wire contract is exactly the drift this corpus keeps finding, so the copy is
 **guarded rather than trusted**: `tests/test_hook_envelope.py` asserts this module's field names and

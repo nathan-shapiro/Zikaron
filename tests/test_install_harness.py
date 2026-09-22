@@ -189,7 +189,7 @@ def _require_kiro() -> None:
     spec↔design drift guard cannot catch, since it pins the code against `harness.md` rather than
     against the machine, and an upstream rename lands on both at once.
 
-    That is exactly the shape round 4 caught on the Claude Code side, where a wrong name made the
+    That is exactly the shape seen on the Claude Code side, where a wrong name made the
     whole tier exit 0 on four skips. The message names both causes so the reader does not have to
     guess which one they hit.
     """
@@ -221,7 +221,7 @@ class TestAgainstTheRealBinary:
         """The **real shipped artefact**, serialized exactly as `KiroTarget.shipped_files` does.
 
         It used to validate a four-key toy, which asserted a belief about a document nothing ships.
-        That mattered more after M15's tiering than before: until then, every `test_install_e2e.py`
+        That matters more since the tiering: before it, every `test_install_e2e.py`
         run incidentally drove this validator over the real written config through
         `complaints_about`, and stubbing the binary there removed the only place the shipped JSON
         met the real validator at all. This is where that check belongs anyway — the tier that

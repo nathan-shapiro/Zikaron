@@ -4,10 +4,18 @@
 # `./check.sh` is the per-edit gate and the definition of done for a change; this script is
 # additionally required before a milestone lands. (That phrase is kept on one line on purpose: it is
 # how every site stating this rule is found, and a wrap hides one from the grep.)
-# Not on every edit, because it is minutes rather than seconds and
-# builds a virtualenv per version; not conditional on which files changed either, because a rule like
-# "run it when the compatibility module changes" is a judgement call, and the person making it is the
-# one who would rather not wait.
+#
+# **CI does not run this script, and is not a third thing to run.**
+# `.github/workflows/check.yml` asserts *this script's* claim — every supported version green on one
+# tree — against a commit, by running `check.sh` once per version. So it needs none of the tree
+# fingerprinting below: a job checks out one SHA, and "every version saw the same tree" is guaranteed
+# rather than sampled. The price is that the deprecation filters set here become per-job over there
+# and have to be asserted rather than remembered, which `tests/test_ci_workflow.py` does.
+# `design/distribution.md` §"What CI asserts" is normative.
+#
+# Not on every edit, because it is minutes rather than seconds and builds a virtualenv per version;
+# not conditional on which files changed either, because a rule like "run it when the compatibility
+# module changes" is a judgement call, and the person making it is the one who would rather not wait.
 #
 # Two things are only ever exercised here. The version-dependent rows in
 # `zikaron/service/asyncio_compat.py` are each unexecuted on the versions that do not select them, so

@@ -165,7 +165,7 @@ def test_the_hook_sends_the_seam_resolved_label_under_each_harnesss_own_variable
     fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
     spec: HarnessSpec,
 ) -> None:
-    """The other half of the milestone's cross-client property, and the half nothing pinned.
+    """The other half of the cross-client property, and the half nothing pinned.
 
     Every other test here asserts what came *back*; none asserted what went *out*, and the fake
     service discarded the envelope unread. So passing the payload's session id — or any constant —

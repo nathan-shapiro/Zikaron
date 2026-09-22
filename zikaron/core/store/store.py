@@ -113,7 +113,7 @@ def _store_not_created(db_path: Path) -> ZikaronError:
     """
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
-        source=BadConfigSource.FILE,
+        source=BadConfigSource.DERIVED,
         key="store_dir",
         value=str(db_path),
         expected="an existing, openable memory.db — this store has not been created",
@@ -195,9 +195,9 @@ class Store:
     its own `aiosqlite.connect()` returned, with no `await` in between — the tightest available
     capture short of a materially larger VFS-level integration a deliberate, human-authorized
     decision declined to pursue (see `open_connection`'s own docstring for the full reasoning
-    and the narrow, accepted gap this leaves). It is *not* re-derivable later from `self.path.
-    stat()`: that would read whatever file currently sits at the path, which is precisely the
-    question this field exists to answer independently of.
+    and the narrow, accepted gap this leaves). It is *not* re-derivable later from
+    `self.path.stat()`: that would read whatever file currently sits at the path, which is
+    precisely the question this field exists to answer independently of.
     """
 
     def __init__(

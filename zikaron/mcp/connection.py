@@ -1,10 +1,16 @@
 """A lazy, reconnecting handle to `zikaron-service`, held for the life of one MCP server process.
 
-`architecture.md` §Lifecycle states the client's obligation precisely: "a client can connect just
-as the service decides to exit, and its request then fails. Clients retry once through the full
-start-if-absent sequence before falling back." This module is that obligation, and nothing more —
-it opens no connection until something asks for one (M10's own done-when: "the client provably
-makes no service call until the model calls a tool"), and every later request reuses the same
+`architecture.md` §Lifecycle states this client's obligation precisely: "a client can connect just
+as the service decides to exit, and its request then fails. `zikaron-mcp` retries once through the
+full start-if-absent sequence before falling back." **The subject is this client and not clients in
+general** — the source's next sentence is "The hook does not", and the hook's single outer attempt
+never retries the sequence. *This quotation read "Clients retry once", which turns a deliberately
+single-subject rule into a universal one that the sentence after it refuses. A reader of this
+module would have concluded the hook retries too.*
+
+This module is that obligation, and nothing more —
+it opens no connection until something asks for one — no service call happens until the model
+calls a tool — and every later request reuses the same
 socket rather than reopening it per call, which is what lets one process serve many tool calls
 without repeating the ~101 ms cold start-if-absent cost every time.
 
@@ -56,8 +62,7 @@ _REQUEST_TIMEOUT_SECONDS = 10.0
 @dataclass(frozen=True, slots=True)
 class StoreLocation:
     """Where this process's store lives, resolved once from the scope directory the entry point
-    supplies — `HarnessSpec.store_scope_dir` over this process's own cwd (D17, **amended
-    2026-08-18**).
+    supplies — `HarnessSpec.store_scope_dir` over this process's own cwd (D17).
 
     The original wording said "resolved once from the process's own working directory — D17's
     'literally the current working directory,' computed here rather than trusted from an argument,
@@ -100,11 +105,11 @@ async def _read_store_identity(store_dir: Path) -> str | None:
     unauthenticated peer's self-report before checking it.
 
     Both `db_path.exists()` and `resolve_effective_config` run through `asyncio.to_thread` below,
-    not directly: the first is a blocking `stat`, the second reaches `config.resolution.
-    _read_layer`'s own blocking `Path.read_bytes()` for both config layers — either one run
-    synchronously here would hold the same event loop `ServiceConnection.request`'s own blocking
-    socket calls are already careful to run off of, for the identical reason `architecture.md`'s
-    RPC section states for those.
+    not directly: the first is a blocking `stat`, the second reaches
+    `config.resolution._read_layer`'s own blocking `Path.read_bytes()` for both config layers —
+    either one run synchronously here would hold the same event loop `ServiceConnection.request`'s
+    own blocking socket calls are already careful to run off of, for the identical reason
+    `architecture.md`'s RPC section states for those.
 
     **A store this client has never seen before is not an error here.** `memory.db` not existing
     yet is the ordinary state of a project `zikaron-service` has never started against
@@ -150,16 +155,16 @@ class ServiceConnection:
 
     `architecture.md`: "the client adopts the returned label and reuses it for its process
     lifetime." A fresh `client_envelope()` call per request that re-read the harness's session
-    variable every
-    time would be correct only under `harness` resolution (the environment variable does not
-    change mid-process); under `minted` resolution — no session variable at all, the common case
-    for a client that is not a genuine kiro-spawned process, and reachable even under one if the
-    variable were ever absent — every call would instead bootstrap with `session_id: null` and the
-    service would mint a **new** `zk-<uuid4>` label each time, silently breaking every
-    receipt/ownership check that assumes one session speaks with one label: a consolidator's own
-    successful `plan_groups`, owned by `(session_id, pid)`, would then be followed by a
-    `next_group` under a *different* `session_id` and see its own run as foreign. This class holds
-    the resolved label once it is known, so every request after the first that establishes it uses
+    variable every time would be correct only under `harness` resolution (the environment variable
+    does not change mid-process); under `minted` resolution — no session variable at all, the
+    common case for a client that is not a genuine kiro-spawned process, and reachable even under
+    one if the variable were ever absent — every call would instead bootstrap with
+    `session_id: null` and the service would mint a **new** `zk-<uuid4>` label each time, silently
+    breaking every receipt/ownership check that assumes one session speaks with one label: a
+    consolidator's own successful `plan_groups`, owned by `(session_id, pid)`, would then be
+    followed by a `next_group` under a *different* `session_id` and see its own run as foreign.
+    This class holds the resolved label once it is known, so every request after the first that
+    establishes it uses
     the identical value.
 
     **Every `request()` call runs under one `asyncio.Lock`, for a second reason beyond ordinary

@@ -1,7 +1,9 @@
 # v0 schema
 
-> Written 2026-08-01. Reconciles D1–D32. Companion to `design/architecture.md` (process model, RPC, MCP
-> surface), `design/indexing.md` (chunking contract) and `design/consolidation.md`.
+> Written 2026-08-01. Reconciles the decision table. Companion to `design/architecture.md` (process model, RPC, MCP
+> surface), `design/indexing.md` (chunking contract), `design/consolidation.md`, and — since M20 put the
+> knowledge-base registry in `memory.db` — `design/knowledge-index.md`, which owns that table's *meaning*
+> where §"The knowledge-base registry" below owns its shape.
 > Verified locally on **each tested Python version, because the SQLite library is bundled with the
 > interpreter rather than chosen here** and so varies with how that interpreter was obtained: **FTS5
 > compiled in** and `enable_load_extension` available for `sqlite-vec` on a distribution-packaged
@@ -410,13 +412,20 @@ service refuses to serve, returns `−32023 bad_config` naming the key, and logs
 degraded hook path re-validate the same keys a `bad_config` had just declared unusable, so it could attempt a
 fallback read anyway — which meant re-deriving values the rule above forbids substituting a default for, or
 ranking differently while looking healthy, which is the exact failure this rule exists to prevent. The hook no
-longer attempts this at all: on `bad_config` it logs the exact detail to `hook.log` and exits 0 with a
-model-facing relay instruction on stdout, uniformly with every other failure (`architecture.md` §"Degraded
-modes"). There is no validation for the degraded path to perform, because there is no read for that
-validation to protect.
+longer attempts this at all: on `bad_config` it logs ~~the exact detail~~ **the failure kind and the
+wire code, and only those,** to `hook.log` and exits 0 with a model-facing relay instruction on
+stdout, uniformly with every other failure (`architecture.md` §"Degraded modes"). `hook/failure.py`
+formats one line of `timestamp kind code`; the `{source, file, key, value, expected}` payload is
+dropped during classification and never reaches the log call, **deliberately** — `architecture.md`
+§"Filesystem security" requires `hook.log` to hold a fixed failure-kind label and an error code and
+never prompt or memory content. **So the offending key is named in the service's rejection, not in
+`hook.log`.** There is no validation for the degraded path to perform, because there is no read for
+that validation to protect.
 
 **Unknown keys are tolerated; a newer `schema_version` is not.** An unknown key on a *supported* version is
-left alone and logged once, so a newer writer's extra settings do not brick the store. That is deliberately
+left alone ~~and logged once~~ **and not reported at all** — both `core/store/meta.py` and
+`core/knowledge/meta.py` say "tolerated silently", and neither enumerates the keys it did not
+read — so a newer writer's extra settings do not brick the store. That is deliberately
 **not** a forward-compatibility claim, and reading it as one was a defect: an unknown key says nothing about
 whether the tables, indexes, invariants, or the meaning of the *existing* keys changed under a newer writer.
 v0 therefore supports **exactly `schema_version = 1`**. A value `> 1` is refused with a stable
@@ -429,7 +438,7 @@ v0 therefore supports **exactly `schema_version = 1`**. A value `> 1` is refused
 | `store_id` | uuid string | 36 chars, uuid4 | **minted at creation** | not user-configurable; `health()` returns it (`architecture.md` §"Store identity") |
 | `embed_model` | string | non-empty | from the effective config at creation (`BAAI/bge-small-en-v1.5`) | **dual-homed with the config file, hard.** Seeded here at creation; authoritative thereafter, so a file that disagrees is *requesting* a change and the answer is invariant 11's forced reindex, never a silent switch |
 | `embed_dim` | int | ≥1 | from the effective config at creation (`384`) | **dual-homed with the config file, hard.** Must equal the `vec0` column width, which is fixed at creation — so unlike `embed_model` a disagreement here cannot be reindexed in place at all |
-| `chunk_max_tokens` | int | 64–8192 | from the effective config at creation (`450`) | **the dual key.** Records the budget the *existing* chunks were cut at. The config file governs **new** writes; a mismatch is **soft** — logged, store simply heterogeneous, never a refusal, because old chunks are valid vectors of valid text. Contrast the hard `embed_model` case (invariant 11) |
+| `chunk_max_tokens` | int | 64–8192 | from the effective config at creation (`450`) | **the dual key.** Records the budget the *existing* chunks were cut at. The config file governs **new** writes; a mismatch is **soft** — ~~logged,~~ **never detected, since nothing compares this row against the file** — store simply heterogeneous, never a refusal, because old chunks are valid vectors of valid text. `indexing.md`'s `token_count` and `truncated` instrumentation is the only thing that makes the heterogeneity visible. Contrast the hard `embed_model` case (invariant 11) |
 
 **`reindexing` is a sentinel, not configuration, and is deliberately not in the table above.** It is a
 transient key inserted when invariant 3's unavailable window opens and **deleted** when it closes; its value
@@ -463,6 +472,16 @@ memories:
 
 | Cutoff | Directed quantity thresholded | Why that direction |
 |---|---|---|
+| `anchor_cutoff` | `s(entry → record)` | the journal entry is the querying side; it searches the long-term tier for something to anchor to |
+| `dedup_threshold` | `s(new row → candidate)` | the row being written is the querying side; it looks for what it may duplicate |
+| `orphan_edge_cutoff` | `min(s(A → B), s(B → A))` | the only symmetric relation of the three, so it is symmetrized rather than directed |
+
+*This table was **empty** — header, separator, blank line — from the commit that introduced it until
+2026-09-22, while `consolidation.md` §Mechanism, `design/overview.md`'s D29 row and this document's own
+§Configuration keys all pointed a reader at it for the answer. Two of them close a citation loop:
+`consolidation.md` sends the reader here and §Configuration keys sends them back. Every direction above was
+already stated in `consolidation.md`'s prose; nothing had to be decided, only transcribed. **A table nobody
+filled is worse than no table, because three documents stop explaining what they point at.***
 
 `min` rather than `max` or a mean, for the same reason the edge test already demands mutual top-K: an edge
 should require agreement from both endpoints, and the conservative direction is the safe one here because
@@ -503,11 +522,14 @@ value moved on the strength of a level from that report would be moved on a misr
 
 ## Configuration keys
 
-**Twenty-six file keys: nineteen that moved out of `meta` outright, three dual-homed ones**
-(`embed_model`, `embed_dim`, `chunk_max_tokens`) that also persist in `meta` as the record of what the
-existing index was actually built with, and four belonging to the knowledge index rather than to the
-memory store (every `knowledge_`-prefixed key), which is why they carry that prefix inside a shared
-section.
+**The taxonomy, without a running total — the table below is the count.** Nineteen keys moved out of
+`meta` outright; three are **dual-homed** (`embed_model`, `embed_dim`, `chunk_max_tokens`), persisting
+in `meta` as the record of what the existing index was actually built with; four belong to the
+knowledge index rather than to the memory store (every `knowledge_`-prefixed key), which is why they
+carry that prefix inside a shared section; and later keys are added without any of these figures
+moving. *(This read "Twenty-six file keys" against a table of 27 rows: 19 + 3 + 4 = 26 left
+`consolidation.spill_threshold` in no bucket at all, in the document `README.md` and
+`architecture.md` both defer to for the key list.)*
 Resolved from the two TOML layers per `architecture.md` §"Configuration". Ranges and defaults are unchanged
 from when the nineteen lived in `meta`; only their home moved. The dual-homed three are the reason the file can be said to express *intent* while `meta` records
 *what was done* — without a file key there would be no way to state the intent at all, and the
@@ -605,8 +627,10 @@ signal_horizon_days = 30
 
 **The three cosine cutoffs remain provisional seeds, not measurements** — that was round 3's correction and
 moving them to a file does not change it. What is not provisional is that `orphan_edge_cutoff` must exist,
-which is combinatorial rather than empirical (`consolidation.md`). Their direction is defined in
-`consolidation.md`; only `orphan_edge_cutoff` is symmetrized, being the one undirected relation of the three.
+which is combinatorial rather than empirical (`consolidation.md`). Their direction is in **this
+document's own per-cutoff direction table**, under §`meta`; only `orphan_edge_cutoff` is symmetrized, being
+the one undirected relation of the three. *This sentence pointed at `consolidation.md`, which points back
+here — a two-document citation loop around a table that was blank at the time.*
 
 Being file keys now makes `fusion_depth` and `rrf_k` in particular a **config sweep** rather than a schema
 write, which is what `FINDINGS.md` open question 2 needs.
@@ -1190,9 +1214,12 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
     naming `run_id` internal here without that carve-out contradicted `architecture.md`
     §`zikaron_memory_next_group`, whose payload has stated `{group_id, run_id, …}` since the lifecycle was written.
     The carve-out is safe because neither id is a *handle*: `group_id` is the only one any verb accepts, and
-    **no verb accepts `run_id` at all** — it is a correlation id, so that a consolidator's own log line, and
-    the `merge`/`promote`/`discard`/`group_served`/`consolidate_run` events it caused, can be joined to the
-    run that produced them. It reaches no row of `memory` and authorizes nothing.
+    **no verb accepts `run_id` at all** — it is a correlation id, so that ~~a consolidator's own log line, and~~
+    the `merge`/`promote`/`discard`/`group_served`/`consolidate_run` events it caused can be joined to the
+    run that produced them. **The `event` join is the whole of it**: no Zikaron log line carries a
+    `run_id`, `service/log.py` having four writers and none of them concerning a run, and neither
+    `core/consolidation/` nor `mcp/consolidator.py` imports a logger at all.
+    It reaches no row of `memory` and authorizes nothing.
 15. **One *effectively-active* consolidation run per store at a time** — `status='active' AND
     expires_at ≥ now`. A stored `'active'` row past its lease constrains nobody, including its owner
     (invariant 17). Enforced by that predicate rather than by `status` alone; the lifecycle, including
@@ -1352,18 +1379,20 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
     the measurement that collapsed the label ladder to two rungs made `label_source` a **pure function of
     `session_id`** (`^zk-` ⇒ `minted`, else `harness`), so there is nothing to record and nothing for two copies
     to disagree about. The number is retired rather than reused, so that every `invariant N` reference written
-    across the corpus in twelve review rounds keeps pointing at what it pointed at. **v0 holds invariants 1–20.**
+    across the corpus during the design review keeps pointing at what it pointed at. **v0 holds invariants 1–20.**
     Rationale: `architecture.md` §"`label_source` is derived, not stored".
 
 ## File permissions
 The store is durable, unencrypted, plain-text knowledge about a project. `.zikaron/` is mode **0700** and
-`memory.db`, its `-wal` and `-shm`, and each of `service.log`, `warmup.log` and `hook.log` are mode **0600**,
+`memory.db`, its `-wal` and `-shm`, **every `knowledge/<uuid4>.db` and its `-wal`/`-shm`** (the
+`knowledge/` directory itself 0700), and each of `service.log`, `warmup.log` and `hook.log` are mode **0600**,
 created with an explicit umask rather than inherited. `design/architecture.md` §"Filesystem security" carries
 the full rule, including the socket and the `/tmp` fallback, because those live outside the store directory.
 
 **Erasing a row is not a `DELETE FROM memory`.** `memory_fts` is an external-content FTS5 table, so deleting
 the content row leaves its terms searchable; `memory_vec` has no foreign key, so deleting chunks first
-orphans vectors; and `consolidation_group_member`/`_candidate` hold `ON DELETE RESTRICT` references that will
+orphans vectors; and `memory.superseded_by`, `consolidation_group.anchor_uuid` and
+`consolidation_group_member`/`_candidate` hold **four** `ON DELETE RESTRICT` references that will
 refuse the delete outright. There is no agent-facing hard delete by design (D16), but an operator who must
 erase a leaked secret needs the exact transaction — it is in `design/write-policy.md` §"Inspection,
 deletion", together with the WAL/log residue that survives it.

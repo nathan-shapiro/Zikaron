@@ -237,8 +237,7 @@ async def _apply_merge(
         # `Authorized.target` is optional because `promote` and `discard` name none; `merge` always
         # does, and rung 2 refused the call if it was not authorized. A real `raise` rather than a
         # bare `assert`, for the reason `write.tools` gives at the same kind of site: an assertion
-        # can
-        # be compiled away, and this exists to catch the ladder changing what it returns.
+        # can be compiled away, and this exists to catch the ladder changing what it returns.
         raise ValueError("merge reached rung 7 with no authorized target")
     after = await records.apply_rewrite(db, current=before, rewrite=prepared.rewrite, ctx=call.ctx)
     await writes.reindex_rewrite(
@@ -459,8 +458,7 @@ async def discard(
 
     Raises:
         ZikaronError: the ladder's own rejections, or `STORE_BUSY` / `INDEX_FAILED`. No `BOUNDS`
-        from a
-            gist, since this verb authors no prose — only from a repeated `absorb` uuid.
+        from a gist, since this verb authors no prose — only from a repeated `absorb` uuid.
     """
     named = NamedRows(absorb=tuple(absorb))
 

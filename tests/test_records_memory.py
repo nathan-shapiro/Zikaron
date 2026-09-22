@@ -1,5 +1,5 @@
 """`zikaron.core.records.memory` — invariants 4-10, checked against `design/schema.md` and
-`design/architecture.md` §"Validation precedence", plus `build-plan.md`'s M3 done-when criteria.
+`design/architecture.md` §"Validation precedence".
 """
 
 import asyncio
@@ -109,8 +109,8 @@ async def test_create_with_empty_content_rolls_back_on_the_tables_own_check_cons
     tmp_path: Path,
 ) -> None:
     """`create`'s own docstring: non-emptiness is enforced by the table's `CHECK` constraint,
-    which raises `sqlite3.IntegrityError` rather than a `ZikaronError` — this milestone's fence
-    leaves that boundary to M6's tool-facing `bounds` rejection. The failed `INSERT` must still
+    which raises `sqlite3.IntegrityError` rather than a `ZikaronError` — this layer's fence
+    leaves that boundary to the tool-facing `bounds` rejection. The failed `INSERT` must still
     roll back cleanly rather than leave a half-open transaction behind for the next call."""
     async with await _open_store(tmp_path) as store:
         with pytest.raises(sqlite3.IntegrityError):
@@ -725,7 +725,7 @@ async def test_invariant_9_amend_without_a_receipt_is_rejected(tmp_path: Path) -
             )
         assert excinfo.value.code is ErrorCode.NO_READ_RECEIPT
         assert excinfo.value.data["uuids"] == [created.uuid]
-        assert excinfo.value.data["hint"] == "fetch it first"
+        assert excinfo.value.data["hint"] == "re-read it through fetch or next_group"
 
 
 async def test_invariant_9_a_version_bump_revokes_other_receipts_but_not_the_writers_own(
@@ -898,8 +898,8 @@ async def test_invariant_9_a_version_conflicts_current_is_one_conflict_record_ne
     """`architecture.md`'s tool surface states
     `zikaron_memory_amend`/`zikaron_memory_retire`'s conflict shape
     as `{conflict: true, current: CONFLICT_RECORD}` — one object. The list form
-    (`current: [CONFLICT_RECORD, ...]`) belongs only to the four consolidator verbs, which this
-    milestone does not implement, so `amend`'s own conflict payload must never wrap in a list."""
+    (`current: [CONFLICT_RECORD, ...]`) belongs only to the four consolidator verbs, so `amend`'s
+    own conflict payload must never wrap in a list."""
     async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx(session_id="winner"))
@@ -1172,7 +1172,7 @@ async def test_determinism_resolving_the_same_chain_twice_gives_the_same_answer(
 
 # ---------------------------------------------------------------------------
 # Transaction composability: the wire-facing verbs open their own transaction, but the
-# `<verb>_within_transaction` cores must compose into a wider one a caller (M4) already owns.
+# `<verb>_within_transaction` cores must compose into a wider transaction a caller already owns.
 # ---------------------------------------------------------------------------
 
 
@@ -1191,7 +1191,7 @@ async def test_the_public_verb_raises_on_a_nested_begin(tmp_path: Path) -> None:
 async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_commit(
     tmp_path: Path,
 ) -> None:
-    """A caller (standing in for M4) opens one transaction, calls the neutral core, does its own
+    """A composing caller opens one transaction, calls the neutral core, does its own
     further write, and commits once — proving the neutral form does not itself open or close a
     transaction and so does not conflict with an outer owner."""
     async with await _open_store(tmp_path) as store:
@@ -1199,8 +1199,8 @@ async def test_create_within_transaction_composes_with_a_sentinel_write_in_one_c
         created = await create_within_transaction(
             store.connection, gist="g", content="c", session_id="s1"
         )
-        # A stand-in for M4's own further write inside the same transaction (a chunk row, here
-        # represented by a second ordinary statement against a table this milestone already owns).
+        # A stand-in for a composing caller's further write inside the same transaction (a chunk
+        # row, here represented by a second ordinary statement against a table this layer owns).
         await store.connection.execute(
             "UPDATE memory SET token_count = 99 WHERE uuid = ?", (created.uuid,)
         )
@@ -1341,7 +1341,7 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
 async def test_a_sentinel_write_staged_before_a_composed_rejection_is_not_accidentally_committed(
     tmp_path: Path,
 ) -> None:
-    """The hole a round of independent review found: a composing caller (M4) that writes
+    """The hole: a composing caller that writes
     something of its own *before* calling into the authorization ladder, and then hits a
     version conflict, must not have that earlier write durably committed alongside the
     rejection's own receipt and event. Proven by using a bare `except: rollback()` — the wrong

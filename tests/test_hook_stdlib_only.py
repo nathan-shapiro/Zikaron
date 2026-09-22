@@ -1,4 +1,4 @@
-"""M11's own done-when: a test asserts stdlib-only imports, and specifically that `logging` is
+"""A test asserts stdlib-only imports, and specifically that `logging` is
 not among them, for every module on the `agentSpawn`/`userPromptSubmit` critical path.
 
 `architecture.md` §Components: "`zikaron-hook` stays stdlib-only." `coding-standards.md` §6 gives
@@ -13,15 +13,15 @@ process image**, spawned by `spawn_warm.py` but never imported by it, so its own
 paid in a process nothing on the critical path is waiting on.
 
 **This module is a rewrite of an earlier, weaker version that used two hand-maintained lists — a
-"critical path modules" tuple and a "forbidden third-party packages" tuple — and a review caught
-both as real gaps rather than merely inelegant.** A denylist of *anticipated* forbidden packages
+"critical path modules" tuple and a "forbidden third-party packages" tuple — both real gaps rather
+than merely inelegant.** A denylist of *anticipated* forbidden packages
 (`aiosqlite`, `fastembed`, and so on) would silently pass a genuinely new, unanticipated
 third-party import — `requests`, say — since nothing about that name was ever listed as forbidden;
 the whole enforcement claim of "stdlib-only" rests on catching *any* non-stdlib import, not merely
 the ones a past contributor happened to think of. And a hand-maintained list of "every module on
 the critical path" opts a new hook module *out* of enforcement by default until someone remembers
 to add it to the list — the identical failure class `check.sh`'s own `--cov` flags were caught in
-at M9, restated here for a test's own coverage rather than a coverage tool's. Both are fixed the
+elsewhere, restated here for a test's own coverage rather than a coverage tool's. Both are fixed the
 same way: **discover** the true module set from the package directory on disk, and **classify**
 every newly-imported top-level package as stdlib, `zikaron` itself, or forbidden — an allowlist of
 what is *known good* (`sys.stdlib_module_names`, the interpreter's own authoritative list, plus the
@@ -102,9 +102,9 @@ def _sys_modules_after_import(module_name: str) -> frozenset[str]:
 
 
 def _non_stdlib_non_zikaron(added: frozenset[str]) -> frozenset[str]:
-    """Every name in `added` that is neither part of the standard library (`sys.
-    stdlib_module_names`, the interpreter's own authoritative list — not a hand-transcribed copy
-    of it that could drift) nor this project's own `zikaron` package. Whatever remains is, by
+    """Every name in `added` that is neither part of the standard library
+    (`sys.stdlib_module_names`, the interpreter's own authoritative list — not a hand-transcribed
+    copy of it that could drift) nor this project's own `zikaron` package. Whatever remains is, by
     construction, a third-party import — the positive classification a denylist of *anticipated*
     packages cannot give, since a package nobody thought to list would otherwise pass silently.
     """
@@ -156,7 +156,7 @@ def test_no_third_party_package_is_imported(module_name: str) -> None:
 
 
 def test_logging_specifically_is_not_among_the_critical_path_modules_imports() -> None:
-    """Named separately from the general third-party sweep above because M11's own done-when
+    """Named separately from the general third-party sweep above because the contract
     states it as its own clause: "a test asserts stdlib-only imports **and specifically that
     `logging` is not among them**" — worth a dedicated assertion precisely because `logging` is
     itself stdlib and so is *not* caught by `_non_stdlib_non_zikaron`'s own positive
@@ -170,8 +170,8 @@ def test_logging_specifically_is_not_among_the_critical_path_modules_imports() -
 def test_a_hypothetical_third_party_import_would_be_caught(tmp_path: Path) -> None:
     """The enforcement claim this whole file exists to make, proven rather than assumed: a
     genuinely arbitrary, previously-unlisted third-party-shaped import must fail
-    `_non_stdlib_non_zikaron`'s own classification, since it is neither in `sys.
-    stdlib_module_names` nor named `zikaron`. `requests` is not actually installed in this
+    `_non_stdlib_non_zikaron`'s own classification, since it is neither in
+    `sys.stdlib_module_names` nor named `zikaron`. `requests` is not actually installed in this
     project's pinned venv, so this test does not import a real third-party package (which could
     silently start passing if a future dependency change happened to add it as a transitive import
     of something else); it constructs a throwaway module on `sys.path` with an unmistakably

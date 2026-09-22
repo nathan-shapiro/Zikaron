@@ -8,11 +8,11 @@ thing that can displace it.
 The reasoning behind the mechanism, restated because it is what makes an unconditional takeover
 safe rather than reckless: nothing inside the store can tell a stopped worker from a slow one — a
 lease is a timer, and a pid check answers whether a process exists, not whether it will progress.
-The
-one piece of real liveness evidence is outside the store: a human invoking the skill again. So an
-explicit `memory_plan_groups` takes the run over, and the displaced run is closed `taken_over`
-rather than
-`abandoned`, because a user retrying in one kiro session presents the same `session_id` and only a
+The one piece of real liveness evidence is outside the store: a human invoking the skill again.
+So an explicit `memory_plan_groups` takes the run over, and the displaced run is closed
+`taken_over` rather than `abandoned`, because a user retrying in one kiro session presents the
+same
+`session_id` and only a
 different pid.
 """
 

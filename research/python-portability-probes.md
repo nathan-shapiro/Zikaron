@@ -52,8 +52,14 @@ Read from `https://pypi.org/pypi/<pkg>/json`, release `1.28.0` / `0.1.9` / `0.8.
 3.11 through 3.14.
 
 **One real platform gap, and it is not about Python at all: `onnxruntime` ships no
-`macosx_*_x86_64` wheel.** Intel Macs cannot install the current pin from PyPI. That is a
-supported-platform question, independent of every distribution mechanism below.
+`macosx_*_x86_64` wheel.** ~~Intel Macs cannot install the current pin from PyPI.~~ **— refuted
+2026-09-21 by `research/onnxruntime-macos-wheels.md`, which this milestone commissioned precisely to
+check this sentence.** `fastembed==0.8.0` excludes only specific broken point releases rather than
+everything below the cutoff, so on **cp312 and cp313** a resolver backtracks to 1.23.2 — the last
+release with a `macosx_13_0_x86_64` wheel — and the install **succeeds**. Only **cp314** forces
+`>=1.24.2` and fails outright. The platform decision is unchanged (`design/distribution.md` §1) and
+its reason is now *supporting a year-stale pinned dependency* rather than *no wheel exists*.
+That is a supported-platform question, independent of every distribution mechanism below.
 
 ## 4. The load-bearing compile-time flag, measured on the interpreters uv actually ships
 
@@ -246,6 +252,51 @@ and reading the failures.
 
 ## 6. `uv tool install` produces exactly the artefact shape the installer needs
 
+> **Added 2026-09-22, and it changes the documented command rather than this section's result.**
+> The measurement below was run as
+> `uv tool install --python 3.14 --python-preference only-managed <tree>`, "with no host 3.14
+> present" — a configuration in which uv has **no choice** but to fetch a managed interpreter. §4's
+> `enable_load_extension` result is about those managed builds, so a recommendation resting on both
+> is only true for a command that actually gets one.
+>
+> **It does not, by default.** Measured in a scratch directory with an empty managed-interpreter
+> directory (`UV_PYTHON_INSTALL_DIR` pointed at one), on uv 0.12.17:
+>
+> | command | answer |
+> |---|---|
+> | `uv python find 3.12` | **`/usr/bin/python3.12`** — the host build |
+> | `uv python find --managed-python --no-project 3.12` | refuses: *"No interpreter found … in virtual environments or managed installations"* |
+>
+> uv's documented default is *prefer managed, fall back to a system Python when no managed one is
+> installed* — the state of **every fresh uv install**. So on the machine the recommendation is
+> written for, a Mac carrying python.org's 3.12 and a just-installed uv, the plain
+> `uv tool install git+…` builds the tool environment on exactly the interpreter §4's argument says
+> may not load `sqlite-vec`.
+>
+> **And then the same lesson applied to this very measurement.** `uv python find` **never downloads
+> by design**, so "it refuses" says nothing about whether `uv tool install --managed-python` would
+> go on to *fetch* one — which is the claim the README actually makes. Review round 2 caught that,
+> one round after the corpus wrote down the rule it violates. **So the documented command itself was
+> run**, 2026-09-22, on a copy of this tree in a scratch directory with `UV_PYTHON_INSTALL_DIR`,
+> `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR` all pointed at empty directories:
+>
+> | command, as run | interpreter the tool venv got | downloaded? |
+> |---|---|---|
+> | `uv tool install --managed-python <tree>` | `…/pythons/cpython-3.14.7-linux-x86_64-gnu/bin/python3.14` | **yes** — the managed directory went from empty to `cpython-3.14.7-…` |
+> | `uv tool install <tree>` | **`/usr/bin/python3.12`** | **no** — its managed directory stayed empty |
+>
+> **And the point of the whole exercise, checked rather than assumed**: on the build the flag
+> produced, `sqlite3.enable_load_extension` + `sqlite_vec.loadable_path()` loads cleanly — SQLite
+> 3.53.1, CPython 3.14.7. So the flag is what makes the recommendation's own mechanism work, on the
+> command a user types.
+>
+> `uv tool install --help` confirms the flag's meaning: *"Require use of uv-managed Python
+> versions"*. `design/distribution.md` §2, `README.md` and D36 all carry it.
+> **The transferable half, now earned twice in two rounds: a measurement taken under one command
+> licenses no claim about another** — not about the same command without a flag, and not about a
+> different subcommand of the same tool. This corpus's own `check-matrix.sh` already reaches for
+> `--managed-python` for the mirror-image reason.
+
 Zikaron's install contract depends on console scripts with **absolute paths**, written into
 `.claude/settings.local.json` and `.mcp.json`, plus `sys.executable -m zikaron.service.main` for
 start-if-absent (`install/entries.py` `Commands.from_this_interpreter`). Any distribution mechanism
@@ -259,6 +310,20 @@ that does not yield a stable absolute interpreter path breaks it.
 - put symlinks in `UV_TOOL_BIN_DIR`, with the tool venv at `tools/zikaron/lib/python3.14/`.
 
 So `Commands.from_this_interpreter()` resolves correctly under it and the service spawn is unchanged.
+
+**The heading overstates it, and the gap was found 2026-09-21 by asking a question this section never
+asked: what does the user *type*?** Everything above is about the two **machine-facing** scripts, and
+for those it holds. But `zikaron.install` and `zikaron.knowledge` are `python -m` entry points with
+**no console script at all** — `[project.scripts]` names only `zikaron-hook` and `zikaron-mcp` — and
+under `uv tool install` the tool venv's interpreter is not on `PATH`. So **the installer and the
+knowledge CLI are both unreachable** on the very path this section recommends, short of the user
+finding `<UV_TOOL_DIR>/zikaron/bin/python` by hand. `design/build-plan.md` §M30 adds a `zikaron`
+umbrella.
+**The shape of the miss is the transferable part**: this section verified the artefacts the *design
+documents named* and was right about every one of them. Nothing here was wrong. What it never
+enumerated is the set of things a human invokes, which is a different set — and the two CLIs missing
+from it are the two no design document has ever had to mention, because until now the interpreter
+running them was always the one the reader already had in their hand.
 
 ## 7. `uv run` / `uvx` is the wrong verb for the hook, by measurement
 
@@ -292,6 +357,46 @@ real entry point — but the two numbers should not both be quoted without recon
    is **104 bytes** on macOS against 108 on Linux, and `service/paths.py` already sizes the socket
    hash against "the ~108-byte `sun_path` limit"; `$XDG_RUNTIME_DIR` does not exist there, so every
    store falls to the `/tmp/zikaron-<uid>` branch of `runtime_dir`.
+   **Measured 2026-09-21, and the result is mixed rather than a dismissal.** Calling
+   `paths.runtime_dir` and `paths.socket_path` directly: **60 B** with
+   `$XDG_RUNTIME_DIR=/run/user/1000`, **55 B** on the no-XDG branch — the branch macOS always takes —
+   against macOS's **103 usable** bytes (104 including the NUL). *(The lock path is **not** subject to
+   `sun_path`: it is an ordinary file opened for `flock`, and the bound applies only to what reaches
+   `bind()`. An earlier revision added its 5 bytes to the figure as though it consumed budget.)*
+   So there is
+   **48 bytes of headroom on the macOS branch** — moved only by the uid's width (uid 501 leaves 49,
+   a ten-digit uid 42). *(This read **45** here and in two other documents until review round 1
+   subtracted it. 103 − 55 = 48, and no subtraction of 55 or 60 from 103 or 104 yields 45: an
+   arithmetic slip propagated by copying rather than re-deriving.)*
+   **The *store* path's contribution is safe by construction**: hashed to 32 hex characters, never
+   embedded, so no project nesting depth moves the number. That answers
+   `python-distribution-portability.md` §5's request to check the bound "for deeply-nested project
+   directories" — the hash is the answer.
+   **But the XDG branch is not bounded at all, and that is a real hole this note's first pass missed.**
+   `runtime_dir` prepends `$XDG_RUNTIME_DIR` **verbatim**, and that input is user-controlled. The very
+   convention §5 of the delegated note found for macOS —
+   `/var/folders/zz/<~30 chars>/T/runtime-501/zikaron/<32 hex>.sock` — computes to ≈**106 bytes**, so
+   anyone exporting it that way gets `OSError: AF_UNIX path too long` at bind. The earlier text here
+   said that convention "would be longer … and buy nothing" and then reasoned only about the branch
+   where nobody sets the variable. **`design/build-plan.md` §M29 now refuses an over-length path with
+   a `bad_config`-class error**, per `architecture.md` §"Filesystem security"'s reject-never-repair
+   rule.
+   ~~**What remains open is narrower and is the real macOS risk**: whether `security.py`'s
+   hostile-directory vetting passes on macOS's `/tmp`, which is a symlink to `/private/tmp` — exactly
+   the shape such a check exists to distrust. Unmeasured, needs the runner.~~ **— mis-sized, and
+   readable without a runner.** `ensure_runtime_dir` calls `lstat` on **the leaf**, not on its parents,
+   so macOS's symlinked `/tmp` is traversed exactly as `stat` would traverse it and the vet is
+   **expected to pass**. The runner confirms rather than discovers.
+   **The genuinely unread macOS risk was somewhere else entirely**: `check.sh` wraps pytest in GNU
+   `timeout`, which macOS does not ship, so a macOS CI job without a `coreutils` step dies in the
+   shell script before one test runs.
+   **The correction worth keeping is that the error ran both ways.** `FINDINGS.md` had called these
+   items "all larger than anything M27 covers", which was oversized — but the first revision of *this*
+   measurement then called two of the three "near-nothing", which was undersized, because it retired
+   the branch macOS takes and never read the branch it does not. **A plausible risk restated across
+   three documents acquires a size nobody measured; so does a plausible dismissal.**
+   `design/architecture.md` §Paths still says "~108" and is **deliberately not edited here** — that
+   sentence is normative and `design/build-plan.md` §M29 owns it.
 2. ~~**Whether to support one Python or a range.**~~ **Decided 2026-09-20: a range**, `>=3.12`, behind
    the seam — §5b above and `design/build-plan.md` §M27. Shipping our own interpreter, which would
    have made one version *enough* and the seam optional rather than load-bearing, remains open as its

@@ -5,10 +5,11 @@ or the hook for the reason `architecture.md` gives — the hook stays dumb, so t
 stated order and the demotion labels all come from here. The properties below are load-bearing; the
 count that used to introduce them is gone, having been wrong about its own list twice.
 
-- **The order is stated, and it means what it says.** Best first. A direct dogfooding lesson: this
-  project's own knowledge tool prints results in *ascending* score order, so its best match appears
-  last, which is trivially misread. A block whose order does not mean what the reader assumes is
-  worse than one with no order at all.
+- **The order is stated, and it means what it says.** Best first. A direct dogfooding lesson: the
+  harness's built-in knowledge tool (kiro's) prints results in *ascending* score order, so its best
+  match appears last, which is trivially misread. Zikaron's own knowledge search is best-first, so
+  the two differ and naming which one this is matters. A block whose order does not mean what the
+  reader assumes is worse than one with no order at all.
 - **A gist is named as an abstract, and fetching is tied to an occasion rather than to a
   judgement.** The block carries gists alone, and an agent reading one as the finding asserts a
   condensed claim with the qualifications stripped off — reported from real use as answers that

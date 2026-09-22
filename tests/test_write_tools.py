@@ -241,9 +241,17 @@ async def test_amend_rewrites_the_row_and_bumps_the_version(tmp_path: Path) -> N
 async def test_amend_on_a_stale_version_returns_a_conflict_with_the_full_current_record(
     tmp_path: Path,
 ) -> None:
-    """`architecture.md`'s promise: "a conflict returns the full record and its receipt in one
-    round trip" — checked here by re-amending with what the conflict handed back, with no second
-    `fetch` call in between."""
+    """`build-plan.md` §M6's done-when: a conflict returns the full record and its receipt in one
+    round trip. `architecture.md` states the mechanism — the conflict payload itself mints a
+    receipt at the current version, so the agent really can re-decide without asking again.
+    Checked here by re-amending with what the conflict handed back, with no second `fetch` call in
+    between.
+
+    *That promise was attributed to `architecture.md` and is `build-plan.md`'s wording; it appears
+    in no `architecture.md` phrasing. The two documents say compatible things, which is why the
+    misattribution survived — a quotation that is true of the corpus but not of the document named
+    reads exactly like a correct one.*
+    """
     async with harness(tmp_path) as h:
         call = _write_call(h)
         written = await remember(
@@ -721,11 +729,11 @@ async def test_a_locked_store_during_remember_is_store_busy_not_index_failed(
     wrapper: contention is an ordinary, reachable production outcome under real concurrent access,
     not a malformed-state guard, and it must be reported as `store_busy` — retryable — rather than
     collapsed into `index_failed`, which the caller cannot retry. `indexing.writes`'s own
-    `_failure_map` is proven correct by M4's own test at this same boundary; this is the identical
+    `_failure_map` is proven correct by its own test at this same boundary; this is the identical
     real-lock scenario proven again at `write.tools`'s own newly introduced transaction, since a
     caller reaching `remember`'s `_in_one_transaction`/`_failure_map` never goes through
     `indexing.writes.remember`'s transaction-owning wrapper at all — it composes the neutral
-    `remember_within_transaction` core directly, so M4's test does not exercise this layer's own
+    `remember_within_transaction` core directly, so that test does not exercise this layer's own
     mapping.
 
     A second connection holds a write transaction while this one tries to open its own, with the
@@ -852,10 +860,11 @@ async def test_a_failure_during_amends_index_replacement_leaves_the_old_row_and_
 async def test_a_failure_during_retires_own_event_write_leaves_the_row_unretired(
     tmp_path: Path,
 ) -> None:
-    """`retire`'s own `retire` event is its last statement (`records.memory.retire_within_
-    transaction`'s own ordering), so failing there is the sharpest point to prove invariant 2 for
-    this verb. `retire` touches no index (`indexing.writes`'s own "two verbs, not three"), so the
-    full snapshot's chunk/vector/FTS fields are expected to be identical before and after on their
+    """`retire`'s own `retire` event is its last statement
+    (`records.memory.retire_within_transaction`'s own ordering), so failing there is the sharpest
+    point to prove invariant 2 for this verb. `retire` touches no index (`indexing.writes`'s own
+    "two verbs, not three"), so the full snapshot's chunk/vector/FTS fields are expected to be
+    identical before and after on their
     own terms — what this test adds over the narrower row-only check is the receipt set and the
     exact event list, neither of which a three-column comparison would catch drifting."""
     async with harness(tmp_path) as h:

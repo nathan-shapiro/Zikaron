@@ -1,8 +1,8 @@
 """`remember` / `amend` / `retire`: the three primary-agent write verbs.
 
-Each opens exactly one transaction (invariant 2, re-asserted for these verbs per
-`build-plan.md`'s M6 brief) by composing a lower layer's own transaction-owning entry point —
-`indexing.writes.remember`/`amend` for the two indexed verbs, `records.memory.retire` for the one
+Each opens exactly one transaction (invariant 2) by composing a lower layer's own
+transaction-owning entry point — `indexing.writes.remember`/`amend` for the two indexed verbs,
+`records.memory.retire` for the one
 that touches no index. None of the three is reimplemented here; this module supplies the one thing
 none of those layers has: D15's dedup search for `remember`, and a typed `Conflict` outcome for
 `amend`/`retire` in place of the raised exception.
@@ -11,10 +11,9 @@ none of those layers has: D15's dedup search for `remember`, and a typed `Confli
 stays the row-level layers' own signal — `records.memory` and `indexing.writes` raise it, and
 `architecture.md`'s ladder is what decides which code — but the tool surface states
 `zikaron_memory_amend`/`zikaron_memory_retire`'s response as a **two-shape return**
-(`{uuid, version}` or
-`{conflict: true, current: ...}`), not as a side-channel error a transport has to catch
-specifically to keep responding 200. So this layer catches exactly `VERSION_CONFLICT` at its own
-boundary and returns the typed `Conflict` value instead; every other `ZikaronError` —
+(`{uuid, version}` or `{conflict: true, current: ...}`), not as a side-channel error a transport
+has to catch specifically to keep responding 200. So this layer catches exactly `VERSION_CONFLICT`
+at its own boundary and returns the typed `Conflict` value instead; every other `ZikaronError` —
 `NOT_FOUND`, `NO_READ_RECEIPT`, `INACTIVE_ROW`, `BAD_SUPERSESSION`, `BOUNDS`, `STORE_BUSY`,
 `INDEX_FAILED` — propagates unchanged, because the tool surface gives none of those a second
 response shape to translate into. Serializing `Conflict` to the literal wire object
@@ -107,9 +106,8 @@ class Remembered:
 
 
 #: `zikaron_memory_remember` always succeeds once past `bounds`/`index_failed`/`store_busy` — a
-#: fresh row
-#: has no version to conflict on — so this alias exists only for symmetry with the other two verbs'
-#: outcome names, and to give a transport one family of return types to pattern-match across all
+#: fresh row has no version to conflict on — so this alias exists only for symmetry with the other
+#: two verbs' outcome names, and to give a transport one family of return types to match across all
 #: three tools rather than a special case for the one verb with no second shape.
 type RememberOutcome = Remembered
 
@@ -142,17 +140,15 @@ type AmendOutcome = Amended | Conflict
 @dataclass(frozen=True, slots=True)
 class Retired:
     """`zikaron_memory_retire`'s success shape: `{uuid, version}` — identical in shape to
-    `Amended`, and
-    a separate type anyway, because the two verbs are not interchangeable at any call site that
-    matches on the outcome's own type rather than its fields."""
+    `Amended`, and a separate type anyway, because the two verbs are not interchangeable at any
+    call site that matches on the outcome's own type rather than its fields."""
 
     uuid: str
     version: int
 
 
 #: `Retired | Conflict`: `zikaron_memory_retire`'s two response shapes, sharing `Conflict` with
-#: `amend`
-#: because `architecture.md` states one payload shape for both verbs' rejection.
+#: `amend` because `architecture.md` states one payload shape for both verbs' rejection.
 type RetireOutcome = Retired | Conflict
 
 

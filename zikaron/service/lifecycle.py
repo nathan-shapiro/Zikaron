@@ -4,10 +4,10 @@
 background task that polls the store's own activity clock and exits the process when it has been
 idle past `idle_timeout` with nothing in flight, unlinking the socket first so no client mistakes
 a dead server for a live one. Start-if-absent is client-side, and lives here rather than in a
-future `mcp`/`hook` package because M9's own integration tests are the first thing that needs to
-exercise the exact race conditions `architecture.md` names — connect, `flock`, connect again,
-vet-and-unlink-stale, spawn detached, poll `health()` — and M10/M11 reuse this unmodified rather
-than each writing their own copy of a six-step sequence that must agree on every step.
+future `mcp`/`hook` package because the service's own integration tests are the first thing that
+needs to exercise the exact race conditions `architecture.md` names — connect, `flock`, connect
+again, vet-and-unlink-stale, spawn detached, poll `health()` — and the thin clients reuse this
+rather than each writing their own copy of a six-step sequence that must agree on every step.
 """
 
 import asyncio
@@ -73,15 +73,16 @@ async def idle_self_stop(
     `architecture.md` "the client adopts the returned label and reuses it for its process
     lifetime") makes `wait_closed()` alone block forever, measured directly against
     Python 3.12.3: `wait_closed()` explicitly waits until all accepted
-    connections are dropped, not merely until new ones stop being accepted. `RunningServer.
-    shut_down` closes every tracked connection first, which is what makes this actually return.
+    connections are dropped, not merely until new ones stop being accepted.
+    `RunningServer.shut_down` closes every tracked connection first, which is what makes this
+    actually return.
 
     **`original_store_inode` is a required parameter, captured by the caller, not by this
-    function.** `main.py` reads it from `ctx.store.opened_inode` — a field `Store.open`/`Store.
-    create` set immediately after their own `aiosqlite.connect()` returned, with no `await` in
-    between (`zikaron.core.store.connection.open_connection`'s own docstring has the full reasoning
-    for this capture point, including the narrow, human-authorized gap it deliberately accepts
-    rather than a materially larger VFS-level integration).
+    function.** `main.py` reads it from `ctx.store.opened_inode` — a field
+    `Store.open`/`Store.create` set immediately after their own `aiosqlite.connect()` returned,
+    with no `await` in between (`zikaron.core.store.connection.open_connection`'s own docstring has
+    the full reasoning for this capture point, including the narrow, human-authorized gap it
+    deliberately accepts rather than a materially larger VFS-level integration).
 
     The check itself compares the *current* path's inode against `original_store_inode` — a
     `memory.db` deleted and recreated at the identical path afterward gets a different inode at
@@ -157,10 +158,10 @@ async def stop_on_encoder_failure(
     zero, idle self-stop is out of reach as well, and the process stays *reachable* with
     start-if-absent unable to replace it.
 
-    The hang itself is not new — before this milestone the same load hung before the socket was
-    ever bound, where it was invisible rather than resident. What is new is that it now hangs on
-    the far side of a bind, which is the same non-daemon-thread trap `coding-standards.md` records
-    for store connections, reached through the executor instead.
+    The hang itself is not new — before the socket was bound at startup, the same load hung
+    earlier in the sequence, where it was invisible rather than resident. What is new is that it
+    now hangs on the far side of a bind, which is the same non-daemon-thread trap
+    `coding-standards.md` records for store connections, reached through the executor instead.
 
     **Initiated here rather than by the first access that trips over the failure**, so a service
     nobody happens to send a request to does not sit resident and mislabelled as ready.
@@ -247,11 +248,11 @@ def _health(sock: socket.socket) -> HealthCheck:
     distinguish "the process is ready" from "the process answered but is not ready yet," and a
     JSON boolean is the one shape `architecture.md`'s handshake actually specifies for the field,
     so this rejects anything else rather than coercing it into an answer. Every caller already
-    treats this function raising the same way it treats a connection failure — `_poll_until_
-    reachable`'s spawn-branch loop keeps polling, and `connect_start_if_absent`'s bare-connect
-    branches close the socket and propagate — so raising here rather than merely returning
-    `ready=False` is what makes those existing reactions the deciding path instead of a value a
-    caller could still fail to check.
+    treats this function raising the same way it treats a connection failure —
+    `_poll_until_reachable`'s spawn-branch loop keeps polling, and `connect_start_if_absent`'s
+    bare-connect branches close the socket and propagate — so raising here rather than merely
+    returning `ready=False` is what makes those existing reactions the deciding path instead of a
+    value a caller could still fail to check.
     """
     response = _send_request(sock, "health", {})
     result = response.get("result")
@@ -300,14 +301,14 @@ def connect_start_if_absent(
     `flock`, connect again, vet and spawn if still dead, release the lock, verify identity.
 
     The runtime directory is vetted **before the very first connect attempt**, not only before
-    spawning — `architecture.md` §"Filesystem security": "reject, never repair, a hostile runtime
-    path... before creating or using it." A socket already reachable through a hostile directory
-    would otherwise let this sequence connect straight through it without ever vetting anything,
-    on exactly the common path where a server already answers and nothing about this call ever
-    reaches the spawn branch that used to be the only place the check ran.
+    spawning — `architecture.md` §"Filesystem security": "Reject, never repair, a hostile runtime
+    path. Before creating or using `/tmp/zikaron-<uid>/`…" A socket already reachable through a
+    hostile directory would otherwise let this sequence connect straight through it without ever
+    vetting anything, on exactly the common path where a server already answers and nothing about
+    this call ever reaches the spawn branch that used to be the only place the check ran.
 
-    Blocking, deliberately: every thin client this sequence serves (M9's own tests today, M10/M11
-    later) is a short-lived process making one connection attempt, not an event loop — spawning an
+    Blocking, deliberately: every thin client this sequence serves is a short-lived process making
+    one connection attempt, not an event loop — spawning an
     `asyncio` runtime merely to run a `connect()` and a `flock` would cost more than either
     operation saves.
 

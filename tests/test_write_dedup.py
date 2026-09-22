@@ -351,10 +351,10 @@ async def test_lexical_only_candidate_scoring_cost_does_not_grow_with_candidate_
     tmp_path: Path,
 ) -> None:
     """The batched candidate-scoring cost, proved as scale-invariance rather than as one fixed
-    magic number: the
-    number of statements touching `memory_vec` must be the **same** whether the fused pool holds
-    3 lexical-only candidates or 6 of them — never one further statement per additional candidate,
-    which a one-read-per-candidate regression would show as growing linearly with the count."""
+    magic number: the number of statements touching `memory_vec` must be the **same** whether the
+    fused pool holds 3 lexical-only candidates or 6 of them — never one further statement per
+    additional candidate, which a one-read-per-candidate regression would show as growing linearly
+    with the count."""
     three_dir = tmp_path / "three"
     six_dir = tmp_path / "six"
     three_dir.mkdir()

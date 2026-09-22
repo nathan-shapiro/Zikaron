@@ -1,7 +1,12 @@
 # Retrieval — the read path
 
 > Written 2026-08-01. Covers D5, D12, D13, D20–D25. Companion to `design/indexing.md` (which covers how the
-> indexes are *built*); this document covers how they are *queried*. All measured figures trace to
+> indexes are *built*); this document covers how they are *queried*.
+> **Scope: the memory store only.** The knowledge index has its own read path — its own fusion, grouped
+> cross-KB ordering, per-file cap and response bound — specified in `design/knowledge-index.md` §7. This
+> document contained no mention of it until 2026-09-22, which read as exhaustiveness it never had.
+>
+> All measured figures trace to
 > `research/embedder-benchmark-results.md`, independently reviewed to APPROVED over three rounds
 > (`reviews/embedder-benchmark-independent.md`) — **with one erratum against that report**, on the identifier
 > conclusion, recorded in its review trail and repeated in §"The identifier weakness is real and unremedied".
@@ -140,7 +145,7 @@ figure in this document was measured on. **Depth 50 is the benchmarked pipeline*
 useful-recall@5, the 21.7-of-77.3 arm intersection, the 960/960 agreement result, the 0.8802 BM25-only
 degraded figure and the 9.14 ms warm end-to-end latency all come from depth 50. `fusion_depth` lives in
 configuration, not in the request, so an agent cannot silently change the ranking by asking for a different `limit`,
-and the tuning pass §"The known defect in this design" calls for has a named parameter to move.
+and the tuning pass §"The known defect in this design" called for had a named parameter to move.
 
 **The dense arm's overfetch loop, and the three ways it can stop.** `vec0` cannot filter on `memory`'s
 columns, so eligibility is applied *after* the join, which means a fixed KNN depth can return fewer eligible
@@ -435,9 +440,27 @@ finding of the benchmark:
 - Score ties were investigated as the cause and **refuted**: maximum movement across four tie-breaking
   rules was 0.0052, one query.
 
-RRF `k`, arm weighting, and fusion depth therefore deserve their own tuning pass, plausibly worth more than
-any model swap. Deliberately not tuned in the benchmark run. Requires no reindex, so it is safely
+RRF `k`, arm weighting, and fusion depth therefore deserve their own tuning pass, ~~plausibly worth more
+than any model swap~~. Deliberately not tuned in the benchmark run. Requires no reindex, so it is safely
 post-build.
+
+**That pass has since run — against the knowledge index rather than this benchmark — and nothing ships.**
+Over 2,720 chunks of technical prose, 252 cells of `rrf_k` × `fusion_depth` × arm weight: no configuration
+beat the shipped one by more than **+0.0069 MRR@10** on the one query family measured valid (`heading`,
+n=150), against a **0.02** bar fixed in advance, and the optimal weight sat on a broad plateau containing
+the unweighted fusion that ships. `fusion_depth` is flat-to-slightly-negative across a 40-fold range on the
+shipped slice. **Two scope warnings belong with that number**: the other three families were measured
+*invalid* — their queries are substrings of their own answers, so they hand the lexical arm the result —
+and on the pooled metric the preregistration actually named, **48 cells cleared every threshold**, the
+largest by +0.1314. Smaller `k` is weakly dominant everywhere rather than optimal per family: every
+family's maximum sits at `k = 10`, which beats 60 by **0.102** MRR@10 on exact-phrase queries but by only
+about +0.004 on the valid family, under the bar. `research/m25-fusion-sweep.md`.
+
+**The defect above is untouched by that result.** It was measured on the *memory* store's 187-record
+benchmark — a different corpus, a different scale, and an embedder upgrade rather than a parameter — so the
+erasure of +0.0705 is neither replicated nor refuted by the sweep, and stays open. What the sweep retires
+is only the generalisation struck above, which was stated of fusion tuning at large and is now known to be
+false of at least one real corpus.
 
 ## Embedding
 
@@ -460,8 +483,13 @@ scale control. Matched fp32 exports of one family would settle it. Not "bge-larg
 disproved".
 
 Why not a code embedder: CodeSage, jina-code, nomic-embed-code and Qodo-Embed are each confirmed by their
-own model cards to target NL→code or code→code retrieval. Per D1 we do not index code; our documents are
-prose *about* code. The large ones also fail the CPU, size and license constraints.
+own model cards to target NL→code or code→code retrieval. ~~Per D1 we do not index code; our documents are
+prose *about* code.~~ **— false since D1's amendment, corrected 2026-09-22.** The knowledge index's
+walk-time deny-list rejects binaries and minified assets only, so `.py`, `.rs` and `.go` are admitted and
+indexed as text (`design/knowledge-index.md` §4.2), and §16 carries *"source code is open question 3"*.
+**The narrower claim that survives** is that Zikaron is not a symbol graph or an AST index (§1.1) — and
+this sentence was the stated reason for not evaluating code embedders, a choice the knowledge index
+reopens rather than settles. The large ones also fail the CPU, size and license constraints.
 
 ### The identifier weakness is real and unremedied
 A counterfactual instrument — byte-identical passage templates with only the identifier swapped, randomized
@@ -630,8 +658,12 @@ a shortened one is not a handle at all. The cost is the honest one: about 36 cha
 preamble of several hundred.
 
 - **The order is stated, and it means what it says.** Best first. This is a direct dogfooding lesson from
-  this project: our own knowledge tool prints results in *ascending* score order, so the best match appears
-  last, which is trivially misread. An injected block whose order does not mean what the reader assumes is
+  this project: ~~our own knowledge tool~~ **the harness's built-in knowledge tool (kiro's)** prints results
+  in *ascending* score order, so the best match appears
+  last, which is trivially misread. *(Written 2026-08-01, when "our own" could only mean kiro's built-in
+  tool. Zikaron now ships `zikaron_knowledge_search`, which is best-first — so read today the original
+  sentence confessed a defect this project does not have.)* An injected block whose order does not mean what the
+  reader assumes is
   worse than one with no order at all.
 - **A gist is named as an abstract, and the fetch is tied to an occasion rather than to a judgement.** The
   block carries gists alone (D13), so an agent that reads one as the finding states a condensed claim with
@@ -648,12 +680,19 @@ preamble of several hundred.
   qualifier in the content, and kept the gist's framing anyway. So this is the weaker half of a pair:
   the write side's *"if a claim expires, the gist has to say so"* stays load-bearing, because a
   qualifier in the record reaches only an agent that fetches while a qualifier in the line reaches
-  every agent. It is weakest for exactly the two records that prompted it (`FINDINGS.md` §"The gist was being
-  read as the finding") — both were conclusions about the reading agent's own behaviour, and a
-  record that reshapes a posture is never "stated as fact" in
-  any step the agent can observe itself taking.
-  **Cost and signal.** The paragraph is **+342 units on every push** (fixed framing 967 → 1,309; the
-  paragraph itself is 377 and it replaced a 35-unit sentence), and it deliberately induces a `fetch`,
+  every agent. It is weakest for exactly the two records that prompted it
+  (`FINDINGS-archive.md` §"The gist was being read as the finding") — both were conclusions about
+  the reading agent's own behaviour, and a record that reshapes a posture is never "stated as fact"
+  in any step the agent can observe itself taking.
+  **Cost and signal.** The paragraph is **+342 units on every push** (framing plus worst-case
+  supersession labels, 967 → 1,309; the paragraph itself is 377 and it replaced a 35-unit sentence),
+  and it deliberately induces a `fetch`,
+  *(These two totals were called **fixed framing**, and 265 of each is not fixed: a five-row block
+  carries five `(superseded by <uuid>) ` labels at 53 units apiece, and a block of **live** rows
+  carries none. The genuinely fixed part is 702 → 1,044. The totals are right and are the correct
+  worst case — `schema.md` §Bounds's five-row figures are the all-superseded row of its table — but
+  a reader recomputing "fixed framing" from `block.py` gets 1,044 and concludes the corpus is 265
+  units out.)*
   whose `content` has no upper bound — so a message that *uses* a gist now costs gist plus record.
   **Signal, and what it cannot see.** From `surface` and `fetch` events joined on `session_id`: the
   share of surfaced uuids fetched **after the pair's first `surface` row and** before their
@@ -672,7 +711,7 @@ preamble of several hundred.
   as it did to `search`, and a store whose harness cutover this corpus does not record cannot be
   split at all — **and bounded at both ends by instants taken from outside the store and expressed
   in `event.at`'s clock, which is UTC**: an instant before any shipped text had changed — the one
-  recorded in `FINDINGS.md` §"The gist was being read as the finding" is conservative, not the last
+  recorded in `FINDINGS-archive.md` §"The gist-as-abstract fix, and M27" is conservative, not the last
   such — and the first service start after every change had.
   No event records which preamble a push carried, and
   **both sides are whole harness-labelled sessions**: the post-change side is the sessions that began after the
@@ -685,7 +724,7 @@ preamble of several hundred.
   Code keeps and only for `cleanupPeriodDays`.
   And the events attribute a fetch to a **session**, never to an agent within it, on either
   harness: Claude Code's transcript can separate a subagent's fetch from the primary's for as long
-  as it survives, and kiro has nothing (open question 1). Overfiring looks
+  as it survives, and kiro has nothing (open question 16). Overfiring looks
   like all five fetched on every message irrespective of use, which is the ceremonial compliance the
   search gate was also warned about.
   **It is also the read side of a write-side defect already measured here**: consolidation cannot lead a

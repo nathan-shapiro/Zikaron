@@ -12,8 +12,8 @@ where none does, and the two interruptions are not symmetric, so one ordering sa
   nothing was ever indexed under it. A build cannot repair it — everything defining a corpus but
   its name and description lives in the database that is missing — so a build refuses instead.
 - An interrupted `remove` leaves a **file without a row**: an orphan, invisible to every query,
-  never opened, reported by `status`. It leaks disk until someone clears it, which is the lesser
-  harm.
+  never opened for search, reported by `status`. It leaks disk until someone clears it, which is
+  the lesser harm.
 
 The reverse ordering is worse in both directions. An `add` writing its row last would leave an
 orphan on interruption, and because a retried `add` mints a fresh id that orphan is *permanent*,
@@ -383,8 +383,9 @@ async def remove(
     observed = await reporting.observe(store_dir, registered, config)
     if observed.blocker is not None:
         raise IndexerBusyError(
-            f"a build is running against {registered.name!r} ({observed.blocker.describe()}); "
-            f"retry once it has finished",
+            f"{registered.name!r}'s build lock is held by a process this host cannot show is "
+            f"gone ({observed.blocker.describe()}); wait for it, or clear the lock with "
+            f"`refresh --force-unlock` if you are sure it is gone",
             holder=observed.blocker,
         )
 

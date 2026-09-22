@@ -1,6 +1,6 @@
 """Layered TOML resolution, checked against `architecture.md` §"Configuration".
 
-The fixture matrix `build-plan.md`'s M2 brief requires: missing file, a partial override, an
+The fixture matrix this layer requires: missing file, a partial override, an
 unknown key, an out-of-range value, and a wrong TOML type, each exercised at both the system-wide
 and the project layer.
 """

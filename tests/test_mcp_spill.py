@@ -366,7 +366,7 @@ class TestTheCleanupThatDoesNotDependOnExiting:
 
     def test_the_sweep_leaves_a_live_processs_files_alone(self, tmp_path: Path) -> None:
         """It may belong to a concurrent consolidator on this store, and it may be being read right
-        now. Deleting it would reintroduce the failure the whole milestone exists to remove."""
+        now. Deleting it would reintroduce the failure this sweep exists to remove."""
         policy = _policy(tmp_path)
         policy.directory.mkdir(parents=True, exist_ok=True)
         live = policy.directory / f"{policy.store_key}-next_group-{os.getpid()}-abc.json"

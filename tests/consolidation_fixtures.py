@@ -37,15 +37,13 @@ from zikaron.core.records.memory import CallParams, Rewrite, Tier
 from zikaron.core.retrieval.retrieve import RetrievalSettings
 
 #: The consolidator's own session and process, distinct from the primary agent's so that a test
-# which
-#: forgets to pass one is visibly using the wrong client rather than accidentally correct.
+#: which forgets to pass one is visibly using the wrong client rather than accidentally correct.
 CONSOLIDATOR_SESSION: Final = "consolidator-session"
 CONSOLIDATOR_PID: Final = 4242
 AGENT_SESSION: Final = "agent-session"
 
 #: A `created_at` per fixture row, ISO-8601 in UTC and one minute apart, so group order is decided
-# by
-#: the timestamps a test wrote rather than by how fast the writes happened to run.
+#: by the timestamps a test wrote rather than by how fast the writes happened to run.
 _MINUTE: Final = "2026-08-02T09:{:02d}:00+00:00"
 
 

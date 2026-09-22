@@ -105,7 +105,7 @@ class TestWritingTheShippedFiles:
         assert report.replaced == []
 
     def test_a_hand_edited_file_is_backed_up_and_refreshed(self, tmp_path: Path) -> None:
-        """**A deliberate reversal, M15.** This test previously asserted the opposite — that an
+        """**A deliberate reversal.** This test previously asserted the opposite — that an
         operator's edit to a shipped file survives a re-run — and that rule is what made the
         installer keep an *older version's* consolidator prompt on every upgrade and report it
         cheerfully as "already there". Content is the only evidence the installer has, and "an older
@@ -412,7 +412,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         assert crew["availableAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
 
     def test_an_existing_trusted_agents_list_is_never_touched(self, tmp_path: Path) -> None:
-        """Spawn trust is a wider grant than the memory tools — its own model invocation and four
+        """Spawn trust is a wider grant than Zikaron's tools — its own model invocation and four
         mutation verbs — so it stays the user's decision even under `--force`, and the install says
         that starting a consolidation will ask once.
         """
@@ -778,7 +778,7 @@ class TestTheBackup:
 
 
 class TestAStaleShippedConfigIsCorrectedRatherThanKept:
-    """Two ways a shipped file goes stale, and M15 made one predicate cover both.
+    """Two ways a shipped file goes stale, and one predicate covers both.
 
     A **cloned repository** arrives with these artefacts tracked, carrying another machine's paths:
     kept as-is that is a consolidator that can never start, and reported as "already there" it is a
@@ -810,7 +810,7 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
         assert any("differed from what this install ships" in note for note in report.notes)
 
     def test_an_older_versions_config_is_refreshed_rather_than_kept(self, tmp_path: Path) -> None:
-        """The case the interpreter check could not see, and the reason M15 replaced it.
+        """The case the interpreter check could not see, and the reason it was replaced.
 
         This config names *this* install's own interpreter — so the old predicate answered "not
         stale" and kept it — while carrying a prompt no current Zikaron would write. That is an
@@ -881,7 +881,7 @@ class TestAStaleShippedConfigIsCorrectedRatherThanKept:
             merge_agent_config(config, _plan(tmp_path), Report())
 
     def test_the_skill_file_is_refreshed_too(self, tmp_path: Path) -> None:
-        """**Reversed in M15**, and this one was a plain defect rather than a trade.
+        """**A deliberate reversal**, and this one was a plain defect rather than a trade.
 
         The skill embeds no interpreter path, so the old predicate — "does this name a different
         install" — could never be true of it, and it was written as the constant `False`. The effect

@@ -78,10 +78,9 @@ def _consolidation_call(ctx: ServiceContext, envelope: ResolvedEnvelope) -> Cons
     docstring), not to police who may call these methods — `server.py` dispatches purely by
     method name, so an `mcp`-kind client naming `memory_apply_merge`/`memory_next_group`/etc.
     directly **is** reachable; nothing about the method table itself prevents it. Checking here,
-    before
-    constructing the type whose invariant would otherwise raise a bare `ValueError`, is what
-    turns "a caller supplied the wrong client kind" into a response that names the field and its
-    problem rather than one indistinguishable from a genuine server bug.
+    before constructing the type whose invariant would otherwise raise a bare `ValueError`, is
+    what turns "a caller supplied the wrong client kind" into a response that names the field and
+    its problem rather than one indistinguishable from a genuine server bug.
 
     Raises:
         ZikaronError: `BOUNDS` naming `client.kind` if the envelope's kind is not
@@ -382,13 +381,13 @@ async def consolidator_discard(
 #: The service-RPC surface `architecture.md` §"Service RPC surface" names beyond the five
 #: primary-agent verbs: `memory_plan_groups`/`memory_next_group` (both consolidator-gated, though
 #: `memory_plan_groups` is reachable by direct RPC rather than through any tool) and the three
-#: consolidator write verbs — named on the wire as
-#: `memory_apply_merge`/`memory_apply_promote`/`memory_apply_discard`, **not** the bare
-#: `merge`/`promote`/`discard` the design's own prose uses when discussing the underlying
-#: verb/concept elsewhere (the validation-ladder section, for instance, writes "consolidator verbs
-#: (`merge`, `promote`, `discard`)"). Those are two different things: the RPC surface section is
-#: the one place the document states the actual wire method name, and it is unambiguous — a
-#: client built against it would otherwise receive `METHOD_NOT_FOUND` for every write.
+#: consolidator write verbs — named on the wire as `memory_apply_merge`/`memory_apply_promote`/
+#: `memory_apply_discard`, **not** the bare `merge`/`promote`/`discard` the design's own prose uses
+#: when discussing the underlying verb/concept elsewhere (the validation-ladder section, for
+#: instance, writes "consolidator verbs (`merge`, `promote`, `discard`)"). Those are two different
+#: things: the RPC surface section is the one place the document states the actual wire method name,
+#: and it is unambiguous — a client built against it would otherwise receive `METHOD_NOT_FOUND`
+#: for every write.
 CONSOLIDATOR_METHODS: dict[str, Handler] = {
     "memory_plan_groups": plan_groups,
     "memory_next_group": next_group,

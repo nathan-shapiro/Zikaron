@@ -195,7 +195,7 @@ async def test_a_real_write_stores_unit_vectors_that_a_knn_query_finds(
 ) -> None:
     """One KNN probe, as a check on the *write*: invariant 1's join is the only thing tying a
     vector to its memory, so a write that produced an unqueryable index would look healthy in every
-    other assertion here. The read path itself is a later milestone's."""
+    other assertion here. The read path itself has its own tests."""
     async with _open(tmp_path, encoder) as (store, call):
         content = "\n\n".join([_LONG_PARAGRAPH, "run make clean first or the stale objects link"])
         written = await writes.remember(

@@ -1,5 +1,5 @@
 """`Store.create`/`Store.open`, checked against `schema.md` §"Creating the dense index", §`meta`,
-and invariants 1, 3 and 11 — the three `build-plan.md`'s M2 brief names for this milestone.
+and invariants 1, 3 and 11 — the three this layer is responsible for.
 """
 
 import struct
@@ -34,8 +34,7 @@ def _default_embedder() -> FakeEmbedder:
 
 
 # ---------------------------------------------------------------------------
-# Carried from M1: this build's schema version must agree with errors.py's own
-# declaration, never restate it.
+# This build's schema version must agree with errors.py's own declaration, never restate it.
 # ---------------------------------------------------------------------------
 
 
@@ -379,30 +378,30 @@ async def test_create_closes_the_connection_if_the_transaction_never_commits(
 # `schema.md` states this invariant as a bare comment beside the DDL (`-- INVARIANT:
 # memory_vec.rowid == memory_chunk.chunk_id`), with no trigger, foreign key or CHECK enforcing
 # it structurally — it is a write-discipline rule for whichever code writes a chunk and its
-# vector together, which is M4's indexing path, not this milestone's. `Store` itself never
+# vector together, which is the indexing path rather than the store's. `Store` itself never
 # inserts into `memory_chunk` or `memory_vec`, so there is no production code here for a test to
 # invert: a "negative control" that hand-picks two different literal ids and shows SQL's own
 # join semantics tell them apart would demonstrate the SQL engine works, not that any Zikaron
 # code upholds the invariant, and dressing that up as an invariant test would be the "plausible
 # answer instead of raising" failure shape the design corpus's own postmortems warn against.
-#
-# What M2 *can* state and verify honestly: the schema it creates gives the invariant somewhere
-# to hold. Both tables exist with an explicit-rowid-compatible shape (`memory_chunk.chunk_id` is
-# an `INTEGER PRIMARY KEY`, and `vec0` accepts an explicit `rowid` on insert, per M0 spike 1) —
-# so a later writer *can* satisfy the invariant by construction, and nothing in the schema this
-# milestone lays down makes it impossible to. Per `coding-standards.md`'s own instruction for a
-# genuinely untestable invariant: say so, rather than skip it silently or fake a test that would
-# pass unconditionally.
+# What this layer *can* state and verify honestly: the schema it creates gives the invariant
+# somewhere to hold. Both tables exist with an explicit-rowid-compatible shape
+# (`memory_chunk.chunk_id` is an `INTEGER PRIMARY KEY`, and `vec0` accepts an explicit `rowid` on
+# insert) — so a later writer *can* satisfy the invariant by construction, and nothing in the
+# schema this layer lays down makes it impossible to. Per `coding-standards.md`'s own instruction
+# for a genuinely untestable invariant: say so, rather than skip it silently or fake a test
+# that would pass unconditionally.
 # ---------------------------------------------------------------------------
 
 
-async def test_invariant_1_has_no_enforcement_code_at_this_milestone_and_that_is_stated_here(
+async def test_invariant_1_has_no_enforcement_code_in_this_layer_and_that_is_stated_here(
     tmp_path: Path,
 ) -> None:
     """Documents the honest scope rather than silently omitting the invariant. `Store` writes
     no row into `memory_chunk` or `memory_vec` anywhere in this module — confirmed by asserting
     both are empty immediately after creation — so there is no write path here whose inversion
-    an invariant test could exercise. M4 owns that write path and owns this invariant's test."""
+    an invariant test could exercise. The indexing layer owns that write path and this
+    invariant's test."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
     async with await Store.create(store_dir, config, _default_embedder()) as store:
@@ -420,7 +419,7 @@ async def test_invariant_1_the_schema_created_here_permits_the_invariant_to_be_u
     tmp_path: Path,
 ) -> None:
     """`memory_chunk.chunk_id` must be a rowid-aliasing `INTEGER PRIMARY KEY` and `memory_vec`
-    must accept an explicit rowid on insert (M0 spike 1's proven pattern), or M4's write path
+    must accept an explicit rowid on insert (a probed, proven pattern), or the indexing write path
     could not satisfy the invariant even if it tried. This is a schema-shape check, not an
     invariant-violation test: it shows the precondition holds, not that any code enforces the
     conclusion, which is exactly the distinction the section comment above states."""
@@ -818,7 +817,7 @@ async def test_sqlite_vec_extension_is_loaded(tmp_path: Path) -> None:
 async def test_opened_inode_survives_a_replacement_during_later_open_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The exact race a round of independent review measured against this milestone's own first
+    """The exact race measured against this module's own first
     fix attempt: `Store.open`'s own `_validate_on_open` call runs real, awaited SQL *after*
     `open_connection` has already returned — a version of the inode-drift baseline that read a
     fresh `stat()` at that later point, rather than the value `open_connection` itself captured,

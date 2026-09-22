@@ -1,6 +1,6 @@
 """The harness itself loads what we installed, driven by a real `claude` and a real model.
 
-**This is the test M12's scope fence said could not exist.** That fence read: the harness's own
+**This is the test an earlier scope fence said could not exist.** That fence read: the harness's own
 reading of the installed files "is not testable from here — kiro is not driven by the suite." True
 of kiro, and false of Claude Code, which has a headless mode. So every other test in this repository
 checks that we *wrote* the right files; this one checks that the harness *acts* on them.
@@ -154,7 +154,7 @@ class TestTheHarnessActsOnWhatWeInstalled:
         *not* check that `enabledMcpjsonServers` and `permissions.allow` do their jobs.
         `research/claude-code-installer-probe.md` §8 measured that a **headless** run approves
         everything — so this test passes identically if the installer omits both approval keys,
-        and a claim about them here would be vacuous in exactly the way M14's break-the-code
+        and a claim about them here would be vacuous in exactly the way the break-the-code
         discipline exists to catch. Those two keys were measured interactively instead
         (`research/claude-code-dogfood-checkpoint.md` §1), and their *contents* are pinned
         hermetically by `test_the_installed_settings_name_this_harness_own_triggers` below.

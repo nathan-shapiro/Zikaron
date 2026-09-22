@@ -9,8 +9,8 @@ the RPC surface behind it:
   (`dispatch_consolidation.py`'s own docstring says so). No `@mcp.tool` names it; it is called
   internally, by this module, as a prerequisite of forwarding the first `memory_next_group`.
 - **The three-state bridge** (`unplanned | ready | failed`) that decides, on every
-  `memory_next_group` call, whether `memory_plan_groups` must run first — `build-plan.md`'s own
-  M10 done-when states the table exactly, reproduced in `_PlanBridge` below.
+  `memory_next_group` call, whether `memory_plan_groups` must run first. The state table is in
+  `_PlanBridge` below.
 - **The wire method names differ from the tool names** for the three write verbs:
   `zikaron_memory_merge` calls `memory_apply_merge`, `zikaron_memory_promote` calls
   `memory_apply_promote`, `zikaron_memory_discard` calls `memory_apply_discard`. Everywhere else a
@@ -79,8 +79,7 @@ class _PlanBridge:
         # `memory_plan_groups` actually resumes — the first `await` inside `_connected_socket()`
         # (`_read_store_identity` opening the store) is already a yield point. Without
         # serialization here, both tasks would proceed to their own successful `memory_plan_groups`
-        # call,
-        # which is two takeovers from one process and a direct violation of "at most one
+        # call, which is two takeovers from one process and a direct violation of "at most one
         # **successful** takeover per client process." The lock makes the whole
         # check-then-act sequence — read state, decide, call, update state — atomic with respect
         # to every other call on this same bridge.
@@ -89,8 +88,8 @@ class _PlanBridge:
     async def ensure_planned(self, connection: ServiceConnection) -> None:
         """Run the bridge for one forwarded `memory_next_group` call: do nothing if already
         `READY`, re-raise the terminal failure if `FAILED`, and otherwise call
-        `memory_plan_groups` — moving to
-        `READY` on success, staying `UNPLANNED` (so the *next* call retries) on `store_busy`, or
+        `memory_plan_groups` — moving to `READY` on success, staying `UNPLANNED` (so the *next*
+        call retries) on `store_busy`, or
         moving to `FAILED` on anything else.
 
         Raises:
@@ -149,8 +148,7 @@ class _PlanBridge:
                 if error.code == _STORE_BUSY_CODE:
                     # Stay `UNPLANNED`: `store_busy` is the one outcome `architecture.md` states
                     # as retryable, and a caller's own retry is a fresh forwarded
-                    # `memory_next_group`,
-                    # which calls this method again from the top.
+                    # `memory_next_group`, which calls this method again from the top.
                     raise
                 self._state = _BridgeState.FAILED
                 self._failure = error
@@ -207,7 +205,7 @@ def register_consolidator_tools(
     """Decorate all four consolidator tools onto `mcp`.
 
     Called at most once per process, from `server.py`'s `build_server("consolidator")` branch —
-    the seam `architecture.md` §"a consolidator config provably cannot reach `search` or `fetch`"
+    the seam `architecture.md` §"Consolidator tool surface"'s *"provably cannot reach"* claim
     rests on from this side: this function never decorates those two, or `remember`/`amend`/
     `retire`, so a consolidator process has no tool through which a model could ask for them,
     regardless of what it is prompted to attempt.
@@ -304,8 +302,9 @@ def register_consolidator_tools(
     ) -> object:
         """Retire journal rows from this group that are not worth keeping — outright, with no
         replacement. `absorb` is a list of `{uuid, expected_version}` naming the rows to discard;
-        `reason` is recorded in the audit log, not in the store, so the discarded rows' own prose
-        is untouched. Returns `{retired, remaining_uuids, group_complete}` on success, or
+        `reason` is recorded in the event log and nowhere else — the discarded rows' own prose is
+        untouched — so keep it short and put no secret in it: that log is a table in this same
+        plaintext store. Returns `{retired, remaining_uuids, group_complete}` on success, or
         `{conflict: true, current: [...], remaining_uuids}` on the same stale-version terms as
         `zikaron_memory_merge`.
         """

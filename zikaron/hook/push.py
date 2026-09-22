@@ -140,11 +140,12 @@ def _classify_failure(error: Exception) -> tuple[str, int | None]:
         # Checked before the plain `HookTransportError` base class it subclasses: an identity
         # mismatch is `architecture.md`'s own named code `-32030 store_identity`, not the generic
         # "transport" the base class's other cause (no server ever became reachable) collapses
-        # to. Reachable through the unconditional store-*path* comparison `connect._verify_
-        # identity` always runs — the hook has no persistent connection across invocations to
-        # have learned a real `store_id` from the way a long-running client could, so its own
-        # identity check stays path-only rather than reading the store file for one, which would
-        # violate `architecture.md`'s own "never a reader of the store, under any failure."
+        # to. Reachable through the unconditional store-*path* comparison
+        # `connect._verify_identity` always runs — the hook has no persistent connection across
+        # invocations to have learned a real `store_id` from the way a long-running client could,
+        # so its own identity check stays path-only rather than reading the store file for one,
+        # which would violate `architecture.md`'s own "never a reader of the store, under any
+        # failure."
         return "store_identity", -32030
     if isinstance(error, rpc.SurfaceRejectionError):
         return _REJECTION_KINDS.get(error.code, f"rejected_{error.code}"), error.code

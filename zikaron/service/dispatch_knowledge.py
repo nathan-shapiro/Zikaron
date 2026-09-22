@@ -14,7 +14,7 @@ management verbs do build their shapes field by field, in `serialize_knowledge.p
 
 **A knowledge-base refusal is translated to a wire code here, on the exception's type.** `core`
 raises one class per refusal and gives none of them a numeric code, deliberately: those classes
-describe a corpus rather than anything a client asked the memory service to do. This module is the
+describe a corpus rather than anything a client asked the service to do. This module is the
 boundary where they become something a client can branch on, and it branches on the **type** so
 that a message may be reworded without silently changing which code a caller sees. Left
 untranslated they would reach `server.py`'s `except Exception:` fallback and arrive as *internal

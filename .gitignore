@@ -53,9 +53,10 @@ target/
 # Logs
 *.log
 
-# Memory store — local state, never committed (FINDINGS.md D19).
-# Memories live only in the local SQLite DB; the FTS5 and sqlite-vec indexes and the
-# downloaded embedding model are all rebuildable, so none of it belongs in git.
+# Zikaron's stores — local state, never committed (D19).
+# Memories and every knowledge base's index live only in local SQLite; those FTS5 and
+# sqlite-vec indexes and the downloaded embedding model are all rebuildable, so none of
+# it belongs in git.
 *.db
 *.db-wal
 *.db-shm

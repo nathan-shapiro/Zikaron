@@ -165,22 +165,20 @@ def _reap_any_service_spawned_for(store_dir: Path) -> None:
 
     The whole chain is genuinely asynchronous and detached by design (`architecture.md`
     §"Warming": "the hook process makes no RPC; its detached child does the start-if-absent
-    work, on a path no user message waits for") — `main.py`'s own subprocess has already exited
-    by the time this cleanup runs, and the warm helper it spawned may still be mid-flight. This
-    polls for the service to actually become reachable through the warm helper's own full
-    `_HEALTH_POLL_DEADLINE_SECONDS` (10 s) plus margin — round 2 review
-    (`reviews/m11-hook-client-review.md`, finding 6) found an earlier version of this function
-    used a 5 s deadline here, half the helper's own, so a slower machine could have the helper
-    finish starting a service *after* this function had already given up looking for one to
-    clean up — before attempting to terminate it; a warm helper that never starts anything leaves
-    nothing here to find, which is the ordinary, non-leaking case for every *other* test in this
-    class that does not touch `agentSpawn` at all.
-
+    work, on a path no user message waits for") — `main.py`'s own subprocess has already exited by
+    the time this cleanup runs, and the warm helper it spawned may still be mid-flight. This polls
+    for the service to actually become reachable through the warm helper's own full
+    `_HEALTH_POLL_DEADLINE_SECONDS` (10 s) plus margin, **before** attempting to terminate it. An
+    earlier version used a 5 s deadline here, half the helper's own, so a slower machine could
+    have the helper finish starting a service *after* this function had already given up looking
+    for one to clean up; a warm helper that never starts anything leaves nothing here to find,
+    which is the ordinary, non-leaking case for every *other* test in this class that does not
+    touch `agentSpawn` at all.
     The service found this way is a **grandchild** of this test process (this process's own
     child, `main.py`'s subprocess, has already exited; the warm helper it spawned is itself
     detached and its own child is the service) — `os.waitpid` cannot reap a process that is not
-    this process's own direct child, and the same round-2 finding caught an earlier version of
-    this function treating `os.waitpid`'s resulting `ChildProcessError` as confirmation the
+    this process's own direct child, and an earlier version of this function likewise treated
+    `os.waitpid`'s resulting `ChildProcessError` as confirmation the
     process was gone, when it only confirms this process was never entitled to reap it in the
     first place and says nothing about whether SIGTERM actually took effect. Liveness is
     therefore checked with `os.kill(pid, 0)` (works correctly against a non-child, unlike
@@ -477,7 +475,7 @@ class TestMainAsARealSubprocess:
     every one of them spawns a real subprocess and observes its real exit code — but `coverage.py`
     cannot attribute a subprocess's own execution back to this test process's coverage data
     without subprocess coverage instrumentation, which nothing else in this codebase adopts
-    either: `zikaron/service/main.py`, built and reviewed at M9, carries the identical class of
+    either: `zikaron/service/main.py` carries the identical class of
     uncovered lines (its own thin `run()` wrapper and `__main__` guard) for the same reason.
     """
 
@@ -537,8 +535,8 @@ class TestMainAsARealSubprocess:
         """A real, top-level `agentSpawn` genuinely spawns the detached warm helper as a fire-
         and-forget side effect, which in turn genuinely spawns a real `zikaron.service.main` for
         `tmp_path` — this is the intended production behaviour, not a test artefact, so it cannot
-        be mocked away without also no longer testing the real end-to-end entry point. `_reap_
-        any_service_spawned_for` waits for and cleans up whatever service this test's own
+        be mocked away without also no longer testing the real end-to-end entry point.
+        `_reap_any_service_spawned_for` waits for and cleans up whatever service this test's own
         `agentSpawn` caused to exist, rather than leaving it running for the rest of the suite.
         """
         monkeypatch.delenv("KIRO_SESSION_ID", raising=False)

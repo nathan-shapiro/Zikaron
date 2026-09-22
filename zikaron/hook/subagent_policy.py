@@ -1,7 +1,7 @@
 """`SubagentStart`: deliver the write policy to a subagent, and nothing else.
 
 `design/harness.md` §Subagents is normative. The spawn trigger fires once per session, so a subagent
-would otherwise inherit the memory tools having never seen the write policy at all. This path exists
+would otherwise inherit Zikaron's tools having never seen the write policy at all. This path exists
 to close that gap and does nothing more.
 
 **Policy-only, stated because each omission is deliberate.** It does not spawn the warm helper — the
@@ -41,9 +41,9 @@ def run(*, scope_dir: Path, agent_type: object) -> str | None:
     `agent_type` is typed `object` because it arrives as untrusted JSON from the harness's own
     stdin delivery. Anything that is not exactly the consolidator's type — a missing field, a
     non-string, an agent type this build has never heard of — receives the policy, which is the
-    safe direction to be wrong in: an agent that holds the memory tools and has not been told the
-    write policy is the failure this path exists to prevent, while an agent that receives a policy
-    it did not need has merely read a few thousand characters.
+    safe direction to be wrong in: an agent that holds the memory write verbs and has not been
+    told the write policy is the failure this path exists to prevent, while an agent that receives
+    a policy it did not need has merely read a few thousand characters.
 
     Never raises, for the same reason every other hook path does not: the caller's contract is to
     exit 0 having printed something or nothing, and `resolved_policy_text` absorbs any failure

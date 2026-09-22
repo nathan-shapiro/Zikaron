@@ -3,7 +3,7 @@
 > **Normative for every harness-coupled fact in Zikaron.** Where this document and an older section of
 > **another design document** disagree about kiro-versus-Claude-Code behaviour, this one is right and the
 > other is stale — say so and fix it rather than reconciling them in your head. Deltas are currently placed
-> in `architecture.md` (**eight** — two added 2026-08-18 for D17's amended store scope) and `schema.md`
+> in `architecture.md` (**six**, recounted 2026-09-22 — this said eight) and `schema.md`
 > (one); `retrieval.md`'s push section still describes kiro trigger names and placement and has not been
 > annotated.
 >
@@ -44,6 +44,12 @@ request envelope rather than importing the canonical one. **The harness seam mus
 trivial** — no dataclasses, no logging, no core imports. A drift test guards the copy; it does not guard
 against someone adding an expensive import.
 
+**`enum` and `typing` are the two imports the seam does take, and both were measured before being
+taken.** Adding `enum` costs nothing measurable, `socket` on the hook's existing floor having already
+imported it, and `typing` costs ~2 ms, which `hook/envelope.py` already pays for its own `NamedTuple`.
+So the closed sets `coding-standards.md` §2 asks for are affordable here. A frozen dataclass is not:
+`dataclasses` pulls in `inspect`, which `envelope.py` records as most of that import's own cost.
+
 ## The table
 
 | Fact | **kiro-cli** | **Claude Code** |
@@ -79,14 +85,23 @@ against someone adding an expensive import.
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
 
-Trigger names normalize **many-to-two** internally: spawn and prompt. Kiro's array format already accepts
+Trigger names normalize **many-to-three** internally: spawn, prompt, and subagent start — which is
+what `HookEvent`'s own docstring says, and what `hook/main.py` says it resolves to.
+*(This read "many-to-two" from M13, when there were two. M14 added the third event and appended it
+to the end of this paragraph as a sentence instead of moving the count — the number and its own
+counter-example sitting three lines apart for two milestones.)* Kiro's array format already accepts
 `SessionStart` as an alias for `agentSpawn`, so this is one vocabulary with synonyms rather than two
 languages. `SubagentStart` is a third internal event, Claude-Code-only, carrying the policy and nothing else.
 
 ## Detection, session identity, and the nesting limit
 
-**Detection is the marker variable and nothing cleverer**: `CLAUDECODE` present ⇒ Claude Code, else kiro.
-Measured present in both hook processes and both MCP server starts (§1).
+**For the hook and the MCP client, detection is the marker variable and nothing cleverer**:
+`CLAUDECODE` present ⇒ Claude Code, else kiro. Measured present in both hook processes and both MCP
+server starts (§1). *The scope matters: the **installer** detects differently — it reads the
+project's own `.claude/`/`.kiro/` directories first and treats the marker as a fallback, refusing
+outright when the project names both or when neither the project nor the marker says. That is
+§"The installer's two targets" below, and an unscoped "detection is the marker variable" here read
+as covering it.*
 
 **Session identity ports as a rename.** `CLAUDE_CODE_SESSION_ID` is exported into every process Claude Code
 spawns — both hooks, the MCP stdio server, and a subagent's subprocesses — and equals the hook payload's
@@ -186,7 +201,7 @@ context, because no push fires there at all.
   justification does not apply to this harness and must not be copied into it.
 
 **The write policy is delivered to subagents, precisely.** `SessionStart` fires once per session, so a
-subagent would otherwise inherit the memory tools having never seen D30's policy. The rule is: inject the
+subagent would otherwise inherit Zikaron's tools having never seen D30's policy. The rule is: inject the
 policy on `SubagentStart` for every `agent_type` **except `zikaron-consolidator`**, whose policy is its own
 system prompt.
 
@@ -194,8 +209,10 @@ system prompt.
 otherwise: plain exit-0 stdout from `SubagentStart` reaches **nobody** — not the subagent, not the parent.
 The policy arrives only via `hookSpecificOutput.additionalContext`, which the subagent then quotes verbatim
 while the parent still cannot see it (§7b) — the isolation this delivery wants. **So the seam owns which
-channel each event uses**, and `hook/main.py`, which writes plain stdout unconditionally today, cannot
-continue to.
+channel each event uses**, ~~and `hook/main.py`, which writes plain stdout unconditionally today, cannot
+continue to.~~ **— stale as written: `harness/spec.py`'s `CHANNELS` maps the subagent trigger to
+`ADDITIONAL_CONTEXT` and `hook/main.py` branches on `channel_for(event)`, wrapping the envelope for
+anything that is not `STDOUT`.**
 
 The `SubagentStart` path is **policy-only**: it does *not* spawn the warm helper (the session's own
 `SessionStart` already did, and a second spawn per subagent is pure cost), and it *does* honour the
@@ -270,7 +287,11 @@ opposite of kiro, whose silent substitution is the *sole* reason the install-tim
 `kiro-cli chat --list-models -f json` check exists. **So no install-time validation is needed under Claude
 Code** — the harness enforces no-silent-fallback itself.
 
-**Under Claude Code the shipped default is the `sonnet` alias; kiro keeps its pinned `claude-sonnet-5` and its install-time check, because an alias would fail `--list-models`. So this field *is* harness-varying data and has a table row — probe §7d's own closing inference that it was not is a probe-note conclusion the design deliberately did not adopt, for the reason below. Experiments pin, on both harnesses.** `architecture.md` §"The consolidator's model
+**Under Claude Code the shipped default is the `sonnet` alias; kiro keeps its pinned
+`claude-sonnet-5` and its install-time check, because an alias would fail `--list-models`. So this
+field *is* harness-varying data and has a table row — probe §7d's own closing inference that it was
+not is a probe-note conclusion the design deliberately did not adopt, for the reason below.
+Experiments pin, on both harnesses.** `architecture.md` §"The consolidator's model
 is a shipped config field" requires the field to be **present explicitly** and to be **an id the harness
 accepts** — an alias satisfies both, so *no silent inheritance* holds (the field is written, not omitted) and
 *no silent fallback* holds (the harness serves exactly what was asked for). A third rule — *the value must be
@@ -327,20 +348,41 @@ dialog is the only disclosure point in the flow and it is skipped exactly where 
 happen — a developer's own existing project. `--no-trust-tools` is the escape, and this is the
 argument for weighing it rather than treating the default as settled.
 
-## MCP tools may arrive deferred, and the policy's tool names are what make them findable
+## MCP tools may arrive deferred, and how the agent recovered their names is not established
 
 Measured in M16: the zikaron tools were **not in the agent's initial tool list**, and its first action of
-the session was to load their schemas *by exact name* — `select:mcp__zikaron__zikaron_memory_search,…`. It knew
-the names because the injected write policy names them, and it got them right because §"Tool names are a
-substitution point" rewrites the bare names to the `mcp__<server>__<tool>` form for this harness.
+the session was to load their schemas *by exact name* — `select:mcp__zikaron__zikaron_memory_search,…`.
 
-**So the substitution is load-bearing twice over.** It was built so the spawn instruction would be
-correct; it is also the only thing that makes the tools *discoverable* when they are deferred. A policy
-carrying bare names would **likely** leave an agent unable to find them — *likely* because
-`ToolSearch`'s matching on a bare name was never probed (`dogfood-checkpoint` §2) — and the failure
-is silent, since the agent simply
-concludes there are no memory tools. Any future edit to the policy's tool-name handling must keep this
-property, and it is not optional cosmetics.
+~~It knew the names because the injected write policy names them, and it got them right because
+§"Tool names are a substitution point" rewrites the bare names to the `mcp__<server>__<tool>` form
+for this harness. **So the substitution is load-bearing twice over.** It was built so the spawn
+instruction would be correct; it is also the only thing that makes the tools *discoverable* when
+they are deferred. A policy carrying bare names would **likely** leave an agent unable to find them
+— *likely* because `ToolSearch`'s matching on a bare name was never probed
+(`dogfood-checkpoint` §2) — and the failure is silent, since the agent simply concludes there are
+no memory tools. Any future edit to the policy's tool-name handling must keep this property, and it
+is not optional cosmetics.~~
+
+**— the stated mechanism does not exist and never has.** `WRITE_POLICY_PROMPT` contains **no tool
+name at all**: `re.findall(r"zikaron_[a-z_]+", …)` over the constant returns `[]`, and
+`git log -S "zikaron_memory" -- zikaron/hook/write_policy.py` returns nothing, so no edit ever
+removed one. Nor is the policy rewritten: `resolved_policy_text` returns the constant or the
+operator's override verbatim, and `assets.render`'s only two call sites are the skill and the
+consolidator prompt. ~~So the substitution is load-bearing **once** — for the spawn instruction —~~
+**— that overshoots the evidence, which reaches the write policy and stops there. What is refuted is
+narrower: the substitution is not load-bearing *for the write policy*. It stays load-bearing wherever
+`render` does run** — nine bare tool names across two artefacts: four in `CONSOLIDATOR_PROMPT`, four
+in the skill body, and the one in the Claude Code spawn instruction, which is substituted into that
+body before the rewrite. §"Tool names are a substitution point, not just the spawn instruction" is
+the statement of it. And the deferred-listing surface names the tools directly, which is the likelier
+explanation for how the agent had them.
+
+**What this cost is the instruction, not the measurement.** The observation stands; the sentence
+built on it told a maintainer that *"any future edit to the policy's tool-name handling must keep
+this property"*, and there is no such handling to keep. **A directive to preserve a mechanism that
+was never built preserves nothing and misdirects whoever obeys it** — and it survived because the
+claim is internally coherent, cites a real measurement, and names a substitution that genuinely
+exists somewhere else in the same file.
 
 This is also **a better explanation for §9's `installer-probe` observation** that both servers were
 "still connecting" and could not be named: a model cannot name tools that are not in its context.
@@ -534,7 +576,7 @@ consolidator`, which is where D32 implements it anyway.
   output anyway**, and the reason survives the measurement rather than being retired by it: no
   install-time or headless check can verify the effect, because a headless run approves everything
   (`installer-probe` §8), so nothing in the shipped software can notice the day a key stops working.
-  Belt and braces, because the failure it guards is a fresh install with no memory tools at all and
+  Belt and braces, because the failure it guards is a fresh install with no Zikaron tools at all and
   nothing saying why. The notes are conditioned on the grants being genuinely absent, since the merge never
   removes one and an unconditional note would contradict the file on a re-run.
 - **The primary agent's exposure to the four consolidation verbs.** A server must be registered session-wide

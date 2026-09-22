@@ -13,6 +13,20 @@
 > accepted cost is that a *general-purpose* subagent writing through MCP does so without this guidance;
 > §3's signals will show it if it matters, since `client.kind` is `mcp` either way and the write attributes to
 > the top-level session.
+>
+> **Harness delta (D34): the paragraph above is kiro's reach, and it is not Claude Code's.** Claude Code
+> fires `SubagentStart` carrying `agent_type`, which makes the per-agent rule expressible — so
+> `hook/subagent_policy.run` delivers this text to **every subagent except `zikaron-consolidator`**,
+> an unknown `agent_type` included, deliberately. Three consequences for the paragraph above, on that
+> harness: it does not reach top-level sessions only; a general-purpose subagent writing through MCP
+> **does** get this guidance, so the "accepted cost" is kiro's alone; and carrying a policy in the
+> agent's own config is no longer the only route. §"Delivery" above says "injected once per session":
+> under Claude Code it is once per session **plus** once per non-consolidator subagent.
+> `harness.md` §"Subagents" is normative.
+> *This was the scope header of the document that owns the injected text, stating a reach that had been
+> half-false since M14 — and `harness.md`'s own inventory of kiro-stale prose did not name it. A delta
+> note is cheap; the reason this one was missing is that nobody re-reads a section headed "narrowed",
+> which reads as already having been thought about.*
 
 ## 1. Why this text is shaped the way it is
 
@@ -20,7 +34,7 @@
 reported.** The older is
 below; the newer is §2's instruction to fetch a record before asserting from its gist, added
 2026-09-20 after an agent in real use reported taking gists as findings and answering from them
-(`FINDINGS.md` §"The gist was being read as the finding" records the report and both records).
+(`FINDINGS-archive.md` §"The gist-as-abstract fix, and M27" records the report and both records).
 "If a claim expires, the gist has to say so" was added 2026-08-03, in the first hour of real
 dogfooding. An agent asked to record project knowledge wrote the gist *"do not tune rrf_k/fusion_depth/arm
 weighting during retrieval work — it's a deliberate standing instruction"*, with the condition that makes
@@ -46,7 +60,10 @@ So the prompt deliberately biases toward recording, and leans on D15's write-tim
 redundancy that bias produces. Flooding is the cheaper error: a duplicate is one row and the dedup path
 offers it back, whereas an unrecorded lesson is re-learned at full cost.
 
-**The scope line needs a test, not a definition.** D1 says tribal knowledge, not codebase knowledge, but an
+**The scope line needs a test, not a definition.** D1 ~~says~~ **said** tribal knowledge, not codebase
+knowledge — and since its 2026-09-15 amendment the test is a **routing rule rather than a refusal**:
+codebase and document knowledge now has a home in Zikaron's knowledge index rather than nowhere, which
+is a stronger argument for the same test, not a weaker one. But an
 agent will happily record "the auth module lives in `src/auth/`". The operational test — *could you learn
 this by reading the code?* — draws the line in a way an agent can actually apply in the moment.
 
@@ -82,14 +99,17 @@ This directory has a memory store holding **tribal knowledge**: what has been le
 here that the source code does not tell you. It persists across sessions, and other agents will
 read what you write.
 
-**Look things up before you spend time.** A few relevant gists are injected ahead of each message
-you receive, but they were selected for the *user's words*, not for the problem as you understand
-it now. Two exchanges into a task the framing has usually moved and the selection has not: no new
-gists arrive, and nothing tells you the set has stopped covering the problem. The records
-themselves are not suspect, but you are not shown the records: each line is a gist, a one-sentence
-abstract written to help you choose what to read, and the conditions a finding held under usually
-live in the entry behind it. So before you state one as fact, or act on one, fetch it. The
-injected set is a starting point, never evidence that memory has already been consulted.
+**Look things up before you spend time.** If you are the session's main agent, a few relevant
+gists are injected ahead of each user message, selected for the *user's words*, not for the
+problem as you understand it now. A few turns into a task the framing has usually moved and the
+selection has not: nothing new arrives until the user speaks again, and nothing tells you the set
+has stopped covering the problem. **If you were spawned as a subagent, nothing is injected for you
+at all** — the push rides on a user message, and you never receive one — so searching is the only
+way memory reaches you here. The records themselves are not suspect, but you are not shown the
+records: each line is a gist, a one-sentence abstract written to help you choose what to read, and
+the conditions a finding held under usually live in the entry behind it. So before you state one
+as fact, or act on one, fetch it. The injected set is a starting point, never evidence that memory
+has already been consulted.
 
 Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
 — effort feels like progress, so that judgement arrives too late to act on:
@@ -107,8 +127,7 @@ about what must happen now: a recorded failure tells you what to re-check, not w
 drop, so confirm its conditions still hold before letting it rule anything out.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
-it out — a separate system covers code structure, symbols and layout. This store is for what cost
-someone time to discover.
+it out. This store is for what cost someone time to discover.
 
 Worth recording:
 - How to build, test, run and deploy — especially the step that is not in the README
@@ -152,9 +171,12 @@ you, so you do not need to check first.
 read further. Lead with the observable symptom or situation rather than the conclusion:
 "integration tests flake on CI unless PGHOST is set" beats "notes on test configuration".
 
-**Keep a gist to one sentence of about 20 to 25 words.** The limit is 64 tokens — roughly 50 words
-of ordinary prose — and a write over it is rejected outright, costing you the call. If a gist
-strains toward that limit it is usually carrying content that belongs in `content`.
+**Keep a gist to one sentence of about 20 to 25 words.** Two bounds apply and the first you
+cross rejects the write: 64 tokens by default — roughly 50 words of ordinary prose — and a fixed
+1,024 characters, which only binds if the gist carries a long unbroken string. The token bound is
+this project's to configure and may be lower here; the rejection names the limit it applied.
+A write over either is rejected outright, costing you the call. If a gist strains toward either
+limit it is usually carrying content that belongs in `content`.
 
 **Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
 its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
@@ -172,7 +194,7 @@ precondition and its read receipt (D26), what the dedup response contains and ho
 point of decision, which is the better place for them.
 
 ### Inspection, deletion, and the one thing D16 cannot do
-The store is a plain SQLite file at `<cwd>/.zikaron/memory.db`, mode 0600, never committed (D19). A user can
+The store is a plain SQLite file at `<scope>/.zikaron/memory.db`, mode 0600, never committed (D19). A user can
 read every memory with `sqlite3` and no tooling from us.
 
 `retire` is the only removal verb **agents** get, and it is deliberately soft (D16) — one bad session must not
@@ -196,7 +218,7 @@ announce itself on first contact — an operator who ran one query after a bad d
 answer would have no signal anything was wrong until the next touch. This is why the sequence below maintains
 `memory_fts` explicitly with the `'delete'` command rather than relying on the content-table delete alone.
 Detail: `research/spike-results.md` §"Spike 2".
-`memory_vec` has no foreign key, so deleting chunks first orphans vectors. And three `ON DELETE RESTRICT`
+`memory_vec` has no foreign key, so deleting chunks first orphans vectors. And **four** `ON DELETE RESTRICT`
 references will refuse the delete outright. The supported sequence, with the service **stopped** (find its pid
 in `service.log`, `SIGTERM` it; it unlinks its socket on exit — do not do this against a live service, whose
 in-memory state would rewrite what you just removed):
@@ -250,6 +272,15 @@ record prose that lives outside the store and outside the log rules, and it is l
 else in this procedure would reach it.
 
 #### What this still does not guarantee
+- **A knowledge base is a separate plaintext copy, and this procedure does not touch it.** Added
+  2026-09-22, and it is the largest gap this section had: a corpus holds the **verbatim text of every
+  file indexed into it**, in its own database, its own FTS5 index and its own vectors
+  (`design/knowledge-index.md`). So a secret that reaches Zikaron inside an indexed *file* was never
+  written by an agent, is not in `memory.db`, and nothing above reaches it. **`zikaron_knowledge_remove`
+  destroys that corpus's index**; the file itself is yours to fix, and rotating the value remains the
+  only real remedy. *(This section was written as a complete account of where a leaked string can
+  survive, and `README.md` sends a user here for exactly that. It stayed complete-sounding through the
+  six milestones that added a second plaintext store.)*
 - **`event.detail` is not covered, and one field of it is prose.** Event details store counts, not memory
   text — with one exception, `discard.detail.reason`, which is model-authored. If the secret could be in a
   discard reason, `DELETE FROM event WHERE memory_uuid = :u` as well.
@@ -330,7 +361,20 @@ Two supports sit beside it, both from the same account. The **sufficiency illusi
 injected block and not only here: five on-point gists make memory feel already consulted, while they
 matched the *user's words* and go stale as soon as the problem is reframed, and nothing arrives to
 say so. The policy is read once per session; the block prints once per message, which is where the
-impression is actually formed, at a cost of 187 bytes against the harness's own output cap. The
+impression is actually formed, at a cost of **179 units per push** against the smaller of the two
+harness caps — the paragraph measures **178** UTF-16 units and adds 179 with the newline that
+separates it in the rendered block. *Two corrections to one figure. The unit was "bytes against the
+harness's own output cap", which is singular and kiro-shaped: that cap is 65,536 **bytes**, Claude
+Code's is 10,000 **UTF-16 units**, and the two denominators are different arguments. And the number
+was **187**, which it has never been — the text is byte-identical since the commit that introduced
+it. **The round that fixed the unit wrote a justification for why the number need not change
+instead of measuring it**, which is this corpus's own "re-derive every number you are handed",
+failed on a number nobody handed me: I inherited it from the sentence I was editing. The
+neighbouring **342** below is right, because that one was measured when the unit was pinned. This
+read "the neighbouring 377", which is a real figure — it belongs to `retrieval.md` and is the
+gist-abstract paragraph's size — and appears in this file nowhere except inside that sentence about
+it. **A correction that cites a neighbour should check the neighbour is one.***
+The
 block carries a second paragraph from §1's pair — a gist is an abstract of its record, fetch before
 asserting from it — which is the larger addition at 342 units per push; `retrieval.md` §"Push output
 format" carries its rationale, its ceiling and its cost. And a
@@ -419,7 +463,7 @@ all deterministic, none requiring an extra LLM:
 |---|---|
 | writes per session, and sessions with **zero** writes — `remember` and `amend` counted separately as well as together, over a denominator of sessions the service actually saw | the under-writing rate (`~/Memory`'s observed failure), and separately whether repair ever happens |
 | dedup near-miss offered → **fully resolved / amended-but-duplicate-left-live / duplicate-discarded-without-amend / ignored**, classified against a **deadline** of `offer.at + signal_horizon_days`, where `A` = a bounded `amend` on the offered row and `R` = a bounded `retire` of the row just created. **`A ∧ R` closes early as *fully resolved*** (it cannot be improved on); **every other offer stays *pending*, and excluded from the rate, until the deadline passes** — so an amend-only offer is never published as a failure while an in-deadline `retire` could still complete it. At maturity all four combinations are named: `A ∧ ¬R` = amended-but-duplicate-left-live, `¬A ∧ R` = duplicate-discarded-without-amend, `¬A ∧ ¬R` = ignored. Five reported numbers, rate over the four matured classes only | whether the D15 escape hatch is used, and whether agents finish the job by retiring the row they just created |
-| amend following a surface, counted once per **(session, memory) pair** that was surfaced — the pair is the unit on both sides, "following" is `event.id` order, and the amend must fall within `surface.at + signal_horizon_days`; past that deadline with none the pair is *not amended* permanently, before it it is *pending* and excluded | whether D11's repair loop ever fires at all. Its `amend` arm only: a surfaced row the agent repaired by `retire` is counted by the retire signal below, so this is a floor on repair |
+| amend following a surface, counted once per **(session, memory) pair** that was surfaced — the pair is the unit on both sides, "following" is `event.id` order, and the amend must fall within `surface.at + signal_horizon_days`; past that deadline with none the pair is *not amended* permanently; before it, the pair is *pending* and excluded | whether D11's repair loop ever fires at all. Its `amend` arm only: a surfaced row the agent repaired by `retire` is counted by the retire signal below, so this is a floor on repair |
 | retire calls, split by superseded versus outright, agent retirements only | whether the agent will ever retire, or only accretes |
 | `token_count` **per write**, from the `remember`/`amend`/`merge`/`promote` events rather than from the current row | over-long memories with poor boundaries (D28), and the real length distribution open question 3 wants |
 | version-conflict rate over every **observable receipt-gated** mutation call — one of `amend` / `retire` / `merge` / `promote` / `discard` that committed, or was rejected as a conflict or for a missing receipt — the consolidator's included, with `no_receipt` reported beside it | concurrency reality, and separately whether agents try to write from a gist they never read. Two exclusions, both stated where the denominator is defined in `schema.md`: rejections of other kinds write no event, so they are outside the rate; and `remember` is outside it because it names no prior version and so can never conflict — putting it in would divide contention by write volume, which the first signal measures on purpose |
@@ -427,6 +471,11 @@ all deterministic, none requiring an extra LLM:
 Exact numerators, denominators and event shapes: `design/schema.md` §"The `event` log, per kind" and
 §"D30's six signals, as queries". They are specified there rather than here because three of the six were not
 reproducible from an untyped `detail` column, and because a rate needs a stated denominator to be a rate.
+
+**They ship as SQL and stop there — no reporting UI, no formatting, no export format.** A signal is a
+question about the store, and the shape an answer should take differs per caller: a CLI table, a test
+assertion, a one-off analysis. Fixing a presentation in the layer that computes them would fix it for
+callers that have not been written.
 
 **Two honest limits on the session-denominated signals**, both stated because both bias the same signal in the
 same direction:

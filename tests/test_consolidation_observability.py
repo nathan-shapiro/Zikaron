@@ -1,7 +1,7 @@
 """The guards whose effect is only *sometimes* observable, and the fixtures that make it observable.
 
 Every test here exists because a deliberate one-line mutation of the code it defends **survived**
-the rest of the suite. That is the M5 lesson repeated: a fixture where two rules coincide cannot
+the rest of the suite. The lesson repeated: a fixture where two rules coincide cannot
 tell them apart, so the tiebreak that only decides a tie needs a tie, the scan that only differs
 from a gate when rank 1 fails the floor needs rank 1 to fail the floor, and the exclusion that only
 bites once a member has become long-term needs a member that has.

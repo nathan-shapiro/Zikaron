@@ -163,7 +163,7 @@ def test_require_all_names_every_missing_uuid_in_one_call() -> None:
         receipts.require_all(["a"], uuids=["a", "b", "c"])
     assert excinfo.value.code is ErrorCode.NO_READ_RECEIPT
     assert excinfo.value.data["uuids"] == ["b", "c"]
-    assert excinfo.value.data["hint"] == "fetch it first"
+    assert excinfo.value.data["hint"] == "re-read it through fetch or next_group"
 
 
 def test_receipt_sources_match_the_ddl_check_constraints_own_four_values() -> None:

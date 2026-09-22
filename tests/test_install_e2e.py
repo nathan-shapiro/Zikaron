@@ -131,10 +131,9 @@ def _run_hook(
     """Run an installed hook `command` the way the harness runs it: through a shell.
 
     `shell=True` is fidelity rather than convenience, and it was a real gap. The harness executes
-    this
-    field through `/bin/bash -c` — measured, along with the failure that follows from it: an
-    unquoted
-    path containing a space produced `/bin/bash: line 1: /home/me/My: No such file or directory` and
+    this field through `/bin/bash -c` — measured, along with the failure that follows from it: an
+    unquoted path containing a space produced
+    `/bin/bash: line 1: /home/me/My: No such file or directory` and
     exit 127. Passing `[command]` to `subprocess.run` instead treats the whole string as one
     executable pathname, which is a *different* execution model and cannot see that class of defect
     at

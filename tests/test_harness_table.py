@@ -361,7 +361,7 @@ class TestInjectionBudgetMeasurement:
         """The **measured** reading, pinned so it cannot be quietly relaxed to `len()`.
 
         The budget was first pinned with text from the Basic Multilingual Plane, where a code point
-        and a UTF-16 code unit are the same thing, so it could not say which was counted. M16's
+        and a UTF-16 code unit are the same thing, so it could not say which was counted. The
         astral rerun settled it (`research/claude-code-dogfood-checkpoint.md` §3): 6,000 astral code
         points — 12,000 units — truncate under the 10,000 cap while 4,600 survive. So counting
         units is **correct**, and a `len()`-based count would be *wrong* rather than merely less

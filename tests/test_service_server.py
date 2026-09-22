@@ -97,11 +97,11 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
     writing the fix this test defends: reaching that line reliably took **three** bare
     `asyncio.sleep(0)` event-loop turns after the transport itself was already attached — not one,
     and not a number worth hardcoding as a sleep duration, which is exactly why this test builds
-    the window directly with a real `asyncio.Server` and an intentionally empty `RunningServer.
-    _connections`, rather than trying to time a real accept precisely (a sleep-based version of
-    this test would be nondeterministic by construction: too short and it would not reliably land
-    inside the window on a slower machine, too long and it would not be defending anything a
-    request/response round trip did not already cover).
+    the window directly with a real `asyncio.Server` and an intentionally empty
+    `RunningServer._connections`, rather than trying to time a real accept precisely (a
+    sleep-based version of this test would be nondeterministic by construction: too short and it
+    would not reliably land inside the window on a slower machine, too long and it would not be
+    defending anything a request/response round trip did not already cover).
 
     A real client genuinely connects and is genuinely accepted — the server's own count reflects
     it — but `RunningServer` here is constructed with an empty `_connections` set on purpose, the
@@ -248,9 +248,16 @@ async def test_close_all_connections_raises_loudly_rather_than_hanging_inside_ga
             # Confirmed directly this matters, not merely for tidiness: the earlier draft of
             # this test never closed `writer` at all, and the handler task finishing normally
             # (once the gate opens) left the underlying transport itself still open, since
-            # nothing had ever told it to close — the transport, not the task, is what `_active_
-            # count` actually counts, and the test hung waiting for `bare_server.wait_closed()`
-            # as a direct result. Mirrors `_handle_connection`'s own `finally: writer.close()`.
+            # nothing had ever told it to close — the transport, not the task, is what the
+            # server's own attached-connection count reflects, and the test hung waiting for
+            # `bare_server.wait_closed()` as a direct result. Mirrors `_handle_connection`'s own
+            # `finally: writer.close()`.
+            #
+            # **The private attribute this sentence used to name is deliberately not named here.**
+            # `test_version_seam.py` allows private asyncio names only in `asyncio_compat.py`, and
+            # that guard passed over this comment for as long as a line wrap happened to split the
+            # name in two. Joining it back up is what made the guard fire — **a textual guard is
+            # defeated by a line break, silently, and nothing reports the gap.**
             writer.close()
 
     bare_server = await asyncio.start_unix_server(_on_connect, path=str(sock_path))
@@ -431,17 +438,16 @@ async def test_fetch_returns_the_documented_record_shape_and_reports_missing_uui
     tmp_path: Path,
 ) -> None:
     """`fetch` was the one primary-agent method with **no** service-level test at all — found by
-    enabling the coverage floor on `zikaron/service` (which had been silently excluded since M1,
+    enabling the coverage floor on `zikaron/service` (which had been silently excluded,
     when `core` was the only package), and worth closing rather than noting because an unasserted
     wire shape is exactly the class of defect a wrong RPC method name is: reachable only by a real
     client sending the real method name, invisible to a test that calls a Python handler function
     directly instead.
 
     Asserts the exact twelve-field record shape `architecture.md` §`zikaron_memory_fetch` states,
-    as a set
-    rather than by spot-checking a few keys, so a field silently added or dropped fails here; and
-    asserts an unknown uuid is reported in `missing` rather than failing the batch, which the same
-    section states explicitly ("a partial answer is more useful than none")."""
+    as a set rather than by spot-checking a few keys, so a field silently added or dropped fails
+    here; and asserts an unknown uuid is reported in `missing` rather than failing the batch,
+    which the same section states explicitly ("a partial answer is more useful than none")."""
     async with open_context(tmp_path) as ctx:
         written = await _response_json(
             ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})

@@ -1,11 +1,11 @@
 """`zikaron.service.main.run` — the process-entry-point coroutine, specifically its own resource
 ownership: once `serve()` has bound a real listening socket, a failure in any of the setup steps
 that still run before the idle/signal race begins (`chmod` and task creation) must not leave that
-listener open with nobody holding it, nor its socket path behind on disk. Every other M9 test
-exercises `run()`/`main()` only indirectly, as a subprocess `test_
-service_lifecycle_integration.py` spawns — this is the one place `run()` itself is called directly
-as a plain coroutine, which is what makes a setup-step failure between `serve()` and that race
-reachable without needing a real signal or a real client connection at all.
+listener open with nobody holding it, nor its socket path behind on disk. Every other lifecycle test
+exercises `run()`/`main()` only indirectly, as a subprocess
+`test_service_lifecycle_integration.py` spawns — this is the one place `run()` itself is called
+directly as a plain coroutine, which is what makes a setup-step failure between `serve()` and that
+race reachable without needing a real signal or a real client connection at all.
 
 **Signal-handler installation is no longer one of those steps**, and the test that it precedes the
 bind is here for the same reason: the ordering is only observable from inside the process. Until
@@ -97,8 +97,8 @@ async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the
         await main.run(sock_path, store_dir)
 
     # The listener `serve()` bound must not survive this failure: its socket path is gone, which
-    # is the one externally observable fact a test with no reference to the closed `asyncio.
-    # Server` object itself can still check directly.
+    # is the one externally observable fact a test with no reference to the closed
+    # `asyncio.Server` object itself can still check directly.
     assert not sock_path.exists()
 
 
@@ -115,10 +115,11 @@ async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
 
     **Asserted here rather than by signalling a real process, because no external observer can see
     it.** A test that waits for the socket and then signals is waiting on the *start* of the very
-    window it means to rule out, and there is no later event to wait for instead: `asyncio.start_
-    unix_server` accepts from the moment it returns, so even a successful health call proves only
-    that the listener is up. What is observable from inside is that `loop.add_signal_handler`
-    installs a process-wide disposition, so reading it at the moment `serve()` is called answers
+    window it means to rule out, and there is no later event to wait for instead:
+    `asyncio.start_unix_server` accepts from the moment it returns, so even a successful health
+    call proves only that the listener is up. What is observable from inside is that
+    `loop.add_signal_handler` installs a process-wide disposition, so reading it at the moment
+    `serve()` is called answers
     the question directly.
     """
     store_dir = tmp_path / ".zikaron"
@@ -227,10 +228,10 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
     whatever exception was already propagating — the identical exception-masking class already
     fixed once inside `ServiceContext.assemble` itself, but at a different call site: this is
     `run()`'s own cleanup, which runs *after* `assemble` has already returned successfully,
-    against whatever failure happens later in `run()`'s own body. Forces both a `loop.add_signal_
-    handler` failure — which, now that the handlers go on before the bind, is the earliest failure
-    `run()`'s outer `finally` must preserve, reached with no socket bound and no `except
-    BaseException:` clause in the way — and a
+    against whatever failure happens later in `run()`'s own body. Forces both a
+    `loop.add_signal_handler` failure — which, now that the handlers go on before the bind, is the
+    earliest failure `run()`'s outer `finally` must preserve, reached with no socket bound and no
+    `except BaseException:` clause in the way — and a
     `Store.close` failure, and asserts the *setup* failure is what a caller's own `except`
     catches — not the close failure that happened while handling it."""
     store_dir = tmp_path / ".zikaron"
@@ -269,8 +270,8 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
         # survives it — but the underlying connection still has to be closed for real underneath
         # that raise, or this test's own deliberately-broken monkeypatch would leak the
         # connection past its own scope and trip the unrelated leak-detection fixture over a
-        # failure this test caused on purpose, not a genuine leak. Mirrors `test_service_context_
-        # assemble.py`'s own established pattern for the identical situation.
+        # failure this test caused on purpose, not a genuine leak. Mirrors
+        # `test_service_context_assemble.py`'s own established pattern for the identical situation.
         await real_close(self)
         raise OSError("store.close() failed, deliberately, for this test")
 
@@ -291,7 +292,7 @@ async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_th
     status zero having genuinely failed. `lifecycle.idle_self_stop` is monkeypatched to raise
     immediately here, standing in for any real internal failure of that function; since `run()`
     awaits `asyncio.wait(..., return_when=asyncio.FIRST_COMPLETED)` on every task together — three
-    of them here, since this store exists and so the open path creates M17's load watch beside the
+    of them here, since this store exists and so the open path creates the load watch beside the
     idle poll and the signal wait — the
     monkeypatched coroutine racing `signal_wait` at all is enough to land in the `done` set this
     test exists to defend — no synchronization needed beyond `create_task` scheduling it to run at
@@ -333,9 +334,9 @@ async def test_an_ordinary_already_done_task_failure_logs_no_false_secondary_rec
     concurrent, distinct secondary failure at all — must propagate with **no** "a lifecycle task
     raised ... while an earlier failure was already propagating" log record, even though `gather`
     genuinely reports the identical, already-raised exception object again during cleanup.
-    Round-7 review found the version of this fix keyed only on a boolean "is a primary already
-    active" could not distinguish that reappearance from a genuinely distinct concurrent failure,
-    and would have logged this exact, ordinary case as if it were one.
+    An earlier version of this fix keyed only on a boolean "is a primary already active", which
+    could not distinguish that reappearance from a genuinely distinct concurrent failure, and would
+    have logged this exact, ordinary case as if it were one.
     """
     sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
 
@@ -364,10 +365,11 @@ async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserv
 ) -> None:
     """The combined regression the previous test's own docstring names but does not itself force:
     `idle_self_stop` raising lands in `run()`'s post-bind `except BaseException:` via the innermost
-    `finally`'s task cancellation, which runs and re-propagates unchanged (`_stop_on_sigterm_or_
-    sigint`'s own handler removal now runs *after* that clause, on the way out of the `async with`
-    that wraps the bind) — and that `except` clause's own `server.shut_
-    down()` retry used to have no `try` of its own around it, so a *second* failure there would
+    `finally`'s task cancellation, which runs and re-propagates unchanged
+    (`_stop_on_sigterm_or_sigint`'s own handler removal now runs *after* that clause, on the way
+    out of the `async with` that wraps the bind) — and that `except` clause's own
+    `server.shut_down()` retry used to have
+    no `try` of its own around it, so a *second* failure there would
     **replace** the first rather than being logged as secondary. Forces both to fail and asserts
     the *original* `idle_self_stop` failure — not the `shut_down()` retry's own `RuntimeError` —
     is what `run()` actually raises."""
@@ -413,11 +415,12 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
     to leave a handler permanently installed even after a fully successful run — including the
     narrower case this test targets specifically: `SIGTERM` (installed first, per
     `_stop_on_sigterm_or_sigint`'s own `(signal.SIGTERM, signal.SIGINT)` order) succeeding while
-    `SIGINT` (installed second) fails,
-    which used to leave `SIGTERM`'s handler installed forever with nothing removing it, closing
-    over this specific invocation's `stop` event. Wraps the real `remove_signal_handler` to record
-    which signals it was actually called with, rather than merely asserting the fake `add_signal_
-    handler` was called the expected number of times — the removal is the behaviour under test,
+    `SIGINT` (installed second) fails, which used to leave `SIGTERM`'s handler installed forever
+    with nothing removing it, closing over this specific invocation's `stop` event. Wraps the real
+    `remove_signal_handler` to record which signals it was actually called with, rather than
+    merely asserting the fake `add_signal_handler` was called the expected number of times — the
+    removal is the behaviour
+    under test,
     not the installation."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
@@ -645,11 +648,12 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
     `ShutdownTimeoutError`, and asserts the spy fired — proving the handling is on a path `run()`
     actually reaches.
 
-    Two separate safety measures, both deliberate: the spy replaces `main._force_exit_after_
-    shutdown_timeout`, never the real `os._exit` (un-catchable, and would kill the `pytest` worker
-    itself rather than merely the code under test); and `os._exit` itself is *additionally*
-    replaced with a fail-fast sentinel, so if a future edit ever moved the real call out from
-    behind that indirection, this test fails loudly instead of terminating the test run.
+    Two separate safety measures, both deliberate: the spy replaces
+    `main._force_exit_after_shutdown_timeout`, never the real `os._exit` (un-catchable, and would
+    kill the `pytest` worker itself rather than merely the code under test); and `os._exit` itself
+    is *additionally* replaced with a fail-fast sentinel, so if a future edit ever moved the real
+    call out from behind that indirection, this test fails loudly instead of terminating the test
+    run.
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
@@ -895,10 +899,10 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The identical signal-wins-the-snapshot race as the test above, but for a genuine
-    exception that is **not** `ShutdownTimeoutError` — round-5 review found the first version of
+    exception that is **not** `ShutdownTimeoutError`. An earlier version of
     `_surface_any_genuine_task_failure` (then named `_force_exit_if_shutdown_timed_out`) checked
     only for that one exception type and silently discarded anything else found among `gather`'s
-    collected outcomes, which became newly reachable once M11's own inode-drift self-stop started
+    collected outcomes, which became newly reachable once the inode-drift self-stop started
     deliberately letting an unexpected `stat` failure (a genuine `PermissionError`, for one
     concrete case) propagate out of `idle_self_stop` rather than swallowing it. A lifecycle task
     raising something other than `ShutdownTimeoutError` while a signal wins the earlier
@@ -949,7 +953,7 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
 async def test_a_secondary_cancellation_failure_does_not_mask_the_primary_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The exact interaction round-6 review found: a primary exception already propagating into
+    """The exact interaction: a primary exception already propagating into
     the task-cleanup `finally` must not be **replaced** by a distinct, secondary exception a
     different task raises while being cancelled — `raise outcome` inside a `finally` block
     displaces whatever was already in flight unconditionally, surviving only as the secondary's
@@ -1017,8 +1021,8 @@ async def test_a_secondary_cancellation_failure_does_not_mask_the_primary_except
         await main.run(sock_path, store_dir)
     assert not isinstance(excinfo.value, PermissionError)
     # The secondary failure must still be visible to the operator, distinctly from the primary —
-    # round-7 review's own request: preserving the primary must not come at the cost of silently
-    # dropping the secondary altogether.
+    # Preserving the primary must not come at the cost of silently dropping the secondary
+    # altogether.
     secondary_records = [
         record for record in caplog.records if "secondary failure" in record.getMessage()
     ]

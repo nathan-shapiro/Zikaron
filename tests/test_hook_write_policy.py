@@ -1,7 +1,7 @@
 """The `agentSpawn` prompt text, checked against its source block in `design/write-policy.md` §2,
 and the optional operator override that may replace it.
 
-Same drift-guard shape M1's three singletons already established: parse the design document at
+Same drift-guard shape the schema singletons already establish: parse the design document at
 test time rather than comparing against a second hand-typed copy, so a revision to the prompt on
 either side of the boundary fails a test instead of silently diverging.
 """
@@ -115,7 +115,7 @@ class TestReadPolicyOverride:
         assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
 
     def test_an_override_in_a_world_writable_store_is_refused(self, tmp_path: Path) -> None:
-        """The case the round-2 reasoning got wrong: no symlink is involved, so `O_NOFOLLOW` cannot
+        """The case an obvious reading gets wrong: no symlink is involved, so `O_NOFOLLOW` cannot
         see it, and another local user with write access to a `0777` store could have authored this
         file. Its text must not reach the model's context.
         """

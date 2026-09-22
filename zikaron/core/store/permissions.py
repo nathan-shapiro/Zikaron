@@ -1,10 +1,14 @@
 """`0700`/`0600` enforcement for the store directory and the files inside it.
 
-`architecture.md` §"Filesystem security" is normative: `.zikaron/` is mode `0700`, and
-`memory.db` plus its `-wal`/`-shm` siblings are `0600`, created with an explicit umask rather
+`architecture.md` §"Filesystem security" is normative: `.zikaron/` and `.zikaron/knowledge/` are
+mode `0700`, and `memory.db`, every `knowledge/<uuid4>.db`, and all their `-wal`/`-shm` siblings
+are `0600`, created with an explicit umask rather
 than inherited — SQLite creates the WAL/SHM files itself and will otherwise pick up whatever
 umask the process happened to have. A directory found wider than `0700` is tightened rather than
 refused, per the same table.
+
+`core/knowledge/database.py` imports this module so a knowledge base gets the same modes, which
+matters at least as much there: a corpus holds the verbatim text of every file indexed into it.
 """
 
 import os
@@ -23,12 +27,15 @@ def _reject_symlinked_store_dir(store_dir: Path) -> None:
     """Refuse a store reached through a symlink anywhere in `store_dir`'s own path.
 
     `architecture.md` §"Filesystem security": "`realpath` the store directory and require the
-    resolved parent to be the cwd." That sentence states the rule from `zikaron-service`'s own
-    point of view, where the store path is *derived* from the caller's scope directory in the
-    first place (D17 as originally written: "Store scoped to the harness's directory... literally
-    the current working directory" — **amended 2026-08-18** to the harness's own project directory
-    where it names one; the vetting below is unaffected either way, since it never compares against
-    an ambient cwd) — deriving `store_dir` is that caller's job, not this
+    resolved parent to be the **scope directory** (D17 as amended — under Claude Code deliberately
+    not the spawning process's cwd)." *This quoted the pre-amendment wording — "the cwd" — which
+    D17 replaced, and then glossed the word the amendment had removed. One side of a two-way
+    pointer was updated and the other kept quoting the superseded text; the pointer guard cannot
+    see it, because the section name it resolves is intact.* That sentence states the rule from
+    `zikaron-service`'s own point of view, where the store path is *derived* from the caller's
+    scope directory in the first place (D17: the harness's own project directory where it names
+    one, else the working directory; the vetting below is unaffected either way, since it never
+    compares against an ambient cwd) — deriving `store_dir` is that caller's job, not this
     function's, since `Store.create`/`Store.open` take `store_dir` as an explicit parameter and
     have no way to know whether the caller's own cwd is the concept the caller meant by it. A
     caller that resolved `store_dir` from somewhere other than its own cwd — a test, a tool
@@ -48,7 +55,7 @@ def _reject_symlinked_store_dir(store_dir: Path) -> None:
         if current.is_symlink():
             raise ZikaronError(
                 ErrorCode.BAD_CONFIG,
-                source=BadConfigSource.FILE,
+                source=BadConfigSource.DERIVED,
                 key="store_dir",
                 value=str(store_dir),
                 expected=f"no symlink anywhere in the path to it (found one at {current})",

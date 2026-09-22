@@ -12,6 +12,12 @@ surfacing as a table that silently does not match its own specification.
 import re
 from typing import Final
 
+#: How long a connection to a knowledge base waits for the writer lock before giving up. Named
+#: rather than written into the pragma below alone, because one caller has to *lower* it for a
+#: single statement and then put it back — and restoring a hand-written duplicate of this number is
+#: how a connection comes to keep a timeout nobody chose.
+BUSY_TIMEOUT_MS: Final = 5000
+
 #: The pragmas every connection to a knowledge base is opened with — two of the memory store's
 #: three. WAL is required rather than incidental: a search has to serve committed state *while*
 #: the indexer writes, and under the default rollback journal a reader contends with the writer
@@ -26,12 +32,6 @@ from typing import Final
 #: to nothing is what the first version of this module shipped, and the document-comparison test
 #: passed the whole time, because comparing two texts cannot see whether either reaches the running
 #: system.
-#: How long a connection to a knowledge base waits for the writer lock before giving up. Named
-#: rather than written into the pragma below alone, because one caller has to *lower* it for a
-#: single statement and then put it back — and restoring a hand-written duplicate of this number is
-#: how a connection comes to keep a timeout nobody chose.
-BUSY_TIMEOUT_MS: Final = 5000
-
 PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode = WAL",
     f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}",

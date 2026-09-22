@@ -1,6 +1,6 @@
-"""M9's own done-when criteria: start-if-absent under two racing clients, connect-as-server-exits,
+"""Start-if-absent under two racing clients, connect-as-server-exits,
 a stale socket file, and a refused foreign-store handshake — every one of them against a real
-subprocess speaking real Unix-domain-socket JSON-RPC, per `build-plan.md`'s M9 brief.
+subprocess speaking real Unix-domain-socket JSON-RPC.
 
 Integration tier throughout: every test here spawns `python -m zikaron.service.main` as a real
 detached process and speaks to it over a real socket, which is exactly what the `integration`
@@ -145,7 +145,7 @@ def _wait_for_accepting_socket(sock_path: Path, *, deadline_seconds: float) -> N
     `ECONNREFUSED` — measured, as a gate failure at load ~7 in
     `test_client_retries_through_start_if_absent_when_the_server_exits_mid_connect`, which then
     passed 5 of 5 in isolation. `_wait_for_socket` is waiting on the *start* of the readiness
-    window, which is the same observation `FINDINGS.md` item 6 records for the signal-handler race
+    window, which is the same observation recorded for the signal-handler race
     in the other direction.
 
     **`_wait_for_socket` is deliberately left alone rather than changed to this.** Its other caller
@@ -618,7 +618,7 @@ async def test_client_retries_through_start_if_absent_when_the_server_exits_mid_
     request fail — then confirm a fresh `connect_start_if_absent` recovers by respawning.
 
     This is the actual race `architecture.md` names ("a client can connect just as the service
-    decides to exit, and its request then fails... clients retry once through the full
+    decides to exit, and its request then fails… `zikaron-mcp` retries once through the full
     start-if-absent sequence"), and it differs from the stale-socket scenario below in exactly
     the part that matters: here, a request is genuinely *in flight* against a server that then
     disappears out from under it, rather than the client only ever discovering an already-dead

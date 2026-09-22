@@ -1,6 +1,8 @@
 # Indexing and chunking — v0 spec
 
 > Settled with the user 2026-08-01. Summarized as **D28** in `FINDINGS.md`; this is the build contract.
+> **Scope: the memory store only.** The knowledge index chunks by a different contract — file-oriented,
+> carrying line ranges, with no gap and no overlap — in `design/knowledge-index.md` §4.3.
 > Evidence for the surrounding retrieval choices (D20–D25) is in `research/embedder-benchmark-results.md`.
 
 ## Why chunk at all
@@ -156,18 +158,43 @@ gain.
 
 ## Implementation constraints
 
-- **Every mutation that touches indexed prose is one transaction**, not only `amend`. That is `remember`,
+- **Every *logical* mutation is one transaction**, not only `amend`. That is `remember`,
   `amend`, `retire`, `merge`, both forms of `promote`, and `discard` — see `schema.md` invariant 2, which
-  is the authoritative statement. Inside it: the `memory` row, the `version` bump, explicit `memory_fts`
+  is the authoritative statement and is worded exactly that way.
+  *(This bullet read "every mutation that **touches indexed prose**", which is a narrower predicate
+  than invariant 2's and false of three of the seven verbs it lists: `retire` touches no index —
+  this document says so under §"`retire` touches no index", and `writes.py` opens with
+  "Two verbs, not three" —
+  `discard` "runs no chunking preflight and touches no index", and `promote`'s in-place form
+  changes no prose. The list was widened to all seven while the narrow predicate stayed attached to
+  it.)* Inside it: the `memory` row, the `version` bump, and — for the four that do touch indexed
+  prose — explicit `memory_fts`
   maintenance, chunk and vector maintenance, receipts, and the events.
+- **The row-level layer therefore emits no `remember`/`amend` event**, which follows from the rule
+  above rather than being an omission in it. Those two kinds carry `token_count`, `gist_tokens`,
+  `n_chunks` and `truncated` — outputs of the chunking preflight — and `schema.md`'s nullability
+  table does not list them as nullable for these two kinds, unlike `merge`/`promote`, where a
+  non-authoring row genuinely has none. An authoring write always has real prose, so those fields
+  are meant to be populated, and `core/records/` cannot produce them honestly: it has neither
+  tokenizer nor model. The indexing layer wraps `create`/`amend` in the **same** transaction and
+  emits the composed event there. `retire` and `fetch` emit their own, neither naming a memory's
+  size.
+- **So each row-level verb is a thin, transaction-owning wrapper around a
+  `<verb>_within_transaction` core** that assumes an already-open transaction and neither commits
+  nor rolls back. A composing caller calls the neutral form directly, inside its own wider `BEGIN`
+  covering the chunking writes and the composed event; calling the wrapper instead would raise on a
+  nested `BEGIN`. `core/indexing/writes.py` exposes the same convention to the layer above it.
 - **Delete vectors before chunks.** `memory_vec` is a virtual table with no foreign key to
   `memory_chunk`, so chunks-first would orphan vectors if the sequence were interrupted. The reverse
   order fails safe: an orphaned *chunk* row is detectable and repairable; an orphaned vector is a silent
   false positive in retrieval.
-- **A `tier` flip rewrites the index too.** `promote`'s in-place form changes no prose, so its chunks are
-  unchanged — but it still bumps `version` in the same transaction, and if the consolidator supplied
-  different prose it is not an in-place flip at all (see `architecture.md`, which decides the form from the
-  payload rather than guessing).
+- ~~**A `tier` flip rewrites the index too.**~~ **A `tier` flip touches the index not at all.**
+  `promote`'s in-place form changes no prose, so its chunks are unchanged:
+  `consolidation/verbs.py` routes it to `_apply_in_place_promote`, which calls `records.apply_tier`
+  and never `writes.reindex_rewrite`, since `memory_fts` indexes `gist` and `content` only and
+  `tier` appears in neither index. It still bumps `version` in the same transaction, and if the
+  consolidator supplied different prose it is not an in-place flip at all (see `architecture.md`,
+  which decides the form from the payload rather than guessing).
 - **Retire (D16) leaves chunks in place**; eligibility excludes or demotes at query time, matching
   `~/Memory`'s soft-retire contract, and it is what keeps superseded rows retrievable under D25.
 - **Full reindex is build-and-swap, or the store is unavailable while it runs** (`schema.md` invariant 3).
