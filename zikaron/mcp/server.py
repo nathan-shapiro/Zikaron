@@ -50,6 +50,12 @@ def build_server(mode: Mode, *, scope_dir: Path) -> FastMCP:
         scope_dir: the **already-resolved** store-scope directory (D17) —
             `main.py` resolves it through `HarnessSpec.store_scope_dir` and this hands it to the
             one `ServiceConnection` this process holds for its whole lifetime.
+
+    Raises:
+        ZikaronError: `StoreLocation.resolve`'s `BAD_CONFIG` for a runtime directory that leaves
+            no room in `sun_path`, in either mode; in consolidator mode also
+            `resolve_effective_config`'s, since `_spill_policy` reads both config layers here
+            rather than per call. Either stops the server before it serves.
     """
     mcp = FastMCP(name=f"zikaron-{mode}")
     connection = ServiceConnection(scope_dir)

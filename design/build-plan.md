@@ -2997,14 +2997,26 @@ delivered by the hook**: `hook/push.py` funnels every failure into `record_failu
 contract — `architecture.md` §"Filesystem security", restated in `failure.py` and `write_policy.py` —
 is *"a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold
 a leaked secret"*. So:
-- the refusal is **a new exception defined in `service/paths.py` itself**, which must stay stdlib-only,
+- ~~the refusal is **a new exception defined in `service/paths.py` itself**, which must stay stdlib-only,
   since `hook/connect.py` imports that module directly for exactly that reason — it therefore cannot
   import the store's error types, and "`bad_config`" above names an RPC code the *service* returns, not
-  this;
-- `push.py` maps it to one new **fixed** `hook.log` kind, `socket_path_too_long`, and that label is the
-  whole of what that log may carry;
-- the variable name, length and limit reach the user through the **MCP server's start-up failure** on
-  stderr, and through `zikaron doctor` once M30 lands;
+  this;~~
+- ~~`push.py` maps it to one new **fixed** `hook.log` kind, `socket_path_too_long`, and that label is the
+  whole of what that log may carry;~~
+- **— both withdrawn, and the premise under them was false.** `zikaron/core/errors.py` is pure stdlib
+  (verified by measuring `sys.modules` after importing it alongside `paths` and `security`: no
+  non-stdlib module added), and `service/security.py` — already in the hook's own import set — raises
+  `ZikaronError(BAD_CONFIG, source=DERIVED, key="runtime_dir")` from `ensure_runtime_dir` for the
+  same class of failure. So the stdlib argument forbids nothing, and a bespoke type would have been a second
+  error vocabulary for one class, against `coding-standards.md` §7's "one `IntEnum` … every raise site
+  references the enum". **`paths.socket_path` raises that same existing error**, and `push.py` needs no
+  change at all: its `_classify_failure` already maps any `ZikaronError` to `(wire_name, code)`, so
+  `hook.log` gets the fixed label `bad_config` and `-32023` and nothing else — which is what the
+  withdrawn bullet was trying to arrange.
+- the variable name, length and limit reach **stderr** through the MCP server's start-up failure —
+  where each harness puts that line is unmeasured, and is a row in `design/harness.md`'s table —
+  and reach the user through `zikaron doctor` once M30 lands, which M30's `doctor` table carries
+  as a check;
 - `hook/spawn_warm.py` suppresses it, as it suppresses everything, deliberately.
 
 **(b) The limit is per platform, held as data — and four details decide whether the guard is real.**
@@ -3082,8 +3094,10 @@ macOS's default `umask` or ACLs differ; anything in the suite that assumes `/pro
    difference in `design/distribution.md` — never worked around in a test.
 2. `service/paths.py`'s comment says 104, and `architecture.md` §Paths carries the bound, the reason
    the *store* path's contribution is safe by construction, and the fact that the runtime directory's
-   is not. **The refusal is built as (a) and (b) above specify** — a stdlib-only exception from
-   `paths.py`, a fixed `hook.log` kind, the detail surfacing through the MCP server and `doctor`, and a
+   is not. **The refusal is built as (a) and (b) above specify** — ~~a stdlib-only exception from
+   `paths.py`, a fixed `hook.log` kind~~ **`paths.py` raising the same `BAD_CONFIG`/`runtime_dir`
+   `ZikaronError` that `security.py` already raises for this class, which `push.py` already degrades on
+   as a fixed label** — the detail surfacing through the MCP server and, from M30, `doctor`, and a
    per-platform byte bound compared with `>=`. Tests: the fallback branch fits with a ten-digit uid; an
    over-length `xdg_runtime_dir` is refused rather than left to `bind()`'s bare `OSError` and never
    silently redirected to the fallback; **plus (b)3's boundary cells** — 103 accepted / 104 refused under
@@ -3091,13 +3105,17 @@ macOS's default `umask` or ACLs differ; anything in the suite that assumes `/pro
    bound while its character length does not. The function already takes `xdg_runtime_dir` as a
    parameter, so every test states the environment rather than mutating the process's.
    **Mutation-verify the refusal** — and note that the two original cells, 42 and 3 bytes from the edge,
-   would pass an off-by-one, which is what (b)3 exists to catch. The hook's own test asserts its
-   `hook.log` line carries the fixed `socket_path_too_long` kind **and nothing else**.
-   **`tests/test_hook_connect.py`'s existing "~108-byte kernel limit on Linux" docstring is read and
-   left**: it hands a 300-character path straight to `_try_connect`, *below* `paths.socket_path`, so it
-   stays reachable and stays true. Add one clause saying it bypasses the new refusal deliberately, so a
-   sweep for "108" neither "fixes" it to 104 nor counts it as drift. **That is the third "~108" site**;
-   the other two are `paths.py`'s comment and `architecture.md` §Paths.
+   would pass an off-by-one, which is what (b)3 exists to catch. ~~The hook's own test asserts its
+   `hook.log` line carries the fixed `socket_path_too_long` kind **and nothing else**.~~ **— the kind
+   is `bad_config`, per the withdrawal in (a); the existing `test_hook_push.py` coverage of that label
+   is what this asks for and it already holds.**
+   **`tests/test_hook_connect.py`'s too-long-path test stays reachable**: it hands a 300-character
+   path straight to `_try_connect`, *below* `paths.socket_path`. ~~is read and left … Add one clause
+   saying it bypasses the new refusal deliberately~~ **— its docstring was rewritten instead, to name
+   no number at all and to state the bypass, so there is nothing left for a sweep to "fix".**
+   ~~**That is the third "~108" site**;
+   the other two are `paths.py`'s comment and `architecture.md` §Paths.~~ **— `grep -rn 'sun_path'
+   zikaron/ tests/ design/` is the enumeration; there were more sites than this named.**
 3. `runtime_dir`'s macOS behaviour is stated in `architecture.md` §Paths, and the `security.py`
    vetting question is **confirmed** on the runner — expected to pass by reading, since `lstat` vets
    the leaf and not its parents, so a runner disagreement is the interesting outcome rather than the
@@ -3109,11 +3127,19 @@ macOS's default `umask` or ACLs differ; anything in the suite that assumes `/pro
 6. `./check.sh` and `./check-matrix.sh --parallel` green on Linux; the macOS job green on the same
    commit.
 
-**Fence.** **One deliberate exception, named because the fence would otherwise forbid it:** the
+**Fence.** ~~**One deliberate exception**~~ **Two deliberate exceptions, named because the fence
+would otherwise forbid them:** the
 over-length-path refusal in done-when 2 **does** change Linux behaviour, replacing a bare `OSError` at
 bind with a named `bad_config` error on an input no Linux user is likely to have set. It is in scope
 because the macOS work is what discovered it and because splitting a two-line guard across milestones
-would leave the platform it was found on unprotected. Nothing else Linux-visible moves; a fix that
+would leave the platform it was found on unprotected.
+**And the `zikaron-mcp` entry point's handler**, which prints any `ZikaronError` `build_server`
+raises as one line on stderr and exits 1 rather than leaving a traceback — so the consolidator's
+config-file refusal on Linux gains that line too. Done-when 2 requires the refusal's detail to
+surface through the MCP server, and the exception's own string carries none of it; narrowing the
+handler to one payload key would special-case an entry point on a field to preserve a traceback
+nobody wants, and the exit status does not move either way.
+Nothing else Linux-visible moves; a fix that
 alters ordinary Linux behaviour is a different milestone.
 **No Intel-Mac work** — no `onnxruntime` pin gymnastics, no alternate embedder; the platform is arm64
 and the wheel gap is upstream's. **No front-door or model work**, which is M30. If the `security.py`
@@ -3152,10 +3178,14 @@ are not touched**, deliberately: they are machine-facing, their absolute paths a
 harness config, and `design/harness.md` treats the install contract as normative — folding them in
 would change every installed config for a cosmetic gain on two surfaces no human types.
 `python -m zikaron.install` keeps working.
+**While that surface is open:** `knowledge/scope.py`'s `execute` prints a `ZikaronError`'s payload
+as `mappingproxy({…})`, enum reprs and all; render it the way `mcp/main.py` does — `name=value` per
+field, one line. Left alone by M29 because it is an ordinary-Linux-behaviour change on a surface
+that milestone had no reason to open.
 
 **`doctor` exists because the interpreter decision supports two acquisition paths**, and it names each
-failure **by remedy rather than by symptom**. **Four pass/fail checks and one report, and the
-distinction matters because done-when 2 sets an exit code:**
+failure **by remedy rather than by symptom**. **The pass/fail checks and one report of the table
+below, and the distinction matters because done-when 2 sets an exit code:**
 
 | | check | fails when |
 |---|---|---|
@@ -3163,6 +3193,7 @@ distinction matters because done-when 2 sets an exit code:**
 | 2 | FTS5 available | the linked SQLite lacks it |
 | 3 | `sqlite-vec` loads a real `vec0` table | importing succeeds but loading does not — the probe note's own distinction, and the reason a bare import is not the test |
 | 4 | the model cache is **present at the pinned revision and hash-verified** | a file is there *at that revision* and does not match its pinned hash. A cache holding only some *other* revision is the **absent** case below, not a mismatch |
+| 5 | the socket path fits `sun_path` on this platform | `paths.socket_path` refuses the runtime directory `paths.runtime_dir` resolves — the over-long `$XDG_RUNTIME_DIR` case M29 turns away at MCP start-up, on a channel no probe has measured. The remedy line is that refusal's own `expected`. **M29's done-when 2 names `doctor` as the second channel for it; this row is where that promise is kept** |
 | — | the linked SQLite version beside the interpreter's | *never* — a report, not a check: this is the axis no seam can absorb (3.45.1 against 3.53.1 between two builds on one machine), and there is no correct value to compare against |
 
 **Check 4's absent case is exit 0, not a failure, and getting this wrong ships a red first run.** With
@@ -3282,11 +3313,14 @@ now and then changes the install command in every document above.
 
 1. A `zikaron` console script with `install`, `knowledge` and `doctor`; `zikaron-hook` and
    `zikaron-mcp` unchanged in behaviour **and in the strings the installer writes**, asserted by a
-   test over the install artefacts rather than by inspection.
-2. `doctor` runs the **four checks and one report** of the table above, exits non-zero when any check
+   test over the install artefacts rather than by inspection. And `zikaron knowledge`'s refusal line
+   renders a `ZikaronError` as `name=value` per field, one line, as `zikaron-mcp` does — asserted by
+   a test through `execute`'s `printer`.
+2. `doctor` runs **every check and the one report** of the table above, exits non-zero when any check
    fails, and every failure names a remedy. **An absent model cache is exit 0**, per that table.
    **Verified by mutation**: a stubbed-absent `enable_load_extension` produces the remedy line, not a
-   traceback.
+   traceback; and the over-long `$XDG_RUNTIME_DIR` that `tests/test_mcp_main.py` already uses
+   produces the socket-path check's remedy line and a non-zero exit.
 3. The model cache resolves to a durable per-user directory through **Zikaron's own resolver**, which
    honours `$FASTEMBED_CACHE_PATH` itself (fastembed never reads it once `specific_model_path` is
    passed), and a test over that resolver asserts the resolved path is not under

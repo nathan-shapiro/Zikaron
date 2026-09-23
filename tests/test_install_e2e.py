@@ -17,6 +17,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import suppress
@@ -160,7 +161,7 @@ def _service_pid(project: Path) -> int | None:
     if not store_dir.is_dir():
         return None
     runtime = paths.runtime_dir(xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid())
-    sock_path = paths.socket_path(runtime, store_dir.resolve())
+    sock_path = paths.socket_path(runtime, store_dir.resolve(), platform=sys.platform)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(5.0)
     try:

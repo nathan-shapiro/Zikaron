@@ -381,8 +381,25 @@ rescuing, because the prefix test is the only test.
   clean. `$XDG_RUNTIME_DIR/zikaron/<h>.sock` when that is set (already user-private `0700`), else
   `/tmp/zikaron-<uid>/<h>.sock` with the directory created `0700`. `<h>` is the **first 32 hex characters
   (128 bits) of the sha256 of the `realpath`-resolved store path** — long enough that accidental collision
-  is not a design concern, short enough to keep the path under the ~108-byte `sun_path` limit. One service
-  per store.
+  is not a design concern. One service per store.
+  **macOS sets no `$XDG_RUNTIME_DIR`, so it takes the fallback, and there is deliberately no platform
+  branch for the default**: the `$TMPDIR/runtime-$UID` convention found in the wild on macOS is *longer*
+  than `/tmp/zikaron-<uid>`, so it would buy nothing.
+- **The socket path is bounded per platform, and an over-length one is refused rather than repaired.**
+  `sizeof(sun_path)` is **104 bytes on macOS and 108 on Linux**, terminating NUL included, and CPython
+  refuses a path whose *encoded* length is `>=` that — so **103 and 107** are what a path may use.
+  Held as a two-row table in `service/paths.py` with the platform taken as a parameter, so both rows are
+  exercised wherever the suite runs; an unrecognised platform takes the smaller row, which can only refuse
+  a path another kernel would have accepted.
+  **The store's contribution is safe by construction and the runtime directory's is not.** The store is
+  hashed to a fixed width and never embedded, so no project nesting depth can move the total — measured on
+  the fallback branch, 54 bytes for uid `501` and 61 for the widest uid a system will issue, against 103.
+  But `$XDG_RUNTIME_DIR` is prepended verbatim and is an unbounded value the user chose: the macOS
+  convention above reaches 106 and does not fit.
+  The refusal is a `bad_config` naming `runtime_dir`, raised by `paths.socket_path` itself rather than left
+  to `bind()`, so that no client spawns a service for a path it can never bind and then reports the spawn's
+  failure instead of the path's. Silently substituting the `/tmp` fallback for a directory the user named
+  is the repair §"Filesystem security" forbids.
 - **Logs: one file per process, never shared.** `<scope>/.zikaron/service.log` (the long-running service),
   `<scope>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<scope>/.zikaron/hook.log` (the
   `userPromptSubmit` hook's own failure record). Three distinct processes, three distinct files, by design:
@@ -608,6 +625,10 @@ Rules that go with the modes:
   exists, it must be a real directory (not a symlink), owned by the running uid, mode 0700. Otherwise the
   service refuses to start there and the clients go degraded. Blindly `mkdir`-ing a predictable `/tmp` path
   and unlinking sockets inside it is the classic local symlink attack.
+  **The same rule covers a runtime directory that is merely too long**, per §Paths: a `$XDG_RUNTIME_DIR`
+  whose derived socket path will not fit `sun_path` is refused with a `bad_config`, never quietly served
+  out of the `/tmp` fallback instead. The user picked a directory; putting the socket somewhere else
+  without saying so would move every request and every spill file to a path they did not choose.
 - **Never unlink a socket you have not vetted.** The start-if-absent sequence below unlinks a stale socket;
   it may only do so after confirming the path is a socket, in a vetted directory, owned by the running uid.
 - **Refuse a store reached through a symlinked `.zikaron`.** `realpath` the store directory and require the

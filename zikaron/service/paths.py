@@ -12,12 +12,24 @@ for its length and its output alphabet, not for any resistance property the desi
 """
 
 import hashlib
+import os
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
+from typing import Final
+
+from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 
 #: `architecture.md` §Paths: "the first 32 hex characters (128 bits) of the sha256 of the
 #: realpath-resolved store path" — long enough that accidental collision is not a design concern,
-#: short enough to keep the socket path under the ~108-byte `sun_path` limit.
+#: and fixed, so the store contributes the same width to the socket path however deeply the
+#: project it names is nested. That is what leaves `_SUN_PATH_SIZE` a question about the runtime
+#: directory alone.
 _HASH_HEX_CHARS = 32
+
+#: `sizeof(struct sockaddr_un.sun_path)` per platform, in bytes, terminating NUL included. CPython
+#: refuses a socket path whose *encoded* length is `>=` this.
+_SUN_PATH_SIZE: Final[Mapping[str, int]] = MappingProxyType({"darwin": 104, "linux": 108})
 
 _DB_FILENAME = "memory.db"
 _CONFIG_FILENAME = "config.toml"
@@ -84,9 +96,59 @@ def runtime_dir(*, xdg_runtime_dir: str | None, uid: int) -> Path:
     return base / "zikaron" if xdg_runtime_dir else base
 
 
-def socket_path(runtime_directory: Path, resolved_store_dir: Path) -> Path:
-    """The full `<h>.sock` path for one store, inside its runtime directory."""
-    return runtime_directory / f"{socket_hash(resolved_store_dir)}.sock"
+def sun_path_size(platform: str) -> int:
+    """`sizeof(sun_path)` on `platform`: the length `bind()` refuses a socket path at or above.
+
+    Takes the platform as an argument for the reason this module's own docstring gives, and so
+    both rows are exercised wherever the suite runs rather than only the one underfoot.
+
+    An unrecognised platform takes the smallest row. That can only refuse a path some other
+    platform would have accepted, never admit one its own kernel will reject, and D35 supports
+    exactly the two named here.
+    """
+    return _SUN_PATH_SIZE.get(platform, min(_SUN_PATH_SIZE.values()))
+
+
+def _too_long_for_sun_path(runtime_directory: Path, *, measured: int, size: int) -> ZikaronError:
+    """The refusal, with `runtime_dir` meaning what `security.py`'s raises make it mean.
+
+    `value` is the directory, not the socket path derived from it: one key, one vocabulary, and
+    the directory is the half a reader can act on.
+    """
+    return ZikaronError(
+        ErrorCode.BAD_CONFIG,
+        source=BadConfigSource.DERIVED,
+        key="runtime_dir",
+        value=str(runtime_directory),
+        expected=(
+            f"a directory under which <dir>/<32 hex>.sock fits in {size - 1} bytes on this "
+            f"platform; this one makes it {measured}. It comes from $XDG_RUNTIME_DIR when set"
+        ),
+    )
+
+
+def socket_path(runtime_directory: Path, resolved_store_dir: Path, *, platform: str) -> Path:
+    """The full `<h>.sock` path for one store, inside its runtime directory.
+
+    The store's contribution is a constant — `socket_hash` is `_HASH_HEX_CHARS` wide whatever it
+    is given — so only `runtime_directory` can push the result past the bound, and on the
+    `$XDG_RUNTIME_DIR` branch that is an unbounded value the user chose.
+
+    Refused here rather than at `bind()`, because by then a client has already run start-if-absent
+    and would report a spawned service's failure instead of the path's. `architecture.md`
+    §"Filesystem security" rules out the other repair — silently serving the `/tmp` fallback to a
+    user who named somewhere else is exactly the repair that section forbids.
+
+    Raises:
+        ZikaronError: `BAD_CONFIG` naming `runtime_dir`, when the encoded result does not fit
+            `platform`'s `sun_path`.
+    """
+    path = runtime_directory / f"{socket_hash(resolved_store_dir)}.sock"
+    size = sun_path_size(platform)
+    measured = len(os.fsencode(path))
+    if measured >= size:
+        raise _too_long_for_sun_path(runtime_directory, measured=measured, size=size)
+    return path
 
 
 def lock_path(sock_path: Path) -> Path:

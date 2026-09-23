@@ -34,7 +34,7 @@ def _loaded_against(dim: int) -> BackgroundLoadedEncoder:
 
 
 async def test_a_failed_load_unlinks_the_socket_and_stops_the_server(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, socket_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The whole point: a service that cannot serve must stop being reachable, rather than keep
     answering `health()` truthfully about a store while failing every request that needs a model.
@@ -43,7 +43,7 @@ async def test_a_failed_load_unlinks_the_socket_and_stops_the_server(
     the state that record exists to end — an operator looking at `service.log` has to be able to
     tell this apart from an idle stop or a crash."""
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         loading = BackgroundLoadedEncoder(model_name="m", load=_failing_load)
         loading.declare_dim(384)
@@ -57,12 +57,14 @@ async def test_a_failed_load_unlinks_the_socket_and_stops_the_server(
         assert "reason=encoder_failed" in caplog.text
 
 
-async def test_a_width_disagreement_stops_the_service_the_same_way(tmp_path: Path) -> None:
+async def test_a_width_disagreement_stops_the_service_the_same_way(
+    tmp_path: Path, socket_dir: Path
+) -> None:
     """The identity guard, reached through the process rather than through the encoder: a store
     whose recorded width the artifact does not match is unusable, and the service must not stay up
     pretending otherwise."""
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         disagreeing = BackgroundLoadedEncoder(
             model_name="m", load=lambda _name: FakeEncoder(dim=384)
@@ -76,7 +78,9 @@ async def test_a_width_disagreement_stops_the_service_the_same_way(tmp_path: Pat
         assert not sock_path.exists()
 
 
-async def test_a_successful_load_never_completes_this_task(tmp_path: Path) -> None:
+async def test_a_successful_load_never_completes_this_task(
+    tmp_path: Path, socket_dir: Path
+) -> None:
     """Completion is the caller's signal to tear the service down, so a successful load must leave
     this task pending rather than returning. A version that returned on success would shut the
     service down the moment the model finished loading — which is to say, immediately, on every
@@ -86,7 +90,7 @@ async def test_a_successful_load_never_completes_this_task(tmp_path: Path) -> No
     `done()` right away: the latter would pass against a task that had simply not been scheduled
     yet, which is the same observation for the wrong reason."""
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         healthy = _loaded_against(384)
 
@@ -106,6 +110,7 @@ async def test_a_successful_load_never_completes_this_task(tmp_path: Path) -> No
 
 async def test_the_watch_does_not_block_the_event_loop_while_the_model_loads(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """The wait belongs on a worker thread, not on the loop. If it ran on the loop, a service
     would accept connections and then answer none of them for as long as the model took — the
@@ -121,7 +126,7 @@ async def test_the_watch_does_not_block_the_event_loop_while_the_model_loads(
             finished.set()
 
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         slow = BackgroundLoadedEncoder(model_name="m", load=_slow_load)
         slow.declare_dim(384)

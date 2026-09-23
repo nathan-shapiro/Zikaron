@@ -20,6 +20,7 @@ import json
 import os
 import socket
 import sqlite3
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -75,7 +76,9 @@ def _rpc(project: Path, method: str, params: dict[str, Any]) -> dict[str, Any]:
     Reusing our own client would tie the fake holder's identity to this test's own pid.
     """
     runtime = paths.runtime_dir(xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid())
-    sock_path = paths.socket_path(runtime, paths.store_dir(project).resolve())
+    sock_path = paths.socket_path(
+        runtime, paths.store_dir(project).resolve(), platform=sys.platform
+    )
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(30.0)
     try:

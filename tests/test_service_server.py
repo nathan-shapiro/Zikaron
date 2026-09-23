@@ -42,6 +42,7 @@ async def _response_json(ctx: ServiceContext, line: bytes) -> dict[str, object]:
 
 async def test_shut_down_returns_promptly_even_with_an_idle_client_still_connected(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """`asyncio.Server.wait_closed()` explicitly waits until every accepted connection is
     dropped, not merely until new ones stop being accepted — measured directly against
@@ -69,7 +70,7 @@ async def test_shut_down_returns_promptly_even_with_an_idle_client_still_connect
     distinguishes the two.
     """
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
 
         reader, writer = await asyncio.open_unix_connection(str(sock_path))
@@ -87,7 +88,7 @@ async def test_shut_down_returns_promptly_even_with_an_idle_client_still_connect
 
 
 async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registered(
-    tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """The narrower, more dangerous window the previous test's own request/response round trip
     cannot reach: a connection already **accepted** — meaning the server's own attached-connection
@@ -108,7 +109,7 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
     exact state `close_all_connections` must still resolve from correctly by polling the server's
     count itself rather than assuming its own tracking set is already complete.
     """
-    sock_path = tmp_path / "bare_server.sock"
+    sock_path = socket_dir / "bare_server.sock"
     registration_gate = asyncio.Event()
     handler_started = asyncio.Event()
 
@@ -197,7 +198,7 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
 
 
 async def test_close_all_connections_raises_loudly_rather_than_hanging_inside_gather(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`close_all_connections`'s deadline used to be checked only *after* its `await gather(...)`
     returned, and even the bounded successor (`asyncio.wait_for(gather(...), timeout=remaining)`)
@@ -220,7 +221,7 @@ async def test_close_all_connections_raises_loudly_rather_than_hanging_inside_ga
     production deadline."""
     monkeypatch.setattr(server, "_SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS", 0.3)
 
-    sock_path = tmp_path / "cancellation_resistant.sock"
+    sock_path = socket_dir / "cancellation_resistant.sock"
     release_gate = asyncio.Event()
 
     async def _on_connect(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

@@ -167,14 +167,17 @@ class TestTheSpillCleanupIsActuallyWired:
     """
 
     @pytest.fixture(autouse=True)
-    def _private_runtime_and_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Redirect both the runtime directory and the config layer into `tmp_path`.
+    def _private_runtime_and_config(
+        self, tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Give this class a runtime directory and a config layer of its own.
 
         Without the first, a sweep would run against the real `$XDG_RUNTIME_DIR/zikaron` where live
         services keep their sockets; without the second, these read whatever config the developer
-        happens to have.
+        happens to have. The runtime half uses `socket_dir` rather than `tmp_path` because
+        `ServiceConnection` derives a socket path from it, which `paths.socket_path` bounds.
         """
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(socket_dir))
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         monkeypatch.setenv("CLAUDECODE", "1")
 

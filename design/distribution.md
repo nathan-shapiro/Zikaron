@@ -19,7 +19,7 @@
 |---|---|---|
 | Linux x86_64 | **supported, verified** | the gate runs here on 3.12, 3.13 and 3.14 |
 | Linux aarch64 | **unverified** | wheels exist for every dependency (`onnxruntime` ships `manylinux_2_28_aarch64`); nothing has run there, and no milestone claims it |
-| macOS arm64 | **supported, unverified until M29** | CI is the only instrument; no Apple hardware is available |
+| macOS arm64 | **supported, verified** | the hermetic gate runs green on a `macos-<n>` runner (arm64) and that job is required; no Apple hardware is available, so nothing there exercises a live harness |
 | macOS x86_64 (Intel) | **not supported** | `onnxruntime`, below |
 | Windows | **not supported** | transport, below |
 
@@ -75,8 +75,8 @@ python-build-standalone builds `uv` fetches were *measured* to have it
 path **known** to work; the others are not known to fail. That asymmetry is enough to found a
 recommendation and not enough to found a refusal, which is exactly why a host Python stays
 supported. **macOS is where a host interpreter is likeliest to fail this test**, which is why the
-recommendation is strongest there. *(M29 can close the hedge for one dollar of runner time: a
-python.org build is one `curl` away on the macOS job.)*
+recommendation is strongest there. *(Unmeasured, and closable for about a dollar of runner time —
+a python.org build is one `curl` away on the macOS job. No milestone owns it.)*
 
 **`--managed-python` is what makes the previous paragraph true, and without it the recommendation is
 false on exactly the machine it is written for.** uv's default preference is *managed, but fall back
@@ -211,9 +211,10 @@ desktop's**, so this is strong evidence about Gatekeeper rather than proof.
   carries it to every later step.
 - **The cache split into restore → an explicit fetch → save, all before the gate, with the save gated
   on the restore's `cache-hit` and carrying no `always()`.** `actions/cache`'s combined form saves in
-  a post step gated on job success, so the advisory-red macOS job would never write one — 64 MB
-  downloaded every run — and on Linux it would delay the first write until the first green run, which
-  §"Coverage on a runner" predicts may not be the first run. **But `always()` on a split save is
+  a post step gated on job success, so a job that stays red across a run of failures would never write
+  one — 64 MB downloaded every time, exactly when the loop most needs to be short — and it would delay
+  the first write until the first green run, which §"Coverage on a runner" predicts may not be the
+  first run. **But `always()` on a split save is
   worse, not better**: it runs on the *cancelled* path, `cancel-in-progress` cancels on every push to
   the same ref, and a cancel mid-fetch would upload `huggingface_hub`'s `.incomplete` blobs under a
   key that never refreshes — silently, forever. Hoisting the fetch into its own step means the save
@@ -245,19 +246,30 @@ count and load differ from this machine's — the macOS standard runner is 3 vCP
 the Linux one is recorded in this corpus. **A red first run on coverage is a fact about the runner, not a regression**, and
 neither raising nor lowering the floor is licensed by one CI reading.
 
-### The macOS job is advisory
+### The macOS job is required
 
-It sets `continue-on-error` and writes the word *advisory* to the step summary under `if: always()` —
-the red path being the only one where that matters. **There is no branch protection, so nothing blocks
-on it either way**; the setting exists for how the run reads, not for what it gates.
+It carries no `continue-on-error`: a red macOS job is a red run, on the same terms as any Linux one.
+**There is still no branch protection, so nothing mechanically blocks a merge** — what the setting
+changes is whether the run reports the truth, not what it gates. That absence is a decision rather
+than an oversight: with a single contributor, protection enforces a handoff there is nobody to hand
+off to. It is the first thing to add if that changes.
 
-Whether `continue-on-error` still renders the job red in the checks UI is not knowable before the first
-real push. **The first run records here what the UI actually showed**, and until that line exists this
-section is describing an instrument that has never run.
+**What the advisory run established before the job was promoted.** It was red, which is what it was for.
+81 of 2950 tests failed, every one of them reaching `OSError: AF_UNIX path too long`, and **the product
+was not the cause**: its own socket path is short by construction, with room to spare
+(`architecture.md` §Paths holds the arithmetic). The suite was — it built socket paths under pytest's
+`tmp_path`, which on macOS sits under a per-session `/var/folders/…/T` prefix deep enough to cross
+the limit on its own. Everything before the gate passed, the
+64 MB model fetch included, so `fastembed` and `onnxruntime` install cleanly on arm64 and the GNU
+`timeout` the job installs for `check.sh` works.
 
-> **First-run record.** *(Not yet written — M28 does not close until the operator's push produces a
-> green run. An instrument that has never run is not yet one, and M29 does not start on a workflow that
-> has not gone green.)*
+Two things the run confirmed rather than discovered, both predicted by reading: `security.ensure_runtime_dir`
+vets the **leaf** with `lstat`, so macOS's `/tmp` being a symlink to `/private/tmp` is a traversed parent
+and never refused; and no `/proc`, file-mode or `umask` difference surfaced.
+
+**What it still cannot prove, and this is unchanged by promotion**: there is no harness binary on the
+runner, so `integration_kiro` and `integration_claude` stay local-only and nothing on macOS exercises a
+real session pushing or searching. macOS is verified for the hermetic gate, not for a live install.
 
 ---
 

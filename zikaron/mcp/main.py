@@ -14,6 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from zikaron.core.errors import ZikaronError
 from zikaron.harness import detect
 from zikaron.mcp.server import Mode, build_server
 
@@ -40,6 +41,10 @@ def main(argv: list[str] | None = None) -> None:
     socket — `server.py`'s own contract — so the whole sequence from process start to the first
     `tools/list` response costs exactly the `fastmcp` import plus tool registration, with no
     service dependency at all until a model actually calls one of them.
+
+    A `ZikaronError` from `build_server` exits 1 with one line on stderr — stdout is the stdio
+    transport — carrying its payload, since the exception's own string is the code and its generic
+    message, which names neither the key at fault nor its value.
     """
     mode = _parse_args(sys.argv[1:] if argv is None else argv)
     # `Path.cwd()` is this process's own directory, fixed at the moment the harness spawned it —
@@ -48,7 +53,13 @@ def main(argv: list[str] | None = None) -> None:
     # returns one harness-supplied answer to both; under kiro they agree because their inputs
     # agree and the seam returns each unchanged, which is a property of that harness rather
     # than of this call. `tests/test_harness_store_scope.py` asserts each arm separately.
-    mcp = build_server(mode, scope_dir=detect.current_spec().store_scope_dir(Path.cwd()))
+    scope_dir = detect.current_spec().store_scope_dir(Path.cwd())
+    try:
+        mcp = build_server(mode, scope_dir=scope_dir)
+    except ZikaronError as error:
+        detail = ", ".join(f"{name}={value}" for name, value in error.data.items())
+        print(f"zikaron-mcp: {error}: {detail}", file=sys.stderr)
+        raise SystemExit(1) from error
     mcp.run()
 
 

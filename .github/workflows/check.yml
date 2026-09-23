@@ -88,9 +88,9 @@ jobs:
       # **The cache is restored, filled by an explicit fetch, and saved — all before the gate runs.**
       #
       # The obvious shape is a combined `actions/cache` around the whole job, and it is wrong twice
-      # over. Its save is a post step gated on job success, so a red job caches nothing: on the
-      # advisory macOS job below, whose red state is expected while that platform is unverified,
-      # that means re-downloading 64 MB every run indefinitely.
+      # over. Its save is a post step gated on job success, so a red job caches nothing — and a job
+      # that stays red across a run of failures re-downloads 64 MB every time, exactly when the
+      # feedback loop most needs to be short.
       #
       # **And the obvious repair — split it and put `if: always()` on the save — is worse, which is
       # why this comment is long.** `always()` runs the step *even when the run is cancelled*, and
@@ -105,7 +105,7 @@ jobs:
       # `cache-hit != 'true'` with **no** `always()`: a cancelled or failed fetch skips the save by
       # default step semantics, a completed one is saved before the gate can go red, and a restore
       # hit skips the save instead of re-uploading 64 MB to be told the key already exists. The
-      # advisory-red argument disappears entirely, because the cache no longer depends on the suite.
+      # red-job argument disappears entirely, because the cache no longer depends on the suite.
       #
       # **Expect two "Unable to reserve cache" warnings on the first run, and after any key change.**
       # The key carries no Python version — correct, the model is interpreter-independent — so all
@@ -164,11 +164,11 @@ jobs:
         run: ./check.sh
 
   macos:
-    # **Advisory.** macOS is untested until M29 and this job exists to find out how untested. It must
-    # not gate anything, and there is no branch protection today, so nothing blocks on it either way.
-    name: macos / 3.12 (advisory)
+    # **Required.** A red macOS job is a red run, on the same terms as any linux one.
+    # `design/distribution.md` §"The macOS job is required" records what the advisory run
+    # established, and what a runner with no harness binary still cannot prove.
+    name: macos / 3.12
     runs-on: macos-15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -191,7 +191,7 @@ jobs:
       #
       # **Both halves are required.** Homebrew installs the GNU tools `g`-prefixed, so without the
       # `gnubin` prepend only `gtimeout` is on `PATH` and `check.sh` still dies in the shell before a
-      # single test runs — an advisory job reporting "red, as expected" while having tested nothing.
+      # single test runs — a job reporting a macOS incompatibility while having tested nothing.
       - name: Guarantee GNU timeout
         run: |
           brew install coreutils
@@ -205,15 +205,13 @@ jobs:
           command -v timeout
           timeout --version | head -1
 
-      # 3.12 — the floor, and the version a macOS user is likeliest to already have, which is the
-      # case M29 exists to make work. Not a wheel-availability choice: `onnxruntime` cp314 macOS
-      # arm64 wheels have existed since 1.24.1 (`research/onnxruntime-macos-wheels.md`), and the
-      # earlier reason given here rested on their absence.
+      # 3.12 — the floor, and the version a macOS user is likeliest to already have. Not a
+      # wheel-availability choice: `onnxruntime` cp314 macOS arm64 wheels have existed since 1.24.1
+      # (`research/onnxruntime-macos-wheels.md`), and the earlier reason given here rested on their
+      # absence.
       - run: uv python install --no-bin 3.12
 
       # Restore → fetch → save, all before the gate, for the reason spelled out in the linux job.
-      # **It matters most here**: this job is expected to be red while macOS is unverified, so a
-      # cache tied to the suite's outcome would never be written at all.
       - name: Restore the embedding model
         id: model-cache
         uses: actions/cache/restore@v6
@@ -246,14 +244,13 @@ jobs:
           PYTHONWARNINGS: "error::DeprecationWarning,error::PendingDeprecationWarning"
         run: ./check.sh
 
-      - name: Say so in the summary
-        # **"Visible" is operationalised rather than asserted.** Whether `continue-on-error` still
-        # renders this job red in the checks UI is not knowable before the first real run, so the
-        # word *advisory* is written where a reader will see it regardless, and the first run records
-        # in `design/distribution.md` what the UI actually showed.
+      - name: Say what this job does and does not cover
+        # The one thing a reader cannot get from a green tick: it is green for the *hermetic* suite.
+        # No harness binary exists on a runner, so `integration_kiro` and `integration_claude` are
+        # deselected here as everywhere, and nothing on macOS exercises a live session.
         if: always()
         run: |
-          echo "## macOS 3.12 — advisory" >> "$GITHUB_STEP_SUMMARY"
+          echo "## macOS 3.12" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Outcome: \`${{ job.status }}\`. This job is **advisory** and gates nothing." >> "$GITHUB_STEP_SUMMARY"
-          echo "macOS is untested until M29; a red result here is the instrument working." >> "$GITHUB_STEP_SUMMARY"
+          echo "Outcome: \`${{ job.status }}\`. This job is **required**." >> "$GITHUB_STEP_SUMMARY"
+          echo "It runs the hermetic gate. No harness binary exists here, so no live session is exercised." >> "$GITHUB_STEP_SUMMARY"

@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import socket
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,12 +83,19 @@ class StoreLocation:
 
     @classmethod
     def resolve(cls, scope_dir: Path) -> "StoreLocation":
+        """Where everything sits, derived once.
+
+        Raises:
+            ZikaronError: `paths.socket_path`'s `BAD_CONFIG` when the runtime directory leaves no
+                room in `sun_path`. Reached from `ServiceConnection.__init__`, so it surfaces when
+                the server is built rather than when a tool is first called.
+        """
         store_dir = paths.store_dir(scope_dir)
         resolved_store_dir = store_dir.resolve()
         runtime_dir = paths.runtime_dir(
             xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid()
         )
-        sock_path = paths.socket_path(runtime_dir, resolved_store_dir)
+        sock_path = paths.socket_path(runtime_dir, resolved_store_dir, platform=sys.platform)
         return cls(store_dir=store_dir, sock_path=sock_path, runtime_dir=runtime_dir)
 
 

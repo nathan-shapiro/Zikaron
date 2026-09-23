@@ -1,5 +1,7 @@
 # Zikaron
 
+[![CI](https://github.com/nathan-shapiro/Zikaron/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/nathan-shapiro/Zikaron/actions/workflows/check.yml)
+
 **Zikaron** (Hebrew/Yiddish זיכרון — "memory, remembrance") gives a coding agent the two kinds of
 knowledge a project holds that are not in its source code.
 
@@ -103,9 +105,10 @@ and never fails your turn.
 
 - **Linux, or macOS on Apple Silicon.** The transport is a Unix domain socket and the paths assume a
   POSIX filesystem.
-  **Linux x86_64 is verified; Linux arm64 and macOS are supported but not yet verified** — nothing
-  has run on Linux arm64, and the *advisory* macOS CI job is configured but has not yet had a run,
-  so treat macOS as "expected to work, untested". **Intel Macs and Windows are not supported**:
+  **Linux x86_64 and macOS arm64 are verified; Linux arm64 is supported but not verified** — CI runs
+  the full hermetic gate on both of the first two and nothing has ever run on the third. What is
+  verified on macOS is that gate: no harness binary exists on a CI runner, so nothing there
+  exercises a real session pushing or searching. **Intel Macs and Windows are not supported**:
   Intel Macs would mean pinning a year-stale `onnxruntime` on two of the three interpreters and a
   hard install failure on the third, and Windows needs a second RPC transport rather than a flag.
   `design/distribution.md` §1 has the detail.
@@ -673,7 +676,7 @@ Python version, is additionally required before a milestone lands.
 
 **CI is not a third thing to run.** The workflow in `.github/workflows/` asserts the matrix's claim —
 every tested version green on one tree — against a commit, by running `check.sh` once per version. So a
-pull request needs nothing you would not already run locally. It also runs an **advisory** macOS job,
-which gates nothing: macOS support is committed to but unverified, and a red result there is the
-instrument working rather than a broken build. `design/distribution.md` explains what that job can and
-cannot prove.
+pull request needs nothing you would not already run locally. The macOS job is **required** on the same
+terms as the Linux ones. `design/distribution.md` explains what it can and cannot prove — the short
+version being that a CI runner has no harness binary, so a green macOS run is a statement about the
+hermetic gate rather than about a live install.

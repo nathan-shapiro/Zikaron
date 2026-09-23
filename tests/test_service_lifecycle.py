@@ -28,7 +28,7 @@ from zikaron.service import lifecycle, server
 
 
 async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_active(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The inode-drift exit condition `architecture.md` §"Idle self-stop" describes: `memory.db`
     deleted and recreated at the identical path while this process still holds the original file
@@ -44,7 +44,7 @@ async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_ac
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1  # never idle: `may_stop` must return `False` throughout.
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
 
@@ -61,7 +61,7 @@ async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_ac
 
 
 async def test_idle_self_stop_detects_a_replacement_that_already_happened_before_it_started(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The exact race: `memory.db` replaced **before**
     `idle_self_stop` is even created, not merely before its first poll fires. This is what
@@ -84,7 +84,7 @@ async def test_idle_self_stop_detects_a_replacement_that_already_happened_before
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
 
@@ -99,7 +99,7 @@ async def test_idle_self_stop_detects_a_replacement_that_already_happened_before
 
 
 async def test_idle_self_stop_does_not_exit_while_the_store_is_never_replaced_and_stays_busy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The converse of the tests above, guarding against a version of the check that fires on
     every poll regardless of whether anything actually changed — `stat()`-ing the same,
@@ -107,7 +107,7 @@ async def test_idle_self_stop_does_not_exit_while_the_store_is_never_replaced_an
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
         idle_task = asyncio.create_task(
@@ -124,7 +124,7 @@ async def test_idle_self_stop_does_not_exit_while_the_store_is_never_replaced_an
 
 
 async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recreated_yet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A `memory.db` that is deleted and never recreated (no file at all at the path right now)
     must be treated identically to a changed inode, not skipped as "nothing to compare against
@@ -134,7 +134,7 @@ async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recre
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
         idle_task = asyncio.create_task(
@@ -148,7 +148,7 @@ async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recre
 
 
 async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rather_than_exiting(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only absence or a changed inode counts as "replaced". An earlier version of
     `_store_path_now_differs` folded *every* `OSError` into an unconditional shutdown
@@ -161,7 +161,7 @@ async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rathe
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
 
@@ -187,7 +187,10 @@ async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rathe
 
 @pytest.mark.asyncio
 async def test_a_clean_stop_writes_a_record_naming_its_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    socket_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A clean exit must be visible in the log, and say which of the two conditions fired.
 
@@ -205,7 +208,7 @@ async def test_a_clean_stop_writes_a_record_naming_its_reason(
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 1  # never idle, so only the replacement branch can fire.
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
 
@@ -227,7 +230,10 @@ async def test_a_clean_stop_writes_a_record_naming_its_reason(
 
 @pytest.mark.asyncio
 async def test_an_idle_stop_says_idle_rather_than_store_replaced(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    socket_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The other branch, and the one an operator reads most often.
 
@@ -243,7 +249,7 @@ async def test_an_idle_stop_says_idle_rather_than_store_replaced(
     async with open_context(tmp_path) as ctx:
         ctx.activity.in_flight = 0
         ctx.activity.last_activity -= 86_400  # a day of idleness, against a 1800 s default.
-        sock_path = tmp_path / "server.sock"
+        sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
 
         with caplog.at_level("INFO", logger="zikaron.service"):

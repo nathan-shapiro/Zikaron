@@ -209,16 +209,6 @@ def _kill_and_reap_from_pid_file(pid_file: Path) -> None:
         _KNOWN_SERVER_PIDS.discard(pid)
 
 
-def _runtime_dir(tmp_path: Path) -> Path:
-    """A socket directory `security.ensure_runtime_dir` will actually accept: exactly `0700`,
-    created fresh by this fixture rather than reusing `tmp_path` itself — whose own mode is
-    pytest's to decide, not this module's, and both `main.run` and the client's own
-    `connect_start_if_absent` vet whatever directory the socket sits in before using it."""
-    runtime = tmp_path / "runtime"
-    runtime.mkdir(mode=0o700)
-    return runtime
-
-
 def _spawn_server(sock_path: Path, store_dir: Path) -> subprocess.Popen[bytes]:
     return subprocess.Popen(  # noqa: S603 - a fixed, test-controlled argv, not external input.
         _server_command(sock_path, store_dir),
@@ -309,7 +299,7 @@ def _reap(pid: int, *, deadline_seconds: float) -> None:
 
 @asynccontextmanager
 async def _running_server(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> AsyncIterator[tuple[Path, Path, str, subprocess.Popen[bytes]]]:
     """A real store, a real spawned service already listening on a real socket.
 
@@ -325,7 +315,7 @@ async def _running_server(
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     store_id = await _create_store(store_dir, encoder)
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
         _wait_for_accepting_socket(sock_path, deadline_seconds=_SPAWN_DEADLINE_SECONDS)
@@ -457,6 +447,7 @@ def _fake_server_command(script: Path, sock_path: Path, store_dir: Path) -> list
 
 async def test_a_connected_but_not_yet_health_ready_server_is_not_treated_as_started(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """`architecture.md` states spawning and polling `health()` as one step, with releasing the
     lock as the next, separate one — a process that *accepts a connection* well before it can
@@ -473,7 +464,7 @@ async def test_a_connected_but_not_yet_health_ready_server_is_not_treated_as_sta
     call (this fix regressing, or any other bug) must not be able to leak a permanently-running
     fake process for the rest of the test session.
     """
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     pid_file = tmp_path / "fake_server.pid"
@@ -514,6 +505,7 @@ async def test_a_connected_but_not_yet_health_ready_server_is_not_treated_as_sta
 
 async def test_a_structurally_valid_but_not_ready_health_response_is_not_treated_as_started(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """A response that parses correctly and carries a genuine, present `ready` field set to the
     JSON boolean `false` is a different failure shape than a refused connection with no response
@@ -528,7 +520,7 @@ async def test_a_structurally_valid_but_not_ready_health_response_is_not_treated
     wrongly accepted and `is True` correctly still refuses — that distinction is true of the fixed
     code by construction (`is True` accepts nothing but the literal boolean), but is not itself
     independently proven by a fixture that never sends such a value."""
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     pid_file = tmp_path / "fake_server.pid"
@@ -560,7 +552,7 @@ async def test_a_structurally_valid_but_not_ready_health_response_is_not_treated
 
 
 async def test_two_clients_racing_a_cold_store_converge_on_one_server(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """Neither client has ever connected; both run `connect_start_if_absent` against the same
     socket path at (as close as achievable) the same instant. `architecture.md`'s sequence —
@@ -569,7 +561,7 @@ async def test_two_clients_racing_a_cold_store_converge_on_one_server(
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     store_id = await _create_store(store_dir, encoder)
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     db_path = store_dir / "memory.db"
 
     def _connect_and_report_server_pid() -> int:
@@ -612,7 +604,7 @@ async def test_two_clients_racing_a_cold_store_converge_on_one_server(
 
 
 async def test_client_retries_through_start_if_absent_when_the_server_exits_mid_connect(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """Connect while the server is genuinely alive, kill it, and observe the *in-flight*
     request fail — then confirm a fresh `connect_start_if_absent` recovers by respawning.
@@ -624,7 +616,12 @@ async def test_client_retries_through_start_if_absent_when_the_server_exits_mid_
     disappears out from under it, rather than the client only ever discovering an already-dead
     socket file.
     """
-    async with _running_server(tmp_path, encoder) as (sock_path, store_dir, store_id, process):
+    async with _running_server(tmp_path, socket_dir, encoder) as (
+        sock_path,
+        store_dir,
+        store_id,
+        process,
+    ):
         live_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         live_sock.settimeout(2.0)
         live_sock.connect(str(sock_path))
@@ -664,14 +661,19 @@ async def test_client_retries_through_start_if_absent_when_the_server_exits_mid_
 
 
 async def test_start_if_absent_clears_a_stale_socket_left_by_a_killed_server(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """A hard-killed process (`SIGKILL`, no cleanup at all) leaves a socket file that is still,
     structurally, a real uid-owned socket — the only shape `_vet_and_clear_stale_socket` is
     willing to unlink. This asserts both halves: the file is genuinely vettable as stale, and
     start-if-absent actually recovers through it rather than refusing to touch it — with no live
     connection ever made against the dead server, unlike the connecting-mid-exit scenario above."""
-    async with _running_server(tmp_path, encoder) as (sock_path, store_dir, store_id, process):
+    async with _running_server(tmp_path, socket_dir, encoder) as (
+        sock_path,
+        store_dir,
+        store_id,
+        process,
+    ):
         process.kill()
         process.wait(timeout=5.0)
         assert sock_path.exists()
@@ -697,13 +699,18 @@ async def test_start_if_absent_clears_a_stale_socket_left_by_a_killed_server(
 
 
 async def test_a_client_resolving_a_different_store_refuses_the_handshake(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """`architecture.md`: "a mismatch is not a retry: the client... treats the socket as
     foreign." A second store's client, pointed at the first store's live socket, must raise
     `STORE_IDENTITY` rather than proceeding — the whole reason `health()`'s handshake verifies
     **both** `store_path` and `store_id` rather than the path alone."""
-    async with _running_server(tmp_path, encoder) as (sock_path, _store_dir, _store_id, _process):
+    async with _running_server(tmp_path, socket_dir, encoder) as (
+        sock_path,
+        _store_dir,
+        _store_id,
+        _process,
+    ):
         foreign_store_dir = tmp_path / "other" / ".zikaron"
         foreign_store_dir.mkdir(parents=True)
         foreign_store_id = await _create_store(foreign_store_dir, encoder)
@@ -722,13 +729,13 @@ async def test_a_client_resolving_a_different_store_refuses_the_handshake(
 
 
 async def test_a_client_resolving_the_same_path_but_a_different_store_id_is_still_refused(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """The load-bearing case a path-only check would miss entirely: a store deleted and
     recreated at the identical path gets a fresh `store_id` (`Store.create` mints a new UUID
     every time), so `store_path` alone cannot distinguish "the store I resolved" from "a store
     that happens to live at the same path now." """
-    async with _running_server(tmp_path, encoder) as (
+    async with _running_server(tmp_path, socket_dir, encoder) as (
         sock_path,
         store_dir,
         _stale_store_id,
@@ -754,7 +761,7 @@ async def test_a_client_resolving_the_same_path_but_a_different_store_id_is_stil
 
 
 async def test_a_config_failure_at_startup_is_logged_before_the_process_exits(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """The log is configured **before** config resolution runs, specifically so a malformed
     config file — which fails before `ServiceContext.assemble` ever opens the store — leaves a
@@ -768,7 +775,7 @@ async def test_a_config_failure_at_startup_is_logged_before_the_process_exits(
         "[retrieval]\nrrf_k = not valid toml\n", encoding="utf-8"
     )
     await _create_store(store_dir, encoder)
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
         process.wait(timeout=10.0)
@@ -782,7 +789,7 @@ async def test_a_config_failure_at_startup_is_logged_before_the_process_exits(
 
 
 async def test_a_store_open_failure_at_startup_is_also_logged(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """The startup `try` in `main.run()` wraps both config resolution *and*
     `ServiceContext.assemble()` — this asserts the second half specifically, with a real
@@ -798,7 +805,7 @@ async def test_a_store_open_failure_at_startup_is_also_logged(
         )
         await store.connection.commit()
 
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
         process.wait(timeout=10.0)
@@ -817,7 +824,7 @@ async def test_a_store_open_failure_at_startup_is_also_logged(
 
 
 async def test_a_signal_arriving_as_soon_as_the_socket_appears_still_unlinks_it(
-    tmp_path: Path, encoder: FastEmbedEncoder
+    tmp_path: Path, socket_dir: Path, encoder: FastEmbedEncoder
 ) -> None:
     """A real process, signalled at the earliest moment anything outside it can act — the instant
     the socket file appears — and the socket must be gone when it exits.
@@ -839,7 +846,7 @@ async def test_a_signal_arriving_as_soon_as_the_socket_appears_still_unlinks_it(
     # — which is why the signal is the only exit this exercises.
     (store_dir / "config.toml").write_text("[service]\nidle_timeout = 60\n", encoding="utf-8")
     await _create_store(store_dir, encoder)
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     process = _spawn_server(sock_path, store_dir)
     try:
         _wait_for_socket(sock_path, deadline_seconds=_SPAWN_DEADLINE_SECONDS)

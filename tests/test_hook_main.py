@@ -9,12 +9,10 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -39,14 +37,8 @@ class _FakeSurfaceServiceForMain:
     variable is the only lever a real child process shares with this test.
     """
 
-    def __init__(self, store_dir: Path, *, respond_text: str) -> None:
-        # A short, top-level `/tmp` directory rather than nesting under `store_dir` — pytest's
-        # own `tmp_path` is already several directory levels deep, and the socket path this class
-        # binds is `runtime_dir/zikaron/<32-hex-char-hash>.sock`; combined with a deeply-nested
-        # `tmp_path` as the runtime directory, the total length exceeds the ~108-byte kernel
-        # `sun_path` limit — measured directly rather than assumed, since an earlier version of
-        # this fixture nested under `store_dir` and failed with exactly that `OSError`.
-        self.runtime_dir = Path(tempfile.mkdtemp(prefix="zikaron-test-runtime-"))
+    def __init__(self, store_dir: Path, *, runtime_dir: Path, respond_text: str) -> None:
+        self.runtime_dir = runtime_dir
         store_subdir = store_dir / ".zikaron"
         store_subdir.mkdir()
         self._store_db_path = store_subdir / "memory.db"
@@ -109,7 +101,6 @@ class _FakeSurfaceServiceForMain:
         self._stop.set()
         self._thread.join(timeout=2.0)
         self._server.close()
-        shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
 
 def resolve_sock_path_under(store_subdir: Path, *, xdg_runtime_dir: Path) -> Path:
@@ -126,7 +117,7 @@ def resolve_sock_path_under(store_subdir: Path, *, xdg_runtime_dir: Path) -> Pat
     resolved_store_dir = store_subdir.resolve()
     runtime_dir = paths.runtime_dir(xdg_runtime_dir=str(xdg_runtime_dir), uid=os.getuid())
     runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return paths.socket_path(runtime_dir, resolved_store_dir)
+    return paths.socket_path(runtime_dir, resolved_store_dir, platform=sys.platform)
 
 
 def _pid_from_health(sock_path: Path) -> int | None:
@@ -567,13 +558,15 @@ class TestMainAsARealSubprocess:
             _reap_any_service_spawned_for(tmp_path)
 
     def test_a_successful_surface_result_reaches_stdout_byte_for_byte(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The same byte-exact guarantee on the `userPromptSubmit` success path: `push.run`'s own
         returned text must reach stdout with no extra trailing newline `print` would have added.
         """
         monkeypatch.setenv("KIRO_SESSION_ID", "s1")
-        service = _FakeSurfaceServiceForMain(tmp_path, respond_text="- exact gist one\n- gist two")
+        service = _FakeSurfaceServiceForMain(
+            tmp_path, runtime_dir=socket_dir, respond_text="- exact gist one\n- gist two"
+        )
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "zikaron.hook.main"],
@@ -598,13 +591,13 @@ class TestMainAsARealSubprocess:
             service.close()
 
     def test_an_empty_surface_result_produces_genuinely_empty_stdout(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """`architecture.md` §"Errors": an empty store's `surface` "prints nothing at all" —
         `print("")` would still emit a bare `\\n`, which is a different observable from nothing.
         """
         monkeypatch.setenv("KIRO_SESSION_ID", "s1")
-        service = _FakeSurfaceServiceForMain(tmp_path, respond_text="")
+        service = _FakeSurfaceServiceForMain(tmp_path, runtime_dir=socket_dir, respond_text="")
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "zikaron.hook.main"],
@@ -629,7 +622,7 @@ class TestMainAsARealSubprocess:
             service.close()
 
     def test_a_degraded_user_prompt_submit_still_exits_zero_and_relays_on_stdout(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The measured result this whole design rests on: even a genuine failure must exit 0 and
         put its relay text on stdout, never stderr — the exact opposite of an earlier revision
@@ -651,7 +644,7 @@ class TestMainAsARealSubprocess:
         process's own exit code and channel behaviour end to end.
         """
         monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
-        bogus_runtime_dir = tmp_path / "not-a-directory"
+        bogus_runtime_dir = socket_dir / "not-a-directory"
         bogus_runtime_dir.write_text("this is a file, not a directory", encoding="utf-8")
         store_dir = tmp_path / "project"
         store_dir.mkdir()

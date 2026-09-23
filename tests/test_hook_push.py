@@ -97,13 +97,13 @@ class _FakeSurfaceService:
 
 @pytest.fixture
 def fake_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[dict[str, object]], _FakeSurfaceService]:
     """A fake service bound at exactly the socket path `push.run` will itself resolve for
     `scope_dir=tmp_path`, so `push.run` connects to it as though it were the real thing — patches
     `connect.resolve_sock_path` rather than the environment, since the real derivation involves a
     sha256 hash this fixture has no reason to reimplement."""
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
     store_db_path = store_dir / "memory.db"
@@ -342,7 +342,7 @@ def test_an_unrecognized_error_code_still_logs_something_identifiable(
 
 
 def test_no_service_at_all_is_logged_and_relayed_as_transport_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The service is not merely rejecting — it never even answers, and the single-attempt
     contract means `push.run` must not retry a second start-if-absent sequence: this deliberately
@@ -350,7 +350,7 @@ def test_no_service_at_all_is_logged_and_relayed_as_transport_failure(
     own poll deadline exactly once."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     (tmp_path / ".zikaron").mkdir()
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     monkeypatch.setattr(connect, "resolve_sock_path", lambda _store_dir: sock_path)
     monkeypatch.setattr(
         connect, "default_server_command", lambda _sock, _store: ["python3", "-c", "pass"]
@@ -380,7 +380,7 @@ def test_a_failure_output_names_hook_log_so_the_operator_can_verify_it(
 
 
 def test_a_store_identity_mismatch_is_logged_and_relayed_with_its_own_code(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`hook.log` must name a store-identity mismatch specifically as `store_identity` with the
     design's own `-32030` code, not the generic `transport` an earlier version of this module's
@@ -399,7 +399,7 @@ def test_a_store_identity_mismatch_is_logged_and_relayed_with_its_own_code(
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     (tmp_path / ".zikaron").mkdir()
 
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     service = _FakeSurfaceService(
         sock_path,
         store_db_path=tmp_path / "a-completely-different-store" / "memory.db",
@@ -464,7 +464,7 @@ def test_a_genuinely_unanticipated_exception_type_is_still_caught_and_relayed(
 
 
 def test_a_hostile_runtime_directory_is_logged_and_relayed_rather_than_propagating(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`security.ensure_runtime_dir`'s own `ZikaronError` on a hostile runtime directory
     "propagates as itself" out of `connect.connect_once`, per that function's own docstring — but
@@ -481,10 +481,16 @@ def test_a_hostile_runtime_directory_is_logged_and_relayed_rather_than_propagati
     `/zikaron/<hash>.sock` appended beneath it) instead raises a plain `NotADirectoryError` from
     the OS at a *different* point, one component higher, which is a real but different failure
     shape this test is not the one aimed at.
+
+    **`socket_dir` rather than `tmp_path`, and that is load bearing rather than tidiness.**
+    `paths.socket_path` refuses an over-long path with a `bad_config` of its own, before
+    `ensure_runtime_dir` is ever reached — and the assertions below, which read `bad_config` and
+    `-32023` out of `hook.log`, cannot tell the two apart. Under a runtime directory long enough
+    to cross `sun_path` this test would pass while exercising nothing it names.
     """
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     (tmp_path / ".zikaron").mkdir()
-    xdg_runtime_dir = tmp_path / "runtime"
+    xdg_runtime_dir = socket_dir / "runtime"
     xdg_runtime_dir.mkdir()
     (xdg_runtime_dir / "zikaron").write_text("this is a file, not a directory", encoding="utf-8")
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg_runtime_dir))

@@ -70,7 +70,9 @@ def test_the_interpreter_version_is_reported_as_a_dotted_string() -> None:
     assert len(reported.split(".")) >= 2
 
 
-async def test_closing_a_served_socket_leaves_the_file_on_disk(tmp_path: Path) -> None:
+async def test_closing_a_served_socket_leaves_the_file_on_disk(
+    tmp_path: Path, socket_dir: Path
+) -> None:
     """The one behaviour that changed silently: from 3.13, a closing Unix server removes its own
     socket path unless told not to.
 
@@ -85,7 +87,7 @@ async def test_closing_a_served_socket_leaves_the_file_on_disk(tmp_path: Path) -
     even if `serve` had stopped passing them, which is the only way this can actually break.
     """
     async with open_context(tmp_path) as ctx:
-        sock_path = tmp_path / "survives.sock"
+        sock_path = socket_dir / "survives.sock"
         running = await server.serve(ctx, str(sock_path))
         assert sock_path.is_socket()
 
