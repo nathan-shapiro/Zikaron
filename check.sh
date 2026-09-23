@@ -98,4 +98,5 @@ fi
 # every package that exists, so the next one to be added fails here instead of being forgotten.
 timeout 600 "$venv/pytest" -o "cache_dir=${pytest_cache_dir}" \
     --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
-    --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness --cov=zikaron/knowledge
+    --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness --cov=zikaron/knowledge \
+    --cov=zikaron/cli --cov=zikaron/doctor

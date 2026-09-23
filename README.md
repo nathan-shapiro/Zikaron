@@ -1,6 +1,13 @@
 # Zikaron
 
+[![PyPI](https://img.shields.io/pypi/v/zikaron)](https://pypi.org/project/zikaron/)
 [![CI](https://github.com/nathan-shapiro/Zikaron/actions/workflows/check.yml/badge.svg?branch=main)](https://github.com/nathan-shapiro/Zikaron/actions/workflows/check.yml)
+[![Coverage](https://codecov.io/gh/nathan-shapiro/Zikaron/branch/main/graph/badge.svg)](https://codecov.io/gh/nathan-shapiro/Zikaron)
+[![Downloads](https://img.shields.io/pypi/dm/zikaron)](https://pypi.org/project/zikaron/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://img.shields.io/badge/mypy-strict-2a6db2.svg)](https://mypy-lang.org/)
+[![License: MIT](https://img.shields.io/github/license/nathan-shapiro/Zikaron)](LICENSE)
+
 
 **Zikaron** (Hebrew/Yiddish זיכרון — "memory, remembrance") gives a coding agent the two kinds of
 knowledge a project holds that are not in its source code.
@@ -27,8 +34,9 @@ whatever corpus you point it at.
 
 It runs entirely on your machine: SQLite databases under `.zikaron/`, a local embedding model, and a
 small background service on a Unix socket. **Zikaron reaches the network for exactly one thing** —
-the embedding-model download described under [Install](#install), which it repeats if the cache it
-lands in is cleared — and there is no account to create.
+the embedding-model download described under [Install](#install), pinned to one revision and
+verified against a SHA256 set it ships. That download repeats only if the cache it lands in is
+cleared, or if a file in it fails verification. There is no account to create.
 What it retrieves still reaches your model, since that is the point: the gists a hook injects and
 the groups a consolidator is handed travel to it the way the rest of your session does.
 
@@ -134,6 +142,11 @@ and never fails your turn.
 
 ```bash
 # Recommended. `--managed-python` is not optional; the paragraph below says why.
+uv tool install --managed-python zikaron
+```
+
+```bash
+# The same, from the repository rather than PyPI — for a version that has not been released.
 uv tool install --managed-python git+https://github.com/nathan-shapiro/Zikaron.git
 ```
 
@@ -164,37 +177,34 @@ executes once per message you type, and a resolver in that path costs about 20 m
 gets installed is ordinary console scripts with a fixed interpreter.
 
 **First use downloads a 64 MB embedding model** from Hugging Face, so the very first search is slow
-and needs the network. Everything after it is local. **Known limitation**: the model is cached under
-the system temporary directory rather than a durable per-user one, so a reboot can cost you the
-download again. It is outside your project either way, so no `.gitignore` entry helps. A durable
-cache is planned.
+and needs the network. Everything after it is local, and the download survives a reboot: it is
+cached per user, under `$XDG_CACHE_HOME/zikaron/models` (or `~/Library/Caches/zikaron/models` on
+macOS), and `$FASTEMBED_CACHE_PATH` overrides that if you already set it. It is outside your project
+either way, so no `.gitignore` entry helps.
 
-Then install into the project you want Zikaron in. The installer is invoked as `python -m
-zikaron.install` and has no command of its own yet, so you need the path to the interpreter Zikaron
-was installed into. That differs by which path you took above:
+**The download is pinned and verified.** Zikaron fetches one named revision of one Hugging Face
+repository and checks every file **it downloads** against a SHA256 it ships, so an upstream change or
+a damaged transfer is refused rather than used, and it re-fetches once before giving up. A file that
+goes bad on disk *afterwards* is `zikaron doctor`'s to find rather than startup's — checking all
+64 MB on every start costs more of the push hook's budget than it is worth, which is measured in
+`design/distribution.md` §"Model acquisition". `zikaron doctor` reports which state your cache is in.
 
-```bash
-# If you used `uv tool install`:
-ZK="$(uv tool dir)/zikaron/bin/python"
-
-# If you used a source checkout:
-ZK=/path/to/zikaron/.venv/bin/python
-```
-
-A single `zikaron install` command is planned.
-
-Under **Claude Code**:
+Then install into the project you want Zikaron in:
 
 ```bash
 cd /path/to/your/project
-"$ZK" -m zikaron.install --project .
+zikaron install --project .
 ```
 
 Under **kiro**, name the config for the agent you actually work in:
 
 ```bash
-"$ZK" -m zikaron.install --project . --agent .kiro/agents/<your-agent>.json
+zikaron install --project . --agent .kiro/agents/<your-agent>.json
 ```
+
+If `zikaron` is not on your `PATH` — a source checkout whose virtualenv you have not activated —
+every command below also works as `python -m zikaron.<command>`, run with that virtualenv's
+interpreter. `zikaron doctor` has no such form; it is new with the `zikaron` command.
 
 Pass `--harness claude-code` or `--harness kiro` to override the detection described under
 [Requirements](#requirements). `--agent` is kiro-only, and passing it under Claude Code is refused
@@ -262,7 +272,7 @@ name, which may sit outside the project** — a docs tree or a vendored dependen
 corpus, so only degenerate roots (the filesystem root, your home directory itself) are refused — and
 copy its text into an index, in a detached process that works a core for minutes. No network either
 way **once the model is cached** — the only fetch Zikaron makes is the embedder download described
-above, which a cleared temporary directory can make the indexer pay again — and nothing is written
+above, which a cleared cache directory can make the indexer pay again — and nothing is written
 into your project outside `.zikaron/`. A mistaken memory write is *recoverable* rather than
 undoable: `zikaron_memory_retire` withdraws a record from ordinary retrieval and leaves it
 auditable, while an amend overwrites prose that nothing restores. A mistaken
@@ -348,8 +358,31 @@ rewrites a config in whichever format it read, so mixing them in one file has no
 
 ## Verify
 
-Start a session with the agent you installed into. On start you should see nothing unusual — the write
-policy goes into the model's context, not to your terminal. Then, from the project directory:
+**Start with `zikaron doctor`**, which answers the questions that decide whether Zikaron can run on
+this machine at all — and names what to change for each one it answers badly, rather than leaving you
+a traceback:
+
+```console
+$ zikaron doctor
+ok   sqlite extension loading              available
+ok   sqlite FTS5                           available
+ok   sqlite-vec                            loads, and registers vec0
+ok   model cache (BAAI/bge-small-en-v1.5)  present at 52398278842ec682c6f32300af41344b1c0b0bb2 under /home/you/.cache/zikaron/models, 5 files verified
+ok   socket path length                    /run/user/1000/zikaron/2eb0b9c22f39e097ac31aa6adfe7fba7.sock fits 108 bytes
+--   sqlite version                        3.45.1 linked by Python 3.12.3
+```
+
+That is real output with the home directory replaced; everything else is verbatim, including the
+full revision and socket path the command prints.
+
+It exits non-zero if any check fails. **A model cache that is not there yet is not a failure** — there
+is no prefetch at install time, so a first run reports it as fetched on first use and exits 0. The
+last row reports rather than checks: the linked SQLite version varies between interpreter builds on
+one machine and there is no correct value to compare against, so stating it is the whole point.
+`zikaron doctor --project <dir>` checks another project's socket path.
+
+Then start a session with the agent you installed into. On start you should see nothing unusual — the
+write policy goes into the model's context, not to your terminal. Then, from the project directory:
 
 ```bash
 # a service should be running for this project after your first message
@@ -384,16 +417,14 @@ fragments with line ranges, quoted verbatim, so it can read further or quote the
 
 Ask the agent to create one and it will, without leaving the session: *"index the docs directory as
 a knowledge base called design docs"*. It has tools to list, create, rename, refresh, inspect and
-remove them. The same verbs are available at a shell, for when no agent is running — using the same
-`$ZK` interpreter path the install section works out, since this command has no front door of its
-own yet either:
+remove them. The same verbs are available at a shell, for when no agent is running:
 
 ```bash
-"$ZK" -m zikaron.knowledge list
-"$ZK" -m zikaron.knowledge add "design docs" --path ./design \
+zikaron knowledge list
+zikaron knowledge add "design docs" --path ./design \
     --description "Architecture and design records"
-"$ZK" -m zikaron.knowledge refresh            # every corpus; name one to narrow it
-"$ZK" -m zikaron.knowledge status "design docs"
+zikaron knowledge refresh            # every corpus; name one to narrow it
+zikaron knowledge status "design docs"
 ```
 
 Three things are worth knowing before you point one at a directory.
@@ -532,10 +563,18 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   write-policy.md    your policy override, if you wrote one
 ```
 
-**One thing the running system writes lives elsewhere, and it has to.** The service's Unix socket
-and its lock file sit in `$XDG_RUNTIME_DIR/zikaron/` — or `/tmp/zikaron-<uid>/` where that variable
-is unset, which is every Mac — named by a hash of the store's path, `0600` inside a `0700`
-directory. A socket belongs on a runtime filesystem rather than in your project. **Under Claude
+**Two things the running system writes live elsewhere, and both have to.**
+
+The first is the embedding model, which is **per user rather than per project**: one 64 MB artefact
+shared by every project you use Zikaron in, under `$XDG_CACHE_HOME/zikaron/models` —
+`~/Library/Caches/zikaron/models` on macOS, or wherever `$FASTEMBED_CACHE_PATH` points if you set it.
+A copy inside each project would duplicate it for bytes that are identical by construction, since the
+version fetched is pinned. Removing a project does not remove it; [Uninstall](#uninstall) says how.
+
+The second is the service's Unix socket, which with its lock file sits in
+`$XDG_RUNTIME_DIR/zikaron/` — or `/tmp/zikaron-<uid>/` where that variable is unset, which is every
+Mac — named by a hash of the store's path, `0600` inside a `0700` directory. A socket belongs on a
+runtime filesystem rather than in your project. **Under Claude
 Code**, an over-large consolidator result also spills to a file beside them, carrying that group's
 record prose verbatim and named by the same store hash; it is deleted when the consolidator asks for
 its next group — or, if that process is killed first, by the next one that starts. It is the one
@@ -562,12 +601,19 @@ Zikaron is built to fail quietly rather than get in your way. A hook that cannot
 prints a short note asking the agent to tell you, writes one line to `hook.log`, and exits cleanly. It
 never blocks your message, and it never reads the store directly.
 
+**Run `zikaron doctor` first for anything that smells environmental** — no search results at all, a
+service that will not start, an MCP server that dies on contact. It checks the things about this
+machine that can stop Zikaron working and names what to change for each. The table below is for
+symptoms it cannot see.
+
 | Symptom | Where to look |
 |---|---|
+| nothing searchable works at all | `zikaron doctor` — extension loading, FTS5 and `sqlite-vec` are the three that fail this way, and all three are properties of the interpreter rather than of your project |
+| the MCP server starts and immediately dies | `zikaron doctor` — an over-long `$XDG_RUNTIME_DIR` makes the socket path exceed what the platform allows, and this is the only channel that says so |
 | no memories are being injected | `.zikaron/hook.log`, then `pgrep -af zikaron.service.main` |
 | the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval |
 | every Zikaron tool call asks permission | kiro: add `@zikaron` to the agent's `allowedTools`. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
-| a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `... -m zikaron.knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it |
+| a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
@@ -664,6 +710,19 @@ exist, which loads nothing and breaks nothing but is not an uninstall.
 Note that `rm -rf .zikaron` takes the knowledge bases with it. They are rebuildable — an index is a
 view onto files you still have — but rebuilding one takes minutes per corpus.
 
+**The embedding model is not in your project and survives all of the above.** It is per user, not per
+project, so it is deliberately left alone by a single project's uninstall — another project using
+Zikaron still needs it. Remove it only when you are done with Zikaron everywhere:
+
+```bash
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}"/zikaron          # Linux
+rm -rf ~/Library/Caches/zikaron                           # macOS
+```
+
+That is the 64 MB the first search downloaded. If you set `$FASTEMBED_CACHE_PATH` yourself, it is
+there instead. Finally, `uv tool uninstall zikaron` — or delete the virtualenv, if you installed from
+a source checkout.
+
 ## Design and development
 
 The full design record is in [`design/`](design/README.md) — start with `design/overview.md`, which
@@ -674,7 +733,7 @@ under a coverage floor, with three marker tiers (`manual`, `integration_kiro`, `
 deselected by default and run by name. `./check-matrix.sh`, which runs all of that once per tested
 Python version, is additionally required before a milestone lands.
 
-**CI is not a third thing to run.** The workflow in `.github/workflows/` asserts the matrix's claim —
+**CI is not a third thing to run.** `.github/workflows/check.yml` asserts the matrix's claim —
 every tested version green on one tree — against a commit, by running `check.sh` once per version. So a
 pull request needs nothing you would not already run locally. The macOS job is **required** on the same
 terms as the Linux ones. `design/distribution.md` explains what it can and cannot prove — the short

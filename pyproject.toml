@@ -33,6 +33,10 @@ dependencies = [
     "aiosqlite==0.22.1",
     "sqlite-vec==0.1.9",
     "fastembed==0.8.0",
+    # Direct, not transitive: `core/indexing/acquisition.py` calls `snapshot_download` itself, so
+    # that the revision and the digests are Zikaron's rather than whatever upstream head fastembed
+    # would resolve. §6 pins direct dependencies exactly.
+    "huggingface_hub==1.26.0",
     # `zikaron-mcp` only. Deliberately not stdlib-only, unlike `zikaron-hook` — see
     # coding-standards.md §6 for the cost-model reasoning (once per agent spawn, not once per
     # message) and architecture.md §Components for the measured import cost.
@@ -71,7 +75,13 @@ Issues = "https://github.com/nathan-shapiro/Zikaron/issues"
 # `sys.executable -m zikaron.service.main` from whichever client finds the socket absent, which is
 # the path the service and hook clients are already tested against. An entry point nothing invokes
 # is one more shipped surface with no test behind it.
+#
+# `zikaron` is the human front door, and it exists because `uv tool install` puts a package's
+# console scripts on `PATH` and never the tool virtualenv's interpreter — so under the recommended
+# acquisition a `python -m zikaron.<x>` command reaches nothing a user can find. It does not absorb
+# the two above for the same reason they are listed: no human types them.
 [project.scripts]
+zikaron = "zikaron.cli.main:main"
 zikaron-hook = "zikaron.hook.main:main"
 zikaron-mcp = "zikaron.mcp.main:main"
 
@@ -96,6 +106,18 @@ dev = [
     # `mypy --strict` covers the tests as well as the package (see `check.sh`), so the parser above
     # needs stubs or the gate fails on the import rather than on anything about the code.
     "types-PyYAML==6.0.12.20260906",
+    # Tests only. `test_distribution.py` builds the sdist and the wheel and asserts that no
+    # evidence directory reached either — the one place the publication sweep's conclusions could
+    # be quietly undone, since setuptools' defaults are what exclude them and nothing states that.
+    "build==1.3.0",
+    # **The backend, in the venv, because that test builds with `--no-isolation`.** `build` checks
+    # `[build-system] requires` against the running environment and errors *Missing dependencies*
+    # when it is not there, and neither `uv venv --seed` nor `python -m venv` seeds setuptools on
+    # 3.12+ — only pip. Without this line the test is green only where someone installed setuptools
+    # by hand, and red on every matrix venv and in CI.
+    # `test_distribution.py` asserts this pin equals `[build-system].requires`, since two statements
+    # of one version is how one of them goes stale.
+    "setuptools==84.0.0",
 ]
 
 [tool.setuptools.packages.find]

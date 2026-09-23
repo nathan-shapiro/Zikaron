@@ -95,7 +95,11 @@ def _one_run(sock_path: Path) -> dict[str, float | int]:
                 {
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "method": "surface",
+                    # Renamed `surface` -> `memory_surface` when D1's amendment gave the knowledge
+                    # index its own methods and every method gained a subsystem prefix. Re-pointed
+                    # at M30, when this harness was first re-run since and answered
+                    # `method not found`.
+                    "method": "memory_surface",
                     "params": {
                         "prompt": QUERY,
                         "limit": 5,

@@ -34,9 +34,27 @@ import pytest
 import yaml
 
 from zikaron.core.config.keys import CONFIG_KEYS
+from zikaron.core.indexing.model_pin import pin_for
 
 _ROOT: Final = Path(__file__).resolve().parent.parent
+
+#: How the prefetch step is recognised. **Zikaron's own loader, not `fastembed`'s constructor**:
+#: only the former honours the pinned revision, so a prefetch that reverted to `TextEmbedding(...)`
+#: would fill a revision-keyed cache with upstream's head and is not this step.
+_MODEL_FETCH: Final = "FastEmbedEncoder.load("
 _WORKFLOW: Final = _ROOT / ".github" / "workflows" / "check.yml"
+
+#: **Every workflow file, for the checks about how a workflow is pinned rather than about what the
+#: gate asserts.** Those read the module-scoped fixture and covered `check.yml` alone, leaving the
+#: one workflow that holds a publishing credential unpinned by anything — the inverse of where the
+#: rule matters most. Discovered rather than listed, so a third workflow is covered by existing.
+#: Both extensions, because GitHub reads either and a workflow added as `.yaml` would otherwise be
+#: covered by neither pin test while this comment claimed it was.
+_WORKFLOW_FILES: Final = sorted(
+    path
+    for suffix in ("*.yml", "*.yaml")
+    for path in (_ROOT / ".github" / "workflows").glob(suffix)
+)
 
 #: Both filters, exactly as `check-matrix.sh` sets them. A job missing either is the failure this
 #: file exists for: it passes a tree the milestone gate would fail.
@@ -427,7 +445,7 @@ def test_the_model_cache_is_filled_and_saved_before_the_gate_can_redden_it(
             "carries that id, so the expression is empty and the save always runs"
         )
 
-    fetch = _step_index(job, lambda s: "TextEmbedding(" in str(s.get("run", "")))
+    fetch = _step_index(job, lambda s: _MODEL_FETCH in str(s.get("run", "")))
     gate = _step_index(job, lambda s: "./check.sh" in str(s.get("run", "")))
     restore = _step_index(job, lambda s: "cache/restore" in str(s.get("uses", "")))
     save = _step_index(job, lambda s: "cache/save" in str(s.get("uses", "")))
@@ -463,6 +481,7 @@ def test_the_cache_key_names_the_library_whose_pin_decides_the_download(
 
     embed_model = next(key for key in CONFIG_KEYS if key.name == "embed_model")
     model_leaf = str(embed_model.default).split("/")[-1]
+    pin = pin_for(str(embed_model.default))
 
     for job_name, job in _jobs(workflow).items():
         for step in _cache_steps(job):
@@ -474,6 +493,12 @@ def test_the_cache_key_names_the_library_whose_pin_decides_the_download(
                 f"the cache key does not name the configured model {model_leaf!r}, so a changed "
                 "default would keep serving the previous model out of cache"
             )
+            assert pin is not None
+            assert pin.revision in key, (
+                f"the cache key does not name the pinned revision {pin.revision}, so a cache "
+                "filled at the previous one keeps hitting while the snapshot it holds is absent — "
+                "64 MB downloaded per job per run and never saved back"
+            )
 
         # **And the step that actually fetches must name the same model the key does.** The fetch is
         # a literal in a `run:`, tied to nothing: edited to any other valid model id it passes
@@ -481,13 +506,42 @@ def test_the_cache_key_names_the_library_whose_pin_decides_the_download(
         # so the save never corrects it, and the gate silently downloads the real one inside
         # itself on every run forever.
         fetch = next(
-            (step for step in _steps(job) if "TextEmbedding(" in str(step.get("run", ""))), None
+            (step for step in _steps(job) if _MODEL_FETCH in str(step.get("run", ""))), None
         )
         assert fetch is not None, f"{job_name} has no explicit model-fetch step"
         assert str(embed_model.default) in str(fetch["run"]), (
             f"{job_name} fetches a different model than the cache key names; the configured "
             f"default is {embed_model.default!r}"
         )
+
+
+@pytest.mark.parametrize("job_name", _JOBS)
+def test_every_job_proves_the_pinned_digests_against_real_bytes(
+    workflow: dict[Any, Any], job_name: str
+) -> None:
+    """**CI is the only place a gate makes the digest table meet the files it describes** — on a
+    machine, `zikaron doctor` does it on demand.
+
+    Startup verifies what it fetched and a warm cache is five `stat` calls, so a digest edited
+    wrongly at an *unchanged* revision passes the gate and every warm developer machine, and is
+    met first by a stranger's cold fetch refusing with `bad_config`. A revision bump misses the
+    cache and the fetch step covers it; nothing else covers this.
+    """
+    job = _jobs(workflow)[job_name]
+    proving = _step_index(job, lambda s: "a.verify(" in str(s.get("run", "")))
+    assert proving != -1, f"{job_name} never checks the pinned digests against the fetched files"
+    fetching = _step_index(job, lambda s: _MODEL_FETCH in str(s.get("run", "")))
+    assert fetching < proving, (
+        f"{job_name} proves the digests before fetching them, which proves nothing"
+    )
+    # Tied to the configured default the way the fetch step is. Otherwise a changed default moves
+    # the cache key and the fetch while this step keeps naming the old model — loud, since it would
+    # hash an absent snapshot, but reported as a digest failure rather than as the drift it is.
+    embed_model = next(key for key in CONFIG_KEYS if key.name == "embed_model")
+    assert str(embed_model.default) in str(_steps(job)[proving]["run"]), (
+        f"{job_name} proves a different model than it fetches; the configured default is "
+        f"{embed_model.default!r}"
+    )
 
 
 @pytest.mark.parametrize("job_name", _JOBS)
@@ -498,9 +552,20 @@ def test_the_restore_and_save_keys_match(workflow: dict[Any, Any], job_name: str
     assert len(keys) == 1, f"{job_name}'s cache steps use different keys: {sorted(keys)}"
 
 
-def test_setup_uv_is_pinned_to_a_full_version_rather_than_a_bare_major(
-    workflow: dict[Any, Any],
-) -> None:
+def _uses(path: Path) -> list[str]:
+    """Every `uses:` in one workflow file."""
+    parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(parsed, dict)
+    return [
+        str(step["uses"])
+        for job in _jobs(parsed).values()
+        for step in _steps(job)
+        if step.get("uses")
+    ]
+
+
+@pytest.mark.parametrize("path", _WORKFLOW_FILES, ids=lambda p: p.name)
+def test_setup_uv_is_pinned_to_a_full_version_rather_than_a_bare_major(path: Path) -> None:
     """**The one action pin that fails silently rather than loudly.**
 
     `astral-sh/setup-uv` has no floating major tag — `@v10` is a 404 and only full patch tags exist.
@@ -509,31 +574,37 @@ def test_setup_uv_is_pinned_to_a_full_version_rather_than_a_bare_major(
     hardening default since. **A job pinned that way goes green running stale, unmaintained code,
     and nothing says so**, which is worse than a tag that does not resolve at all.
     """
-    pins = [
-        str(step["uses"])
-        for job in _jobs(workflow).values()
-        for step in _steps(job)
-        if "setup-uv" in str(step.get("uses", ""))
-    ]
-    assert pins, "no job sets up uv, which every job needs for its interpreter"
+    pins = [use for use in _uses(path) if "setup-uv" in use]
     for pin in pins:
         ref = pin.split("@", 1)[1]
         assert re.fullmatch(r"v\d+\.\d+\.\d+", ref) or re.fullmatch(r"[0-9a-f]{40}", ref), (
-            f"`{pin}` is a bare major or branch; setup-uv has no floating major tag, so this "
-            "silently resolves to a frozen historical release"
+            f"`{pin}` in {path.name} is a bare major or branch; setup-uv has no floating major "
+            "tag, so this silently resolves to a frozen historical release"
         )
 
 
-def test_no_action_is_pinned_to_a_moving_branch(workflow: dict[Any, Any]) -> None:
+def test_the_gate_workflow_sets_up_uv_at_all() -> None:
+    """The oracle above passes over a workflow that never mentions `setup-uv`, which is legitimate
+    for a workflow that needs no interpreter and would be a hole in the one that does."""
+    assert [use for use in _uses(_WORKFLOW) if "setup-uv" in use]
+
+
+@pytest.mark.parametrize("path", _WORKFLOW_FILES, ids=lambda p: p.name)
+def test_no_action_is_pinned_to_a_moving_branch(path: Path) -> None:
     """`@main` on a third-party action means the workflow's behaviour changes without a commit here,
-    which is both a reproducibility problem and a supply-chain one."""
+    which is both a reproducibility problem and a supply-chain one.
+
+    **A ref that is neither a full version nor a commit is moving unless it is a bare major**, and
+    a bare major on a first-party action is a deliberate, documented alias. Anything else — a branch
+    name like `release/v1`, which is what the PyPI publishing action's own docs recommend — moves
+    under the workflow and is caught here rather than by a suffix list that has to guess the names.
+    """
     moving = [
-        str(step["uses"])
-        for job in _jobs(workflow).values()
-        for step in _steps(job)
-        if str(step.get("uses", "")).endswith(("@main", "@master", "@latest"))
+        use
+        for use in _uses(path)
+        if not re.fullmatch(r"v\d+(\.\d+\.\d+)?|[0-9a-f]{40}", use.split("@", 1)[1])
     ]
-    assert not moving, f"pinned to a moving ref: {moving}"
+    assert not moving, f"{path.name} pins a moving ref: {moving}"
 
 
 @pytest.mark.parametrize("job_name", _JOBS)

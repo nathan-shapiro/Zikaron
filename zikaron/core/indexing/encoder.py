@@ -20,6 +20,7 @@ from itertools import pairwise
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
+from zikaron.core.indexing import acquisition, model_cache, model_pin
 from zikaron.core.store.embedder import Embedder
 
 if TYPE_CHECKING:
@@ -235,7 +236,35 @@ class FastEmbedEncoder:
         from fastembed import TextEmbedding  # noqa: PLC0415
         from tokenizers import Tokenizer  # noqa: PLC0415
 
-        model = TextEmbedding(model_name=model_name)
+        # Both arguments, not either: `OnnxTextEmbedding.__init__` runs
+        # `define_cache_dir(cache_dir)` — which `mkdir`s — before the `download_model` call that
+        # `specific_model_path` returns early from, so passing the specific path alone still
+        # creates an empty `tempfile.gettempdir()/fastembed_cache` on every service start.
+        cache_dir = model_cache.resolved_model_cache_dir()
+        pin = model_pin.pin_for(model_name)
+        specific_model_path = (
+            None if pin is None else str(acquisition.artifact_directory(pin, cache_dir=cache_dir))
+        )
+        try:
+            model = TextEmbedding(
+                model_name=model_name,
+                cache_dir=str(cache_dir),
+                specific_model_path=specific_model_path,
+            )
+        except Exception as error:
+            # **The cause has to be in the payload, because nothing else will carry it.**
+            # `server.py` logs a traceback for a non-`ZikaronError` and returns only `data` for a
+            # `ZikaronError`, and nothing in the package renders `__cause__`. Converting without
+            # this text would report a broken `onnxruntime` as a config fault pointing at a
+            # `doctor` that passes, with the real message on no channel.
+            if pin is None:
+                raise
+            raise _artifact_failure(
+                model_name,
+                f"an artefact that loads from {specific_model_path} — constructing it raised "
+                f"{type(error).__name__}: {error}; `zikaron doctor` checks its files against the "
+                "pin this release carries",
+            ) from error
         deployed = getattr(model.model, "tokenizer", None)
         if not isinstance(deployed, Tokenizer):
             raise _artifact_failure(model_name, "a model exposing its own tokenizers.Tokenizer")

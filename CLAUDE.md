@@ -65,7 +65,7 @@ falsifies, in the one place nobody edits when adding one.
 | **`design/build-plan.md`** | **Per-milestone briefs: scope, normative sections, invariants, done-when, scope fence.** Read the brief for the milestone you are on |
 | **`design/coding-standards.md`** | **Binding.** Structure, domain model, typing, the test tiers, invariant tests, comment rules, dependency rules, the check gate, and the rules for bulk edits to prose in code |
 | **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, K1–K13 and 16 invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
-| **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, the version scheme and its artefact-shape rule, **what CI asserts and what it provably cannot** |
+| **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, publication by trusted publishing, **the `zikaron` front door and what `doctor` checks**, **model acquisition — the durable cache, the pinned revision and digest set, when digests are checked and why not on every start**, the version scheme and its artefact-shape rule, **what CI asserts and what it provably cannot** |
 | **`design/harness.md`** | **The two supported harnesses as one table (D34)**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership, the consolidator's model, and **the installer's two targets** — the value/shape split, the three flags and what each refuses |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
@@ -171,15 +171,32 @@ format .`, not adjusting the code by hand to satisfy it.
 - **Milestones, not tasks.** Work is scoped by a brief in `design/build-plan.md` (scope, normative
   sections, invariants to cover, done-when, and an explicit **scope fence**), lands as one commit, and
   leaves a review file behind. Work the lowest-numbered incomplete milestone; do not skip ahead.
-- **Never commit. The operator commits.** No `git commit`, no `git push`, no `--amend` — not when the
-  gate is green, not when a review reaches APPROVED, and not as a step inside some larger task that
-  was asked for. Staging, branching and reading history are fine. When work reaches the point where
-  committing is the obvious next move, say so and stop there. The bullet above says a milestone
-  "lands as one commit" — that describes what a milestone *is*, not permission to land it.
+- **Never commit to `main`, and never merge. The operator does both.** Not when the gate is green,
+  not when a review reaches APPROVED, and not as a step inside some larger task that was asked for.
+  The bullet above says a milestone "lands as one commit" — that describes what a milestone *is*,
+  not permission to land it.
+- **The one way work leaves this session is a pull request, and only when the operator asks for
+  one.** Until then, staging, branching and reading history are what you may do. On that request:
+  branch (`m<N>-<slug>` for milestone work, `<slug>` otherwise), commit, push, open the PR against
+  `main`, then report and stop. **The PR is what makes CI run on the merge candidate** — the
+  workflow triggers on `push`/`pull_request` to `main` only, so a branch push alone tests nothing
+  and a green branch is not evidence.
+  **One commit per PR.** Subsequent work on the same PR **amends that commit and force-pushes with
+  `--force-with-lease`**, which updates the open PR in place and re-runs CI — never a stack of
+  fix-ups, and never a second PR, which would abandon the review trail. Delete the remote branch
+  after the merge.
+  **`--amend` is permitted here and has exactly one hazard: amending onto a moved `HEAD`**, which
+  folds your changes into whatever commit happens to be there and says nothing. So check first —
+  `git rev-parse --short HEAD` against the commit you believe you are amending — every time, and
+  never amend a commit the operator has merged.
+  **The commit message follows the milestone style** (`git show 9e86cad`): a title naming what the
+  work found rather than what it touched, led by `M<N>:` for milestone work, then prose paragraphs
+  — what was discovered, what was decided and why, what was withdrawn. No bullet lists, no
+  narration of the process.
 - **Never run a git command that discards uncommitted work.** Not `git checkout -- <path>`, not
-  `git restore <path>`, not `git reset --hard`, not `git stash`, not `git clean`. Because the rule
-  above says you never commit, *everything* you have produced is uncommitted at all times, and none
-  of these has an undo you will find in time. **The trigger is tidying up, not a big dangerous
+  `git restore <path>`, not `git reset --hard`, not `git stash`, not `git clean`. Work is committed
+  only at the moment a PR is asked for, so at any other time *everything* you have produced is
+  uncommitted, and none of these has an undo you will find in time. **The trigger is tidying up, not a big dangerous
   operation** — reverting a probe line you just added takes the whole file with it.
   **Instead:** probe in a throwaway `git init` under the scratchpad, never in the repository; undo
   your own edit by re-editing the file; get a pristine copy with `git show HEAD:<path>` written
@@ -212,6 +229,10 @@ format .`, not adjusting the code by hand to satisfy it.
   the inside as having applied it.
 - **Measure before you assert.** Token counts, retrieval hit rates and end-task success are the
   currency; "it feels better" is not a result. **Name the quantity before quoting a number about it.**
+  **A cost is measured under the condition its budget was set for, not under the one that is
+  convenient** — a CPU-bound cost timed in an idle in-process loop understated one here by 2×, and
+  the comparison that decides such a question is an A/B against a control on the same machine at the
+  same load, never a figure from another day.
 - **Withdraw a refuted claim in place** in the design corpus: strike the original and put the
   correction beside it, rather than deleting it silently. This applies to `design/`, not to
   `FINDINGS.md`, where §"Project memory" above governs.

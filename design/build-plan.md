@@ -331,6 +331,8 @@ and model"; `design/write-policy.md`.
 Six shipped artefacts and one program. `[project.scripts]` gives `zikaron-hook` and `zikaron-mcp` console
 entry points, because a hook `command` and an `mcpServers` command need one absolute path whose shebang pins
 the interpreter Zikaron is installed into — the same interpreter start-if-absent will spawn the service with.
+*(M30 added a third, `zikaron`, for the commands a person types. It is named in no config file, which is
+why this paragraph's argument does not reach it: `design/distribution.md` §"The front door".)*
 `.kiro/agents/zikaron-consolidator.json` carries the explicit `model`, the four consolidation tools and
 nothing else, all pre-approved, and no `hooks`. `.kiro/skills/zikaron-consolidate/SKILL.md` is D10's trigger,
 and it is also the only place a user is told that re-invoking it **takes over** a stuck run. The `hooks` and
@@ -1566,6 +1568,11 @@ and an `mcpServers` entry's `command`. Nothing names this CLI in a config file. 
 which is `zikaron.install`'s own recorded argument for **not** being a console script: `python -m` names
 the interpreter whose Zikaron owns the store, and an ambient name on `PATH` obscures exactly that. §9,
 which is normative here, already spells `python -m zikaron.knowledge`, and that is what ships.
+*(**Overturned at M30, by a premise this argument did not have.** "An ambient name on `PATH` obscures
+which interpreter owns the store" is still true — but under `uv tool install`, the recommended
+acquisition since M28, **no interpreter is on `PATH` at all**, so the `python -m` form is the one a
+user cannot reach. Both now work: `zikaron knowledge` is the front door, and `python -m` remains for
+the several-virtualenvs case this paragraph was written about.)*
 
 CLI only: `add`, `list`, `remove`, `rename`, `status`. Registry-first ordering for both `add` and
 `remove`, with the interrupted states §8.4 specifies. Name lower-casing and uniqueness. `add`'s path
@@ -2559,7 +2566,8 @@ end*, and `distribution.md` will be written from this brief — so a rejection r
    the host question entirely, but reimplements what `uv` already does correctly. The second is kept as
    a later option rather than refuted — see §"Still open" in `FINDINGS.md`.
 3. **MIT.** Every runtime dependency is permissive — `aiosqlite` MIT, `sqlite-vec` MIT/Apache-2.0
-   dual, `fastembed` and `fastmcp` Apache-2.0 — so nothing in the tree constrains the choice.
+   dual, `fastembed` and `fastmcp` Apache-2.0 — *and, since M30, `huggingface_hub` Apache-2.0,
+   direct rather than transitive (D19 as amended)* — so nothing in the tree constrains the choice.
    **Rejected: Apache-2.0**, whose patent grant and NOTICE mechanism corporate review prefers and which
    half the dependency tree uses, on the grounds that for a SQLite-and-ONNX CLI the grant buys little
    against MIT's shorter, more widely-recognised terms; and **AGPL-3.0**, which would keep the design
@@ -2578,9 +2586,13 @@ end*, and `distribution.md` will be written from this brief — so a rejection r
    duplication whose second site is the one nobody edits. That last failure mode is this project's own,
    recorded repeatedly in `FINDINGS.md`.
 5. **Model files are fetched and never redistributed** — operator's constraint, stricter than the
-   licence requires. `bge-small-en-v1.5` is recorded as MIT in
+   licence requires. ~~`bge-small-en-v1.5` is recorded as MIT in
    `research/embedding-models-technical-prose.md`, which is our own note rather than a primary
-   reading; M30 re-verifies it against the model card before shipping a fetcher. The constraint
+   reading; M30 re-verifies it against the model card before shipping a fetcher.~~ **Re-verified at
+   M30 against both model cards, and the recorded licence was the wrong repository's**: MIT is
+   `BAAI/bge-small-en-v1.5`, the upstream weights, while the quantized ONNX artefact actually
+   fetched — `qdrant/bge-small-en-v1.5-onnx-q` — states `apache-2.0`. Both permissive.
+   `research/m30-name-and-licence.md`. The constraint
    forecloses vendoring the weights in a wheel, which was the option that would have removed the
    network from first run.
 6. **CI is the only macOS instrument.** No Apple hardware is available. What that buys and what it
@@ -3179,7 +3191,10 @@ harness config, and `design/harness.md` treats the install contract as normative
 would change every installed config for a cosmetic gain on two surfaces no human types.
 `python -m zikaron.install` keeps working.
 **While that surface is open:** `knowledge/scope.py`'s `execute` prints a `ZikaronError`'s payload
-as `mappingproxy({…})`, enum reprs and all; render it the way `mcp/main.py` does — `name=value` per
+as ~~`mappingproxy({…})`, enum reprs and all~~ — **read at M30 against the running code, it is
+`{'source': <BadConfigSource.FILE: 'file'>, …}`: quoted keys and enum reprs, but a plain dict, since
+an f-string calls `str` and `MappingProxyType` defines only `__repr__`. The defect is what the
+sentence says; its name was wrong** — render it the way `mcp/main.py` does — `name=value` per
 field, one line. Left alone by M29 because it is an ordinary-Linux-behaviour change on a surface
 that milestone had no reason to open.
 
@@ -3201,6 +3216,9 @@ no install-time prefetch (this milestone's fence), a stranger's very first `zika
 model at all — so *absent* reports **"not yet fetched; fetched on first service start"** and passes,
 while *present and mismatched* fails. Unstated, the executor picks, and the likely pick greets every
 new user with a non-zero exit before anything is wrong.
+*(**Sharpened in the build**: a snapshot directory that is present fails if any pinned file is
+**missing** as well as if one mismatches, each with its own remedy — only a directory that is not
+there at all is the passing absent case. "Present and mismatched" names one of the two failures.)*
 
 ### The model on disk
 
@@ -3286,6 +3304,22 @@ exists and the pointer does not it re-links without downloading**. So "delete th
 `snapshot_download` again" deletes the symlink, re-links the same corrupt blob, mismatches again, and
 reports *upstream differs* to a user whose **disk** is bad — the two causes' diagnoses swapped. Only
 `force_download` re-downloads an existing destination.
+*(**Narrowed in the build**: "the one re-fetch" is right for a file that is present and wrong, and
+wrong for one that is **absent**. An interrupted first fetch leaves a partial snapshot which the warm
+call *returns* rather than refuses — with a commit hash and no tree cache,
+`_raise_if_incomplete_snapshot` does not check — and forcing there re-downloads every pinned file
+instead of the missing one. Absent and wrong are therefore repaired differently:
+`design/distribution.md` §"Model acquisition".)*
+
+*(**Narrowed in the build, on a measurement.** Verifying on **every** start — which (iii) and (iv)
+assume — costs 331-396 ms under load and pushed the cold-start sequence past
+`push._DEADLINE_SECONDS`, reintroducing M17's defect at 0-1 runs in 5 inside the budget against 5/5
+without it. Digests are now checked on the acquisition paths only; a warm start checks presence. A
+snapshot proved wrong is discarded before *and* after the forced re-fetch, so no complete-but-wrong
+snapshot exists at any instant. **And (iv)'s *never another download* holds for bytes, not
+requests**: after the discard, a second call in one process falls through to one plain online call
+that re-links the existing blobs and transfers nothing. `design/distribution.md` §"Model
+acquisition"; `research/m30-verify-cost.md`.)*
 
 **(iv) Re-fetch is bounded to one per process**, and a second mismatch is a named failure carrying its
 remedy (*"artefact at revision X differs from the pinned hash — upgrade zikaron"*), never another

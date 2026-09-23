@@ -118,10 +118,14 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          # The model and the library that fetches it. A cache saves only on a key miss, so a key
-          # that does not name everything deciding the download goes stale permanently rather than
-          # refreshing — when the model revision is pinned, it belongs in this key too.
-          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+          # The model, the revision Zikaron pins it to, and the library that loads it. A cache saves
+          # only on a key miss, so a key missing any of the three goes stale permanently rather than
+          # refreshing: a cache filled at the previous revision would keep hitting, `snapshots/<new>`
+          # would be absent, and every job of every run would download 64 MB while never saving it
+          # back. `fastembed` stays in the key because it decides which files are wanted, even though
+          # the revision now decides their bytes. `test_ci_workflow.py` reads all three from their
+          # sources.
+          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Build the virtualenv
         run: |
@@ -133,7 +137,22 @@ jobs:
         # cancelled. The model id is Zikaron's own default, from `core/config/keys.py`; the drift
         # test ties that default to the cache key so a changed default cannot keep serving the old
         # model out of cache.
-        run: .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+        #
+        # **Through Zikaron's own loader, not `fastembed` directly**, which is what makes the cache
+        # hold the pinned revision the key names. Calling `TextEmbedding` here would fetch whatever
+        # the upstream repository's head is, fill a revision-keyed cache with the wrong snapshot,
+        # and leave the gate downloading the right one inside itself on every run.
+        run: .venv/bin/python -c "from zikaron.core.indexing.encoder import FastEmbedEncoder; FastEmbedEncoder.load('BAAI/bge-small-en-v1.5')"
+
+      - name: Prove the pinned digests against the fetched bytes
+        # **The only place a gate checks the digest table against real files** — `zikaron doctor`
+        # does it on any machine on demand. Startup verifies what it
+        # fetched, and a warm cache is five `stat`s — so a digest edited wrongly at an *unchanged*
+        # revision would be green in this job without this step, is green on every warm developer
+        # machine, and is met first by a stranger's cold fetch as `bad_config … upgrade zikaron`.
+        # A *revision* bump misses the cache
+        # and is covered by the fetch above; this covers the other edit. ~200 ms.
+        run: .venv/bin/python -c "from zikaron.core.indexing import acquisition as a, model_cache as c, model_pin as p; pin = p.pin_for('BAAI/bge-small-en-v1.5'); v = a.verify(pin, c.snapshot_dir(c.resolved_model_cache_dir(), repo_id=pin.repo_id, revision=pin.revision)); assert v.complete(), v"
 
       - name: Save the embedding model
         # No `always()`, deliberately — see the block above the restore step.
@@ -141,7 +160,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Record what SQLite this interpreter brought
         # SQLite is bundled with the interpreter and FTS5 ranking can vary by host, which is the one
@@ -162,6 +181,26 @@ jobs:
           PYTEST_ADDOPTS: "-W error::DeprecationWarning -W error::PendingDeprecationWarning"
           PYTHONWARNINGS: "error::DeprecationWarning,error::PendingDeprecationWarning"
         run: ./check.sh
+
+      - name: Report coverage
+        # **Uploaded from every job, and merged by Codecov, because coverage here genuinely differs
+        # per interpreter**: `service/asyncio_compat.py`'s two version-dependent rows are each
+        # unexecuted on the versions that do not select them, so a single job's report would show
+        # one of them uncovered and be wrong about the matrix.
+        #
+        # **It cannot redden the run.** What CI asserts is the matrix's claim — every supported
+        # version green on one tree — and a reporting service being unreachable says nothing about
+        # that. `check.sh`'s own ratchet is what enforces the floor, on the runner, before this
+        # step exists.
+        if: always()
+        run: .venv/bin/python -m coverage xml
+      - uses: codecov/codecov-action@v6
+        if: always()
+        with:
+          files: coverage.xml
+          flags: linux-${{ matrix.python }}
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   macos:
     # **Required.** A red macOS job is a red run, on the same terms as any linux one.
@@ -217,7 +256,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Build the virtualenv
         run: |
@@ -225,14 +264,18 @@ jobs:
           .venv/bin/pip install -e '.[dev]'
 
       - name: Fetch the embedding model
-        run: .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+        run: .venv/bin/python -c "from zikaron.core.indexing.encoder import FastEmbedEncoder; FastEmbedEncoder.load('BAAI/bge-small-en-v1.5')"
+
+      - name: Prove the pinned digests against the fetched bytes
+        # Both jobs, for the reason the linux job's copy gives.
+        run: .venv/bin/python -c "from zikaron.core.indexing import acquisition as a, model_cache as c, model_pin as p; pin = p.pin_for('BAAI/bge-small-en-v1.5'); v = a.verify(pin, c.snapshot_dir(c.resolved_model_cache_dir(), repo_id=pin.repo_id, revision=pin.revision)); assert v.complete(), v"
 
       - name: Save the embedding model
         if: steps.model-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-${{ runner.os }}
+          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Record what SQLite this interpreter brought
         run: .venv/bin/python -c "import sqlite3, sys; print(sys.version); print('sqlite', sqlite3.sqlite_version)"
@@ -243,6 +286,18 @@ jobs:
           PYTEST_ADDOPTS: "-W error::DeprecationWarning -W error::PendingDeprecationWarning"
           PYTHONWARNINGS: "error::DeprecationWarning,error::PendingDeprecationWarning"
         run: ./check.sh
+
+      - name: Report coverage
+        # Merged with the linux jobs' — see the reasoning there.
+        if: always()
+        run: .venv/bin/python -m coverage xml
+      - uses: codecov/codecov-action@v6
+        if: always()
+        with:
+          files: coverage.xml
+          flags: macos-3.12
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Say what this job does and does not cover
         # The one thing a reader cannot get from a green tick: it is green for the *hermetic* suite.

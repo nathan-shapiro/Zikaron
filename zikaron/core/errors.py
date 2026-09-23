@@ -341,3 +341,15 @@ class ZikaronError(Exception):
         self.message: Final = spec.message
         self.data: Final[Mapping[str, object]] = MappingProxyType(payload)
         super().__init__(f"{code.wire_name}: {spec.message}")
+
+    def detail(self) -> str:
+        """The payload as `name=value` per field, comma-joined on one line.
+
+        Here rather than at each surface that prints a refusal, so that they cannot render one
+        payload two ways. `str(self)` carries only the wire code and the code's generic message,
+        which name neither the key at fault nor its value, while interpolating the payload gives
+        `{'source': <BadConfigSource.FILE: 'file'>, …}` — quoted keys and enum reprs, a line that
+        reads as a traceback fragment rather than as a diagnosis. No caller handles an empty
+        result, which `test_error_codes.py::test_every_code_carries_a_payload` licenses.
+        """
+        return ", ".join(f"{name}={value}" for name, value in self.data.items())

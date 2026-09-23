@@ -228,6 +228,34 @@ def test_the_exception_text_names_the_code() -> None:
     assert error.message == ERROR_SPECS[ErrorCode.STORE_BUSY].message
 
 
+def test_every_code_carries_a_payload() -> None:
+    """`ZikaronError.detail` renders nothing for a code that declares no field, and neither of the
+    two surfaces that print a refusal handles that. A fieldless code would reach a user as a
+    dangling `()` or a trailing colon, so the absence is asserted rather than assumed.
+    """
+    fieldless = sorted(code.wire_name for code, spec in ERROR_SPECS.items() if not spec.data_fields)
+    assert fieldless == []
+
+
+def test_detail_renders_one_line_of_name_equals_value() -> None:
+    error = ZikaronError(ErrorCode.NOT_FOUND, uuid="a1b2")
+    assert error.detail() == "uuid=a1b2"
+
+
+def test_detail_renders_an_enum_as_the_value_it_serializes_as() -> None:
+    """The defect this exists against is `mappingproxy({'source': <ConfigSource.FILE: 'file'>})`,
+    which is what an f-string of the payload produces.
+    """
+    error = ZikaronError(
+        ErrorCode.BAD_CONFIG,
+        source="file",
+        key="runtime_dir",
+        value="/nope",
+        expected="a path",
+    )
+    assert error.detail() == "source=file, key=runtime_dir, value=/nope, expected=a path"
+
+
 def test_a_spec_cannot_declare_one_field_twice() -> None:
     with pytest.raises(ValueError, match="declares a field twice"):
         ErrorSpec("nonsense", (PayloadField("uuid"), PayloadField("uuid")))

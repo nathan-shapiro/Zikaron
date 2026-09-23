@@ -1064,7 +1064,7 @@ nothing can manage.** Under a cross-host lock `refresh` reports `already_indexin
 `remove` refuses (§8.4), and auto-reclaim is same-host-only — so a stale foreign lock is permanent with
 no exit. This is ordinary rather than exotic: an indexer run inside a devcontainer records the
 container's hostname in `lock_host`, so one crash there leaves a lock the host session can never clear.
-The exit is **`python -m zikaron.knowledge refresh <name> --force-unlock`**, which deletes the three
+The exit is **`zikaron knowledge refresh <name> --force-unlock`**, which deletes the three
 `lock_*` keys and **refuses when the lock is same-host and its pid is alive** — the one case where the
 holder is provably running. It is CLI-only and has no MCP twin: an agent cannot distinguish a stale
 foreign lock from a live one any better than the service can, so this is a judgement that belongs to the
@@ -2365,15 +2365,21 @@ all** — its `MAX_TOOL_RESPONSE_SIZE` of 400,000 is applied in three other tool
 ## 9. CLI surface (parity, not the primary path)
 
 ```
-python -m zikaron.knowledge list
-python -m zikaron.knowledge add    <name> --path <dir> --description <text>
-                                   [--include GLOB]... [--exclude GLOB]...
-                                   [--git-mode tracked|all|off] [--max-file-bytes N]
-python -m zikaron.knowledge remove <name> [--yes]
-python -m zikaron.knowledge rename <name> <new-name>
-python -m zikaron.knowledge refresh [<name>] [--full] [--force-unlock]
-python -m zikaron.knowledge status [<name>]
+zikaron knowledge list
+zikaron knowledge add    <name> --path <dir> --description <text>
+                         [--include GLOB]... [--exclude GLOB]...
+                         [--git-mode tracked|all|off] [--max-file-bytes N]
+zikaron knowledge remove <name> [--yes]
+zikaron knowledge rename <name> <new-name>
+zikaron knowledge refresh [<name>] [--full] [--force-unlock]
+zikaron knowledge status [<name>]
 ```
+
+*Spelled `python -m zikaron.knowledge …` until M30, which put these verbs behind the `zikaron`
+console script.* **That form still works and is not deprecated** — under a host-Python install with
+several virtualenvs it is the one that says *which* interpreter's Zikaron is acting. It is no longer
+what a reader should be shown first, because under the recommended `uv tool install` no interpreter
+is on `PATH` at all. `design/distribution.md` §"The front door".
 
 `remove` deletes the registry row, then unlinks the database and its `-wal`/`-shm` siblings, after
 confirmation (§3.1a). `rename` changes the registry's `name` and touches no file. `refresh` scans and

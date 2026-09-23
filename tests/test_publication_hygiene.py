@@ -32,23 +32,19 @@ Credential-shaped **values** are a different case and are included: per the swee
 **zero** hits inside `zikaron/` today, and a token pasted into shipped code is a worse outcome
 than a home path — which is the case a guard most earns its keep on.
 
-**Pinning the embedding model will make this guard go red, by design, and that is written here so
-the red is read correctly.** Owning the model fetch means a **full 40-hex** Hugging Face revision
-and a set of **SHA256** hashes in product code, both matching the value patterns below. The failure
-will arrive quoting *"the installed package must carry no machine-local path,
-private-project name, or credential-shaped value"* against a deliberate pin, which reads exactly
-like a planted secret.
-
-**The exemption is deliberately not chosen here.** Its shape depends on where those pins live —
-one module, a data file, one constant or several — which cannot be known before they exist, and
-picking it now would be reasoning about unwritten code. Choose then between a per-line
-marker and a single-file allowlist when it can see the tree.
+**The embedding model's pin is credential-shaped and deliberate**: owning the fetch means a full
+40-hex Hugging Face revision and a set of SHA256 digests in product code, all matching the value
+patterns below. They live in one module, so the exemption is a single-file allowlist —
+`_SHAPE_EXEMPT` below states why that rather than a per-line marker, and the exemption is narrowed
+by a positive check on the file's contents rather than trusted.
 """
 
 import itertools
 import re
 from pathlib import Path
 from typing import Final
+
+from zikaron.core.indexing.model_pin import PINNED_ARTIFACTS
 
 _ROOT: Final = Path(__file__).resolve().parent.parent
 _PACKAGE: Final = _ROOT / "zikaron"
@@ -90,11 +86,26 @@ _FORBIDDEN_SHAPES: Final = tuple(
 
 _FORBIDDEN: Final = _FORBIDDEN_LITERALS + _FORBIDDEN_SHAPES
 
+#: The one file exempt from the *shape* patterns, holding the pinned artefact's revision and
+#: digests. **A single-file allowlist rather than a per-line marker, chosen at M30 when the pins
+#: existed to look at.** A marker would sit on every digest line and on each new one, which makes
+#: it a thing people add without reading — and a marker pasted onto a line that is genuinely a
+#: secret is indistinguishable from one pasted onto a digest. One file whose entire purpose is
+#: public digests can be audited at a glance.
+#:
+#: **The exemption is narrowed by a positive check rather than trusted**:
+#: `test_the_exempt_file_holds_only_its_declared_pins` asserts that every hex run in it is one of
+#: the values `model_pin` declares, so nothing else can hide behind it. The literals stay in force
+#: here — a home path in this file would be as wrong as anywhere else.
+_SHAPE_EXEMPT: Final = _PACKAGE / "core" / "indexing" / "model_pin.py"
+
 #: A wrapped comment line's continuation marker, stripped before two lines are rejoined.
 _CONTINUATION: Final = re.compile(r"^\s*(?:#:|#)?\s*")
 
 
-def _searchable(lines: list[str]) -> list[tuple[int, str, tuple[re.Pattern[str], ...]]]:
+def _searchable(
+    lines: list[str], *, shapes: tuple[re.Pattern[str], ...]
+) -> list[tuple[int, str, tuple[re.Pattern[str], ...]]]:
     """Each line against every pattern, plus each adjacent pair rejoined against the literals only.
 
     **Why the rejoin at all.** `test_version_seam.py` states the rule this adopts: *a check that
@@ -118,7 +129,8 @@ def _searchable(lines: list[str]) -> list[tuple[int, str, tuple[re.Pattern[str],
         (number, f"{line.rstrip()}{_CONTINUATION.sub('', following)}", _FORBIDDEN_LITERALS)
         for (number, line), (_, following) in itertools.pairwise(numbered)
     ]
-    return [(number, line, _FORBIDDEN) for number, line in numbered] + joined
+    applicable = _FORBIDDEN_LITERALS + shapes
+    return [(number, line, applicable) for number, line in numbered] + joined
 
 
 def _scanned_files() -> list[Path]:
@@ -135,7 +147,8 @@ def test_the_shipped_package_names_no_path_off_this_machine() -> None:
         # ship a binary asset tomorrow, and a guard that *raises* on the first such file stops being
         # a guard at the moment the tree grows one.
         for number, line, patterns in _searchable(
-            path.read_text(encoding="utf-8", errors="replace").splitlines()
+            path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            shapes=() if path == _SHAPE_EXEMPT else _FORBIDDEN_SHAPES,
         )
         for pattern in patterns
         if pattern.search(line)
@@ -174,6 +187,33 @@ def test_every_forbidden_pattern_can_actually_match_something() -> None:
     assert len(samples) == len(_FORBIDDEN)
     for pattern, sample in zip(_FORBIDDEN, samples, strict=True):
         assert pattern.search(sample), f"{pattern.pattern} matched nothing in {sample!r}"
+
+
+def test_the_exempt_file_holds_only_its_declared_pins() -> None:
+    """What narrows the shape exemption from "this file may contain anything" to "this file may
+    contain the pins it declares".
+
+    Without this, exempting a file would be a standing hole that a later edit could put a real
+    secret through, and the guard would stay green — which is the objection to a per-line marker
+    applied to the alternative that was chosen instead.
+    """
+    declared = {pin.revision for pin in PINNED_ARTIFACTS.values()} | {
+        digest for pin in PINNED_ARTIFACTS.values() for digest in pin.digests.values()
+    }
+    text = _SHAPE_EXEMPT.read_text(encoding="utf-8")
+    found = {match for shape in _FORBIDDEN_SHAPES for match in shape.findall(text)}
+    assert found <= declared, (
+        f"undeclared credential-shaped value in {_SHAPE_EXEMPT.name}: {found - declared}"
+    )
+
+
+def test_the_exemption_is_only_where_it_is_claimed() -> None:
+    """A planted digest anywhere else in the package is still caught, so the exemption is one file
+    rather than a pattern that happens to match one."""
+    elsewhere = _PACKAGE / "core" / "indexing" / "encoder.py"
+    assert elsewhere != _SHAPE_EXEMPT
+    scanned = _searchable(["DIGEST = " + "d" * 64], shapes=_FORBIDDEN_SHAPES)
+    assert any(pattern.search(line) for _, line, patterns in scanned for pattern in patterns)
 
 
 def test_this_file_does_not_match_itself() -> None:

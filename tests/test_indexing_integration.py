@@ -11,7 +11,10 @@ this package builds a second tokenizer is a measured property of a third-party a
 property ever changes, a failing test is exactly how this design note should come up for review.
 """
 
+import os
 import struct
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -276,3 +279,41 @@ async def test_a_real_store_writes_identical_bytes_for_identical_prose(
             )
             blobs.append([bytes(row[0]) for row in rows])
     assert blobs[0] == blobs[1]
+
+
+class TestAWarmStartMakesNoNetworkCall:
+    """The assertion that protects M17's cold-start budget, and it holds by construction.
+
+    `HF_HUB_OFFLINE=1` turns any request into `OfflineModeIsEnabled`, so a green run proves the
+    online fallback was *not reached* rather than that it succeeded quickly. What makes that true is
+    the warm call passing `local_files_only=True` together with a 40-hex revision: the sha alone
+    still leaves one `list_repo_tree` call possible whenever `trees/<sha>.json` is absent.
+
+    A subprocess, because `huggingface_hub` reads the variable into module constants at import.
+    Warmed in a first subprocess rather than assumed warm, so the offline run is measuring the
+    warm path on a machine that has never fetched this artefact.
+    """
+
+    @staticmethod
+    def _load(environment: dict[str, str] | None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 — a fixed, test-constructed interpreter path.
+            [
+                sys.executable,
+                "-c",
+                "from zikaron.core.indexing.encoder import FastEmbedEncoder;"
+                f"print(FastEmbedEncoder.load({MODEL!r}).dim)",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+            env={**os.environ, **(environment or {})},
+        )
+
+    def test_the_model_loads_with_the_network_refused(self) -> None:
+        assert self._load(None).returncode == 0, (
+            "the warming run must succeed before the offline one"
+        )
+        offline = self._load({"HF_HUB_OFFLINE": "1"})
+        assert offline.returncode == 0, offline.stderr
+        assert offline.stdout.strip() == "384"

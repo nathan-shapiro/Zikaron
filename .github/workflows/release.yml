@@ -1,0 +1,86 @@
+# Publishing to PyPI, by trusted publishing rather than a stored token.
+#
+# **No credential exists anywhere in this repository or its secrets.** PyPI is told, once, that this
+# repository's `release` environment running this workflow file may publish `zikaron`; the runner
+# then mints a short-lived OIDC token per run. A leaked repository secret is the failure mode this
+# removes, and there is nothing left to leak.
+#
+# **It runs on a published GitHub release, not on a tag push.** A tag is cheap to create by accident
+# and cheap to move; a release is a deliberate act with a person behind it, and the version it
+# publishes is whatever `pyproject.toml` says rather than whatever the tag is named — which is why
+# the job asserts the two agree before building anything. A tag that disagrees with the file is the
+# mistake this catches, and it is the likeliest one.
+#
+# **`check.yml` is not re-run here.** It runs on every push and pull request to `main`, so the
+# commit a release points at has already been through every supported version on two platforms.
+# Re-running it would test the same tree again and say nothing new; what this workflow adds is that
+# the artefact uploaded is built from that tree.
+#
+# **Two jobs, and the split is the point.** Only `publish` can mint an OIDC token, and it runs
+# nothing but the publisher — no checkout, no build backend, no code from this repository. The
+# build happens in a job with no `id-token` permission at all, so a compromised build-time
+# dependency has no credential in its process to reach.
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Refuse a release whose tag disagrees with the version being published
+        # The one failure a human makes here: tagging `v0.2.0` against a tree that still says
+        # `0.1.0`. PyPI would accept the upload and the release page would name a version nobody
+        # can install, so this is checked before anything is built.
+        # `uv version --short` reads `[project] version` with no interpreter involved at all, which
+        # is why it is preferred over parsing the file: any `python -c` here either trusts whatever
+        # the runner image aliases, or needs a `--python` constraint to resolve the same interpreter
+        # `uv build` will, and neither is worth carrying to read one string.
+        run: |
+          declared="$(uv version --short)"
+          tagged="${GITHUB_REF_NAME#v}"
+          if [ "$declared" != "$tagged" ]; then
+            echo "release tag ${GITHUB_REF_NAME} declares $tagged; pyproject.toml says $declared" >&2
+            exit 1
+          fi
+
+      - name: Build the sdist and the wheel
+        run: uv build
+
+      - name: Check the artefacts are installable and described
+        # `twine check` reads the metadata a package index will render. A README that PyPI refuses
+        # fails the upload itself, which is a worse place to discover it.
+        run: uv run --no-project --with twine twine check dist/*
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # The whole credential story: this mints the OIDC token PyPI verifies. Nothing else is
+      # granted — no `contents: read`, because this job checks nothing out.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+      # Pinned to a commit rather than `@release/v1`, which is a branch and moves. The project's own
+      # moving-ref rule applies hardest to the one action that will hold a publishing credential.
+      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2

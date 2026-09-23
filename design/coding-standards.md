@@ -30,7 +30,12 @@ zikaron/
   mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
   install/              # the shipped artefacts for both harnesses, and the command that writes them
+  cli/                  # the `zikaron` front door: dispatch only, no rule of its own
 ```
+
+**Nothing shipped sits directly under `zikaron/`.** Every module lives in a package, because the
+gate names packages in `--cov` flags and a loose module would be measured by none of them —
+`tests/test_check_gate.py` asserts both halves.
 
 *(This tree listed neither `core/knowledge/`, `core/write/`, `zikaron/knowledge/` nor
 `zikaron/harness/` until 2026-09-22 — four real packages, one of them thirty modules — while §1's own
