@@ -60,13 +60,13 @@ class TestHealthRejectsAMalformedResponse:
 
 
 class TestPollUntilReachableRetriesAfterAConnectThatFailsHealth:
-    def test_a_connection_that_answers_health_badly_is_retried(self, tmp_path: Path) -> None:
+    def test_a_connection_that_answers_health_badly_is_retried(self, socket_dir: Path) -> None:
         """A server that accepts a connection and then answers `health()` with a malformed
         response (rather than not answering at all) must be treated as "not yet ready" and
         polled again — not raised on immediately — since a service mid-startup can legitimately
         accept sockets before it can answer correctly.
         """
-        sock_path = tmp_path / "test.sock"
+        sock_path = socket_dir / "test.sock"
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(sock_path))
         server.listen(4)

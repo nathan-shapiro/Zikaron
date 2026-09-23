@@ -195,10 +195,10 @@ def test_ensure_runtime_dir_refuses_a_plain_file_at_the_path(tmp_path: Path) -> 
     assert excinfo.value.code is ErrorCode.BAD_CONFIG
 
 
-def test_vet_socket_for_unlink_accepts_a_real_socket_owned_by_this_uid(tmp_path: Path) -> None:
+def test_vet_socket_for_unlink_accepts_a_real_socket_owned_by_this_uid(socket_dir: Path) -> None:
     import socket as socket_module  # noqa: PLC0415 — only this test needs a real bound socket.
 
-    sock_path = tmp_path / "server.sock"
+    sock_path = socket_dir / "server.sock"
     sock = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
     try:
         sock.bind(str(sock_path))
@@ -221,24 +221,24 @@ def test_vet_socket_for_unlink_refuses_a_plain_file(tmp_path: Path) -> None:
     assert security.vet_socket_for_unlink(fake, uid=_MY_UID) is False
 
 
-def test_vet_socket_for_unlink_refuses_a_symlink_even_to_a_real_socket(tmp_path: Path) -> None:
+def test_vet_socket_for_unlink_refuses_a_symlink_even_to_a_real_socket(socket_dir: Path) -> None:
     import socket as socket_module  # noqa: PLC0415
 
-    real_sock_path = tmp_path / "real.sock"
+    real_sock_path = socket_dir / "real.sock"
     sock = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
     try:
         sock.bind(str(real_sock_path))
-        symlink = tmp_path / "server.sock"
+        symlink = socket_dir / "server.sock"
         symlink.symlink_to(real_sock_path)
         assert security.vet_socket_for_unlink(symlink, uid=_MY_UID) is False
     finally:
         sock.close()
 
 
-def test_vet_socket_for_unlink_refuses_a_socket_owned_by_someone_else(tmp_path: Path) -> None:
+def test_vet_socket_for_unlink_refuses_a_socket_owned_by_someone_else(socket_dir: Path) -> None:
     import socket as socket_module  # noqa: PLC0415
 
-    sock_path = tmp_path / "server.sock"
+    sock_path = socket_dir / "server.sock"
     sock = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
     try:
         sock.bind(str(sock_path))

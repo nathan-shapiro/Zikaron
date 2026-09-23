@@ -43,6 +43,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Generator, Iterable, Iterator
+from pathlib import Path
 from typing import Final
 
 import aiosqlite
@@ -53,8 +54,43 @@ from zikaron.harness.spec import KIRO, SPECS
 from zikaron.install import harness as install_harness
 
 
+@pytest.fixture(scope="session")
+def short_tmp_root() -> Iterator[Path]:
+    """A session-wide directory shallow enough that an `AF_UNIX` path under it can be bound.
+
+    `/tmp` by name rather than `tempfile.gettempdir()`, and that is the whole point of the
+    fixture. On macOS `gettempdir()` answers a per-session `/var/folders/…/T` path deep enough
+    that `<runtime>/zikaron/<32 hex>.sock` under it no longer fits `sun_path`, and `bind()` fails.
+
+    The product is not subject to this — its own path is short by construction (`architecture.md`
+    §Paths; `paths.socket_path` enforces the bound `paths.sun_path_size` holds). Only the suite is,
+    because
+    pytest's temporary paths are deep and self-describing, so this is the suite buying the
+    headroom production already has rather than a platform difference papered over.
+    """
+    root = Path(tempfile.mkdtemp(prefix="zk-", dir="/tmp"))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def socket_dir(short_tmp_root: Path) -> Path:
+    """A per-test `0700` directory short enough that a socket path under it can be bound.
+
+    Stands in for `tmp_path` wherever a test builds something it will hand to `bind()` or
+    `connect()`. Everything else a test needs a directory for — stores, configs, projects — still
+    belongs on `tmp_path`, which names the test that made it and survives the run for inspection.
+
+    `mkdtemp` rather than a name derived from the test's, for the reason the name would defeat:
+    a descriptive test name alone can spend most of the budget.
+    """
+    return Path(tempfile.mkdtemp(dir=short_tmp_root))
+
+
 @pytest.fixture(scope="session", autouse=True)
-def _runtime_dir_is_never_the_developers() -> Iterator[None]:
+def _runtime_dir_is_never_the_developers(short_tmp_root: Path) -> Iterator[None]:
     """Point `$XDG_RUNTIME_DIR` at a temporary directory for the whole session.
 
     The socket path is a hash of the store directory, and tests create their stores under
@@ -68,15 +104,16 @@ def _runtime_dir_is_never_the_developers() -> Iterator[None]:
     **1,388 of them**, accumulating over seven weeks, in a directory whose hashed naming exists so
     that a human debugging one real store can find its socket among the others.
 
-    Session-scoped so the path stays short: `sun_path` is 108 bytes on Linux and 104 on macOS, and
-    a per-test directory deep under pytest's own tree would spend that budget for nothing. The
-    resulting socket path measures well under it.
+    Session-scoped, and under `short_tmp_root` rather than wherever `mkdtemp` defaults to, so that
+    what real clients derive from this variable stays inside `sun_path`. Both properties are load
+    bearing: a per-test directory would spend the budget on a name, and `gettempdir()` spends it
+    on macOS before this suite contributes a byte.
 
     `os.environ` directly rather than `monkeypatch`, which is function-scoped; `mkdtemp` already
     creates the directory `0700`, which is what `security.ensure_runtime_dir` requires of it.
     """
     previous = os.environ.get("XDG_RUNTIME_DIR")
-    directory = tempfile.mkdtemp(prefix="zk-rt-")
+    directory = tempfile.mkdtemp(prefix="rt-", dir=short_tmp_root)
     os.environ["XDG_RUNTIME_DIR"] = directory
     try:
         yield

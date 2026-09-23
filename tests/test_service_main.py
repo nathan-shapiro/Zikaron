@@ -45,16 +45,8 @@ def _event_loop_class() -> type[asyncio.AbstractEventLoop]:
     return type(asyncio.get_running_loop())
 
 
-def _runtime_dir(tmp_path: Path) -> Path:
-    """A socket directory `security.ensure_runtime_dir` will actually accept: exactly `0700` —
-    mirroring `test_service_lifecycle_integration.py`'s own fixture of the same name and purpose."""
-    runtime = tmp_path / "runtime"
-    runtime.mkdir(mode=0o700)
-    return runtime
-
-
 async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the_socket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Task creation is the setup step made to fail here, standing in for the fallible operations
     between `serve()` returning a bound listener and the idle/signal race beginning — `chmod` and
@@ -71,7 +63,7 @@ async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the
     names is still real for the steps that remain."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -103,7 +95,7 @@ async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the
 
 
 async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The ordering that decides whether a `SIGTERM` can leave a socket file behind.
 
@@ -124,7 +116,7 @@ async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -167,7 +159,7 @@ async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
 
 
 async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`idle_task`/`signal_wait` are both created before `asyncio.wait` is ever called on them —
     a failure reaching this point from *inside* that call (or from `run()` itself being cancelled
@@ -180,7 +172,7 @@ async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_o
     *before* either task exists) cannot reach."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -222,7 +214,7 @@ async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_o
 
 
 async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`run()`'s own outer `finally: await ctx.close()` used to let a close failure **replace**
     whatever exception was already propagating — the identical exception-masking class already
@@ -236,7 +228,7 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
     catches — not the close failure that happened while handling it."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -282,7 +274,7 @@ async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
 
 
 async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_than_exiting_clean(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`idle_task.done() and not idle_task.cancelled()` used to treat a genuinely *raised*
     `idle_self_stop` identically to a normal idle exit, since a raised task is `done()` and not
@@ -299,7 +291,7 @@ async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_th
     the next opportunity, which `asyncio.wait` itself already waits for."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -328,7 +320,10 @@ async def test_idle_self_stop_raising_after_all_tasks_exist_propagates_rather_th
 
 
 async def test_an_ordinary_already_done_task_failure_logs_no_false_secondary_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    socket_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The converse of the masking-preservation test: an ordinary lifecycle-task failure — no
     concurrent, distinct secondary failure at all — must propagate with **no** "a lifecycle task
@@ -338,7 +333,7 @@ async def test_an_ordinary_already_done_task_failure_logs_no_false_secondary_rec
     could not distinguish that reappearance from a genuinely distinct concurrent failure, and would
     have logged this exact, ordinary case as if it were one.
     """
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
 
     async def _idle_self_stop_always_fails_again(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("idle_self_stop failed, deliberately, for this test")
@@ -361,7 +356,7 @@ async def test_an_ordinary_already_done_task_failure_logs_no_false_secondary_rec
 
 
 async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserves_the_original(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The combined regression the previous test's own docstring names but does not itself force:
     `idle_self_stop` raising lands in `run()`'s post-bind `except BaseException:` via the innermost
@@ -375,7 +370,7 @@ async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserv
     is what `run()` actually raises."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -409,7 +404,7 @@ async def test_a_shut_down_failure_while_handling_idle_self_stop_failure_preserv
 
 
 async def test_a_failure_installing_the_second_signal_handler_still_removes_the_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`loop.add_signal_handler` calls with no matching `remove_signal_handler` on any path used
     to leave a handler permanently installed even after a fully successful run — including the
@@ -424,7 +419,7 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
     not the installation."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -476,7 +471,7 @@ async def test_a_failure_installing_the_second_signal_handler_still_removes_the_
 
 
 async def test_signal_handlers_are_removed_after_a_fully_successful_signal_driven_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The normal-exit half of the same fix: even a run that installs both signal handlers
     successfully and then exits cleanly (here, via the `stop` event being set directly rather
@@ -496,7 +491,7 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
     force-exit unlink satisfying it as well, and the other two assert nothing about it."""
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -567,7 +562,7 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
 
 
 async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The exact deadlock a version of `main.run` used to hang on, and this test independently
     reproduces before the fix landed: `main.run` used to wait on `asyncio.Server.serve_forever()`
@@ -588,7 +583,7 @@ async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -633,7 +628,7 @@ async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
 
 
 async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_coroutine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**Directed by the human operator:** keep the graceful shutdown path exactly as
     already built, and if its own 5 s deadline expires, end the process rather than chasing every
@@ -657,7 +652,7 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -730,7 +725,7 @@ async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_co
 
 
 async def _prepared_store_and_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, Path]:
     """A created store plus `(sock_path, store_dir)`, with `FastEmbedEncoder.load` stubbed.
 
@@ -739,7 +734,7 @@ async def _prepared_store_and_paths(
     """
     store_dir = tmp_path / ".zikaron"
     store_dir.mkdir()
-    sock_path = _runtime_dir(tmp_path) / "server.sock"
+    sock_path = socket_dir / "server.sock"
     config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
 
     class _FakeEmbedder:
@@ -775,14 +770,14 @@ def _spy_on_force_exit(monkeypatch: pytest.MonkeyPatch) -> list[None]:
 
 
 async def test_an_idle_path_shutdown_timeout_reaches_the_terminal_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The idle exit calls `shut_down()` inside `lifecycle.idle_self_stop`, not in `run()`'s own
     body, so its `ShutdownTimeoutError` reaches `run()` by a different route than the signal
     path's: the task completes, lands in `asyncio.wait`'s `done` set, and
     `_raise_if_any_task_genuinely_failed` re-raises it. This test pins that route as sound so it
     stays that way."""
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
     async def _idle_self_stop_times_out_shutting_down(*_a: object, **_k: object) -> None:
@@ -803,13 +798,13 @@ async def test_an_idle_path_shutdown_timeout_reaches_the_terminal_path(
 
 
 async def test_a_shutdown_timeout_while_cleaning_up_another_failure_reaches_the_terminal_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unrelated lifecycle failure enters `except BaseException:`, whose cleanup `shut_down()`
     then times out. That nested handler used to log the `ShutdownTimeoutError` as a mere secondary
     failure and fall through to ordinary propagation and `ctx.close()` — exactly the "keep going
     after the graceful path already gave up" the operator's direction rules out."""
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
     async def _idle_self_stop_fails_unrelated(*_a: object, **_k: object) -> None:
@@ -839,7 +834,7 @@ async def test_a_shutdown_timeout_while_cleaning_up_another_failure_reaches_the_
 
 
 async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_forces_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If a signal won the `asyncio.wait` snapshot while `idle_self_stop` was concurrently inside
     its own `shut_down()`, that task's `ShutdownTimeoutError` arrives as a **return value** of
@@ -847,7 +842,7 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
     `_raise_if_any_task_genuinely_failed`, which only saw the earlier `done` set — and would be
     silently discarded without a further check. `_surface_any_genuine_task_failure` is what
     routes it to the terminal path instead."""
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
     forced_exit_calls = _spy_on_force_exit(monkeypatch)
 
     async def _idle_self_stop_times_out_when_cancelled(*_a: object, **_k: object) -> None:
@@ -896,7 +891,7 @@ async def test_a_shutdown_timeout_surfacing_only_during_task_cancellation_still_
 
 
 async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_still_propagates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The identical signal-wins-the-snapshot race as the test above, but for a genuine
     exception that is **not** `ShutdownTimeoutError`. An earlier version of
@@ -909,7 +904,7 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
     `asyncio.wait` snapshot must still reach this coroutine's own ordinary propagation, not vanish
     silently the way `ShutdownTimeoutError` alone used to be the only exception routed anywhere.
     """
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
 
     async def _idle_self_stop_raises_something_else_when_cancelled(
         *_a: object, **_k: object
@@ -951,7 +946,10 @@ async def test_a_non_shutdown_timeout_failure_surfacing_during_cancellation_stil
 
 
 async def test_a_secondary_cancellation_failure_does_not_mask_the_primary_exception(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    socket_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The exact interaction: a primary exception already propagating into
     the task-cleanup `finally` must not be **replaced** by a distinct, secondary exception a
@@ -978,7 +976,7 @@ async def test_a_secondary_cancellation_failure_does_not_mask_the_primary_except
     raising anything from `outcomes` at all can pass this specific ordering. `main.run()` must
     still propagate the primary `RuntimeError`, never the secondary `PermissionError`.
     """
-    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, monkeypatch)
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
 
     async def _idle_self_stop_raises_a_different_error_when_cancelled(
         *_a: object, **_k: object

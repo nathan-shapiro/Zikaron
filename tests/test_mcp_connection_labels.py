@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.mcp.connection import ServiceConnection
 
 
@@ -173,3 +174,19 @@ async def test_an_already_adopted_label_is_not_overwritten_by_a_later_harness_re
     # connection has already adopted, unlike a design that re-read `os.environ` per call.
     monkeypatch.setenv("KIRO_SESSION_ID", "a-different-value-that-appeared-later")
     assert connection.envelope(kind="mcp").session_id == "zk-adopted-once"
+
+
+def test_constructing_a_connection_refuses_an_unusable_runtime_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`StoreLocation.resolve` runs in `__init__`, so `paths.socket_path`'s refusal surfaces when
+    this client is constructed — before a tool is registered, let alone called.
+    `tests/test_mcp_main.py` covers what the process then prints.
+
+    Pure: nothing is connected and nothing touches the filesystem. It pins the wiring, which the
+    boundary tests in `test_service_paths.py` cannot see.
+    """
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/" + "x" * 110)
+    with pytest.raises(ZikaronError) as raised:
+        ServiceConnection(tmp_path)
+    assert raised.value.code is ErrorCode.BAD_CONFIG

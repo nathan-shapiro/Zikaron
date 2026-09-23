@@ -367,9 +367,13 @@ def resolve_sock_path(store_dir: Path) -> Path:
     it already holds. Given that, path-only is the correct, sufficient check for this client:
     the one case it cannot resolve on its own resolves itself within one more poll cycle either
     way, with no fallback read attempted here in the meantime.
+
+    Raises:
+        ZikaronError: `paths.socket_path`'s own `BAD_CONFIG` when the derived path will not fit
+            `sun_path`.
     """
     resolved_store_dir = store_dir.resolve()
     runtime_dir = paths.runtime_dir(
         xdg_runtime_dir=os.environ.get("XDG_RUNTIME_DIR"), uid=os.getuid()
     )
-    return paths.socket_path(runtime_dir, resolved_store_dir)
+    return paths.socket_path(runtime_dir, resolved_store_dir, platform=sys.platform)

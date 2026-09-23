@@ -87,8 +87,8 @@ def _pid_from_health(sock_path: Path) -> int | None:
         sock.close()
 
 
-def test_run_warms_a_cold_store_and_logs_success(store_dir: Path, tmp_path: Path) -> None:
-    sock_path = tmp_path / "test.sock"
+def test_run_warms_a_cold_store_and_logs_success(store_dir: Path, socket_dir: Path) -> None:
+    sock_path = socket_dir / "test.sock"
     run(sock_path, store_dir)
 
     pid = _pid_from_health(sock_path)
@@ -117,7 +117,7 @@ def test_run_warms_a_cold_store_and_logs_success(store_dir: Path, tmp_path: Path
 
 
 def test_run_never_raises_when_the_service_can_never_be_reached(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`run()`'s own docstring: "Never raises — this process's own exit code is not observed by
     anything." Forced deterministically by making `default_server_command` build a command that
@@ -129,7 +129,7 @@ def test_run_never_raises_when_the_service_can_never_be_reached(
         "default_server_command",
         lambda _sock_path, _store_dir: ["/nonexistent/interpreter/path", "-c", "pass"],
     )
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_dir = tmp_path / "store"
     store_dir.mkdir()
     run(sock_path, store_dir)  # must not raise
@@ -140,6 +140,7 @@ def test_run_never_raises_when_the_service_can_never_be_reached(
 
 def test_run_warms_a_genuinely_fresh_project_whose_zikaron_directory_never_existed(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """The exact first-run case a first version of `run()` could not survive: `store_dir` (the
     `.zikaron` directory itself) does not exist at all before this call, not merely `memory.db`
@@ -148,7 +149,7 @@ def test_run_warms_a_genuinely_fresh_project_whose_zikaron_directory_never_exist
     version of `run()` called it before any failure boundary was in scope, so this exact case
     raised `FileNotFoundError` uncaught and produced no warmup log at all.
     """
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_dir = tmp_path / "project" / ".zikaron"
     assert not store_dir.exists()
 
@@ -176,7 +177,7 @@ def test_run_warms_a_genuinely_fresh_project_whose_zikaron_directory_never_exist
 
 
 def test_a_warm_failure_never_writes_a_traceback_to_warmup_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`architecture.md` §"Filesystem security": `warmup.log` "log[s] only a fixed failure-kind
     label and an error code, never prompt or memory content" — `logger.exception` would have
@@ -189,7 +190,7 @@ def test_a_warm_failure_never_writes_a_traceback_to_warmup_log(
         "default_server_command",
         lambda _sock_path, _store_dir: ["/nonexistent/interpreter/path", "-c", "pass"],
     )
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_dir = tmp_path / "store"
     store_dir.mkdir()
     run(sock_path, store_dir)

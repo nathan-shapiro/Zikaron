@@ -64,16 +64,42 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M27 are built, reviewed and landed.** M26 shipped **nothing** — neither the reranker nor any
+**M0–M28 are built, reviewed and landed.** M26 shipped **nothing** — neither the reranker nor any
 chunking change — and that is the result, not a stall.
 
-**M28 (publication) is built and gated; M29 (macOS) and M30 (front door, model on disk) are not
-started.** All three briefs are in `design/build-plan.md` §§M28–M30 and are reviewed. What stands
-between M28 and done is the operator's push: local `main` and remote `main` share no history, so
-reconciling them rewrites or merges published history and is his call.
+**M28 is done.** `main` is published at `github.com/nathan-shapiro/Zikaron` and CI is green on it:
+linux 3.12, 3.13 and 3.14.
 
-**Both gates are green on one tree**: `./check.sh`, and `./check-matrix.sh --parallel` across 3.12,
-3.13 and 3.14. The matrix refuses if anything changes while it runs, so do not edit during a sweep.
+**M29 (macOS) is built and reviewed on branch `m29-macos`, unmerged; M30 (front door, model on
+disk) is next.** Both briefs are in `design/build-plan.md`. CI was green on all four jobs — linux
+3.12/3.13/3.14 and macOS 3.12, the last **required** for the first time — on the branch's last
+pushed commit; done-when 6 wants the same on the commit that lands. `gh run list --branch m29-macos`
+says where it stands. **The operator merges to `main`, not this agent.** There is no branch protection — operator decision; the rationale is in
+`design/distribution.md` §"The macOS job is required".
+
+**The refusal is the existing `BAD_CONFIG`/`runtime_dir` `ZikaronError`; no bespoke type and no new
+`hook.log` kind.** `service/security.py` already raises it from inside the hook's own import set for
+the same class of failure, and `hook/push.py` already maps any `ZikaronError` to a fixed
+`bad_config -32023` label. Re-derive with
+`grep -nE 'BadConfigSource|ZikaronError' zikaron/service/security.py zikaron/hook/push.py`; that
+`zikaron/core/errors.py` stays stdlib-only is held by `tests/test_hook_stdlib_only.py`.
+
+**`sun_path` is tighter on macOS than Linux, and only the runtime directory can spend it.** The
+store is hashed to a fixed width, so **project nesting depth cannot move the socket path's length**;
+`$XDG_RUNTIME_DIR` is prepended verbatim and is unbounded, so an over-long one is now refused rather
+than left to `bind()`. **`design/architecture.md` §Paths holds every figure — do not restate one
+here.** Re-derive the fallback-branch figure with (vary `uid` and `platform` for the rest):
+`.venv/bin/python -c "import os;from pathlib import Path;from zikaron.service import paths as p;rd=p.runtime_dir(xdg_runtime_dir=None,uid=501);print(len(os.fsencode(p.socket_path(rd,Path('/x'),platform='darwin'))), p.sun_path_size('darwin'))"`
+
+**A long `TMPDIR` reproduces macOS's path geometry on Linux, and that is how to test this class
+without a runner.** Point it at a directory as long as macOS's own `/var/folders/…/T`:
+`d=/tmp/mac/$(printf 'x%.0s' {1..39}); mkdir -p "$d" && TMPDIR="$d" .venv/bin/pytest -q`.
+Verified both ways: green as the tree stands, red with the `socket_dir` fixture pointed back at
+the default tempdir.
+
+**Both local gates are green on one tree**: `./check.sh`, and `./check-matrix.sh --parallel` across
+3.12, 3.13 and 3.14. The matrix refuses if anything changes while it runs, so do not edit during a
+sweep.
 
 **Nothing is installed into this repository**, deliberately. `python -m zikaron.install --project .
 --harness claude-code` would do it; `--harness auto` refuses here because the repo carries both

@@ -132,9 +132,9 @@ def _read_health_pid(sock: socket.socket) -> int:
     return pid
 
 
-def test_connects_to_a_cold_started_real_service(store: tuple[Path, str], tmp_path: Path) -> None:
+def test_connects_to_a_cold_started_real_service(store: tuple[Path, str], socket_dir: Path) -> None:
     store_dir, store_id = store
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     command = default_server_command(sock_path, store_dir)
     sock = connect_once(
         sock_path,
@@ -148,13 +148,13 @@ def test_connects_to_a_cold_started_real_service(store: tuple[Path, str], tmp_pa
 
 
 def test_connecting_to_an_already_warm_real_service_reuses_it(
-    store: tuple[Path, str], tmp_path: Path
+    store: tuple[Path, str], socket_dir: Path
 ) -> None:
     """A second `connect_once` call against a store the first call already warmed must connect
     directly rather than spawning a second server — the ordinary case every real
     `userPromptSubmit` after the first in a session goes through."""
     store_dir, store_id = store
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     command = default_server_command(sock_path, store_dir)
 
     first = connect_once(

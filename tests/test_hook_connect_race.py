@@ -193,7 +193,7 @@ def _race_connect_once(
 
 
 def test_two_concurrent_callers_race_to_start_exactly_one_service(
-    tmp_path: Path, long_running_server_script: Path
+    tmp_path: Path, socket_dir: Path, long_running_server_script: Path
 ) -> None:
     """The exact race `architecture.md`'s lock exists to close: both callers observe the socket
     absent and call `connect_once` at effectively the same instant (forced via a
@@ -203,7 +203,7 @@ def test_two_concurrent_callers_race_to_start_exactly_one_service(
     which a lock-free implementation could also produce if the loser's failed bind fell through to
     connecting to the winner.
     """
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
     marker_path = tmp_path / "spawned.marker"
     command = [
@@ -260,7 +260,7 @@ def test_two_concurrent_callers_race_to_start_exactly_one_service(
 
 
 def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
-    tmp_path: Path, long_running_server_script: Path
+    tmp_path: Path, socket_dir: Path, long_running_server_script: Path
 ) -> None:
     """A caller must not spawn at all if, by the time it acquires the lock, a *different* caller
     has already bound a live socket under it — the connect-again-under-the-lock recheck
@@ -288,7 +288,7 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
     be mid-bind — exercising the real unguarded race rather than a race that happens to resolve
     safely regardless of the lock's presence.
     """
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
     marker_path = tmp_path / "spawned.marker"
     caller_a_command = [
@@ -386,6 +386,7 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
 
 def test_a_socket_already_bound_before_the_race_starts_is_never_unlinked(
     tmp_path: Path,
+    socket_dir: Path,
 ) -> None:
     """A server already genuinely listening (bound and serving) before either `connect_once`
     call starts: **neither** caller should ever reach the vet-and-unlink-and-spawn branch at all
@@ -395,7 +396,7 @@ def test_a_socket_already_bound_before_the_race_starts_is_never_unlinked(
     it ever actually ran, so a spawn happening at all fails this test rather than merely going
     undetected.
     """
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

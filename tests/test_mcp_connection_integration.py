@@ -11,11 +11,8 @@ tool calls over one held socket, and recovering exactly once when that socket tu
 
 import asyncio
 import os
-import shutil
 import signal
-import tempfile
 import time
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
@@ -55,7 +52,7 @@ def _wait_until_pid_gone(pid: int, *, deadline_seconds: float) -> None:
 
 @pytest.fixture
 async def connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[ServiceConnection]:
     """A `ServiceConnection` over a fresh, empty store directory — `memory.db` does not exist yet,
     so the very first request through it exercises the create-on-absent path end to end (the
@@ -63,19 +60,15 @@ async def connection(
     top of the ordinary start-if-absent sequence, rather than requiring a separate setup step to
     pre-create the store the way `test_service_lifecycle_integration.py`'s own fixtures do.
 
-    `XDG_RUNTIME_DIR` is pointed at a short, uniquely-named directory under `/tmp` rather than
-    nested inside `tmp_path` itself: `tmp_path`'s own path already encodes this module's and this
-    test's full name, and `<that path>/runtime/<32-char-hash>.sock` routinely exceeds `AF_UNIX`'s
-    ~108-byte `sun_path` limit once a test's own name is descriptive — measured directly against
-    this project's own test-naming convention, not a hypothetical. Production faces the identical
-    constraint and resolves it the same way (`security.runtime_dir`'s `/tmp/zikaron-<uid>`
-    fallback, and `$XDG_RUNTIME_DIR` itself when the desktop session sets it, are both short by
-    construction), so a short directory here is the realistic case, not a workaround unique to
-    the test.
+    `XDG_RUNTIME_DIR` is pointed at `socket_dir` rather than nested inside `tmp_path`, whose own
+    path already encodes this module's and this test's full name: `<that path>/zikaron/<32-char
+    hash>.sock` exceeds `sun_path` once a test's name is descriptive, and `paths.socket_path`
+    refuses it before a service is ever spawned. Production faces the identical arithmetic and
+    comes out the other side of it — `runtime_dir`'s `/tmp/zikaron-<uid>` fallback is short by
+    construction — so a short directory here is the realistic case rather than a concession the
+    test needs.
     """
-    runtime_dir = Path(tempfile.gettempdir()) / f"zikaron-test-{uuid.uuid4().hex[:8]}"
-    runtime_dir.mkdir(mode=0o700)
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(socket_dir))
     conn = ServiceConnection(tmp_path)
     try:
         yield conn
@@ -89,7 +82,6 @@ async def connection(
                 os.kill(pid, signal.SIGKILL)
             with suppress(TimeoutError):
                 _wait_until_pid_gone(pid, deadline_seconds=5.0)
-        shutil.rmtree(runtime_dir, ignore_errors=True)
 
 
 async def test_the_first_request_spawns_the_service_and_creates_the_store(

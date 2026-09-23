@@ -58,9 +58,9 @@ def delayed_server_script(tmp_path: Path) -> Path:
 
 
 def test_spawns_and_waits_for_a_slow_but_real_service(
-    tmp_path: Path, delayed_server_script: Path
+    tmp_path: Path, socket_dir: Path, delayed_server_script: Path
 ) -> None:
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
     command = [
         sys.executable,
@@ -77,11 +77,11 @@ def test_spawns_and_waits_for_a_slow_but_real_service(
 
 
 def test_a_spawn_too_slow_to_answer_before_the_deadline_raises(
-    tmp_path: Path, delayed_server_script: Path
+    tmp_path: Path, socket_dir: Path, delayed_server_script: Path
 ) -> None:
     """The single-attempt contract: this must raise rather than retry a second start-if-absent
     sequence, per the user's explicit instruction that the hook makes exactly one attempt."""
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
     command = [
         sys.executable,
@@ -105,13 +105,13 @@ def test_a_spawn_too_slow_to_answer_before_the_deadline_raises(
         process.wait(timeout=5.0)
 
 
-def test_vets_and_clears_a_stale_socket_before_spawning(tmp_path: Path) -> None:
+def test_vets_and_clears_a_stale_socket_before_spawning(tmp_path: Path, socket_dir: Path) -> None:
     """A socket file left behind by a service that died without cleaning up — `architecture.md`:
     "`ECONNREFUSED`... is the signature of a service that died without cleaning up — unlink and
     respawn rather than reporting an error." Simulated with a bound-but-not-listening socket,
     then a real spawn that must succeed despite the stale file being present.
     """
-    sock_path = tmp_path / "test.sock"
+    sock_path = socket_dir / "test.sock"
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.bind(str(sock_path))
     stale.close()  # bound and closed: the file exists, but nothing is listening (ECONNREFUSED)

@@ -16,7 +16,8 @@ workflow can silently stop doing while still being valid YAML and still going gr
 - the interpreter quietly coming from somewhere other than `uv`, which changes what the
   `load_extension` evidence is *about*;
 - the macOS job losing the GNU `timeout` it cannot run `check.sh` without;
-- the advisory job losing the summary line that is the only thing saying it is advisory.
+- a job acquiring `continue-on-error`, which lets it stay red without reddening the run;
+- the macOS job losing the summary line that says a green tick there covers no live harness.
 
 **Parsed rather than grepped.** The file is YAML and its structure carries the meaning — which job,
 which step, which level a variable is set at, and in what order. `tests/test_check_gate.py` reads
@@ -219,25 +220,30 @@ def test_every_job_takes_its_interpreter_from_uv_and_not_setup_python(
     assert "uv venv" in runs
 
 
-def test_the_macos_job_is_advisory_and_says_so_where_a_reader_will_see_it(
-    workflow: dict[Any, Any],
-) -> None:
-    """`continue-on-error` alone is not visibility. Whether it still renders the job red in the
-    checks UI is not knowable before the first real run, so the word is written into the step
-    summary, and `if: always()` is what makes that happen on the red path — the only path where it
-    matters."""
-    macos = _jobs(workflow)["macos"]
-    assert macos.get("continue-on-error") is True
+def test_no_job_excuses_itself_from_the_run_s_verdict(workflow: dict[Any, Any]) -> None:
+    """`continue-on-error` on any job makes this workflow's claim weaker than the matrix's, which
+    is the one thing it may not be. Asserted over **every** job rather than over macOS by name: the
+    setting is a per-job flag, and a future platform added with it on would restore the state M29
+    removed while this file, written to watch one job, stayed green."""
+    excused = [name for name, job in _jobs(workflow).items() if job.get("continue-on-error")]
+    assert not excused, f"these jobs cannot redden the run: {excused}"
 
+
+def test_the_macos_job_says_what_a_green_tick_does_not_cover(workflow: dict[Any, Any]) -> None:
+    """A required green job reads as "macOS works", and the hermetic gate cannot support that:
+    no harness binary exists on a runner, so nothing there exercises a live session. The step
+    summary is where a reader meets the run, so the limit is written into it, under `if: always()`
+    so the red path says it too."""
+    macos = _jobs(workflow)["macos"]
     summary_steps = [
         step
         for step in _steps(macos)
         if "GITHUB_STEP_SUMMARY" in str(step.get("run", ""))
-        and "advisory" in str(step.get("run", "")).lower()
+        and "harness" in str(step.get("run", "")).lower()
     ]
-    assert summary_steps, "no step writes the word 'advisory' to the step summary"
+    assert summary_steps, "no step tells the reader the harness tiers are unexercised here"
     assert any(str(step.get("if", "")).strip() == "always()" for step in summary_steps), (
-        "the advisory summary step would be skipped on the red path, which is the path it is for"
+        "the summary step would be skipped on the red path, where the caveat matters as much"
     )
 
 
