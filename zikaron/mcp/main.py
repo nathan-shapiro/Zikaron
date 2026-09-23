@@ -57,8 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         mcp = build_server(mode, scope_dir=scope_dir)
     except ZikaronError as error:
-        detail = ", ".join(f"{name}={value}" for name, value in error.data.items())
-        print(f"zikaron-mcp: {error}: {detail}", file=sys.stderr)
+        print(f"zikaron-mcp: {error}: {error.detail()}", file=sys.stderr)
         raise SystemExit(1) from error
     mcp.run()
 

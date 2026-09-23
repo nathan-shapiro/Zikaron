@@ -10,15 +10,16 @@ consolidation runs incomparable while both look healthy.
 `HarnessTarget`; flow, preflight order, collision policy and backup discipline are here and are
 shared. If a harness name appears below outside `_resolve_harness`, the seam has sprung a leak.
 
-Not a console script. `zikaron-hook` and `zikaron-mcp` are entry points because a config file has to
-name them by absolute path; this command is run by a person, once, and `python -m zikaron.install`
-already says which interpreter's Zikaron is being installed — which is the single most important
-fact about an install and the one an ambient `zikaron-install` on `PATH` would obscure.
+Reached as `zikaron install` and as `python -m zikaron.install`. Both are supported because each is
+unreachable in the other's case: `uv tool install` puts no interpreter on `PATH`, and a host-Python
+install with several virtualenvs needs the form that names which interpreter's Zikaron is being
+installed.
 """
 
 import argparse
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
@@ -52,9 +53,12 @@ _AUTO = "auto"
 _CLAUDE_MARKER: Final = CLAUDE_CODE.marker_variable
 
 
-def _parser() -> argparse.ArgumentParser:
+_MODULE_INVOCATION: Final = "python -m zikaron.install"
+
+
+def _parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m zikaron.install",
+        prog=prog,
         description="Install Zikaron's consolidator, consolidation skill, hook and MCP entries.",
     )
     parser.add_argument(
@@ -117,14 +121,14 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, prog: str = _MODULE_INVOCATION) -> int:
     """Install, printing an account of what happened. Returns a process exit status.
 
     Returns rather than calling `sys.exit`, so a test drives the whole command in-process and reads
     both the status and the output — the `__main__` block below is the only place a status becomes
     an exit.
     """
-    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    args = _parser(prog).parse_args(sys.argv[1:] if argv is None else argv)
     try:
         report = _install(agent=args.agent, options=args)
     except InstallError as exc:

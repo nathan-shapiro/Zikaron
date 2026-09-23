@@ -57,12 +57,25 @@ missing wheel we could work around.
 
 ```bash
 # Recommended. `--managed-python` is not optional — see below.
+uv tool install --managed-python zikaron
+
+# The same from the repository, for a version that has not been released.
 uv tool install --managed-python git+https://github.com/nathan-shapiro/Zikaron.git
 
 # Alternative: a source checkout and a host interpreter.
 git clone https://github.com/nathan-shapiro/Zikaron.git && cd Zikaron
 python3 -m venv .venv && .venv/bin/pip install -e .
 ```
+
+**Published to PyPI by trusted publishing, and no credential exists in this repository.** PyPI is
+told once that the `release` environment of this repository, running `.github/workflows/release.yml`,
+may publish `zikaron`; each run mints a short-lived OIDC token. A stored API token is the failure
+mode this removes, and there is nothing left to leak. The workflow fires on a **published GitHub
+release** rather than a tag push — a tag is cheap to create by accident and cheap to move — and its
+first step refuses a release whose tag disagrees with `pyproject.toml`'s version, which is the one
+mistake a human makes here. **`check.yml` is not re-run there**: every commit on `main` has already
+been through it, so re-running would test the same tree twice; what the release workflow adds is
+that the artefact uploaded was built from that tree.
 
 **Why `uv` is recommended rather than required.** `enable_load_extension` is a **compile-time** CPython
 option and `sqlite-vec` cannot load without it. It is **reported** off in some widely used
@@ -118,10 +131,175 @@ both the Python and the SQLite version at startup, and CI prints them per job. P
 *statically-linked* interpreter is the only fix short of vendoring the library — and the adjective is
 load-bearing, since a distribution build loads the system `libsqlite3.so` and so pins nothing.
 
+### The front door
+
+**One `zikaron` console script, with `install`, `knowledge` and `doctor`.** Before M30 both of the
+first two were reachable only as `python -m zikaron.<x>`, which under the recommended acquisition is
+not reachable at all: `uv tool install` puts a package's console scripts on `PATH` and never the tool
+virtualenv's interpreter, so using them meant finding
+`~/.local/share/uv/tools/zikaron/bin/python` first.
+
+**`zikaron-hook` and `zikaron-mcp` are deliberately not folded in.** Their absolute paths are written
+into harness configuration at install time — `architecture.md` §"The install contract" is normative —
+so absorbing them would rewrite every installed config to shorten two command lines no human types.
+The install contract is unchanged by M30, and `tests/test_install_targets.py`'s golden artefacts are
+what assert it rather than inspection.
+
+**`python -m zikaron.install` and `python -m zikaron.knowledge` keep working**, because a host-Python
+install with several virtualenvs needs the form that says *which* interpreter's Zikaron is acting.
+`doctor` has no such form: it is new with the umbrella, so there is no documented invocation
+predating it to keep working, and `zikaron/knowledge/indexer/` likewise has none — it is spawned as
+`sys.executable -m`, and an entry on a user's `PATH` is not what a machine-spawned process wants.
+
+**`doctor` exists because the interpreter decision supports two acquisition paths**, and the host one
+can be built in ways that make Zikaron unrunnable. It names each failure **by remedy rather than by
+symptom**. Five checks and one report, in order: `enable_load_extension` present; FTS5 available;
+`sqlite-vec` loading a real `vec0` table — a bare import establishes neither; the model cache present
+at the pinned revision and hash-verified; the socket path fitting this platform's `sun_path`, which
+is the second channel M29 owed for a refusal a user would otherwise meet only as a dead MCP server.
+The report is the linked SQLite version beside the interpreter that linked it, and it **cannot
+fail** — that is the axis no seam absorbs, 3.45.1 against 3.53.1 between two builds on one machine,
+with no correct value to compare against.
+
+**An absent model cache is exit 0.** There is no install-time prefetch, so a stranger's first
+`zikaron doctor` finds no model at all; it reports *not yet fetched* and passes. A cache holding only
+some *other* revision is that same absent case, not a mismatch — nothing is wrong with bytes this
+release does not claim. A snapshot directory that **is** there fails if any pinned file is missing or
+does not match, each with its own remedy; only a directory that is not there at all is the absent
+case that passes.
+
+### Model acquisition
+
 **Model files are fetched, never redistributed** — an operator constraint, stricter than the licence
-requires. The embedder is acquired at first use and cached. M30 owns the durable cache, the pinned
-Hugging Face revision and the SHA256 allowlist; until then the cache is fastembed's default, which is a
-temporary directory and is lost on reboot.
+requires. Only the revision and the digests travel with the package.
+
+**The cache is durable and per user**, at `$XDG_CACHE_HOME/zikaron/models`, or
+`~/Library/Caches/zikaron/models` on macOS where that variable is unset. `$FASTEMBED_CACHE_PATH` is
+honoured verbatim and outranks both, which is what keeps CI's existing cache working. A **relative**
+value of either variable is ignored rather than resolved: it would resolve against the working
+directory, which for the service is whichever project spawned it, turning a per-user cache into a
+per-store one silently at 64 MB per project. Before M30 the cache was fastembed's default —
+`tempfile.gettempdir()/fastembed_cache`, lost on reboot, and on macOS a per-session `/var/folders/…`
+path. Zikaron passes `cache_dir` **as well as** `specific_model_path`, because
+`OnnxTextEmbedding.__init__` runs `define_cache_dir(cache_dir)` — which `mkdir`s — before the
+download call the specific path returns early from.
+
+**The pin is a revision *and* a digest set, and the revision is what makes the digests mean
+anything.** fastembed's own acquisition resolves `model_info(<repo>).sha` — the repository's current
+head — and forwards no `revision`, so a digest allowlist alone has a second mismatch cause that is
+not local corruption: the first time upstream pushes any commit, every install fetches bytes that
+cannot match and does it again on the next start, forever. Zikaron therefore owns the acquisition:
+`snapshot_download(repo_id, revision=<full 40-hex sha>, allow_patterns, cache_dir)`, verify, then
+hand fastembed the directory. **Five files, not the repository's nine** — measured against a warm
+cache, fastembed loads `config.json`, `model_optimized.onnx`, `special_tokens_map.json`,
+`tokenizer.json` and `tokenizer_config.json`, and pinning the other four would make the product
+download more than it runs.
+
+**It buys a second thing that is not supply chain**: pinning `tokenizer.json` is what makes
+`chunk_max_tokens`, the gist character bound and the 512-token window arithmetic *provable* rather
+than assumed, since all three rest on a tokenizer nothing previously pinned.
+
+**A warm start makes no network call, by construction.** The warm call passes `local_files_only=True`
+together with the 40-hex sha: the sha alone skips `repo_info`, but on the online path the file listing
+still comes from the on-disk tree cache and, when `trees/<sha>.json` is absent, from one
+`list_repo_tree` call. `local_files_only=True` removes that door —
+`_raise_if_incomplete_snapshot` simply returns. Asserted under `HF_HUB_OFFLINE=1`, which turns any
+request into an error, so a green run proves the online fallback was *not reached*.
+
+**A file that is absent and a file whose bytes are wrong get different repairs, because they are
+different faults.** An interrupted first fetch leaves a snapshot with some files linked and the rest
+missing — and the warm call *returns* that directory rather than raising, since with a commit hash
+and no tree cache `_raise_if_incomplete_snapshot` does not check. A plain online call fills the gaps;
+`force_download` would pay for every pinned file again, which is the wrong answer to a Ctrl-C. So
+absent files are filled, and **`force_download=True` is reserved for a fetch that verified wrong**.
+Whether a file is absent or wrong decides the *first* repair — fill or force — and `missing_files` is
+what decides it, before any hashing; `Verification`'s own absent/wrong split now serves `doctor`'s
+two remedies. A file the source never sends comes back from the fill as absent and goes to the forced
+re-fetch like any other verification failure.
+
+**Nothing deletes a file to repair it.** The cache stores content at `blobs/<etag>` with
+`snapshots/<sha>/<file>` as a symlink to it, and re-links without downloading when the blob exists
+and the pointer does not — so deleting the file and re-calling deletes the symlink, re-links the same
+corrupt blob, mismatches again, and reports *upstream differs* to a user whose disk is bad. The two
+diagnoses swapped. *(The deletions in this path are a proved-wrong snapshot being discarded, below —
+the opposite act, replacing nothing and fetching nothing — and `doctor`'s remedy for a wrong file,
+which tells a user to remove the snapshot for the same reason: it is what makes the next start
+re-acquire down the path that verifies.)*
+
+**Digests are checked when bytes arrive from the network, and never on a warm start.** The cold
+fetch, the fill after an interrupted one, and the single forced re-fetch all verify; a warm start
+does five `stat` calls and nothing else. **This was measured into place, not reasoned into place.**
+
+The quantity that decides it is the margin left in the hook's 2.0 s budget, not the share of any
+latency: `push.py`'s `_DEADLINE_SECONDS` bounds connect *plus* the `surface` request, and a request
+that outlives it degrades — no memories injected, a `transport` line in `hook.log`, and a relay
+instruction the model reads out to the user. That is M17's defect.
+
+**Verifying on every start reintroduced it.** A/B on one machine under one load source, `load1`
+rising 8.01 → 12.25 across the arms, alternating — so each control ran heavier than the arm before
+it and the delta is conservative. The control empties the pin table so `pin_for` returns `None`:
+
+| arm | `surface` median | range | inside 2000 ms |
+|---|---|---|---|
+| verify every start | 2076 / 2181 ms | 1984–2409 | **1/5, then 0/5** |
+| no verification (pre-M30) | 1745 / 1785 ms | 1648–1914 | 5/5 |
+| **verify on acquisition only** | **1677 ms** | 1637–1786 | **7/7** |
+
+Through the shipped hook (`experiments/m17_hook_outcome.sh`), per-start verification gave **1/5**
+clean pushes at `load1 7.35`. The walk costs **331–396 ms** under load, not the 185 ms an unloaded
+in-process timing suggests, because it is CPU-bound and contends. Full data, both harnesses and the
+control shim: `research/m30-verify-cost.md`.
+
+**What the change trades away, stated rather than implied.** Corruption *after* acquisition — disk
+rot, a file replaced on disk — is no longer caught at startup. `zikaron doctor` verifies the full
+digest set on demand and is the channel for it. What stays covered is the threat the pin exists for:
+a source handing over bytes that are not the pinned ones, checked at the moment it does.
+
+**A snapshot this process has proved wrong is discarded, and the invariant is that no such complete
+snapshot exists at any instant** — because presence is all a warm start checks, so any moment where
+all five pointers resolve to bytes already proved wrong is a moment another process loads them.
+There are **two** such moments, not one. The obvious is after a failed re-fetch. The longer by far
+is *during* the forced re-fetch: `snapshot_download` creates a pointer only when one does not
+already exist, so every existing pointer stays aimed at the old blob for the whole download, and a
+process killed there leaves the wrong bytes complete. So the discard happens **before** the re-fetch
+as well as after it — which also fixes a second consequence of that line, where a changed etag lands
+the download at a new blob while the surviving pointer is never re-aimed and the re-fetch cannot
+succeed at all.
+
+It is not the delete this document rules out above: that one deletes a file to *repair* it and
+re-links the same blob; this discards symlinks already proved not to be the artefact, and fetches
+nothing on the way out. If the removal itself fails, the refusal names the directory, because
+refusing while leaving those bytes where a warm start looks is worth more than a sentence.
+
+**Re-derive** with `experiments/m17_cold_start_ab.py` and `experiments/m17_hook_outcome.sh`, both of
+which read the deadlines from the shipped constants. The figure to watch is the worst-run spare
+against 2.0 s, and **compare it against the no-pin control in `research/m30-verify-cost.md` rather
+than against a constant**: `design/build-plan.md` §M17 names under ~300 ms as the threshold worth
+acting on, but sized it at `load1 0.55–1.10` and `7.0–8.9`, and at the `load1` 9–12 measured here
+*both* the fixed tree (214 ms) and the pre-M30 control (86 ms) are already under it. The baseline
+moves with load, so the control is the comparison that means something. The lever if it comes to
+that is the split connect deadline M17 left on the shelf; the marker file is spent, since a warm
+start no longer hashes.
+
+**The forced re-fetch is bounded to one per process per artefact**, so a lazily reconstructed encoder
+is not a fresh licence to download. The bound is deliberately not durable across processes: a source
+serving the wrong bytes therefore costs one extra fetch *per service start*, and the service is
+respawned by any client that finds the socket absent. That is the accepted price of a bound needing
+no state on disk — and, since the discard removes pointers rather than blobs, a proved-wrong blob
+stays under `blobs/` until the cache is cleared: one of them for a source with a stable etag, one per
+service start for a source whose etag varies. Nothing in the product or in `doctor` names or removes
+them, which is accepted for a case that already requires a broken source. It ends when an upgrade
+carries a new pin. A second mismatch inside one process
+is a named failure carrying its remedy, never another *forced* fetch — after the discard the warm
+call falls through to one plain online call, which re-links the existing blobs and transfers
+nothing.
+
+**The artefact's licence is `apache-2.0`**, read from `qdrant/bge-small-en-v1.5-onnx-q`'s model card.
+~~`bge-small-en-v1.5` is MIT~~ — that is the **upstream `BAAI/bge-small-en-v1.5` weights**, which are
+`mit`; the quantized ONNX redistribution Zikaron actually fetches states `apache-2.0` and gives no
+reason for the difference. Both are permissive and neither constrains a fetch-only consumer, but the
+corpus named the wrong repository's licence for the artefact it ships a fetcher for.
+`research/m30-name-and-licence.md`.
 
 ---
 
@@ -138,6 +316,13 @@ longer matches what is installed.
 
 `0.1.0` is the first version with this scheme; everything before it was `0.0.0`, which was never a
 statement about anything.
+
+**A release is tagged `v<version>`, and `pyproject.toml` is what the version *is*.** The tag is a
+label on a commit and the file is the thing PyPI receives, so they can disagree — tagging `v0.2.0`
+against a tree that still says `0.1.0` would publish a version the release page does not name.
+`release.yml` refuses that before it builds, comparing the tag with its leading `v` stripped against
+`[project] version`. A bare `0.2.0` tag passes the same check; the `v` is the convention, not the
+mechanism.
 
 ---
 

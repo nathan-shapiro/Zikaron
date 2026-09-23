@@ -31,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
         "record it.",
     )
     parser.add_argument(
-        "name", help="which knowledge base to build, as `python -m zikaron.knowledge list` names it"
+        "name", help="which knowledge base to build, as `zikaron knowledge list` names it"
     )
     parser.add_argument(
         "--project",

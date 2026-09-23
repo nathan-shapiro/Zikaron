@@ -64,25 +64,76 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M28 are built, reviewed and landed.** M26 shipped **nothing** — neither the reranker nor any
+**M0–M29 are built, reviewed and landed.** M26 shipped **nothing** — neither the reranker nor any
 chunking change — and that is the result, not a stall.
 
-**M28 is done.** `main` is published at `github.com/nathan-shapiro/Zikaron` and CI is green on it:
-linux 3.12, 3.13 and 3.14.
+**`main` is published at `github.com/nathan-shapiro/Zikaron`, and CI runs four jobs on it**: linux
+3.12/3.13/3.14 and macOS 3.12, the last **required** since M29. `gh run list --branch main` says
+where the most recent stands. **The operator merges; this agent does not.** There is no branch
+protection — operator decision, rationale in `design/distribution.md` §"The macOS job is required".
 
-**M29 (macOS) is built and reviewed on branch `m29-macos`, unmerged; M30 (front door, model on
-disk) is next.** Both briefs are in `design/build-plan.md`. CI was green on all four jobs — linux
-3.12/3.13/3.14 and macOS 3.12, the last **required** for the first time — on the branch's last
-pushed commit; done-when 6 wants the same on the commit that lands. `gh run list --branch m29-macos`
-says where it stands. **The operator merges to `main`, not this agent.** There is no branch protection — operator decision; the rationale is in
-`design/distribution.md` §"The macOS job is required".
+**M30 is built, reviewed to APPROVED and green on both gates**: the `zikaron` umbrella (`install` /
+`knowledge` / `doctor`), the durable per-user model cache, the revision-and-digest pin with Zikaron
+owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is normative;
+`design/distribution.md` §§"The front door" and "Model acquisition" are where the shipped design now
+lives. **Not landed** — no branch, no commit, no PR.
 
-**The refusal is the existing `BAD_CONFIG`/`runtime_dir` `ZikaronError`; no bespoke type and no new
-`hook.log` kind.** `service/security.py` already raises it from inside the hook's own import set for
-the same class of failure, and `hook/push.py` already maps any `ZikaronError` to a fixed
-`bad_config -32023` label. Re-derive with
-`grep -nE 'BadConfigSource|ZikaronError' zikaron/service/security.py zikaron/hook/push.py`; that
-`zikaron/core/errors.py` stays stdlib-only is held by `tests/test_hook_stdlib_only.py`.
+**Owed to the operator before a release can happen**, none of it doable from here: the first PyPI
+upload, which is what creates the project and converts the pending publisher. The PyPI publisher and
+the `release` GitHub environment are done — the environment carries **no protection rules**, so a
+published GitHub Release goes straight to PyPI with no approval step. `CODECOV_TOKEN` is set.
+`research/m30-operator-setup.md` has the procedure and its own evidence gaps.
+
+**Until that upload, `uv tool install zikaron` does not resolve** — `README.md` and D36 state it
+because the milestone lands as one PR and the upload follows the merge.
+
+**The publication guard's exemption for the pins is a single-file allowlist**, decided at M30 as
+that guard's docstring asked. A per-line marker would sit on every digest line and on each new one,
+and one pasted onto a line that is genuinely a secret would be indistinguishable from one pasted
+onto a digest. The exemption is narrowed by a positive check — every hex run in
+`core/indexing/model_pin.py` must be a value that module declares — so it is not a standing hole.
+
+**Operator decisions 2026-09-23.** Releases go out by **PyPI trusted publishing** from a
+release-triggered workflow, never an API token in a secret. **Coverage is published to Codecov**,
+because the only honest alternatives are a live service or no badge at all: a percentage typed into
+`README.md` is the stale-number class this corpus has a standing rule to delete. **Every badge must
+derive its value from a source of truth rather than state one**, which is the rule that governs the
+next one somebody wants to add.
+
+**The pinned artefact's digests are checked when bytes arrive from the network, never on a warm
+start — operator decision 2026-09-23, taken on a measurement.** Hashing the five files costs
+**331–396 ms under load**, not the 185 ms an unloaded in-process timing shows, because the walk is
+CPU-bound; that pushed the cold-start sequence past `push._DEADLINE_SECONDS` and reintroduced M17's
+defect, at **0–1 of 5 runs inside the budget against 5/5 without it**, 1/5 clean pushes through the
+shipped hook. Moving the check to the acquisition paths restores parity — 5/5 against the pre-M30
+control at `load1` 10.86 and 11.88. **What this gives up is startup detection of corruption that
+happens *after* acquisition**; `zikaron doctor` is the channel for it. A failed acquisition discards
+the snapshot, or the next warm start would trust bytes already proven wrong.
+`research/m30-verify-cost.md`; rationale in `design/distribution.md` §"Model acquisition".
+
+**The cold-start budget is re-measured with `experiments/m17_cold_start_ab.py` and
+`experiments/m17_hook_outcome.sh` under generated load**, against the no-pin control rather than a
+constant — the baseline moves with load. Commands in `research/m30-verify-cost.md` §"Re-deriving
+this".
+
+**The artefact Zikaron fetches is `qdrant/bge-small-en-v1.5-onnx-q`, its head is
+`52398278842ec682c6f32300af41344b1c0b0bb2`, and it is licensed `apache-2.0` — not the `mit` of the
+`BAAI/bge-small-en-v1.5` weights it is derived from.** Read from the Hub API rather than from our
+own note. Re-derive both facts, and the file list the digest set must cover, with:
+`.venv/bin/python -c "from huggingface_hub import HfApi;i=HfApi().model_info('qdrant/bge-small-en-v1.5-onnx-q');print(i.sha,i.cardData['license'],sorted(s.rfilename for s in i.siblings))"`
+
+**The name stays `zikaron` — operator decision 2026-09-23, taken knowing that `zikkaron` is held on
+PyPI by a near-identical product**: one keystroke away, actively maintained, and by its own
+description a biologically-inspired persistent memory engine for Claude Code on SQLite. The grounds
+are that the markets differ enough that a user reaching for one will not land on the other. Do not
+re-open this from the collision alone. `zikaron` itself is unregistered — both `/simple/` and the
+JSON API answer 404 — but a 404 cannot distinguish never-registered from deleted-and-unreserved, so
+the name is only *proven* free by an upload, which is the operator's act.
+`research/m30-name-and-licence.md`.
+
+**A derived path that cannot be used is refused as the existing `BAD_CONFIG`/`runtime_dir`
+`ZikaronError` — no bespoke type, and no new `hook.log` kind.** `service/security.py` and
+`hook/push.py` already had both halves; rationale in `design/build-plan.md` §M29's withdrawal.
 
 **`sun_path` is tighter on macOS than Linux, and only the runtime directory can spend it.** The
 store is hashed to a fixed width, so **project nesting depth cannot move the socket path's length**;
@@ -135,8 +186,9 @@ would have opened, answered every query, and contained nothing. Use `Connection.
   `FINDINGS-archive.md` §"The gist-as-abstract fix, and M27".
 - **The consolidation A/B has no pre-run baseline.** Both `/tmp` snapshots are gone. `~/Memory` as
   it stands is the *post*-run state and cannot serve as the pre-run arm.
-- **Owed to memory-assistant before M30**: whether `zikaron` is free on PyPI and clear of trademark
-  friction, and `bge-small-en-v1.5`'s licence read from the model card rather than from our own note.
+- **No trademark clearance has been run**, only a light search finding no software or registered
+  mark on `Zikaron` in a computing class. `zikaron.app` is an unrelated cemetery-records platform.
+  The friction that turned up is a package name, not a mark — §"Current state" above.
 
 ### The audit loop, and what it established
 

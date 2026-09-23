@@ -124,7 +124,7 @@ def execute(
     except KnowledgeError as error:
         printer(f"refused: {error}")
     except ZikaronError as error:
-        printer(f"refused: {error.message} ({error.data})")
+        printer(f"refused: {error.message} ({error.detail()})")
     except (aiosqlite.Error, OSError) as error:
         # Every predictable refusal is raised above. This is the remainder — a full disk, a
         # revoked permission, a database that will not open — reported as a failed command rather

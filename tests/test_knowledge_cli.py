@@ -18,6 +18,7 @@ import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import config_for, corpus_root
+from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 from zikaron.core.knowledge import lock, registry, reporting
 from zikaron.core.knowledge import paths as knowledge_paths
 from zikaron.core.knowledge.database import KnowledgeDatabase
@@ -275,6 +276,80 @@ class TestTheVerbs:
         assert "exclude   draft/*" in printed
         assert "git-mode  off" in printed
         assert "4096 bytes" in printed
+
+
+class TestTheFollowLineNamesTheInvocationTheUserTyped:
+    """The line every `add` and `refresh` prints, offered as the way to watch a build.
+
+    A hard-coded `python -m zikaron.knowledge` here is a command that fails with `No module named
+    zikaron` under `uv tool install`, where no interpreter is on `PATH` — printed to a user on the
+    first corpus they ever build.
+    """
+
+    @pytest.mark.parametrize(
+        "prog", ["zikaron knowledge", "python -m zikaron.knowledge"], ids=["console", "module"]
+    )
+    def test_the_follow_line_uses_the_prog_it_was_run_as(
+        self, project: Path, prog: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        status = main(
+            [
+                "--project",
+                str(project),
+                "add",
+                "docs",
+                "--path",
+                str(project / "docs"),
+                "--description",
+                "d",
+            ],
+            prog=prog,
+        )
+        assert status == 0
+        assert f"follow    {prog} status docs" in capsys.readouterr().out
+
+
+class TestHowAWireErrorReadsOnThisCommand:
+    """A `ZikaronError` reaches this surface through `execute`, which is the only place it is
+    rendered for a person. Driven through `execute`'s own `printer` rather than through a verb,
+    because no verb raises one on a reachable path and the rendering is what is under test.
+    """
+
+    @staticmethod
+    def _rendered(error: ZikaronError) -> str:
+        printed: list[str] = []
+
+        async def _raise() -> int:
+            raise error
+
+        assert scope.execute(_raise, printer=printed.append) == 1
+        return "\n".join(printed)
+
+    def test_the_payload_reads_as_fields_not_as_a_dict(self) -> None:
+        """Interpolating the payload gives `{'source': <BadConfigSource.FILE: 'file'>, …}` — quoted
+        keys and an enum repr, which reads as a traceback fragment rather than as a diagnosis.
+        """
+        printed = self._rendered(
+            ZikaronError(
+                ErrorCode.BAD_CONFIG,
+                source=BadConfigSource.FILE,
+                key="runtime_dir",
+                value="/nope",
+                expected="a directory that exists",
+            )
+        )
+        assert "source=file, key=runtime_dir, value=/nope, expected=a directory that exists" in (
+            printed
+        )
+        assert "{" not in printed
+        assert "BadConfigSource" not in printed
+
+    def test_the_whole_refusal_is_one_line(self) -> None:
+        """The message text itself is pinned against the design table in `test_error_codes.py`, so
+        what is asserted here is the shape it is wrapped in and that nothing wraps onto a second.
+        """
+        error = ZikaronError(ErrorCode.NOT_FOUND, uuid="a1b2")
+        assert self._rendered(error) == f"refused: {error.message} (uuid=a1b2)"
 
 
 class TestRefusalsReachTheExitStatus:

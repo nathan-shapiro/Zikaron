@@ -57,6 +57,20 @@ def test_the_gate_measures_every_package_in_the_tree() -> None:
     assert measured == _packages()
 
 
+def test_nothing_shipped_sits_outside_a_package() -> None:
+    """The oracle above enumerates packages, so a module placed directly under `zikaron/` would be
+    measured by no `--cov` flag and reported by neither the run nor the table — the exact blindness
+    the flags test exists against, arriving through the one door it does not watch. `__init__.py`
+    is the package marker itself and `py.typed` is not a module.
+    """
+    loose = sorted(
+        entry.name
+        for entry in _PACKAGE_ROOT.iterdir()
+        if entry.suffix == ".py" and entry.name != "__init__.py"
+    )
+    assert loose == []
+
+
 def test_the_discovery_can_actually_see_a_package() -> None:
     """The oracle above is only worth its assertion if it finds packages by looking. This shows it
     finding one — otherwise a discovery that silently returned nothing would make the test pass by
@@ -128,5 +142,5 @@ def test_the_project_table_still_holds_the_keys_a_later_table_can_swallow() -> N
     project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     for key in ("name", "version", "readme", "license", "requires-python", "dependencies"):
         assert key in project, f"`{key}` has left [project] — a table header was inserted above it"
-    assert len(project["dependencies"]) == 4, "the runtime dependency list changed size"
-    assert set(project["scripts"]) == {"zikaron-hook", "zikaron-mcp"}
+    assert len(project["dependencies"]) == 5, "the runtime dependency list changed size"
+    assert set(project["scripts"]) == {"zikaron", "zikaron-hook", "zikaron-mcp"}

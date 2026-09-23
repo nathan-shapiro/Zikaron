@@ -16,6 +16,7 @@ import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Final
 
 import aiosqlite
 
@@ -27,9 +28,12 @@ from zikaron.knowledge.indexer import detach
 _UNSET = "—"
 
 
-def _parser() -> argparse.ArgumentParser:
+_MODULE_INVOCATION: Final = "python -m zikaron.knowledge"
+
+
+def _parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m zikaron.knowledge",
+        prog=prog,
         description="Manage this project's knowledge bases: named, indexed corpora of text files.",
     )
     parser.add_argument(
@@ -129,13 +133,17 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, prog: str = _MODULE_INVOCATION) -> int:
     """Run one verb, printing an account of what happened. Returns a process exit status.
 
     Returns rather than calling `sys.exit`, so a test drives the whole command in-process and
     reads both the status and the output. `__main__` is the only place a status becomes an exit.
     """
-    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    args = _parser(prog).parse_args(sys.argv[1:] if argv is None else argv)
+    # Carried on the namespace rather than threaded through four signatures, because the only thing
+    # that needs it is the follow line a build prints, and the namespace is already what every verb
+    # is handed.
+    args.invocation = prog
     return scope.execute(lambda: _run(args), printer=lambda line: print(line, file=sys.stderr))
 
 
@@ -198,7 +206,7 @@ async def _add(args: argparse.Namespace, store: scope.OpenStore) -> int:
             f"inside a git work tree, so this corpus is built as "
             f"{created.git_mode_effective.value!r}."
         )
-    _start_build(created.knowledge_base.name, store, full=False)
+    _start_build(created.knowledge_base.name, store, full=False, prog=args.invocation)
     _explain_detachment()
     return 0
 
@@ -225,7 +233,7 @@ async def _refresh(args: argparse.Namespace, store: scope.OpenStore) -> int:
     refused = False
     for entry in planned:
         if entry.may_start:
-            _start_build(entry.knowledge_base.name, store, full=args.full)
+            _start_build(entry.knowledge_base.name, store, full=args.full, prog=args.invocation)
             started = True
         else:
             refused = _report_obstacle(entry) or refused
@@ -278,7 +286,7 @@ def _report_unlock(cleared: lock.LockHolder | None) -> None:
     print(f"unlocked  cleared the lock held by {cleared.describe()}")
 
 
-def _start_build(name: str, store: scope.OpenStore, *, full: bool) -> None:
+def _start_build(name: str, store: scope.OpenStore, *, full: bool, prog: str) -> None:
     """Spawn one build and print the command that reproduces it in the foreground.
 
     The foreground command is printed in full rather than described, because it is the only way to
@@ -295,7 +303,10 @@ def _start_build(name: str, store: scope.OpenStore, *, full: bool) -> None:
     # Quoted, because a name is free-form and two-word ones are ordinary — an unquoted one pasted
     # back is a command that fails to parse, which is worse than useless in a line offered as the
     # way to follow a build.
-    print(f"follow    python -m zikaron.knowledge status {shlex.quote(name)}")
+    # `prog` rather than a literal: under `uv tool install` no interpreter is on `PATH`, so a
+    # hard-coded `python -m` line is a command the first corpus a user ever builds tells them to
+    # run and which then fails with `No module named zikaron`.
+    print(f"follow    {prog} status {shlex.quote(name)}")
     print(f"foreground {shlex.join(argv)}")
 
 

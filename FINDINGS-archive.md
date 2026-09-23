@@ -3250,6 +3250,33 @@ Plan:
 
 
 ## References
+- **M30 front door review** — `reviews/m30-front-door-review.md`, seven rounds to APPROVED. Blockers
+  by round: 4 / 0 / 1 / 1 / 2 / 1 / 0, and the last three were each created by the previous round's
+  fix — which is why the operator's instruction to keep going past the soft cap was the right call.
+  Round 5's blocker turned a documentation question into a measured product defect; round 6's was
+  the reviewer retracting its own round-5 suggestion after I built it.
+- **M30 verification cost** — `research/m30-verify-cost.md`. The A/B that caught per-start digest
+  verification reintroducing M17's cold-start defect, its fix, and the control proving parity. Also
+  records that `experiments/m17_cold_start_ab.py` had rotted to `method not found` and was repaired
+  to take the measurement.
+- **M30 operator setup** — `research/m30-operator-setup.md`. The click-by-click for PyPI trusted
+  publishing and Codecov, with its own evidence gaps named: PyPI's form is login-gated so its field
+  *labels* come from prose docs rather than the page, and PyPI's own two pages disagree on whether
+  "Workflow name" wants `release.yml` or the full path. 2FA is mandatory before any management
+  action. A pending publisher reserves nothing until the first publish, then auto-converts.
+- **M30 name and licence** — `research/m30-name-and-licence.md`. PyPI `zikaron`, `zichron`,
+  `zikhron` and the `zikaron-*` prefix all answer 404; `zikkaron` is held and active. Model cards:
+  `BAAI/bge-small-en-v1.5` `license: mit`, `qdrant/bge-small-en-v1.5-onnx-q` `license: apache-2.0`,
+  the latter stating no reason for the difference. The note's head-sha transcription was re-derived
+  against the Hub API before use — it is 40 hex, and the note's own doubt about its length was
+  unfounded.
+- **M29 macOS review** — `reviews/m29-macos-review.md`, six rounds to APPROVED, every finding
+  accepted. The two with the longest reach came after the point an earlier protocol would have
+  stopped: the refusal's payload was written to a field nothing printed, so the detail reached no
+  reader at all; and M29 promised a `zikaron doctor` check that M30's own brief — the milestone
+  that builds `doctor` — did not carry, so the promise would have been kept by nobody. Also
+  recorded three wrong figures in prose added by that milestone against none in its code, one of
+  them a conflation of `runtime_dir` with the socket path derived from it.
 - **M28–M30 distribution briefs review** — `reviews/m28-m30-distribution-briefs-review.md`, three
   rounds, ending NEEDS_CHANGES with **no blocker outstanding** and its residue applied. Round 1's four
   blockers were all real and two were errors of *reasoning* rather than prose: an arithmetic slip
