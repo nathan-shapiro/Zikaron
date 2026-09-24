@@ -78,16 +78,31 @@ owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is norm
 `design/distribution.md` §§"The front door" and "Model acquisition" are where the shipped design now
 lives. **Merged as `f18c5cb`**, all four CI jobs green on `main`, Codecov reporting.
 
-**The first PyPI upload has not happened**, so `zikaron` is still unregistered and `0.1.0` unspent.
-The `v0.1.0` release fired `release.yml`, whose build succeeded and whose publish failed before
-authenticating: `pypa/gh-action-pypi-publish` is a **Docker** action, so a commit-sha pin resolves to
-a container image tag nobody publishes. **Trusted publishing is therefore still untested.** The PyPI publisher and
-the `release` GitHub environment are done — the environment carries **no protection rules**, so a
-published GitHub Release goes straight to PyPI with no approval step. `CODECOV_TOKEN` is set.
-`research/m30-operator-setup.md` has the procedure and its own evidence gaps.
+### The release, and what is owed next
 
-**Until that upload, `uv tool install zikaron` does not resolve** — `README.md` and D36 state it
-because the milestone lands as one PR and the upload follows the merge.
+**`zikaron` is not on PyPI, `0.1.0` is unspent, and trusted publishing has never been exercised.**
+The first `v0.1.0` release built cleanly and failed at the upload *before authenticating*:
+`pypa/gh-action-pypi-publish` is a **Docker** action, so GitHub resolves its ref to a container image
+tag and a commit sha names one nobody publishes. Fixed on `main` (`21ef204`) to `@v1.14.2`; the
+release and its tag were deleted. The PyPI pending publisher, the `release` environment (**no
+protection rules** — a published release goes straight to PyPI) and `CODECOV_TOKEN` are all in place.
+`research/m30-operator-setup.md` holds the procedure and its evidence gaps.
+
+**What is owed is now one thing, and it is the operator's: re-cut the release** from `main`, tag
+`v0.1.0`. `invalid-publisher` is the live unknown — it would fail *after* the workflow is read, so the
+fix is on the PyPI publisher plus a job re-run, with no re-tagging. **Until the upload lands, `uv tool
+install zikaron` in `README.md` and D36 does not resolve.**
+
+**`requirements-lock.txt` is deleted, and no lock file is tracked.** Nothing installed from it and no
+test read it, so nothing could redden when it drifted — and it had: `build==1.3.0`, a direct dev pin
+added at M30, never reached it. The `--constraint` route survives the file and is one `pip freeze`
+away; `design/coding-standards.md` §6 is normative, including the rule against adding one back
+without a reader. The Dependabot consequence is what makes it worth doing rather than merely tidy:
+pip now watches `pyproject.toml` alone, which is the signal wanted, and needs no `allow` filter.
+
+**Dependabot is live** (`.github/dependabot.yml`): actions weekly and grouped, pip monthly and
+ungrouped. Its first run raised one actions PR, merged as `199ed4f`, and three for lockfile
+transitives, closed — the noise the deletion above removes at its source.
 
 **The publication guard's exemption for the pins is a single-file allowlist**, decided at M30 as
 that guard's docstring asked. A per-line marker would sit on every digest line and on each new one,
@@ -182,6 +197,35 @@ copied while the service held a WAL, gave 27 events and 2 memories against the l
 18 minutes earlier the same store was a 4,096-byte `memory.db` beside a 3.8 MB `-wal`, so the copy
 would have opened, answered every query, and contained nothing. Use `Connection.backup()` or
 `VACUUM INTO`, or copy all three of `memory.db`, `-wal` and `-shm`.
+
+### The end-to-end test in Docker, agreed and not yet run
+
+**Blocked on the PyPI upload**, because the path worth testing is the one `README.md` recommends.
+The point is reaching where CI structurally cannot: `integration_kiro` and `integration_claude` are
+deselected on every runner, so **nothing automated has ever exercised a real session pushing or
+searching**.
+
+**Shape, settled 2026-09-24.** A fresh `ubuntu:26.04` container — a different OS from this host, and
+one carrying no Python, which is the case `--managed-python` exists for. **Hybrid driving, not pure
+tmux**: `docker exec` for scripted steps, where stdout and an exit code are real, and a tmux pane
+only for Claude Code's TUI, where screen-scraping is the only option. Both verified available here;
+`tmux send-keys` / `capture-pane` demonstrated.
+
+**Order: the "I already use Claude Code" journey first**, because that is the realistic user and it
+exercises the installer's *merge* path into an existing agent config rather than its create path.
+Then the greenfield sequence.
+
+**The operator completes the Claude Code login personally in an attached pane** (`tmux attach`), then
+hands back — no credential passes through the agent or this transcript.
+
+**What it is for**, and none of it is reachable from this machine: that `uv tool install
+--managed-python zikaron` resolves the published artefact on another OS; that `zikaron doctor` on a
+genuinely cold machine reports the model *absent* and **exits 0**, which is M30's most easily-wrong
+decision; that the first fetch verifies the pinned digests; and that `README.md` §Install, followed
+literally by something that has never seen this project, works.
+
+**It says nothing about macOS arm64.** The container is amd64 Linux, so the platform D35 supports and
+where `enable_load_extension` is reported off stays CI's job alone.
 
 ### Owed measurements
 
