@@ -17,11 +17,12 @@ precondition, the dedup payload, retire semantics) deliberately, per D30, since 
 at the point of decision while `agentSpawn`'s prose carries policy. Each tool is a thin translation:
 build the RPC params from typed arguments, call the wire method whose name `architecture.md`
 §"Service RPC surface" states — a wire method is the tool's own name without the `zikaron_` prefix,
-so the subsystem segment survives into it, and `memory_surface` and `memory_plan_groups` are the
-subsystem methods no tool carries, the hook calling the first and the consolidator's own client the
-second; `health`, which has neither tool nor subsystem, is answered before either dispatch table is
-reached — and hand back whatever the service returned, a conflict shape included, since a conflict
-is an ordinary successful response, not a rejection (`errors.py`'s own docstring).
+so the subsystem segment survives into it, and `memory_surface`, `memory_plan_groups` and
+`knowledge_unlock` are the subsystem methods no tool carries — the hook calling the first, the
+consolidator's own client the second and `zikaron knowledge` the third; `health`, which has neither
+tool nor subsystem, is answered before any dispatch table is reached — and hand back whatever the
+service returned, a conflict shape included, since a conflict is an ordinary successful response,
+not a rejection (`errors.py`'s own docstring).
 
 Every tool constructs its own `ClientEnvelope` fresh via `connection.envelope(kind="mcp")`, which
 carries whichever session label `connection` has adopted so far — see `connection.py`'s own
@@ -29,6 +30,7 @@ docstring on why that adoption, not a fresh per-call environment read, is what
 `architecture.md`'s "the client adopts the returned label" actually requires.
 """
 
+import aiosqlite
 from fastmcp import FastMCP
 
 from zikaron.core.errors import ZikaronError
@@ -50,11 +52,22 @@ async def _call(connection: ServiceConnection, method: str, params: dict[str, ob
     `fastmcp.exceptions.ToolError` on its own — left uncaught, it would reach the model as an
     opaque internal failure rather than the deliberate, message-preserving tool error every other
     rejection surfaces as.
+
+    **`aiosqlite.Error` is caught for the same reason and is not covered by `ZikaronError`.** The
+    identity read `connection.request` performs opens the store, and a `memory.db` that is not a
+    database at all fails at the first pragma — measured as a bare `sqlite3.DatabaseError('file is
+    not a database')`, which no boundary renames.
     """
     envelope = connection.envelope(kind=_CLIENT_KIND)
     try:
         response = await connection.request(method, params, envelope=envelope)
-    except (OSError, ConnectionError, ZikaronError, AmbiguousMutationError) as error:
+    except (
+        OSError,
+        ConnectionError,
+        ZikaronError,
+        AmbiguousMutationError,
+        aiosqlite.Error,
+    ) as error:
         raise TransportFailureError(str(error)) from error
     return response_to_tool_result(response)
 

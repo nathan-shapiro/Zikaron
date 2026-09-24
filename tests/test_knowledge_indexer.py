@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from tests.knowledge_fixtures import config_for, corpus_root
-from zikaron.core.knowledge import candidates, git, lock
+from zikaron.core.knowledge import candidates, git, lifecycle, lock
 from zikaron.core.knowledge.errors import UnknownKnowledgeBaseError
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.core.store.embedder import FakeEmbedder
@@ -28,7 +28,6 @@ from zikaron.knowledge import scope
 from zikaron.knowledge.indexer import detach
 from zikaron.knowledge.indexer import main as indexer_main
 from zikaron.knowledge.indexer.main import main
-from zikaron.knowledge.main import main as manage
 
 _READY_TIMEOUT_SECONDS = 30.0
 _POLL_SECONDS = 0.05
@@ -158,58 +157,34 @@ def _pretend_git_answered(
 
 
 def _make_project(tmp_path: Path, *, git_mode: str) -> Path:
+    """A store with one corpus registered over a real directory, built without the CLI.
+
+    **Registered through `core.knowledge.lifecycle` rather than through `zikaron knowledge add`.**
+    What these tests need is a registered corpus; reaching it through the management command would
+    now start a real service, which would spawn a real build of its own — competing for the lock
+    the test is about to take, and outliving the test. Nothing about the indexer depends on which
+    surface registered the corpus.
+    """
     config = config_for(tmp_path)
     embedder = FakeEmbedder(config.get_str("embed_model"), config.get_int("embed_dim"))
+    corpus_root(tmp_path)
 
     async def _create() -> None:
-        async with await Store.create(tmp_path / ".zikaron", config, embedder):
-            pass
+        async with await Store.create(tmp_path / ".zikaron", config, embedder) as store:
+            await lifecycle.add(
+                tmp_path / ".zikaron",
+                store.connection,
+                config,
+                lifecycle.AddRequest(
+                    name="docs",
+                    root=tmp_path / "docs",
+                    description="architecture records",
+                    git_mode=GitMode(git_mode),
+                ),
+            )
 
     asyncio.run(_create())
-    corpus_root(tmp_path)
-    assert (
-        manage(
-            [
-                "--project",
-                str(tmp_path),
-                "add",
-                "docs",
-                "--path",
-                str(tmp_path / "docs"),
-                "--description",
-                "architecture records",
-                "--git-mode",
-                git_mode,
-            ]
-        )
-        == 0
-    )
     return tmp_path
-
-
-class TestTheManagementVerb:
-    def test_refresh_starts_exactly_this_build(
-        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """One implementation reached two ways, so a build means the same thing however it was
-        asked for. The management verb does not run it — it starts it detached — so the parity
-        claim is about the command it starts, and the way to check that is to run it."""
-        asked: list[list[str]] = []
-
-        def _record(name: str, *, project: Path, full: bool = False) -> list[str]:
-            asked.append(detach.command(name, project=project, full=full))
-            return asked[-1]
-
-        monkeypatch.setattr(detach, "spawn", _record)
-        assert manage(["--project", str(project), "refresh", "docs"]) == 0
-        capsys.readouterr()
-
-        (argv,) = asked
-        completed = subprocess.run(  # noqa: S603 — the argv the command under test built.
-            argv, capture_output=True, text=True, timeout=300, check=False
-        )
-        assert completed.returncode == 0, completed.stderr
-        assert "built     'docs'" in completed.stdout
 
 
 class TestAsARealProcess:

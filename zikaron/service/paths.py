@@ -44,8 +44,9 @@ def store_dir(scope_dir: Path) -> Path:
 
     Callers resolve `scope_dir` through `HarnessSpec.store_scope_dir`: the harness's own project
     directory where it names one, else the fallback the caller passes — `zikaron-mcp`'s own process
-    cwd, or the payload's `cwd` for the hook, which are *different* inputs and is why the fallback
-    is where the two clients can still diverge (`HarnessSpec.store_scope_dir`). The parameter was
+    cwd, the payload's `cwd` for the hook, or the typing directory for `zikaron knowledge`, which
+    are *different* inputs and is why the fallback is where clients can still diverge
+    (`HarnessSpec.store_scope_dir`). The parameter was
     called `cwd` until the amendment, which was true of neither case in general.
     """
     return scope_dir / ".zikaron"

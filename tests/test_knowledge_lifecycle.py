@@ -40,7 +40,7 @@ from zikaron.core.knowledge.errors import (
 from zikaron.core.knowledge.state import KnowledgeState
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import FakeEmbedder
-from zikaron.core.store.store import Store
+from zikaron.core.store.store import CURRENT_SCHEMA_VERSION, Store
 from zikaron.core.store.transactions import in_one_transaction
 
 #: A pid no process can have, so *not running* is a fact rather than a race with the scheduler.
@@ -488,7 +488,7 @@ class TestTheMigrationIsAdditive:
             await store.connection.commit()
 
         async with await Store.open(store_dir, config) as reopened:
-            assert reopened.meta.schema_version == 1
+            assert reopened.meta.schema_version == CURRENT_SCHEMA_VERSION
             with pytest.raises(sqlite3.OperationalError):
                 await reopened.connection.execute_fetchall("SELECT 1 FROM knowledge_bases")
 
@@ -506,12 +506,21 @@ class TestTheMigrationIsAdditive:
         self, tmp_path: Path
     ) -> None:
         """Stated as an assertion rather than as prose: bumping it would make every older build
-        refuse the store, which is the outcome the additive-table rule exists to avoid."""
-        async with open_store(tmp_path) as (_store_dir, db):
-            await registry.ensure(db)
+        refuse the store, which is the outcome the additive-table rule exists to avoid.
+
+        Compared before against after rather than against a literal, because the claim is that the
+        registry does not move the version — not that the version is any particular number.
+        """
+
+        async def _version(db: aiosqlite.Connection) -> int:
             rows = await db.execute_fetchall("SELECT value FROM meta WHERE key = 'schema_version'")
-            ((version,),) = list(rows)
-            assert int(version) == 1
+            ((value,),) = list(rows)
+            return int(value)
+
+        async with open_store(tmp_path) as (_store_dir, db):
+            before = await _version(db)
+            await registry.ensure(db)
+            assert await _version(db) == before
 
     async def test_ensuring_the_registry_twice_is_a_no_op(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):

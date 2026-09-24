@@ -34,6 +34,7 @@ here rather than left for somebody to meet without warning.
 """
 
 import asyncio
+import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -385,7 +386,7 @@ async def remove(
         raise IndexerBusyError(
             f"{registered.name!r}'s build lock is held by a process this host cannot show is "
             f"gone ({observed.blocker.describe()}); wait for it, or clear the lock with "
-            f"`refresh --force-unlock` if you are sure it is gone",
+            f"`refresh {shlex.quote(registered.name)} --force-unlock` if you are sure it is gone",
             holder=observed.blocker,
         )
 

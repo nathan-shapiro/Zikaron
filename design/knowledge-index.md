@@ -73,7 +73,7 @@ right**, doing D13's triage job one level up, and it is exposed to the agent (§
 - The agent receives **fragments with line ranges**, never file contents, and reads files with the
   harness's own `Read`. A fragment is **byte-identical to the lines it names** (§8.3).
 - **Seven MCP tools**: `search`, `list`, `status`, `add`, `remove`, `rename`, `refresh`. The CLI mirrors
-  all but `search`, and adds `refresh --force-unlock` (§8.2, §9).
+  all but `search`, and adds `refresh --force-unlock` and `refresh --wait` (§8.2, §9).
 
 ## 3. Storage model
 
@@ -1035,9 +1035,10 @@ multi-minute one this section describes.
 
 ### 6.2 Lifecycle
 
-The indexer is spawned by the CLI (§9) or by the service handling `add`/`refresh` (§8.4) — there is no
-scheduler in v0 (§10) — and is **detached**: it
-outlives the invoking command. At most **one indexer per KB**, enforced by an advisory lock row in
+The indexer is spawned by the service handling `add`/`refresh` (§8.4), whichever surface asked — the
+CLI's verbs are RPC calls to those same methods (§9) — or run **by hand**, which is the foreground
+command a build result prints and the one invocation that opens its store directly. There is no
+scheduler in v0 (§10). Either way it is **detached**: it outlives the invoking command. At most **one indexer per KB**, enforced by an advisory lock row in
 `meta` carrying `lock_pid`, `lock_host` and `lock_started_at` (§3.2). A lock whose pid is not alive is **stale and
 reclaimable**.
 
@@ -1307,14 +1308,20 @@ handler absence. The property holds on both; the mechanism differs, and neither 
 **The agent manages knowledge bases in full: create, delete, rename, reindex, poll.** Operator ruling, on
 the grounds that a user should not have to leave the harness to do routine work. Every agent
 **management** operation — create, delete, rename, reindex, poll — has CLI parity (§9), but the CLI is
-the alternative, not the primary surface. **`search` is deliberately MCP-only**: the CLI is a management
+the alternative, not the primary surface. **Parity is in the verbs, not in the preconditions**: the
+agent's tools run inside a session whose harness clients create the store on their first start,
+while every CLI verb refuses a project that has none until `zikaron init` has run (§9).
+**`search` is deliberately MCP-only**: the CLI is a management
 surface, not a retrieval one, and a human wanting to search a corpus has better tools than a subcommand
 that prints ranked fragments.
 
-**The parity is one-directional, and exactly one CLI operation has no MCP twin:** `refresh
---force-unlock` (§6.2, §9). An agent cannot distinguish a stale foreign lock from a live one any better
-than the service can, so clearing one is a judgement for an operator who knows what else is running.
-That is a deliberate exception to this section's rule, not an oversight in it.
+**The parity is one-directional, and what the CLI has beyond the tools is operator business rather
+than agent business.** `refresh --force-unlock` (§6.2, §9) clears a lock, which an agent cannot judge
+any better than the service can — so it is a decision for whoever knows what else is running, and it
+is served by `knowledge_unlock`, an RPC method deliberately given no tool. `refresh --wait` (§9)
+blocks until a build is over, which only a script or a shell has any use for: an agent's turn ends,
+and a tool that held one open for minutes would be spending the caller's budget on waiting. Both are
+deliberate exceptions to this section's rule rather than oversights in it.
 
 | operation | tool | guard |
 |---|---|---|
@@ -1579,6 +1586,21 @@ async def zikaron_knowledge_rename(name: str, new_name: str) -> object
 
 async def zikaron_knowledge_refresh(name: str | None = None, full: bool = False) -> object
 ```
+
+**`knowledge_unlock(knowledge_base)` is an eighth RPC method with no tool beside it** (§9). Clearing a
+build lock is a judgement about what else is running on a machine, which is the operator's: an agent
+meeting a held lock is meant to wait or report it, not to decide the holder is dead. So the method
+exists for `zikaron knowledge refresh --force-unlock` and the tool surface is unchanged. It answers
+`{"cleared": {"pid", "host", "started_at"}}` with the holder it removed, or `{"cleared": null}` when
+no lock was recorded — which is not a failure but the state the caller wanted, reached without the
+call acting. **No rendered sentence travels with those three**: a caller wanting one rebuilds the
+holder and renders it, so the wording exists once rather than once per surface that prints it.
+
+**Both build-starting verbs carry `foreground_command` per corpus, and `add` carries `database_path`.**
+A detached build's output is discarded, so running the identical command in the foreground is the only
+way to recover *why* one failed. It is the argv the spawn reported, never a second construction of it —
+a command that merely resembles what ran answers a different question than the one being asked — and it
+is `null` for a corpus no build was started for, since there is nothing to reproduce.
 
 `add` creates the database, writes `meta`, spawns a detached indexer, and **returns immediately** with
 the KB's name and a note that indexing has started — never blocking on a walk that may take minutes.
@@ -2055,8 +2077,16 @@ async def zikaron_knowledge_status(knowledge_base: str | None = None) -> object
    "state": "indexing", "files_indexed": 1170, "files_remaining": 438},
   {"name": "run books", "description": "Operational procedures",
    "state": "reindex_required", "files_indexed": 0, "files_remaining": null}
-]}
+], "orphans": []}
 ```
+
+**`orphans` is carried by both, at full detail in both.** It is the one field `list` does not project
+down, because an orphan has no projection to make — it is an index file no registry row points at, and
+its path, its own non-authoritative copy of the name it was registered under, and its size are all there
+is to say. Withholding it from `list` would leave a caller reading `knowledge_bases: []` in a directory
+holding index files and concluding the corpora were never there. `status` reports it only when no single
+corpus was named, since an orphan belongs to none and attaching one to a named report would be
+attaching it arbitrarily.
 
 `state` is **the same enum `status` reports**, and answers *can I trust results from this corpus*:
 
@@ -2371,9 +2401,59 @@ zikaron knowledge add    <name> --path <dir> --description <text>
                          [--git-mode tracked|all|off] [--max-file-bytes N]
 zikaron knowledge remove <name> [--yes]
 zikaron knowledge rename <name> <new-name>
-zikaron knowledge refresh [<name>] [--full] [--force-unlock]
+zikaron knowledge refresh [<name>] [--full] [--wait] [--force-unlock]
 zikaron knowledge status [<name>]
 ```
+
+**Every one of these is an RPC call.** The CLI opens no store **of its own** — the one open it makes
+is `ServiceConnection`'s identity read, read-only and shared with `zikaron-mcp`; the hook makes none
+(`architecture.md` §"Store identity is verified, not assumed"). It sends the same methods §8.4 and
+§8.5 state, so the two surfaces cannot come to disagree about what a verb means. A project with no
+store is `zikaron init`'s to create — the service creates one on its first start and `Store.open`
+cannot — and every verb here refuses until it has, for the reason below. `zikaron doctor` is the one
+command exempted from the thin-client rule — it may open the store directly — since it reports on an
+installation that may be broken in exactly the way that stops the service starting. **The indexer is
+not a client**: it *is* the build, and it opens its store directly (§6).
+
+**Every verb here refuses a project with no store, and `zikaron init` is the one command that
+creates one.** D17 keys the store to the harness's project directory where one is named and to the
+working directory otherwise — and **neither supported harness exports one to a shell**, so a typed
+command resolves through the working directory in practice. Reaching the service is what creates a
+store, so a verb run one directory too deep would build a second one, answer every query from it
+correctly, and hold none of the project's work: the user adds a corpus and the agent never sees it.
+The check therefore runs **before the connection**, never after a failure from it, and the refusal
+names *which rung* resolved the directory, because a wrong `CLAUDE_PROJECT_DIR` is not repaired by
+changing directory. `zikaron/project/resolve.py` holds both; `design/distribution.md` §"The front
+door" is normative for `init` itself, which is idempotent, so a provisioning script may run it twice.
+
+**Nothing walks up to a store in order to use one.** The refusal searches ancestors only to *name*
+what it found, and binds nothing: a monorepo holding a store per package is exactly where adopting
+an ancestor's store would attach a command to the wrong one with nothing said. What the reader gets
+is the store's path and the `--project` value that would reach it — plus the directory to run from,
+**only under the fallback rung**, since above it a `cd` resolves to the same place and refuses
+again. A `.zikaron/` that a failed first start left without a `memory.db` reads differently again:
+that reader is in the right project, so they are told so and pointed at `init`, and none of the
+lost-reader advice is offered.
+
+**An empty listing still names the directory it looked in**, and `add` still prints the database
+path it created, because a project that has a store and no corpora is a different answer from a
+project that is not the one the reader meant.
+
+**`zikaron init` in a project with a cold model cache can report no reachable server, and a second
+run succeeds.** It is the only typed command that can meet this, because it is the only one that
+starts a service against a project with no store; every verb here refuses before it connects. The
+socket is bound only after the whole service context is built, and building it creates the store,
+which needs the embedding artifact — on a cold cache, a 64 MB fetch.
+`lifecycle._HEALTH_POLL_DEADLINE_SECONDS` gives that 10 s from spawn; measured in a container
+(`research/m30-docker-end-to-end.md` §"The fetch happens inside the cold start"), health answered
+**3.74 s** after the service's first log line with the fetch at most 3.30 s of it, so the margin is
+real but not large. Past it the client gives up while **the service keeps starting**, which
+is why the retry works — or while it has died inside that first start, which `service.log` in the
+store directory records and `init` names, since a retry alone would loop on that one. A fresh CI
+container is a cold cache by definition, so the `init` that opens
+a provisioning sequence is the call most likely to meet this. Whether the deadline should be longer
+here than on the hook's path — where it is 1.2 s and a miss costs only a skipped injection — or
+whether a script owes the retry, is open.
 
 *Spelled `python -m zikaron.knowledge …` until M30, which put these verbs behind the `zikaron`
 console script.* **That form still works and is not deprecated** — under a host-Python install with
@@ -2392,6 +2472,41 @@ surprising member is `add`: defining a corpus starts building it, which is what 
 of a fresh knowledge base settling from `reindex_required` to `ok` true of the CLI as well as of the
 tool.
 
+**`refresh --wait` returns only once no indexer is running against a named corpus** — the builds
+that call started, and any it found already under way — for a script or a CI step that must not end
+with one still going. **The already-running case is waited for rather than passed over**, because
+the documented provisioning sequence reaches it: `add` starts a build and has no `--wait`, so a
+`refresh --wait` arriving after that build has taken its lock finds it `already_indexing`, and
+returning 0 there would end the step with the indexer alive. **A lock this host cannot probe — another
+host's, or one whose pid is unreadable — fails immediately instead**: nothing here can see it
+released, which is the judgement `lock.probe` itself declines to make, so waiting on it is waiting
+forever. The exit is `--force-unlock`, and the message names the corpus, since the flag refuses
+without one.
+
+The build still detaches, so a command killed mid-wait leaves it running — the same situation as an
+agent ending its session after an MCP refresh, and correct for the same reason: the caller asked for
+a corpus to be built, not for a process to be supervised. It exits on each corpus's terminal state,
+`ok` alone being success.
+
+**The predicate is not "while the state is `indexing`"**, which §8.5's precedence rules out: a
+corpus rebuilt after an encoder mismatch reports `reindex_required` for the whole build. A build is
+over when its lock is gone — absent, or held by a process this host can see is dead — **and**
+`last_scan_started_at` has advanced past what it was before the refresh. That second half closes the
+spawn window: a lock is taken shortly after the spawn, so a fast first poll would otherwise see none
+and call a build that never began finished. **A build already running when the call arrived takes
+the lock half alone**, since it took its lock before that baseline was read and its mark will never
+advance past it. The wait is unbounded once a build is demonstrably running, since inventing a
+deadline for minutes of work would be inventing a number to tune and the step that asked already
+has its own; what *is* bounded is the window before a build shows itself at all, because a spawn
+that died before taking its lock leaves nothing that will ever change.
+
+**It reports progress from the same poll, to standard error, and only when the numbers move.** A
+line per poll is hundreds of identical lines in a CI log, and a redrawn one needs a terminal this is
+written not to assume — on change, a person sees it advance and a log keeps one line per real
+advance. The two phases are reported as the two phases they are: until the walk finishes
+`files_remaining` is `null` (§8.5), so the line names what has been indexed and says the scan is
+still finding what changed, rather than claiming `0 to go` — the one number nobody can yet have.
+
 **Every refusal a build can be given before it reads a file is given in the foreground**, by the
 command that was asked — an unknown name, a knowledge base whose database is gone, a database that is
 present and will not open (reported as a failure rather than a refusal, since nothing the caller can
@@ -2408,9 +2523,11 @@ alternative is a log file per knowledge base: several concurrent writers and a r
 a diagnostic one re-run produces on demand.
 
 `--force-unlock` clears a stale indexer lock (§6.2) and **refuses when the lock is same-host with a live
-pid**. It is the only operation with **no MCP twin**, because an agent cannot distinguish a stale
-foreign lock from a live one any better than the service can — §8.2's parity claim is stated over the
-management verbs, and this is a recovery action for an operator who knows what else is running.
+pid**. It is served by `knowledge_unlock`, the only **knowledge method with no tool**, because an agent cannot
+distinguish a stale foreign lock from a live one any better than the service can — §8.2's parity claim
+is stated over the management verbs, and this is a recovery action for an operator who knows what else
+is running. `--wait` is the other flag §8.2 excepts, and it needs no method at all: it polls
+`knowledge_status`.
 
 ## 10. Configuration
 
@@ -2465,7 +2582,7 @@ reader assumes owns it.
 | KB database present but **unreadable** (corrupt, permissions) | `list` and `status` report `state: "error"`; search returns that group with `state: "error"` and no results, others answer normally. **Not** `reindex_required` — `refresh` does not obviously repair a corrupt file, and the operator needs the difference |
 | KB database **absent** | **an empty knowledge base, not an error**, for everything that reads: `list` and `status` both report `state: reindex_required` with `files_indexed: 0`, and search returns an empty group (§7.4). **`refresh` refuses**, because the file that is missing is the only place this corpus's definition was ever written (§8.4) — the remedy is `remove` and `add`, and it loses nothing, since a KB in this state has never indexed anything |
 | `knowledge/*.db` with no registry row (orphan) | reported by `status` with the file's breadcrumb name and size; never opened for search, never auto-deleted. The residue of an interrupted **`remove`** — under §8.4's registry-first ordering an interrupted `add` leaves the absent-database case above instead |
-| `memory.db` unreadable | **no KB is discoverable**, though every corpus is intact — the coupling §3.1a names. ~~`status` reports `registry_unavailable`~~ **the command refuses with `RegistryUnavailableError`, raised by `knowledge/scope.py` when `Store.open` fails — so `status` never runs and reports no state at all.** `registry_unavailable` is **not** a `KnowledgeState`, which is the closed set of five above; the distinction the refusal preserves is the one that matters, since an empty list would be indistinguishable from "no KBs configured". On the RPC path the service cannot start, so there is no listing either |
+| `memory.db` unreadable | **no KB is discoverable**, though every corpus is intact — the coupling §3.1a names. **One route since M31, where there were two**: the CLI is an RPC client and meets this as `zikaron-mcp` does — `ServiceConnection`'s identity read fails before any service is asked to start, so the failure arrives while the connection is being established rather than from a listing. A `memory.db` that is not a database at all raises the driver's own `sqlite3.DatabaseError` from that read, which both of those clients catch and report verbatim, since nothing invented at that boundary would say it better; the hook makes no such read and meets this as a service that will not start (`architecture.md` §"Degraded modes"). `registry_unavailable` is **not** a `KnowledgeState`, which is the closed set of five above; what the refusal preserves is the distinction that matters, since an empty list would be indistinguishable from "no KBs configured" |
 | embed model/dim in `meta` ≠ configured | that KB refuses to serve and reports `reindex_required`; it does **not** answer with mismatched vectors |
 | a rebuild interrupted after its drop | refuses to serve and reports `reindex_required`, and goes on doing so under a reverted configuration — the drop cleared `last_scan_completed_at`. `meta` names the model the dead run was writing, so the next build **resumes** it where configuration is unchanged and **redoes** it whole where the revert made that an encoder mismatch (§8.4). Either way one model's vectors, never two |
 | an indexer is running (§8.5) | search answers from committed state with `state: "indexing"` and `files_remaining` |

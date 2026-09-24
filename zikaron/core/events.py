@@ -50,18 +50,28 @@ class Demotion(StrEnum):
 class ClientKind(StrEnum):
     """Which client made the call, as `event.client_kind` and `read_receipt.client_kind` record it.
 
-    Three values, exactly as both tables' `CHECK` constraints state them, and deliberately no
-    `service` member: every v0 event is emitted inside a client call, which is also what lets
-    invariant 18 hold. The value is load-bearing on both tables rather than decorative. On `event`
-    it is what makes cross-client session linkage observable — a push comes from `hook`, a write
-    from `mcp` — now that every client of one kiro session shares a `session_id`. On `read_receipt`
-    it is part of the primary key, so a receipt minted by a consolidation serve does not license
-    the primary agent to amend a row it never fetched.
+    Deliberately no `service` member: every v0 event is emitted inside a client call, which is also
+    what lets invariant 18 hold. The value is load-bearing on both tables rather than decorative. On
+    `event` it is what makes cross-client session linkage observable — a push comes from `hook`, a
+    write from `mcp` — now that every client of one kiro session shares a `session_id`. On
+    `read_receipt` it is part of the primary key, so a receipt minted by a consolidation serve does
+    not license the primary agent to amend a row it never fetched.
+
+    **`event.client_kind` states these same values as a `CHECK`, and the two are separate
+    artifacts.** A store's schema is written once and then lives on disk, so adding a member here
+    does not reach a store that already exists: that is a migration, and
+    `zikaron.core.store.migration` is where one is written. `test_ddl.py` asserts the `CHECK`
+    lists exactly this enum, so a member added without one reddens the gate rather than failing at
+    the first insert.
     """
 
     HOOK = "hook"
     MCP = "mcp"
     CONSOLIDATOR = "consolidator"
+    #: The `zikaron knowledge` CLI, which speaks to the service like any other client. It records no
+    #: event today — no knowledge method does — and is a member anyway, because the alternative is a
+    #: client whose envelope names a kind it is not.
+    CLI = "cli"
 
 
 class MergeRole(StrEnum):

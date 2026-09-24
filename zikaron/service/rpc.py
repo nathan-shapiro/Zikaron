@@ -174,3 +174,46 @@ def encode_error(
     if session_id is not None:
         payload["client"] = {"session_id": session_id}
     return json.dumps(payload) + "\n"
+
+
+@dataclass(frozen=True, slots=True)
+class WireError:
+    """One JSON-RPC `error` object as a client reads it, before any client-specific raising.
+
+    `code` is an `int` rather than an `ErrorCode` on purpose: a service newer than this client can
+    send a code this build has no member for, and refusing to parse it would turn a rejection a
+    caller could still read into a protocol failure.
+    """
+
+    code: int
+    message: str
+    data: dict[str, object]
+
+
+def parse_response(response: dict[str, object]) -> object | WireError:
+    """One parsed response object as either its `result` value or its error.
+
+    Shared by both `ServiceConnection` clients rather than reimplemented per surface — the hook
+    keeps its own stdlib-only parse — so `zikaron-mcp` and `zikaron knowledge` cannot come to
+    disagree about what a malformed response is. Neither the `ToolError` one raises nor the refusal
+    the other prints belongs here, so this returns the error instead of raising it.
+
+    Raises:
+        TypeError: the response is neither a well-formed success (`result` present) nor a
+            well-formed error (`error` present, an object, carrying an integer `code` and a string
+            `message`). That is a defect in the service or in the framing rather than a rejection,
+            and there is nothing to construct one from.
+    """
+    if "result" in response:
+        return response["result"]
+    error = response.get("error")
+    if not isinstance(error, dict):
+        raise TypeError(f"response has neither a result nor a well-formed error: {response!r}")
+    code = error.get("code")
+    message = error.get("message")
+    if not isinstance(code, int) or not isinstance(message, str):
+        raise TypeError(f"error object is missing code/message: {error!r}")
+    data = error.get("data")
+    if data is not None and not isinstance(data, dict):
+        raise TypeError(f"error.data is present but not an object: {error!r}")
+    return WireError(code=code, message=message, data={} if data is None else data)

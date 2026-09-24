@@ -950,26 +950,53 @@ class TestShapesThatWouldBeSilentlyDropped:
         assert config.read_text() == before
 
 
-class TestExplicitNullsAreValuesRatherThanAbsences:
-    """JSON has a fourth scalar, and every one of these guards first read `is not None`.
+class TestATopLevelNullIsAnAbsence:
+    """**`null` is how kiro spells *unset*, and it writes it itself** — so a top-level `null` is
+    merged into, not refused.
 
-    `"hooks": null` is something somebody wrote, not a key they omitted — and all three were
-    silently replaced, which is exactly what the guards exist to refuse.
+    ~~These guards once refused it, on the reading that `"hooks": null` is something somebody wrote
+    rather than a key they omitted.~~ **Reversed on a measurement against the real binary,
+    2026-09-24**: `kiro-cli agent create` emits `toolsSettings`, `toolSchema`, `welcomeMessage` and
+    `model` as `null`, and `kiro-cli chat --agent <name>` runs that agent normally. The old reading
+    made this installer refuse the harness's own default output — the modal input to `--agent` —
+    and told the user to repair a file they never hand-wrote. The withdrawal is recorded rather
+    than deleted because *nulls are values* is what anyone would propose from the JSON alone.
+
+    **What the guards were protecting is untouched.** They exist to refuse the *silent replacement
+    of data*, and `null` carries none: merging over it destroys nothing, exactly as merging into an
+    absent key does. A value of the wrong **type** — a string `tools`, an object `hooks` — is still
+    refused, and so is a null entry one level down under our own server name, below.
     """
+
+    @pytest.mark.parametrize("key", ["hooks", "tools", "allowedTools", "mcpServers", "resources"])
+    def test_a_top_level_null_is_merged_into(self, tmp_path: Path, key: str) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "m", key: None})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        written = json.loads(config.read_text())
+        assert written["mcpServers"][MCP_SERVER_NAME]["command"].endswith("zikaron-mcp")
+        assert written["hooks"]
+
+    def test_a_null_tools_settings_is_merged_into(self, tmp_path: Path) -> None:
+        """The exact shape `kiro-cli agent create` writes, which this refused until it was run."""
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "m", "toolsSettings": None, "model": None})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["mcpServers"][MCP_SERVER_NAME]
 
     @pytest.mark.parametrize(
         ("document", "expected"),
         [
-            pytest.param(
-                {"name": "m", "hooks": None}, "neither an object nor an array", id="hooks"
-            ),
-            pytest.param({"name": "m", "tools": None}, "not an array", id="tools"),
-            pytest.param({"name": "m", "mcpServers": None}, "not an object", id="mcpServers"),
+            pytest.param({"name": "m", "hooks": 7}, "neither an object nor an array", id="hooks"),
+            pytest.param({"name": "m", "tools": "all"}, "not an array", id="tools"),
+            pytest.param({"name": "m", "mcpServers": []}, "not an object", id="mcpServers"),
+            pytest.param({"name": "m", "toolsSettings": "x"}, "not an object", id="toolsSettings"),
         ],
     )
-    def test_a_top_level_null_is_refused(
+    def test_a_wrong_type_is_still_refused(
         self, tmp_path: Path, document: dict[str, object], expected: str
     ) -> None:
+        """The half that stands: this is data the user put there, and a merge would destroy it."""
         config = tmp_path / "mine.json"
         _write_agent(config, document)
         before = config.read_text()

@@ -41,6 +41,12 @@ class _Subcommand(NamedTuple):
     load: Callable[[], Entry]
 
 
+def _init() -> Entry:
+    from zikaron.project.initialize import main  # noqa: PLC0415
+
+    return main
+
+
 def _install() -> Entry:
     from zikaron.install.main import main  # noqa: PLC0415
 
@@ -62,6 +68,7 @@ def _doctor() -> Entry:
 #: The dispatch table and the help text are the same object, so a command cannot be runnable
 #: without being listed or listed without being runnable. Order is the order `--help` prints.
 _SUBCOMMANDS: Final[dict[str, _Subcommand]] = {
+    "init": _Subcommand("create this project's store, which the knowledge verbs need", _init),
     "install": _Subcommand(
         "write Zikaron's hook, MCP and consolidator entries into a project", _install
     ),

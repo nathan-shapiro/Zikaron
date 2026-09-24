@@ -26,10 +26,12 @@ zikaron/
     errors.py           # the wire error codes, one enum
   service/              # asyncio UDS server, JSON-RPC, lifecycle
   harness/              # the one seam where a harness difference lives, as data (D34)
-  knowledge/            # the detached indexer process and the `python -m` CLI
+  knowledge/            # the detached indexer process, and `zikaron knowledge`'s RPC client
   mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
   install/              # the shipped artefacts for both harnesses, and the command that writes them
+  project/              # which project a typed command acts on, and `zikaron init` which creates
+                        # its store — the one command that may
   cli/                  # the `zikaron` front door: dispatch only, no rule of its own
 ```
 

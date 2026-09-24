@@ -1,4 +1,4 @@
-"""The wire error contract: one code per rejection, with its message and its `data` shape.
+"""The wire error contract: one code per rejection, with its message, `data` shape and disposition.
 
 Two independently written clients have to agree on what a rejection means, so the codes are a
 contract rather than an implementation detail. They live here as one enum and one table; no
@@ -6,8 +6,24 @@ call site anywhere may name a bare integer, a payload field or one of the values
 field is allowed to take.
 
 This module deliberately stops short of the wire envelope. It says what a rejection *is* — its
-code, its human message, and the exact fields its payload carries, in order — and leaves
-`{code, message, data}` framing to whoever owns the transport.
+code, its human message, the exact fields its payload carries in order, and whether a caller has
+a move — and leaves `{code, message, data}` framing to whoever owns the transport.
+
+**A client branches on the code, never on wording.** That is what makes a payload field safe to
+fill with a sentence: `knowledge_base_busy.holder` and `store_unavailable.cause` are read by people,
+and the code beside them is what anything automated keys on. What the rule forbids is the inverse —
+a distinction a caller must *act* on reaching it only as prose, so that rewording the sentence
+silently changes behaviour. Every such distinction gets a code, or a declared field with a closed
+set of values.
+
+**The rule governs result fields as well as these payloads**, though those are declared elsewhere
+(`service/serialize_knowledge.py`): `KnowledgeBuildResult.reason` is a sentence beside `outcome`,
+which is the closed set anything automated keys on. Wherever a sentence travels, the value it
+explains travels beside it.
+
+`store_unavailable.cause` is the one field whose text comes from outside Zikaron: a driver's or the
+OS's message is not ours to reword, cannot be enumerated, and nothing invented at that boundary
+would say what went wrong better.
 """
 
 from collections.abc import Mapping
@@ -43,11 +59,13 @@ class ErrorCode(IntEnum):
     REINDEXING = -32022
     BAD_CONFIG = -32023
     SCHEMA_INCOMPATIBLE = -32024
+    STORE_UNAVAILABLE = -32025
     STORE_IDENTITY = -32030
     KNOWLEDGE_BASE_UNKNOWN = -32040
     KNOWLEDGE_BASE_EXISTS = -32041
     KNOWLEDGE_BASE_BUSY = -32042
     KNOWLEDGE_CONFIRM_REQUIRED = -32043
+    KNOWLEDGE_BASE_DANGLING = -32044
 
     @property
     def wire_name(self) -> str:
@@ -136,17 +154,37 @@ class PayloadField:
         return len(self.values) == 1
 
 
+class Disposition(StrEnum):
+    """Whether a rejection is Zikaron declining something, or something having broken.
+
+    Declared per code rather than decided at each surface that renders one, so two surfaces cannot
+    disagree about whether a caller has a move. The words are the ones `zikaron knowledge` prints.
+    """
+
+    #: Zikaron understood the request and declined it, naming what to do instead — a different
+    #: value, a confirmation, a retry, a corrected config.
+    REFUSED = "refused"
+    #: Something the caller cannot address from the call site: a schema this build cannot read, a
+    #: store belonging elsewhere, a database or file that would not open.
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class ErrorSpec:
-    """What one code says, and what its payload carries.
+    """What one code says, what its payload carries, and whether the caller has a move.
 
     The fields are ordered, and that order is the order they are serialized in, so two
     implementations of one rejection produce the same payload rather than merely equivalent
     ones.
+
+    `disposition` defaults to `REFUSED` because most codes are, which puts the burden on the
+    minority that are not: a code needing `FAILED` and not saying so reaches a user as *refused*,
+    implying a different call would work.
     """
 
     message: str
     data_fields: tuple[PayloadField, ...]
+    disposition: Disposition = Disposition.REFUSED
 
     def __post_init__(self) -> None:
         names = [field.name for field in self.data_fields]
@@ -231,6 +269,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
         ErrorCode.INDEX_FAILED: ErrorSpec(
             "index maintenance failed and nothing was written",
             (PayloadField("stage", values=tuple(IndexStage)),),
+            disposition=Disposition.FAILED,
         ),
         ErrorCode.REINDEXING: ErrorSpec(
             "the store is reindexing and cannot be opened",
@@ -250,11 +289,23 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
         ),
         ErrorCode.SCHEMA_INCOMPATIBLE: ErrorSpec(
             "that database's schema version is newer than this build supports",
-            (PayloadField("found"), PayloadField("supported", values=(1,))),
+            # `supported` is every version this build opens, not the highest: a build supporting
+            # only 3 and one supporting 1 through 3 would otherwise report the same thing while
+            # offering a caller different answers about downgrading.
+            (PayloadField("found"), PayloadField("supported")),
+            disposition=Disposition.FAILED,
+        ),
+        ErrorCode.STORE_UNAVAILABLE: ErrorSpec(
+            "a database or file this call needed could not be read or written",
+            # `cause` is the one field in this table that holds prose; the module docstring says
+            # on what terms.
+            (PayloadField("operation"), PayloadField("cause")),
+            disposition=Disposition.FAILED,
         ),
         ErrorCode.STORE_IDENTITY: ErrorSpec(
             "that service belongs to a different store",
             (PayloadField("expected"), PayloadField("actual")),
+            disposition=Disposition.FAILED,
         ),
         ErrorCode.KNOWLEDGE_BASE_UNKNOWN: ErrorSpec(
             "no knowledge base with that name",
@@ -276,6 +327,10 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
                 PayloadField("files_indexed"),
                 PayloadField("chunks"),
             ),
+        ),
+        ErrorCode.KNOWLEDGE_BASE_DANGLING: ErrorSpec(
+            "that knowledge base is registered but its database is gone",
+            (PayloadField("name"),),
         ),
     }
 )

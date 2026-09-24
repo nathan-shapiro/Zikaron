@@ -9,7 +9,7 @@ every module docstring in `zikaron/core/write`, `retrieval` and `records`.
 `health()` is the one method with no envelope at all, dispatched separately by `server.py` before
 any of this module's envelope-carrying handlers run.
 
-The knowledge index's seven methods live in `dispatch_knowledge.py`, split on the **subsystem**
+The knowledge index's methods live in `dispatch_knowledge.py`, split on the **subsystem**
 line rather than on the primary/consolidator line the split below follows. They are the primary
 agent's too, which is why this docstring says *memory verbs* rather than *primary-agent verbs* —
 the primary agent's surface is larger than this module, and `mcp/tool_names.py` declares it as
@@ -29,8 +29,9 @@ things one figure must not be quoted for both.
 **Every method here carries a `memory_` prefix, and it is the same prefix its tool carries** — a
 wire method is its tool's name without the leading `zikaron_`. The subsystem segment is what keeps
 `memory_search` and `knowledge_search` from being one name that two dispatch tables both claim.
-`memory_surface` and `memory_plan_groups` are the methods with no tool, the hook calling the first
-directly and the consolidator's own client the second; `health` is the one method with no subsystem,
+`memory_surface`, `memory_plan_groups` and `knowledge_unlock` are the methods with no tool — the
+hook calling the first directly, the consolidator's own client the second and `zikaron knowledge`
+the third; `health` is the one method with no subsystem,
 since it speaks for the service rather than for either store, and it carries no tool either.
 """
 
@@ -319,7 +320,7 @@ async def fetch(
 
 
 #: Every primary-agent method this module handles, by its wire name. `dispatch_consolidation.py`
-#: contributes the other five and `dispatch_knowledge.py` the seven knowledge methods; `server.py`
+#: contributes the other five and `dispatch_knowledge.py` the knowledge ones; `server.py`
 #: merges all **three** tables and adds `health` separately, since
 #: `health` takes no envelope and so does not fit this table's own shape.
 PRIMARY_METHODS: dict[str, Handler] = {

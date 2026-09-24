@@ -128,11 +128,14 @@ CREATE TABLE event (
   id          INTEGER PRIMARY KEY,
   at          TEXT NOT NULL,
   session_id  TEXT,
-  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator')),
+  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli')),
                                     -- from the request envelope. Makes cross-client session linkage
                                     -- OBSERVABLE: pushes come from 'hook', writes from 'mcp'.
                                     -- No 'service' value: every v0 event is emitted inside a client
                                     -- call, which is also why invariant 18 can hold.
+                                    -- 'cli' records no event today; it is admitted because the
+                                    -- envelope `zikaron knowledge` sends names it. Widening this
+                                    -- CHECK is what schema_version 2 IS (§"Migration posture").
                                     -- NO label_source column. It is DERIVED from session_id --
                                     -- `session_id LIKE 'zk-%'` is 'minted', anything else is
                                     -- 'harness' -- so storing it would be a second source of truth
@@ -353,16 +356,18 @@ ASCII-only** (measured). Two consequences, and only the second is a limit:
 **`meta.schema_version` is not bumped for this table, and the rule that licenses it is stated here so the
 next such change is decided by a rule rather than by convenience.**
 
-> **The version gates compatibility, not content.** It is bumped when a binary at the old version would read
-> the store **wrongly** — a changed table, a changed index an invariant rests on, a changed meaning of an
-> existing key, or a new invariant an old binary would violate by writing. It is **not** bumped for a table
-> that no older code path reads or writes and that no existing invariant mentions: every read and write an
-> older binary performs over such a store is exactly as correct as it was before.
+> **The version gates compatibility, not content.** It is bumped when a binary at either version would use
+> the store **wrongly** — an old binary reading a changed table, a changed index an invariant rests on, a
+> changed meaning of an existing key, or a new invariant it would violate by writing; **or** a new binary
+> writing something an old store's constraints refuse, which is the direction version 2 exists for
+> (§"Migration posture"). It is **not** bumped for a table that no older code path reads or writes and that
+> no existing invariant mentions: every read and write an older binary performs over such a store is exactly
+> as correct as it was before.
 
-`knowledge_bases` is the first change of that kind. Bumping would make every older build refuse the store
-outright with `−32024 schema_incompatible` — the correct answer for a schema it cannot read, and the wrong
-one for a schema it can — and would force the supported-range-plus-migration contract §"Migration posture"
-defers, for a change that needs none of its machinery.
+`knowledge_bases` is the first change of that kind, and it stays one. Bumping for it would make every older
+build refuse the store outright with `−32024 schema_incompatible` — the correct answer for a schema it
+cannot read, and the wrong one for a schema it can — for a change that needs none of the
+supported-range-plus-migration machinery §"Migration posture" now carries.
 
 **What the rule obliges in exchange is a single idempotent creation site.** A store created before this
 table existed must still open and serve memory, so the table is created **on first use by the knowledge
@@ -428,13 +433,15 @@ left alone ~~and logged once~~ **and not reported at all** — both `core/store/
 read — so a newer writer's extra settings do not brick the store. That is deliberately
 **not** a forward-compatibility claim, and reading it as one was a defect: an unknown key says nothing about
 whether the tables, indexes, invariants, or the meaning of the *existing* keys changed under a newer writer.
-v0 therefore supports **exactly `schema_version = 1`**. A value `> 1` is refused with a stable
-`−32024 schema_incompatible` naming what was found and what is supported; a value `< 1` or unparseable is
-`bad_config` by the range rule. Compatibility is asserted by the version, never inferred from key tolerance.
+v0 therefore supports **a stated range of `schema_version`, and nothing outside it**. A value above the
+range is refused with a stable `−32024 schema_incompatible` naming what was found and the whole range that
+is supported; a value below `1` or unparseable is `bad_config` by the range rule. Compatibility is asserted
+by the version, never inferred from key tolerance. §"Migration posture" is normative for the range, for
+which opener may move a store through it, and for why the range exists at all.
 
 | Key | Type | Range | v0 default | Notes |
 |---|---|---|---|---|
-| `schema_version` | int | **exactly `1`** in v0 | `1` | `> 1` ⇒ `−32024 schema_incompatible`, not `bad_config`; migration posture below |
+| `schema_version` | int | the supported range (§"Migration posture") | what this build creates | above the range ⇒ `−32024 schema_incompatible`, not `bad_config`. Inside it but below `CURRENT_SCHEMA_VERSION`, the store is opened as it is and migrated only by the service; below `1` is `bad_config` |
 | `store_id` | uuid string | 36 chars, uuid4 | **minted at creation** | not user-configurable; `health()` returns it (`architecture.md` §"Store identity") |
 | `embed_model` | string | non-empty | from the effective config at creation (`BAAI/bge-small-en-v1.5`) | **dual-homed with the config file, hard.** Seeded here at creation; authoritative thereafter, so a file that disagrees is *requesting* a change and the answer is invariant 11's forced reindex, never a silent switch |
 | `embed_dim` | int | ≥1 | from the effective config at creation (`384`) | **dual-homed with the config file, hard.** Must equal the `vec0` column width, which is fixed at creation — so unlike `embed_model` a disagreement here cannot be reindexed in place at all |
@@ -1418,25 +1425,69 @@ deletion", together with the WAL/log residue that survives it.
   function is total.
 
 ## Migration posture
-`meta.schema_version` starts at 1, and **v0 supports exactly that one value**. v0 has no migrations to write
-yet, and the store is empty, which is precisely why D28's chunked `vec0` shape is being adopted now rather
-than later.
+**`meta.schema_version` is a range, not a number.** `zikaron.core.store.store` declares
+`CURRENT_SCHEMA_VERSION` — what a store this build creates records — and `SUPPORTED_SCHEMA_VERSIONS`, every
+version it will open. `zikaron.core.store.migration.MIGRATIONS` holds one ordered step per version above the
+first, and `test_store.py` asserts that the last step produces `CURRENT_SCHEMA_VERSION` and that the steps
+cover the range exactly — no gap, no repeat — so the two declarations cannot move apart.
 
-What that means operationally, because "no migrations yet" is not the same as "any version opens":
-
-| Found on open | v0 does | Why |
+| Found on open | this build does | Why |
 |---|---|---|
-| `1` | opens | the only version whose tables and invariants this binary knows |
-| `> 1` | refuses, `−32024 schema_incompatible` `{found, supported: 1}` | a newer writer may have changed tables, indexes, invariants or the meaning of an existing key. Opening it and ignoring the unknown keys would be reading an unknown schema as if it were this one |
+| `CURRENT_SCHEMA_VERSION` | opens | the version whose tables and invariants it implements |
+| inside the range but below it | opens at that version; **migrated only if the opener asked** | an older store is readable as it is. Making it a flag day would mean a binary refusing stores it can read perfectly well |
+| above the range | refuses, `−32024 schema_incompatible` `{found, supported}` | a newer writer may have changed tables, indexes, invariants or the meaning of an existing key. Opening it and ignoring the unknown keys would be reading an unknown schema as if it were this one |
 | `< 1`, non-integer, missing | refuses, `−32023 bad_config` | ordinary required-key range failure |
 
-The first version that needs to open more than one schema gets an explicit **supported range plus a migration
-or capability contract**, written then. Until it exists, the version is a hard gate rather than a hint, and
-unknown-key tolerance (above) is scoped to supported versions only — it buys nothing across a version bump
-and must not be mistaken for doing so.
+`supported` is the **whole range**, not its maximum: a build that opens only version 3 and one that opens 1
+through 3 would otherwise send an identical payload while offering a caller different answers about
+downgrading.
 
-**"No migrations yet" does not mean "no tables may be added", and §"The knowledge-base registry" carries the
-rule that separates the two.** A table no older code path reads or writes leaves every older read and write
-exactly as correct as it was, so it is created idempotently at first use and the version does not move —
-which is why this section is still accurate with `knowledge_bases` in the file. What would move the version
-is a change an old binary would read *wrongly*, and that is the change this section is waiting for.
+**Exactly one opener migrates: the service.** `Store.open` takes `migrate`, and `service/context.py` is the
+only call site that passes it — the one opener holding the store at startup with write intent, before the
+socket is bound, so no client can be mid-call while the schema moves. The indexer and the MCP identity read
+open an older store at the version it is and change nothing.
+
+**A migration runs as one transaction across every pending step**, and writes `meta.schema_version` inside
+it. A store interrupted partway would otherwise sit at a version no build implements, which is a state
+worse than either schema.
+
+**A step's DDL is a historical artifact, frozen in the step.** It must produce the schema of the version
+it names, not whatever `ddl.py` says today — otherwise the first later change to a rebuilt table makes an
+earlier step build the *newer* one and then fail copying an older store's rows into it, so every store
+still at that older version stops migrating. Each step therefore carries its own literal text, and a test
+holds that literal against what `ddl.py` creates now: while the step's version is the newest the two
+agree, and **the day that test fails is the day the table moved** — at which point the literal stays put
+and a new step is written.
+
+### When the version moves
+
+**The version moves when a binary at *either* version would use the store wrongly.** Two directions, and
+both are binding:
+
+- **An old binary over a new store** — a changed table, a changed index an invariant rests on, a changed
+  meaning of an existing key, or a new invariant it would violate by writing.
+- **A new binary over an old store** — anything it will write that the old store's constraints refuse.
+
+**The second direction is easy to read past, and version 2 is entirely that case.** It widens
+`event.client_kind`'s `CHECK` to admit `cli`. An old binary reading a widened store reads every row
+correctly and would never write the new value, so on the first direction alone this change does not qualify
+— and a reader applying only that half would conclude, wrongly, that it needs no version. What makes it one
+is that a *new* binary meeting a store still carrying the narrow `CHECK` has no way to know, and the first
+`cli` event it writes fails at insert time on a constraint nothing warned it about. **The version is how a
+binary knows which shape it is holding.**
+
+**Why not introspect the schema on every open instead.** It costs a `sqlite_schema` read per start, and
+worse, it makes *has this store been brought forward* a derived fact with no record: a migration that was
+never applied and one that was applied and then partly undone look identical. A recorded version is a
+statement the store makes about itself.
+
+**Adding a table still does not move the version, and §"The knowledge-base registry" carries that rule.** A
+table no older code path reads or writes leaves every older read and write exactly as correct as it was, so
+it is created idempotently at first use — which is why `knowledge_bases` arrived without a version change
+and why `event`'s `CHECK` could not.
+
+**Unknown-key tolerance is scoped to supported versions only.** It buys nothing across a version bump and
+must not be mistaken for doing so.
+
+**Downgrade is not offered.** A store above a binary's range is refused, which is the gate working. Nothing
+walks `MIGRATIONS` backwards, and a step is not required to be reversible.

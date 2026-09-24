@@ -20,12 +20,14 @@ from zikaron.core.errors import (
     INACTIVE_ROW_STATES,
     BadConfigSource,
     BadMergeTargetReason,
+    Disposition,
     ErrorCode,
     ErrorSpec,
     IndexStage,
     PayloadField,
     RowState,
     ZikaronError,
+    _matches,
 )
 
 DOCUMENT = "architecture.md"
@@ -137,22 +139,27 @@ def test_a_fixed_value_is_supplied_rather_than_asked_for() -> None:
         "uuids": ["a", "b"],
         "hint": "re-read it through fetch or next_group",
     }
-    version = ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2)
-    assert dict(version.data) == {"found": 2, "supported": 1}
 
 
 def test_a_fixed_value_may_be_passed_but_not_changed() -> None:
-    assert ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2, supported=1).data["supported"] == 1
+    supplied = ZikaronError(
+        ErrorCode.NO_READ_RECEIPT, uuids=["a"], hint="re-read it through fetch or next_group"
+    )
+    assert supplied.data["hint"] == "re-read it through fetch or next_group"
     with pytest.raises(ValueError, match="is not one of"):
-        ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2, supported=2)
+        ZikaronError(ErrorCode.NO_READ_RECEIPT, uuids=["a"], hint="look it up again")
 
 
 def test_a_closed_value_must_match_the_type_it_serializes_as() -> None:
-    """`true` and `1.0` are not the integer 1 on the wire, however they compare in Python."""
-    with pytest.raises(ValueError, match="is not one of"):
-        ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2, supported=True)
-    with pytest.raises(ValueError, match="is not one of"):
-        ZikaronError(ErrorCode.SCHEMA_INCOMPATIBLE, found=2, supported=1.0)
+    """`true` and `1.0` are not the integer 1 on the wire, however they compare in Python.
+
+    Against `_matches` rather than through a code, because no code declares a numeric closed set:
+    a payload built around one would be testing that code's choice of set, not this rule.
+    """
+    assert _matches(1, 1)
+    assert not _matches(True, 1)
+    assert not _matches(1.0, 1)
+    assert not _matches(1, True)
 
 
 def test_a_non_scalar_where_a_closed_set_is_declared_is_refused() -> None:
@@ -235,6 +242,35 @@ def test_every_code_carries_a_payload() -> None:
     """
     fieldless = sorted(code.wire_name for code, spec in ERROR_SPECS.items() if not spec.data_fields)
     assert fieldless == []
+
+
+def test_the_codes_a_caller_cannot_act_on_are_exactly_these_four() -> None:
+    """Transcribed rather than derived, because `refused` is the default a new code inherits.
+
+    A code that needs `failed` and does not say so reaches a user as *refused: …* — this system
+    declining something, with the implication there is a different call to make. There is not.
+    `architecture.md` §Errors carries the same list in prose.
+    """
+    failed = sorted(
+        code.wire_name
+        for code, spec in ERROR_SPECS.items()
+        if spec.disposition is Disposition.FAILED
+    )
+    assert failed == [
+        "index_failed",
+        "schema_incompatible",
+        "store_identity",
+        "store_unavailable",
+    ]
+
+
+def test_store_unavailable_carries_the_operation_and_the_drivers_own_words() -> None:
+    error = ZikaronError(
+        ErrorCode.STORE_UNAVAILABLE,
+        operation="knowledge_add",
+        cause="attempt to write a readonly database",
+    )
+    assert error.detail() == ("operation=knowledge_add, cause=attempt to write a readonly database")
 
 
 def test_detail_renders_one_line_of_name_equals_value() -> None:

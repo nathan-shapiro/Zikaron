@@ -62,6 +62,12 @@ LOCK_STARTED_AT_KEY: Final = "lock_started_at"
 #: and tying them together would make a knowledge-index change look like a memory-store one.
 SUPPORTED_SCHEMA_VERSION: Final = 1
 
+#: Every version this build opens, which for now is the one above. It exists so that
+#: `schema_incompatible`'s `supported` payload has the same *shape* here as it does for
+#: `memory.db`, which supports a range: one code reporting a bare integer about one database and a
+#: list about the other is one rejection with two payloads.
+SUPPORTED_SCHEMA_VERSIONS: Final[tuple[int, ...]] = (SUPPORTED_SCHEMA_VERSION,)
+
 #: The configuration key each seeded value comes from, for the four whose bounds are declared
 #: there. `max_file_bytes` is the one whose `meta` name differs from its configuration name,
 #: because the configuration namespace is flat and shared with the memory store.

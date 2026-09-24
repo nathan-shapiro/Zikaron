@@ -13,7 +13,7 @@
 | **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DBs. Serves local RPC. Self-stops after idle. | **yes — the only long-running one** |
 | **`zikaron-mcp`** | MCP server, built on the `fastmcp` framework. Translates MCP tool calls to RPC. Starts the service if absent. | no |
 | **`zikaron-hook`** | Thin hook executable for the spawn and user-message triggers. Starts the service if absent. | no |
-| **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8) — **by the service** on a `knowledge_*` call, and **by `python -m zikaron.knowledge`** directly when a person starts a build from a shell, which opens the store itself and never goes through RPC. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
+| **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8), **always by the service** on a `knowledge_*` call — including the ones `zikaron knowledge` makes, since M31 made that command an RPC client. **A person can still start one directly**, by running the foreground command a build result prints, and that invocation opens the store itself and never goes through RPC: it *is* the build, so there is nothing for a service to do on its behalf. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible; it is now the by-hand case alone.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
 
 The service exists for exactly one measured reason: cold whole-process `bge-small` is **783 ms**, and D12
 puts retrieval on the critical path of every user message. Keeping the model resident moves that to a warm
@@ -557,6 +557,22 @@ override can pick a different embedder for one project — and thereafter that s
 A truncated hash plus a shared `/tmp` fallback means a client could in principle reach a service for a
 different store. So identity is checked rather than inferred:
 
+**The socket is keyed on the *resolved* store path and identity is compared on the *spelled* one,
+so two clients spelling one directory differently share a socket and then refuse each other.**
+`health.store_path` reports whatever the service was started with, and the comparison is lexical
+`Path` equality. The clients on the fallback rung agree by construction, because `Path.cwd()` is
+already physical; a typed `--project` joins them because `zikaron/project/resolve.py` resolves it
+rather than merely making it absolute. `Path.absolute()` collapses neither `..` nor a symlink, so an
+unresolved one would start a service the agent's own MCP server and hook refuse on every call until
+it idles out — silently for the hook, which never reads a store on a mismatch.
+
+**What is unmeasured is whether the harness's own value is physical.** `CLAUDE_PROJECT_DIR` is taken
+verbatim by every client that reads it, so a session launched from a symlinked directory would key
+the logical path in the hook and `zikaron-mcp` and the physical one everywhere else: the same
+mismatch with the sides swapped. The lasting repair is to compare resolved paths on both sides of
+the identity check rather than spellings; re-derive the premise with
+`echo "$CLAUDE_PROJECT_DIR"; pwd -P` in a session started from a symlinked path.
+
 - `meta.store_id` is a UUID minted when the store is created.
 - `health()` returns `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}`. It carries
   **no `client` envelope and resolves no session label** — see below.
@@ -564,8 +580,8 @@ different store. So identity is checked rather than inferred:
   write.** A mismatch is not a retry: the client ~~logs it, treats~~ **treats** the socket as foreign,
   and — for the hook — goes through the same degraded path as any other failure (§"Degraded modes"):
   one line to `hook.log` plus a model-facing relay on stdout, never a read. **Only the hook logs**,
-  which is the same split §"Idle self-stop" already draws for the two clients' fallbacks —
-  `zikaron/mcp/` imports no logger, so there the mismatch propagates and surfaces as an ordinary MCP
+  which is the same split §"Idle self-stop" already draws between the hook's fallback and every
+  other client's — `zikaron/mcp/` imports no logger, so there the mismatch propagates and surfaces as an MCP
   tool error the calling model sees, recorded nowhere. The mismatch is not special-cased into a
   fallback read of a store the client has no way to know is the right one.
 - **Nothing is adopted from an unverified service, session labels included.** This is why `health()` is outside
@@ -645,7 +661,7 @@ Rules that go with the modes:
 ## Lifecycle
 
 ### Start-if-absent, without a thundering herd
-Both thin clients may race to start the service. Sequence:
+Any two clients may race to start the service. Sequence:
 
 1. Try to connect.
 2. On `ENOENT` or `ECONNREFUSED`, take an exclusive `flock` on `<sock>.lock`.
@@ -686,6 +702,16 @@ difference is worth having.
 A second `assemble` against the same directory finds `memory.db` already there and opens it, exactly as
 before this decision existed: creation happens at most once per store, on whichever startup is first to
 find the file absent.
+
+**Which client may trigger that first start is narrower than it was, and M31 is why.** The rule above is
+unchanged — the service creates the store and nothing upstream of it does — but a *typed* command now
+reaches it only through `zikaron init`, and every `zikaron knowledge` verb refuses a project with no
+store — no `memory.db`, since the directory above precedes it — before it connects. The service
+creates a store wherever it is pointed, and a command typed outside the project resolves to a
+different project (D17), so any verb able to start a service was a verb able to build a second store
+and answer from it about nothing. The agent-facing clients are unaffected:
+`zikaron-mcp` and the hook are spawned by the harness at the project root, which is the directory they are
+meant to create a store in. `design/distribution.md` §"The front door" is normative for `init`.
 
 **A genuinely-empty directory reaches one step earlier than `ServiceContext.assemble` itself: `main.py`'s own
 log setup.** `run()` configures `service.log` before resolving config or opening the store, deliberately —
@@ -1822,8 +1848,8 @@ The order is part of the contract, because different orders return different err
 consolidator, different orders leak different amounts of the store. There are **two ladders** here, one per
 memory verb
 class. **The knowledge index's verbs are not a third ladder and are specified elsewhere**
-(`knowledge-index.md` §§8.4, 8.6): they name no rows, mint no receipts, and reach only `bounds` and
-the `knowledge_base_*` codes. Rung 0 applies to them as it does to every enveloped method.
+(`knowledge-index.md` §§8.4, 8.6): they name no rows, mint no receipts, and reach `bounds`, the
+`knowledge_base_*` codes and `store_unavailable`. Rung 0 applies to them as it does to every enveloped method.
 
 **Both ladders share rung 0: label resolution.** The envelope's `session_id` is normalized to a non-null label
 *before* rung 1 of either ladder (§"Resolution is a preamble, not a step of the method"). It has to precede
@@ -1931,6 +1957,19 @@ transition the run's stored status; expiry is a condition every reader derives f
 `plan_groups` writes `status='expired'` (`schema.md` invariant 17). An earlier draft had both rules and they
 could not both hold.
 
+**Every code declares a *disposition*, and it is `errors.py`'s field rather than each surface's
+judgement.** `refused` is Zikaron declining something it understood and naming what to do instead — a
+different value, a confirmation, a retry, a corrected config. `failed` is a condition the caller cannot
+address from the call site: `index_failed`, `schema_incompatible`, `store_unavailable`, `store_identity`.
+Everything else is `refused`. It is declared per code because two surfaces rendering one rejection must not
+disagree about whether the caller has a move, and because a new code should have to answer the question
+where it is written.
+
+**A caller branches on the code, never on wording**, which is what makes a payload field safe to fill with a
+sentence a person reads — `knowledge_base_busy.holder`, `store_unavailable.cause`. The inverse is what is
+forbidden: a distinction a caller must act on reaching it only as prose, so that rewording silently changes
+behaviour. Every such distinction gets its own code, or a declared field with a closed set of values.
+
 | Code | Name | Raised when | `data` |
 |---|---|---|---|
 | −32000 | `not_found` | `amend`/`retire` on an unknown uuid; unknown `superseded_by` target | `{uuid}` |
@@ -1949,12 +1988,14 @@ could not both hold.
 | −32021 | `index_failed` | embedding or index maintenance failed; nothing was written. Only the `index_write` stage runs inside a transaction — `prepare` raises the other three before `BEGIN` | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
 | −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook never reads the store on this, like every other failure (§"Degraded modes") |
 | −32023 | `bad_config` | **any of three sources**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`); a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration"); **or** a **derived** path — `store_dir` or `runtime_dir`, neither of which is a configuration key | `{source:'meta'\|'file'\|'derived', file, key, value, expected}` — `file` is the layer the offending key came from and is required for `source:'file'`, because with two layers "which file has the typo" is otherwise a hunt; it is absent for the other two sources, which have no file to name — the hook never reads the store on this, like every other failure |
-| −32024 | `schema_incompatible` | `meta.schema_version > 1`, the only version v0 supports (`schema.md` §"Migration posture") | `{found, supported: 1}`. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
+| −32024 | `schema_incompatible` | `meta.schema_version` above the supported range (`schema.md` §"Migration posture") | `{found, supported}`, where `supported` is the whole range rather than its maximum — a build that opens only one version and one that opens several must not send the same payload. A version inside the range but below `CURRENT_SCHEMA_VERSION` is not this error: it opens, and the service alone migrates it; below the range is `bad_config`, the row above. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
+| −32025 | `store_unavailable` | a `knowledge_*` method met a driver or OS failure `core` deliberately lets travel out unnamed (`transactions.propagate`): a full disk, a revoked permission, a corpus database that will not open | `{operation, cause}`. `cause` is **the driver's or the OS's own text** — the only payload field in this table carrying text from outside Zikaron, since it is not ours to reword, cannot be enumerated, and nothing invented at this boundary would say it better. A caller branches on the **code**; `cause` is for the person reading it. Unwrapped these reach `internal_error` with an empty payload, putting the only description in the service log |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 | −32040 | `knowledge_base_unknown` | a `knowledge_*` method named a corpus the registry has no row for | `{name}` — the **normalized** spelling, since that is what the registry stores and what `list` reports |
 | −32041 | `knowledge_base_exists` | `knowledge_add` with a name already taken, or `knowledge_rename` to one. Never an upsert: silently reconfiguring a corpus underneath whoever created it is worse than a failed call (`knowledge-index.md` §8.4) | `{name}` |
 | −32042 | `knowledge_base_busy` | `knowledge_remove` against a corpus whose build lock is held by a process this host cannot show is gone. **Not raised by `knowledge_refresh`**, which reports `already_indexing` as a per-corpus outcome instead, because a refresh meeting a live build has done what was asked (`knowledge-index.md` §8.2) | `{name, holder}` — `holder` describes the recorded lock holder, for an operator deciding whether to wait |
 | −32043 | `knowledge_confirm_required` | `knowledge_remove` without `confirm=true` | `{name, state, files_indexed, chunks}` — what would be destroyed, which is the only preview of an irreversible unlink there is. **`chunks` is `null` where the corpus cannot be read**, never `0`: a present database refused for a permission or schema reason may hold a fully built corpus, and a confident zero on the one verb nothing undoes is the worst available answer. `state` is carried for the same reason — at `error` it is what says `files_indexed: 0` describes availability rather than content (`knowledge-index.md` §8.5) |
+| −32044 | `knowledge_base_dangling` | `knowledge_unlock` against a corpus whose registry row survives and whose database is gone. Reachable only there: `knowledge_refresh` meets the same condition through `builds.plan`, which reports it as the `no_database` outcome rather than raising | `{name}` — everything that said what this corpus indexes lived in that file, so there is nothing to rebuild from and no lock to clear; the exit is to remove the name and add it again, which loses nothing |
 
 **A read has no `index_failed`, and that is deliberate rather than an omission.** The table's store-level codes
 cover the two failures a read can have an opinion about: contention is `store_busy` (retryable, and it covers
@@ -1967,6 +2008,12 @@ maintenance and a rolled-back write; inventing a `read_failed` would add a code 
 differently. The rule stated once so no read path decides it locally: **map contention, propagate everything
 else.**
 
+**That rule is the memory verbs'.** The knowledge methods deliberately differ: every one of them,
+`knowledge_search` included, is wrapped so a driver or OS failure becomes `store_unavailable` carrying
+the driver's own text. The asymmetry is the two subsystems' different readers — a memory read answers a
+model mid-turn, which can do nothing with a disk error and should see the service's own log carry it,
+while a knowledge verb also answers a person at a shell, for whom that text *is* the diagnosis.
+
 **Empty store, stated so nobody has to guess:** `search` → `[]`; `fetch` → `{records: [], missing: [...]}`;
 `surface` → prints nothing at all, no header, no empty block; `next_group` → `{done: true}`;
 `plan_groups` → a run with zero groups, immediately `complete`.
@@ -1978,9 +2025,10 @@ Non-errors worth naming: a near-duplicate is not an error; a group with no candi
 
 **A wire method is its tool's name without the leading `zikaron_`**, so the subsystem segment
 survives into it: `zikaron_memory_search` is `memory_search`, `zikaron_knowledge_search` is
-`knowledge_search`. Five methods depart from that, for two reasons, and each says why below —
-`memory_surface` and `memory_plan_groups` have no tool, the first being called by the hook and the
-second by the consolidator's own client; and the three consolidator write
+`knowledge_search`. Six methods depart from that, for two reasons, and each says why below —
+`memory_surface`, `memory_plan_groups` and `knowledge_unlock` have no tool, the first being called
+by the hook, the second by the consolidator's own client and the third by `zikaron knowledge`; and
+the three consolidator write
 verbs carry an extra `apply_` because the RPC applies a decision the tool merely names. `health` is
 the one method with no subsystem segment at all, since it speaks for the service rather than for
 either store.
@@ -2025,8 +2073,11 @@ The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `me
 
 - `knowledge_search(query, knowledge_bases, limit_per_kb)`, `knowledge_list()`,
   `knowledge_status(knowledge_base)`, `knowledge_add(...)`, `knowledge_remove(name, confirm)`,
-  `knowledge_rename(name, new_name)` and `knowledge_refresh(name, full)` — the knowledge index's
-  read path and its management verbs, specified in full by `design/knowledge-index.md` §§8.3–8.5.
+  `knowledge_rename(name, new_name)`, `knowledge_refresh(name, full)` and
+  `knowledge_unlock(knowledge_base)` — the knowledge index's read path and its management verbs,
+  specified in full by `design/knowledge-index.md` §§8.3–8.5. The last has **no tool**: clearing a
+  build lock is an operator's judgement about what else is running, so it is
+  `zikaron knowledge refresh --force-unlock`'s method and an agent's business never (§9).
   Named here because they are served by this socket and
   belong on any list of what this service answers; not described here, because one tool surface
   described in two documents is the drift this one spends its length avoiding. They read the

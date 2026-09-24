@@ -16,8 +16,10 @@ from zikaron.core.errors import ERROR_SPECS, BadConfigSource, ErrorCode, Zikaron
 from zikaron.core.store import meta
 from zikaron.core.store.embedder import Embedder, FakeEmbedder
 from zikaron.core.store.meta import StoreMeta
+from zikaron.core.store.migration import MIGRATIONS
 from zikaron.core.store.store import (
-    SUPPORTED_SCHEMA_VERSION,
+    CURRENT_SCHEMA_VERSION,
+    SUPPORTED_SCHEMA_VERSIONS,
     Store,
     _physical_vec0_width,
 )
@@ -35,14 +37,34 @@ def _default_embedder() -> FakeEmbedder:
 
 
 # ---------------------------------------------------------------------------
-# This build's schema version must agree with errors.py's own declaration, never restate it.
+# This build's schema version is declared once and checked from two other directions.
 # ---------------------------------------------------------------------------
 
 
-def test_supported_schema_version_agrees_with_errors_pys_fixed_declaration() -> None:
+def test_the_last_migration_produces_this_builds_schema_version() -> None:
+    assert MIGRATIONS[-1].to_version == CURRENT_SCHEMA_VERSION
+
+
+def test_every_version_above_the_first_is_reached_by_exactly_one_migration() -> None:
+    """The range has no gap and no step repeats one, which is what makes it walkable.
+
+    A gap would leave a store at a version `migrate` claims to support and no step produces; a
+    repeat would make the order of two steps decide the result.
+    """
+    assert [step.to_version for step in MIGRATIONS] == list(SUPPORTED_SCHEMA_VERSIONS[1:])
+
+
+def test_schema_incompatible_reports_the_whole_supported_range() -> None:
+    """`supported` is open-valued, so nothing but this asserts it is the range and not the max."""
     spec = ERROR_SPECS[ErrorCode.SCHEMA_INCOMPATIBLE]
     (supported_field,) = [f for f in spec.data_fields if f.name == "supported"]
-    assert supported_field.values == (SUPPORTED_SCHEMA_VERSION,)
+    assert supported_field.values == ()
+    error = ZikaronError(
+        ErrorCode.SCHEMA_INCOMPATIBLE,
+        found=CURRENT_SCHEMA_VERSION + 1,
+        supported=list(SUPPORTED_SCHEMA_VERSIONS),
+    )
+    assert error.data["supported"] == list(range(1, CURRENT_SCHEMA_VERSION + 1))
 
 
 async def _create_then_close(
@@ -84,7 +106,7 @@ async def test_create_close_open_round_trips(tmp_path: Path) -> None:
     embedder = _default_embedder()
 
     async with await Store.create(store_dir, config, embedder) as created:
-        assert created.meta.schema_version == SUPPORTED_SCHEMA_VERSION
+        assert created.meta.schema_version == CURRENT_SCHEMA_VERSION
         assert created.meta.embed_model == "BAAI/bge-small-en-v1.5"
         assert created.meta.embed_dim == 384
         assert created.meta.chunk_max_tokens == 450
@@ -312,6 +334,12 @@ async def test_a_missing_store_points_at_the_service_rather_than_the_installer(
     # The relation, not a phrase: any message that leads with the installer fails this, whatever
     # words surround it. Excluding one spelling would pass against every other spelling of it.
     assert expected.index("first start") < expected.index("zikaron install")
+    # **The suggested command has to be one that actually creates a store.** Every `knowledge`
+    # verb refuses a project with none, so naming one here would answer a missing store with a
+    # command that refuses for the same reason — a loop with an extra step. This went stale
+    # silently once because nothing compared the remedy to what the commands do.
+    assert "zikaron init" in expected
+    assert "zikaron knowledge" not in expected
 
 
 async def test_open_on_an_existing_db_with_no_meta_table_raises_bad_config_not_a_raw_error(
@@ -704,22 +732,47 @@ async def test_physical_vec0_width_refuses_the_whole_expected_phrase_quoted_as_a
 async def test_a_newer_schema_version_is_refused_as_schema_incompatible(tmp_path: Path) -> None:
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
+    beyond = CURRENT_SCHEMA_VERSION + 1
     async with await Store.create(store_dir, config, _default_embedder()) as created:
-        await created.connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+        await created.connection.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(beyond),)
+        )
         await created.connection.commit()
 
     with pytest.raises(ZikaronError) as excinfo:
         await Store.open(store_dir, config)
     error = excinfo.value
     assert error.code is ErrorCode.SCHEMA_INCOMPATIBLE
-    assert error.data == {"found": 2, "supported": SUPPORTED_SCHEMA_VERSION}
+    assert error.data == {"found": beyond, "supported": list(SUPPORTED_SCHEMA_VERSIONS)}
 
 
-async def test_the_supported_schema_version_itself_opens_normally(tmp_path: Path) -> None:
+async def test_a_version_beyond_the_range_is_refused_even_when_asked_to_migrate(
+    tmp_path: Path,
+) -> None:
+    """Migrating forward is not a licence to open what this build cannot read.
+
+    The gate runs before the migration, so `migrate=True` does not turn a store written by a newer
+    build into one this one will touch — which is the direction no migration exists for.
+    """
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
     async with await Store.create(store_dir, config, _default_embedder()) as created:
-        assert created.meta.schema_version == SUPPORTED_SCHEMA_VERSION
+        await created.connection.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(CURRENT_SCHEMA_VERSION + 1),),
+        )
+        await created.connection.commit()
+
+    with pytest.raises(ZikaronError) as excinfo:
+        await Store.open(store_dir, config, migrate=True)
+    assert excinfo.value.code is ErrorCode.SCHEMA_INCOMPATIBLE
+
+
+async def test_a_store_created_by_this_build_carries_this_builds_version(tmp_path: Path) -> None:
+    store_dir = tmp_path / ".zikaron"
+    config = _config(tmp_path)
+    async with await Store.create(store_dir, config, _default_embedder()) as created:
+        assert created.meta.schema_version == CURRENT_SCHEMA_VERSION
     await _open_then_close(store_dir, config)  # must not raise
 
 
@@ -871,7 +924,7 @@ async def test_opened_inode_survives_a_replacement_during_later_open_validation(
     real_validate = Store._validate_on_open
 
     async def _validate_after_replacing_the_file(
-        db: aiosqlite.Connection, cfg: EffectiveConfig
+        db: aiosqlite.Connection, cfg: EffectiveConfig, *, migrate: bool = False
     ) -> meta.StoreMeta:
         db_path = store_dir / _DB_FILENAME
         db_path.unlink()
@@ -879,7 +932,7 @@ async def test_opened_inode_survives_a_replacement_during_later_open_validation(
         assert db_path.stat().st_ino != original_inode, (
             "the replacement must actually land at a different inode for this test to mean anything"
         )
-        return await real_validate(db, cfg)
+        return await real_validate(db, cfg, migrate=migrate)
 
     monkeypatch.setattr(Store, "_validate_on_open", _validate_after_replacing_the_file)
     async with await Store.open(store_dir, config) as store:

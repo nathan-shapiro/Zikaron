@@ -55,12 +55,13 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D28 | Chunk the dense side, parameterized; FTS5 stays unchunked; `max` rollup |
 | D29 | Consolidation groups topically using retrieval as the adjacency function, mutual-K plus a cohesion pass; session grouping rejected |
 | D30 | Write policy v0 drafted, to be experimented against; six signals instrumented |
-| D31 | ~~Four~~ **Five** components: core / service / mcp / hook, plus the detached knowledge indexer (D1's amendment), over a Unix-socket JSON-RPC |
+| D31 | ~~Four~~ **Five** components: core / service / mcp / hook, plus the detached knowledge indexer (D1's amendment), over a Unix-socket JSON-RPC — **amended at M31**: the typed `zikaron` commands are clients, not store-openers, and `init` alone creates a store |
 | D32 | Two tool sets: ~~five for the primary agent~~ — **five memory verbs plus the knowledge index's seven, twelve in all** (D1's amendment) — and four for the consolidator |
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 | D34 | Two harnesses, one implementation: kiro-cli and Claude Code, differences carried as data behind one seam |
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x` with an artefact-shape rule |
+| D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back |
 
 ## Current state — resume here
 
@@ -73,8 +74,8 @@ where the most recent stands. **The operator merges; this agent does not.** Ther
 protection — operator decision, rationale in `design/distribution.md` §"The macOS job is required".
 
 **M30 is built, reviewed to APPROVED and green on both gates**: the `zikaron` umbrella (`install` /
-`knowledge` / `doctor`), the durable per-user model cache, the revision-and-digest pin with Zikaron
-owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is normative;
+`knowledge` / `doctor`, joined by `init` at M31), the durable per-user model cache, the
+revision-and-digest pin with Zikaron owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is normative;
 `design/distribution.md` §§"The front door" and "Model acquisition" are where the shipped design now
 lives. **Merged as `f18c5cb`**, all four CI jobs green on `main`, Codecov reporting.
 
@@ -192,19 +193,36 @@ would have opened, answered every query, and contained nothing. Use `Connection.
 
 ### The install path is proven end to end, on a machine that had never seen the project
 
-**Run 2026-09-24 in `ubuntu:26.04`; the record and the commands to re-derive it are in
-`research/m30-docker-end-to-end.md`.** Four things were exercised for real there for the first time:
+**Two runs, both 2026-09-24, both in `ubuntu:26.04` — one per harness.**
+
+**The Claude Code run**; the record and the commands to re-derive it are in
+`research/m30-docker-end-to-end.md`. Four things were exercised for real there for the first time:
 **`sqlite-vec` loading on a uv-managed interpreter on a foreign OS**; the `/tmp` socket fallback,
 since a container has no `$XDG_RUNTIME_DIR`; **D32's tool withholding and push suppression under a
 real Claude Code subagent** rather than a stub; and both branches of the model-cache check in one
 container.
 
-**What it did not cover.** Push and pull: no `UserPromptSubmit` gist block was captured and no search
-was called — both have run for real many times under kiro on `~/Trading/LeibaTrader`, and what has
+**What that run did not cover.** Push and pull: no `UserPromptSubmit` gist block was captured and no
+search was called — both have run for real many times under kiro on `~/Trading/LeibaTrader`, and what has
 never happened is a real Claude Code session doing either on another machine, or any *automated* run.
 macOS arm64, since the container is amd64 Linux, so the platform where `enable_load_extension` is
-reported off stays CI's alone. And memory *behaviour*, which needs a real workload rather than a
-container — operator decision.
+reported off stays CI's alone.
+
+**The kiro run completed D34's second half, so both harnesses are now installed on a foreign
+machine** — `research/kiro-container-run.md` is the record. What it established, none of it previously true:
+kiro installs from a *global* agent config with the project elsewhere; the harness creates the store
+with no `zikaron init`; **`agentSpawn` really does deliver hook output to the model**, which D18
+rests on entirely and nothing had checked; 12 MCP tools, matching D32; consolidation end to end,
+promoted `in_place` v1→v2 with a second run planning zero groups; and D15's dedup firing in
+production. It also ran memory *behaviour* under a real workload, which the Claude Code run
+deliberately did not.
+
+**Two defects only the real binary could find.** `kiro-cli agent create` writes
+`"toolsSettings": null`, and every shape guard in `install/writer.py` read `key in document` — so
+the installer refused the harness's own default output, which `kiro-cli chat` runs happily.
+`_is_unset` now treats absent and `null` alike; a wrong *type* is still refused. And **`kiro-cli
+agent validate` prints `Error:` while exiting 0**, so a relay that checks the status relays nothing
+— ours reads stderr and was observed working.
 
 ### `main` carries user-facing fixes that `0.1.0` does not
 
@@ -214,83 +232,66 @@ the release on PyPI: **`zikaron --version`** now exists (it was `unknown command
 installer, per `architecture.md` §"First run"; **`README.md` names `--harness` in the install
 command**; and README now says where `uv` itself comes from.
 
-### Next PR: the knowledge CLI becomes a thin client of the service
+### M31 — the knowledge CLI stops opening the store
 
-**Operator decision 2026-09-24, to be done once the `--version` work lands.**
-`zikaron/knowledge/main.py` opens `memory.db` directly through `zikaron/knowledge/scope.py:
-open_store`, while `zikaron/service/dispatch_knowledge.py` already serves all seven knowledge
-methods over RPC and the MCP server is already a thin client over them.
+**Built, green on `./check.sh`, and reviewed to zero blockers — the loop was stopped there by
+operator decision rather than run to a bare approval.** `design/build-plan.md` §M31 is normative for
+scope, the verbs, the RPC methods they needed, and the fence. The matrix is the PR's
+(`CLAUDE.md` §"The check gate").
 
-**The indexer shares `open_store` and keeps it** — it is the service's own detached child and the
-process that holds the model for a build — so this **splits the CLI's open from the indexer's**
-rather than rerouting the shared helper. `mcp/connection.py`'s `Store.open`, which reads
-`meta.store_id` on every connect after the first, stays too — and is what keeps §9's foreground
-refusal true, since without it an unreadable store costs the CLI the full 10 s poll and a generic
-"no server became reachable" instead of a reason. What the change deletes is the one
-**human-facing management** surface that bypasses the service — the indexer's own entry point, run
-in the foreground by an operator, stays direct.
+**`~/Trading/LeibaTrader` is pinned to this branch until it merges.** Its service runs from this
+repository's editable install, so it migrated that store to schema 2 on its next cold start —
+26,300 events, `integrity_check ok`. `main` and the published `0.1.0` declare
+`SUPPORTED_SCHEMA_VERSION = 1` and refuse anything above it, so reverting the branch strands that
+store.
 
-It buys a CLI that **bootstraps without an agent** — what a provisioning script preparing a repo
-needs — and keeps the embedder out of the CLI, which the rejected alternative (`open_store` creating
-the store itself) could not, since `Store.create` needs the artifact for the vector width. The client
-half exists: `service/lifecycle.py:connect_start_if_absent`, already wrapped with retry and identity
-by `mcp/connection.py:ServiceConnection`. **Not** `hook/connect.py`, whose `connect_once` is a
-stdlib-only re-implementation for the hook's contract, which the CLI is not under.
+Operator rule, 2026-09-24: **the CLI is a thin client of the service, and `doctor` is the single
+exemption** — any store check it grows opens the store directly, because it reports on an
+installation that may be broken in the way that stops the service starting. The indexer keeps its
+direct open and is now `scope.open_store`'s only caller.
 
-**Cost, and it is a latency question rather than a download one.** The cache is per user, so a cold
-*project* on a warm cache pays the model load and store creation; only a cold *cache* pays the
-64 MB. The socket is bound after the whole context is built, so `health()` cannot answer until the
-fetch lands and the store exists: the warm helper saw it answer **3.74 s** after the service's first
-log line in the container, the fetch at most 3.30 s of that, against
-`lifecycle._HEALTH_POLL_DEADLINE_SECONDS = 10.0` measured from spawn. It waits there; on a slower
-network the first call reports no reachable server while the service keeps fetching, and the second
-succeeds — M17's class on a surface with no degraded mode.
+**Two surfaces beyond the brief, both operator business rather than agent business.**
+`knowledge_unlock` is an RPC method with **no MCP tool**, and `refresh --wait` blocks until no
+indexer is running against a named corpus. `design/knowledge-index.md` §§8.2, 9 carry both.
 
-**The provisioning-script case has a cost of its own**: after the change, a `knowledge add` from a
-script leaves a service running until `idle_timeout`, beside the detached indexer it already leaves.
-In a `docker build` step or a CI job everything alive at step end is killed, cutting the build off
-and leaving a dead lock holder and `reindex_required`. So the script case is a live shell, or a
-foreground/`--wait` option is owed — out of this PR's scope either way.
+**Creating a store is `zikaron init`'s act alone among typed commands, and every `knowledge` verb
+refuses a project that has none — operator decisions 2026-09-24, on a measured defect.** Rationale
+and the rejected alternatives: `design/distribution.md` §"The front door". **D17's ladder is
+unchanged** and the check happens after it. **The predicate is `memory.db`, not `.zikaron/`** — the
+service creates the directory for its log before the store, so a failed first start leaves one
+without the other. **No ancestor walk binds anything**; the refusal may look upward only to *name*
+what it found.
 
-**What the PR must correct, because each states the direct open or its rationale:**
-`zikaron/knowledge/scope.py`'s module docstring (*"Requiring a service would make managing and
-building corpora depend on a harness being live"* — already untrue, since the service starts on
-demand); `design/architecture.md`'s indexer row (*"opens the store itself and never goes through
-RPC"* — **reworded, not deleted**: the indexer's own entry point run by hand is still shell-started
-and still direct); `design/overview.md:81` and `:102`; `design/knowledge-index.md:1038`
-(*"spawned by the CLI (§9) or by the service"*), §9's account of who spawns and who refuses, and
-`:2468`'s unreadable-`memory.db` row, whose two halves become one route once the CLI *is* the RPC
-path; and `zikaron/knowledge/main.py`'s module docstring.
+**A typed `--project` is `resolve()`d, never merely made absolute, and that is a correctness
+constraint rather than tidiness.** The socket is keyed on the resolved store path while identity is
+compared on the *spelling* the service was started with, so `--project ..` or a symlinked path
+starts a service the agent's own MCP server and hook then refuse with `store_identity` on every
+call until it idles out. Every other client is physical by construction through `Path.cwd()`;
+whether the harness's own `CLAUDE_PROJECT_DIR` is physical is **unmeasured**, and a symlinked one
+would reproduce the mismatch in the other direction. `design/architecture.md` §"Store identity is
+verified, not assumed" carries it, and the lasting repair — comparing resolved paths on both sides
+— is not taken here.
 
-**`_store_not_created`'s remedy is deleted rather than reworded** — but not because the condition
-goes away. It is the `connect_failure` of *every* `Store.open`, and of the three callers only
-`scope.open_store` omits the file check, so `python -m zikaron.knowledge.indexer` run by hand in a
-storeless project still reaches it. What stops existing is the *CLI's* route to it, since the service
-it now talks to creates the store; a one-line refusal suffices for the by-hand case, and
-`test_a_missing_store_points_at_the_service_rather_than_the_installer` goes with the remedy.
+**Neither supported harness exports a project directory to a shell.** `CLAUDE_PROJECT_DIR` reaches
+the hook and `zikaron-mcp`, not the terminal an agent or a person types in, and kiro names no such
+variable at all (`spec.KIRO.project_dir_variable is None`). So D17's fallback rung, not its harness
+rung, is what every CLI invocation actually resolves through — measured, with its limits, in
+`research/claude-project-dir-reaches-hooks-not-shells.md`. Re-derive by running
+`echo "${CLAUDE_PROJECT_DIR:-unset}"` in a shell the harness spawned, and by reading `spec.py`'s two
+`project_dir_variable` values.
 
-**Bundle a live kiro-cli install in a container with it** (operator decision 2026-09-24) — the
-operational half of the same change. The 2026-09-24 run covered **Claude Code only**, so half of
-D34 has never been installed on a machine that had not seen the project.
+**Three decisions taken 2026-09-24, with their rationale where it lives:** `meta.schema_version`
+becomes a range and `ClientKind` gains `CLI` — **D37**, `design/overview.md` §4; a caller branches on
+the code and never on wording — `zikaron/core/errors.py`'s module docstring; `refresh --wait` rather
+than an age-based lock lease — `design/build-plan.md` §M31.
 
-**An agent config must exist first** — kiro's hooks and `mcpServers` live inside one, and `--agent`
-refuses a path that is not a file — **and where it lives decides detection.** Stable kiro reads them
-from `.kiro/agents/` **or** `~/.kiro/agents/` (`research/kiro-cli-hooks-and-introspect.md`), and
-nothing in `install/` requires `--agent` to point inside the project. A project-local config creates
-`.kiro/` and detection sees it; a global one creates nothing in the project, so that first install
-needs `--harness kiro` exactly as Claude Code's does. Either way the shipped files put `.kiro/`
-there, so the second install detects. **Run both locations** — `--agent` pointing outside the project
-has never met the real binary.
-
-**Cases to run:** the three content cases under `--format`'s already-has-hooks rule (no `hooks`
-block, object-format present, array-format present), and **no `--agent` at all**, where
-`KiroTarget.plan_merges` returns `()` — shipped files written, nothing merged, exit **0**. Whether a
-person reading that realises nothing is live is what eyes judge and no test can.
-
-**What needs the real binary:** `kiro-cli agent validate`'s complaints relayed through the installer,
-and the consolidator model-id check. Auth is *expected* to be a browser-link flow like Claude Code's,
-so the attached-pane procedure carries over — operator report, second-hand and unverified, and
-`research/kiro-mcp-lifecycle-probe.md` is why a documented kiro behaviour is not taken on trust.
+**SQLite cannot alter a constraint in place, and the two routes that work differ sharply in cost.**
+`ALTER TABLE ... DROP/ADD CONSTRAINT` and `ALTER COLUMN` are parse errors on 3.45.1. Against
+`~/Trading/LeibaTrader` (25,836 events, the largest store) on a `VACUUM INTO` snapshot: the 12-step
+rebuild costs **~530 ms**, a `PRAGMA writable_schema` rewrite **~2 ms**, both `integrity_check ok`
+with `cli` accepted and a bogus value still refused. **M31 takes the 12-step** — the saving is once
+per store, and the fast route bypasses every validation SQLite has. Re-derive with
+`.venv/bin/python spikes/m31_check_widening.py`.
 
 **`pyproject.toml` carries `0.1.1.dev0`, and a release number is only set in the commit that gets
 tagged** — operator decision 2026-09-24. A `.dev` suffix between releases is what stops an
@@ -327,8 +328,14 @@ in the tree. What is worth carrying:
   without stating enumerated-vs-checked.** Any "closed" recorded before round 27 is unverified.
 - **A closure decays the moment the surface is edited again**, including by the round that closed
   it. An enumeration is valid only against the tree it ran on.
-- **Deletion is the only move that has ever ended a class here.** Every number this corpus
-  corrected came back stale; every one it deleted stayed dead.
+- **A fact the reader could derive is one this corpus has never kept true.** Every count and
+  enumeration restated away from the constant that determines it came back stale; every one deleted
+  outright stayed dead — *"one of ten verbs"* beside the enum that lists them adds nothing a reader
+  needs and is wrong the day an eleventh lands. **This is not a general case for deleting.** Prose
+  with readers is a graph, and removing a claim at one of its sites strands them or replaces it with
+  a pointer that can dangle. The rule is `design/coding-standards.md` §5 — *do not restate a fact
+  the reader can get from the code, a constant, or a test name*, and *state a number, a count or an
+  enumeration in one place only* — applied when the sentence is written, not by a later pass.
 
 **Findings from those audits are in `reviews/`, and the working tree is the authority on which are
 still outstanding.** `git diff HEAD` is how to tell; a list here is a second copy of state that
@@ -361,8 +368,16 @@ normative and APPROVED; M19–M25 landed. What is still open:
   `design/retrieval.md`; the editorial half is open.
 - **Q6** — **Residual staleness under D11.** The repair loop fires only when a memory surfaces, is acted on,
   and fails loudly. Silently-obsolete memories and memories that stopped surfacing are missed.
-- **Q7** — **Write discipline.** Delivery is settled (D18); content is a v0 draft (D30) with six signals
-  instrumented. Open: how much detail belongs in `content` versus `gist`.
+- **Q7** — **Write discipline, and the scope test is the live half.** Delivery is settled (D18);
+  content is a v0 draft (D30). Open: how much detail belongs in `content` versus `gist`, and —
+  sharper, from `research/kiro-container-run.md` — **whether a decision taken in conversation is in
+  scope at all.** The policy gates on *"what cost someone time to discover"* and lists six
+  retrospective bullets, then lists *"conventions and preferences that are settled but written down
+  nowhere"*, which cost nobody anything to discover. An agent made three settled design decisions
+  with Zikaron as its only persistence channel, wrote nothing, and justified it from that gate; on
+  genuinely hard-won material in the next session it wrote unprompted. That is a D1 question, not a
+  prompt-wording one: widening scope to decisions invites every passing preference in, and leaving
+  it invites the next argument to be had twice.
 - **Q8** — **Does model capacity help identifier discrimination?** Discrimination index 0.194–0.233 for all
   four models; `bge-large − bge-small` is +0.029 against a preregistered 0.15 bar. fastembed serves
   a quantized small against an unquantized large, so this compares artifacts, not capacity.
@@ -376,7 +391,11 @@ normative and APPROVED; M19–M25 landed. What is still open:
   because D21 embeds gist *and* content; push degrades, because the block shows gists only. The
   prompt now has reasons to split and none to merge — **operator decision: do not revert that on
   the strength of the 11-merges-to-0 result.** The next real test needs a journal containing a
-  genuine repeat.
+  genuine repeat. **It also happens at *write* time, which this was not framed for**
+  (`research/kiro-container-run.md`): an agent put two debugging findings and a standing convention
+  into one record, gist led with the first, and the convention is now reachable only on queries
+  shaped like the bug — in the store, and not findable by anyone who needs it. Operator reading:
+  that one is the model's judgement, against a prompt already leaning the other way.
 - **Q14** — **Preferences are collected into a store designed not to bind.** `design/retrieval.md`'s
   untrusted-reference preamble is what stops a poisoned store steering the agent, but a standing
   preference is exactly the class that wants to bind, and the write policy invites them. Three
@@ -389,8 +408,32 @@ normative and APPROVED; M19–M25 landed. What is still open:
 - **Q16** — **Recall: does the agent reach for memory unprompted?** Instrumented but unattributable — the
   `search` event records no actor and no occasion, and every agent in a session shares one id.
   Bursty, at 6–11% of turns. Under Claude Code the harness transcripts answer it externally, for
-  as long as they survive `cleanupPeriodDays`.
+  as long as they survive `cleanupPeriodDays`. **Observed once from the outside**
+  (`research/kiro-container-run.md`): on a prompt with no memory affordance in it, the agent's first
+  three actions were `memory_search`, `knowledge_list` and `knowledge_search`, each with a stated
+  purpose, and it read the empty results as *greenfield* rather than inventing content. n=1, under
+  kiro's `auto` routing, so not attributable to a model.
+- **Q17** — **Does `zikaron init` owe a connect deadline longer than the 10 s it shares with
+  `zikaron-mcp`?** It can report *no server became reachable* while the service is still fetching
+  the 64 MB artifact; a second run succeeds, because the client gives up at
+  `lifecycle._HEALTH_POLL_DEADLINE_SECONDS` (10 s) while the service keeps starting — which the
+  command now says, so what is open is the budget rather than the reporting. **`init` is the only
+  typed command that can reach this**, since every `knowledge` verb refuses a storeless project
+  before it connects and `install` and `doctor` never connect at all — so the question is now about
+  one command rather than about whichever verb a script happened to run first. A fresh CI container
+  is a cold
+  cache by definition, and `init` is what opens a provisioning sequence there. **What would close
+  it**: whether a script owes the retry, or this surface owes a longer deadline than the hook's
+  1.2 s — where a miss costs only a skipped injection, not a failed command. Measurement:
+  `design/knowledge-index.md` §9.
 
+- **Q18** — **A rejected write leaves no event, so the gist bound's cost cannot be measured.**
+  `EventKind` instruments fifteen kinds, including `version_conflict`, `no_receipt` and
+  `dedup_offered` — every other way a write is turned away. A `BOUNDS` refusal happens before
+  anything is written, so a session that made three `remember` calls recorded `remember: 1`.
+  Measured once: two of three calls lost to the 64-token gist limit (71, then 67, then 58).
+  **What would close it**: an event for a refused write, or a decision that D30's six signals do not
+  owe this one. The evidence today survives only in a harness transcript.
 ### Harness
 
 Both thin clients and the installer speak both harnesses. `.claude/` is the live crew; `.kiro/`

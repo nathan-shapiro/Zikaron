@@ -99,4 +99,4 @@ fi
 timeout 600 "$venv/pytest" -o "cache_dir=${pytest_cache_dir}" \
     --cov=zikaron/core --cov=zikaron/service --cov=zikaron/mcp \
     --cov=zikaron/hook --cov=zikaron/install --cov=zikaron/harness --cov=zikaron/knowledge \
-    --cov=zikaron/cli --cov=zikaron/doctor
+    --cov=zikaron/cli --cov=zikaron/doctor --cov=zikaron/project

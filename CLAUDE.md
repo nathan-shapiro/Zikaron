@@ -222,9 +222,10 @@ format .`, not adjusting the code by hand to satisfy it.
   round is the most expensive tool in this crew and a grep is nearly free, so a finding the grep
   would have produced is pure waste — and it is invisible from inside the loop, because every round
   still ends in a green gate and a tidy summary. Before spawning: grep every claim you changed **in
-  all of its phrasings**, not the one you just edited; re-read each changed passage together with
-  its neighbours; mutation-verify every guard added since the last round; and when a defect turns up
-  in one caller of a shared helper, audit its **other** callers for the same class.
+  all of its phrasings**, not the one you just edited; re-read every file you touched, at the scope
+  the re-reading bullet below sets; mutation-verify every guard added since the last round — by
+  running the mutation, not by describing it; and when a defect turns up in one caller of a shared
+  helper, audit its **other** callers for the same class.
   **Grep locates candidates. It does not decide coverage.** A string search only finds sentences
   that resemble the one you edited, and the sentences that go stale are the ones that *followed
   from* it, which share none of its words. The check that works: **state the change as a
@@ -275,11 +276,25 @@ format .`, not adjusting the code by hand to satisfy it.
   `.kiro/` (§Harness) is **re-rendered** through `install/assets.py`'s own function —
   `skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)` reproduces
   `skills/zikaron-consolidate/SKILL.md` byte-for-byte. Hand-typing those files is the defect there.
-  **After any edit, whatever tool made it: re-read the changed passage end to end *together with
-  the passages around it*, then grep for the *claim* you changed — not the phrasing you happened to
-  replace — across the whole corpus rather than only the file you were editing.** A matched-once
-  replacement proves you changed what you aimed at and nothing about the sentences around it, and
-  an enumeration drifts across documents rather than only within one.
+  **After any edit, grep for the *claim* you changed — not the phrasing you happened to replace —
+  across the whole corpus rather than only the file you were editing.** A matched-once replacement
+  proves you changed what you aimed at and nothing about the sentences around it, and an
+  enumeration drifts across documents rather than only within one. Re-reading is the next bullet.
+- **Re-read at a *handoff*, not after an edit — the trigger is what makes this rule work or fail.**
+  "After an edit" has no event attached to it: `Edit` answers *updated successfully*, confirming the
+  one thing never in doubt — that the string matched — while saying nothing about the sentences
+  around it, so it reads as completion and attention moves to the next item. Worse, in a list of
+  findings to apply, re-reading is not itself a finding, so it is never on the list being executed.
+  **The trigger that holds is external: before spawning a reviewer, before running the gate, and
+  before reporting work as done, re-read every file you have touched since you last did.** Whole
+  file for anything you wrote from scratch or edited more than twice; the changed passage with its
+  neighbours otherwise.
+  **Prose you composed yourself is the case that most needs this and most resists it**, because
+  reading it back confirms the intent you are still holding rather than the words on the disk — a
+  new module's own docstring can contradict the code three screens below it and survive several
+  review rounds. The same holds for a passage edited over and over, where confidence about what is
+  in it peaks and accuracy does not: successive edits to one paragraph strand sentences the topic
+  has moved past, push `Raises:` blocks into the middle of a docstring, and ravel the wrapping.
 - **Comments explain measured reasons**, not intentions — and **the code is the product, not the
   commentary.** `design/coding-standards.md` §5 is binding: *why*, never *what*, and a comment must
   earn its place against the cost of being wrong later.
@@ -335,7 +350,7 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
   - **Crew skills** — `skills/self-review/SKILL.md`, the kiro mirror of `.claude/skills/`.
     **Editable**, on the same terms as the crew configs, and worth keeping in step with its twin.
   - **`settings/lsp.json`** — gitignored, machine-local. Leave alone.
-- **Both clients and the installer speak both harnesses.** The two thin clients read trigger
+- **The clients and the installer all speak both harnesses.** The MCP server and the hook read trigger
   names, session variables, output channels and injection budgets through `zikaron/harness/` —
   the one seam, stdlib-only, where a harness difference is allowed to live. Add a harness difference
   *there*, **as data**, never as a branch downstream of it. The installer writes either

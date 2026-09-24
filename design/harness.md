@@ -138,10 +138,13 @@ inherited variables now include `CLAUDE_PROJECT_DIR`, and it names a directory t
 lore, silently. Before the amendment its MCP client keyed the correct inner store through
 `Path.cwd()`, so this is a regression the amendment introduces rather than an existing hazard it
 inherits, and it is durable memory rather than a lost push. The hook half is partly guarded by the
-payload-versus-environment tripwire below; the MCP write path is not. **This is not exotic here:**
-`pytest -m integration_kiro` run from inside a Claude Code session is exactly the scenario,
-protected in the suite only by `conftest._no_inherited_harness_environment`, and by nothing at all
-when a human runs kiro by hand. **The recorded remedy repairs the hook only, and that is the half
+payload-versus-environment tripwire below; the MCP write path is not. **The suite's own exposure to
+it was measured and is not there in this Claude Code version:** `CLAUDE_PROJECT_DIR` is exported to
+hooks and *not* to the agent's shell, so `pytest -m integration_kiro` run from a Claude Code session
+inherits no such value (`research/claude-project-dir-reaches-hooks-not-shells.md`).
+`conftest._no_inherited_harness_environment` deletes it anyway, which costs nothing and stays
+correct if a future version exports it. The hazard itself is unchanged for any process that *does*
+inherit the variable, and nothing guards a human running kiro by hand inside another session. **The recorded remedy repairs the hook only, and that is the half
 already guarded.** `detect.py` records it precisely: the hook holds its payload's own `session_id`,
 so it can select whichever harness's variable actually equals that and detect by agreement. Note
 what this is *not* — agreement between the marker and the session variable would not discriminate
@@ -461,8 +464,8 @@ the bound does the real work and the file is a backstop, not a plan.
 ## The installer's two targets
 
 **The installer is the one place a harness difference may take a different *shape* rather than a different
-value.** Everywhere else — both thin clients — the difference is data in `zikaron/harness/spec.py`, because
-forking doubles every future change to two components the design keeps deliberately thin. The installer
+value.** Everywhere else — every client — the difference is data in `zikaron/harness/spec.py`, because
+forking doubles every future change to components the design keeps deliberately thin. The installer
 cannot be written that way and the reason is structural rather than a concession: kiro's artefacts are
 **one** file whose path the *user* supplies, and Claude Code's are **four** files at paths the *project*
 fixes. That is not two values of one parameter. So `main.py`'s flow, preflight order, collision policy and

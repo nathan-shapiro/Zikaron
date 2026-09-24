@@ -15,9 +15,10 @@ from uuid import UUID
 
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 
-#: The `meta` row key naming the schema this build's tables and invariants implement. Compared
-#: against `zikaron.core.errors.ERROR_SPECS[SCHEMA_INCOMPATIBLE].data_fields`'s fixed `supported`
-#: value by a test, so this module's schema version is never a second, driftable statement of it.
+#: The `meta` row key naming the schema a store records. What this build *supports* is a range
+#: (`store.SUPPORTED_SCHEMA_VERSIONS`, `schema.md` §"Migration posture"), and
+#: `ERROR_SPECS[SCHEMA_INCOMPATIBLE]`'s `supported` field carries the whole of it rather than a
+#: fixed value — `test_store.py` holds the two against each other, so neither drifts alone.
 SCHEMA_VERSION_KEY: Final = "schema_version"
 STORE_ID_KEY: Final = "store_id"
 EMBED_MODEL_KEY: Final = "embed_model"
