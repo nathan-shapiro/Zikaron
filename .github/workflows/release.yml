@@ -81,6 +81,12 @@ jobs:
           name: dist
           path: dist/
 
-      # Pinned to a commit rather than `@release/v1`, which is a branch and moves. The project's own
-      # moving-ref rule applies hardest to the one action that will hold a publishing credential.
-      - uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2
+      # **A release tag, not a commit sha, and that is forced rather than preferred.** This is a
+      # *Docker* action: GitHub turns whatever is pinned here into a container image tag, so a sha
+      # resolves to `ghcr.io/pypa/gh-action-pypi-publish:<sha>`, which does not exist — pypa publish
+      # images by release version. Measured against the registry: `:v1.14.2` and `:release-v1` exist,
+      # the sha does not. A sha pin is right for a JavaScript action and simply does not resolve for
+      # this kind, which the first release discovered after a successful build.
+      # `@release/v1` is what pypa's own docs recommend and is a branch that moves, which the
+      # moving-ref guard rejects — hardest, deliberately, for the one action holding a credential.
+      - uses: pypa/gh-action-pypi-publish@v1.14.2

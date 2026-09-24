@@ -76,10 +76,12 @@ protection — operator decision, rationale in `design/distribution.md` §"The m
 `knowledge` / `doctor`), the durable per-user model cache, the revision-and-digest pin with Zikaron
 owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is normative;
 `design/distribution.md` §§"The front door" and "Model acquisition" are where the shipped design now
-lives. **Not landed** — no branch, no commit, no PR.
+lives. **Merged as `f18c5cb`**, all four CI jobs green on `main`, Codecov reporting.
 
-**Owed to the operator before a release can happen**, none of it doable from here: the first PyPI
-upload, which is what creates the project and converts the pending publisher. The PyPI publisher and
+**The first PyPI upload has not happened**, so `zikaron` is still unregistered and `0.1.0` unspent.
+The `v0.1.0` release fired `release.yml`, whose build succeeded and whose publish failed before
+authenticating: `pypa/gh-action-pypi-publish` is a **Docker** action, so a commit-sha pin resolves to
+a container image tag nobody publishes. **Trusted publishing is therefore still untested.** The PyPI publisher and
 the `release` GitHub environment are done — the environment carries **no protection rules**, so a
 published GitHub Release goes straight to PyPI with no approval step. `CODECOV_TOKEN` is set.
 `research/m30-operator-setup.md` has the procedure and its own evidence gaps.
@@ -96,9 +98,11 @@ onto a digest. The exemption is narrowed by a positive check — every hex run i
 **Operator decisions 2026-09-23.** Releases go out by **PyPI trusted publishing** from a
 release-triggered workflow, never an API token in a secret. **Coverage is published to Codecov**,
 because the only honest alternatives are a live service or no badge at all: a percentage typed into
-`README.md` is the stale-number class this corpus has a standing rule to delete. **Every badge must
-derive its value from a source of truth rather than state one**, which is the rule that governs the
-next one somebody wants to add.
+`README.md` is the stale-number class this corpus has a standing rule to delete. **A badge that
+carries a measured value must derive it rather than state it** — that is what governs the next one
+somebody wants to add. **A badge that merely names a tool need not**: the `ruff` and `mypy` ones are
+static claims that nothing asserts, kept deliberately (operator decision) on the grounds that not
+every claim earns a guard.
 
 **The pinned artefact's digests are checked when bytes arrive from the network, never on a warm
 start — operator decision 2026-09-23, taken on a measurement.** Hashing the five files costs

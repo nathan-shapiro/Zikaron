@@ -1,0 +1,31 @@
+# Dependabot opens pull requests and nothing else: it cannot merge, holds no credential, and every
+# PR it raises goes through the same four `check.yml` jobs and the same review as any other. That is
+# the whole reason it is here — a pinned version is only as good as somebody noticing it has moved,
+# and the alternative to noticing is a floating ref that changes what runs without a commit.
+#
+# **Two ecosystems on deliberately different cadences, because the two kinds of pin fail
+# differently.** A stale *action* pin fails at release time, in front of whoever is releasing, and
+# reaches no user — the first `v0.1.0` attempt is the worked example. A stale *runtime* pin ships to
+# users, so bumping one is a real change: a full `check-matrix.sh` run, and usually a review round.
+# Weekly is right for the first and noise for the second.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One PR for the lot rather than four. These move together often enough that separate PRs
+      # would mean four matrix runs to learn one thing.
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    # **Ungrouped, deliberately.** `coding-standards.md` §6 pins every direct dependency exactly, and
+    # each bump is judged on its own evidence — `fastembed` moving is a different question from
+    # `ruff` moving, and a grouped PR would force one verdict on both.
+    open-pull-requests-limit: 3
