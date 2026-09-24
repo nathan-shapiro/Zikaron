@@ -194,7 +194,7 @@ jobs:
         # step exists.
         if: always()
         run: .venv/bin/python -m coverage xml
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         if: always()
         with:
           files: coverage.xml
@@ -291,7 +291,7 @@ jobs:
         # Merged with the linux jobs' — see the reasoning there.
         if: always()
         run: .venv/bin/python -m coverage xml
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         if: always()
         with:
           files: coverage.xml
