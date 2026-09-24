@@ -18,9 +18,10 @@ what was delivered. Nothing here is under a cap, so every shape is built field b
 what makes a renamed field a type error rather than a `KeyError` in front of a model.
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from zikaron.core.knowledge import reporting
+from zikaron.core.knowledge import lock, reporting
 from zikaron.core.knowledge.builds import PlannedBuild
 from zikaron.service.serialize import RpcResult
 
@@ -114,16 +115,23 @@ class OrphanJson:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeListResult(RpcResult):
-    """`knowledge_list`'s shape: `{knowledge_bases}`, each projected down to the choosing fields."""
+    """`knowledge_list`'s shape: `{knowledge_bases, orphans}`.
+
+    Each corpus is projected down to the choosing fields, which is the difference from `status`.
+    `orphans` is carried at full detail in both, because an orphan has no projection to make: it is
+    a file nothing refers to, and what `OrphanJson` carries is all a reader gets either way.
+    """
 
     reports: tuple[reporting.Status, ...]
+    orphans: tuple[reporting.Orphan, ...]
 
     def as_json(self) -> dict[str, object]:
         return {
             "knowledge_bases": [
                 KnowledgeBaseJson(status=report, detailed=False).as_json()
                 for report in self.reports
-            ]
+            ],
+            "orphans": [OrphanJson(orphan=one).as_json() for one in self.orphans],
         }
 
 
@@ -148,7 +156,7 @@ class KnowledgeStatusResult(RpcResult):
         }
 
 
-def _build_entry(entry: PlannedBuild) -> dict[str, object]:
+def _build_entry(entry: PlannedBuild, argv: Sequence[str] | None) -> dict[str, object]:
     """One corpus's line in a build result: what it is, and what this call did about it.
 
     `started` is read off the absence of an obstacle rather than from a record of which spawns
@@ -156,10 +164,23 @@ def _build_entry(entry: PlannedBuild) -> dict[str, object]:
     this function after a failed spawn. What that does *not* claim is that a sweep is atomic — the
     corpora ahead of the failure have live indexers against them, and they keep running. It claims
     only that no entry reporting `started` describes a corpus whose spawn was never made.
+
+    `foreground_command` is the argv the spawn **reported**, never a second construction of it. A
+    detached build's output is discarded, so running that identical command in the foreground is
+    the only way to recover why one failed — and a command that merely resembles what ran would
+    answer a different question than the one being asked.
+
+    `reason` is the sentence behind an `outcome` that is not `started`, and it is for a person:
+    `outcome` is the closed set anything automated keys on, so rewording this changes no
+    behaviour. It is what carries the specifics that make an obstacle actionable — *which* root is
+    gone, *who* holds the lock — none of which the `list` projection beside it has room for, and
+    for `unreadable` it is the driver's own exception rather than a sentence invented for it.
     """
     payload = KnowledgeBaseJson(status=entry.status, detailed=False).as_json()
     obstacle = entry.obstacle
     payload["outcome"] = "started" if obstacle is None else obstacle.value
+    payload["foreground_command"] = None if argv is None else list(argv)
+    payload["reason"] = None if entry.refusal is None else str(entry.refusal)
     return payload
 
 
@@ -181,19 +202,33 @@ class KnowledgeBuildResult(RpcResult):
     `git_mode_effective` answers a different question, *what the last completed build used*, and
     for a corpus created a moment ago that is `null` until one finishes. One name for two subjects
     across two calls is the seam this avoids.
+
+    `database_path` is `add`'s too, and absent for a refresh, whose corpora all have one already.
+
+    `spawned` maps a corpus's name to the argv its indexer was actually started with, and carries
+    only those this call started. It is keyed by name rather than positional because a sweep's
+    planned entries and its spawns are not the same list — an obstacle produces an entry and no
+    spawn.
     """
 
     planned: tuple[PlannedBuild, ...]
+    spawned: Mapping[str, Sequence[str]]
     git_modes: tuple[str, str] | None = None
+    database_path: str | None = None
 
     def as_json(self) -> dict[str, object]:
         payload: dict[str, object] = {
-            "knowledge_bases": [_build_entry(entry) for entry in self.planned]
+            "knowledge_bases": [
+                _build_entry(entry, self.spawned.get(entry.knowledge_base.name))
+                for entry in self.planned
+            ]
         }
         if self.git_modes is not None:
             requested, effective = self.git_modes
             payload["requested_git_mode"] = requested
             payload["effective_git_mode"] = effective
+        if self.database_path is not None:
+            payload["database_path"] = self.database_path
         return payload
 
 
@@ -235,4 +270,31 @@ class KnowledgeRemoveResult(RpcResult):
             "removed": True,
             "knowledge_bases": [KnowledgeBaseJson(status=self.status, detailed=True).as_json()],
             "files_unlinked": list(self.files_unlinked),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeUnlockResult(RpcResult):
+    """`knowledge_unlock`'s shape: `{cleared}` — the lock holder removed, or `null`.
+
+    `null` is not a failure: no lock recorded is the state the caller asked for, reached without
+    this call acting. Returning the holder rather than a count is what distinguishes the two.
+
+    The fields are `status`'s own for the same holder, minus `age_seconds` and `live`, which
+    describe a lock that is still there. **No rendered sentence travels with them** — a caller
+    wanting one builds `lock.LockHolder` from these three and calls `describe`, so there is one
+    wording rather than one here and one at each surface that prints it.
+    """
+
+    cleared: lock.LockHolder | None
+
+    def as_json(self) -> dict[str, object]:
+        if self.cleared is None:
+            return {"cleared": None}
+        return {
+            "cleared": {
+                "pid": self.cleared.pid,
+                "host": self.cleared.host,
+                "started_at": self.cleared.started_at,
+            }
         }

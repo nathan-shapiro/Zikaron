@@ -15,9 +15,10 @@ from typing import Final
 from zikaron.doctor.checks import Finding, Outcome, run_all
 from zikaron.harness import detect
 
-#: Unlike `install` and `knowledge`, this command has no `python -m` form: it is new with the
-#: umbrella, so there is no documented invocation predating it to keep working, and a package
-#: needs a `__main__.py` to have one at all.
+#: This command has no `python -m` form, and a package needs a `__main__.py` to have one at all.
+#: `install` and `knowledge` keep theirs from before the umbrella; `init` has one because the
+#: storeless-project refusal picks its suggestion from how the caller was invoked, so it must have
+#: something to name a reader whose source checkout puts no console script on `PATH`.
 _DEFAULT_PROG: Final = "zikaron doctor"
 
 

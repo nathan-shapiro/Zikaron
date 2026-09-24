@@ -1,4 +1,4 @@
-"""Method dispatch for the knowledge index: search, and the six management verbs.
+"""Method dispatch for the knowledge index: search, and the management verbs.
 
 In its own module rather than in `dispatch.py` because it is a different subsystem rather than
 more primary-agent verbs: it reads the knowledge-base registry and each corpus's own database, and
@@ -9,8 +9,8 @@ shape in this service is a dataclass whose `as_json` builds the object field by 
 what keeps a renamed field a type error rather than a `KeyError`. Search cannot be: its byte cap is
 enforced by measuring the encoded answer, so the object that is measured and the object that is
 sent have to be the same one — and building it twice is exactly how the measurement comes to
-describe something other than what was delivered. Nothing else here is under a cap, so the six
-management verbs do build their shapes field by field, in `serialize_knowledge.py`.
+describe something other than what was delivered. Nothing else here is under a cap, so every
+management verb does build its shape field by field, in `serialize_knowledge.py`.
 
 **A knowledge-base refusal is translated to a wire code here, on the exception's type.** `core`
 raises one class per refusal and gives none of them a numeric code, deliberately: those classes
@@ -19,6 +19,18 @@ boundary where they become something a client can branch on, and it branches on 
 that a message may be reworded without silently changing which code a caller sees. Left
 untranslated they would reach `server.py`'s `except Exception:` fallback and arrive as *internal
 error* — indistinguishable, to a model, from a bug in the service.
+
+**A driver or OS failure is named here too, and it is the other half of that.** A refusal is this
+system declining something it understood; a full disk or a database that will not open is neither
+understood nor anything the caller can resend differently. `core` lets those travel out as the
+driver's own exception, so the method table wraps every handler to give them `store_unavailable`
+and carry the driver's text as `cause` — the one payload field in this system holding text that
+did not originate here, and so the one that is not ours to reword.
+
+**`knowledge_unlock` is served here and is deliberately not an MCP tool.** Clearing a build lock is
+a judgement about what else is running on a machine, which `lifecycle.unlock` states is the
+operator's; an agent meeting a held lock is meant to wait or report it, not to decide the holder is
+dead. So the method exists for `zikaron knowledge` and D32's tool count is unchanged.
 
 **A build is spawned, never run here.** The service is the process a user is waiting on; a build is
 minutes of saturated CPU over a whole directory tree. `add` and `refresh` start a detached indexer
@@ -36,6 +48,7 @@ import aiosqlite
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import builds, groups, lifecycle, registry, reporting, state
 from zikaron.core.knowledge.errors import (
+    DanglingKnowledgeBaseError,
     DuplicateNameError,
     IndexerBusyError,
     InvalidNameError,
@@ -65,6 +78,7 @@ from zikaron.service.serialize_knowledge import (
     KnowledgeRemoveResult,
     KnowledgeRenameResult,
     KnowledgeStatusResult,
+    KnowledgeUnlockResult,
 )
 
 #: What `limit_per_kb` means when a caller does not say. Stated here as well as in the tool's own
@@ -151,18 +165,17 @@ def _translated(
     """The wire error one knowledge-base refusal becomes, or `None` for one that has no code.
 
     Split on the line the design's own mapping table draws: `_as_bounds` holds the rejections of a
-    supplied *value*, and this holds the three that are statements about a *corpus* — it does not
-    exist, one by that name already does, or a build is holding it.
+    supplied *value*, and this holds those that are statements about a *corpus* — it does not
+    exist, one by that name already does, a build is holding it, or its database is gone.
 
-    **Every payload value comes from the exception's own field rather than from its message.** A
-    `holder`, a `path` and a size cap are values a client reads, and filling one from `str(error)`
-    would put a whole sentence there — after which the message could no longer be reworded, since
-    it would have become the contract this translation exists to keep stable.
+    **Every payload value a caller might act on comes from the exception's own field.** A `path`
+    and a size cap are values a client reads, and deriving one by parsing `str(error)` would make
+    the wording the contract this translation exists to keep stable. A sentence a person reads is
+    rendered from those same fields — `holder` is one — and is not parsed by anything.
 
     **An unmapped class — or a mapped one refusing a value this call never sent — returns `None`
-    and is propagated unchanged rather than given a nearby code.** The classes these verbs can
-    actually raise are the six across both functions; anything else reaching here is a defect in
-    this translation or in `core`, and so is a refusal about a name the caller did not supply.
+    and is propagated unchanged rather than given a nearby code.** Anything reaching that point is
+    a defect in this translation or in `core`, or a refusal about a name the caller did not supply.
     Answering either with a plausible-looking refusal would hide a defect behind an error a caller
     would act on.
     """
@@ -179,6 +192,8 @@ def _translated(
             name=_reported_name(name),
             holder=error.holder.describe(),
         )
+    if isinstance(error, DanglingKnowledgeBaseError):
+        return ZikaronError(ErrorCode.KNOWLEDGE_BASE_DANGLING, name=_reported_name(name))
     return None
 
 
@@ -241,10 +256,15 @@ async def knowledge_list(
     envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
     params: dict[str, object],  # noqa: ARG001 — this method takes none; the table's shape passes one.
 ) -> KnowledgeListResult:
-    """`knowledge_list() -> {knowledge_bases}` — every corpus, projected down to the choosing
-    fields."""
+    """`knowledge_list() -> {knowledge_bases, orphans}` — every corpus, projected down to the
+    choosing fields, and every index file no corpus refers to.
+
+    `list_bases` gathers orphans either way, so withholding them here would have been a caller
+    reading `knowledge_bases: []` in a directory holding index files and concluding there was
+    nothing there.
+    """
     listing = await reporting.list_bases(ctx.store_directory, db, ctx.config)
-    return KnowledgeListResult(reports=listing.knowledge_bases)
+    return KnowledgeListResult(reports=listing.knowledge_bases, orphans=listing.orphans)
 
 
 async def knowledge_status(
@@ -306,12 +326,22 @@ def _corpus_root(ctx: ServiceContext, supplied: str) -> Path:
     return paths.scope_of(ctx.store_directory) / root
 
 
-def _spawn(ctx: ServiceContext, planned: Sequence[builds.PlannedBuild], *, full: bool) -> None:
-    """Start a detached indexer for every corpus nothing stops, and return without waiting."""
+def _spawn(
+    ctx: ServiceContext, planned: Sequence[builds.PlannedBuild], *, full: bool
+) -> dict[str, list[str]]:
+    """Start a detached indexer for every corpus nothing stops, and return without waiting.
+
+    Returns each started corpus's argv as the spawn reported it, so the result can carry the
+    command that reproduces a build in the foreground without constructing one a second time.
+    """
     project = paths.scope_of(ctx.store_directory)
-    for entry in planned:
-        if entry.may_start:
-            detach.spawn(entry.knowledge_base.name, project=project, full=full)
+    return {
+        entry.knowledge_base.name: detach.spawn(
+            entry.knowledge_base.name, project=project, full=full
+        )
+        for entry in planned
+        if entry.may_start
+    }
 
 
 async def knowledge_add(
@@ -341,10 +371,11 @@ async def knowledge_add(
     planned = await builds.plan(
         ctx.store_directory, db, ctx.config, names=[created.knowledge_base.name]
     )
-    _spawn(ctx, planned, full=False)
     return KnowledgeBuildResult(
         planned=planned,
+        spawned=_spawn(ctx, planned, full=False),
         git_modes=(created.git_mode.value, created.git_mode_effective.value),
+        database_path=str(created.database_path),
     )
 
 
@@ -371,8 +402,26 @@ async def knowledge_refresh(
         planned = await builds.plan(
             ctx.store_directory, db, ctx.config, names=None if name is None else [name]
         )
-    _spawn(ctx, planned, full=full)
-    return KnowledgeBuildResult(planned=planned)
+    return KnowledgeBuildResult(planned=planned, spawned=_spawn(ctx, planned, full=full))
+
+
+async def knowledge_unlock(
+    db: aiosqlite.Connection,
+    ctx: ServiceContext,
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    params: dict[str, object],
+) -> KnowledgeUnlockResult:
+    """`knowledge_unlock(knowledge_base) -> {cleared}` — clear a build lock nothing else will.
+
+    Its own method rather than a parameter on `knowledge_refresh`: clearing a lock and building an
+    index fail in different ways, and a refusal to clear must not read as a refusal to build. The
+    name is required here, where `knowledge_refresh`'s is optional — there is no sweep form of
+    *clear every lock*, which would be a way to unlock a corpus somebody is still building.
+    """
+    name = require_str(params, "knowledge_base")
+    with _refusals_as_wire_errors(supplied={"knowledge_base": name}):
+        cleared = await lifecycle.unlock(ctx.store_directory, db, name=name)
+    return KnowledgeUnlockResult(cleared=cleared)
 
 
 async def knowledge_rename(
@@ -455,15 +504,49 @@ def _destroyable_chunks(found: reporting.Status) -> int | None:
     return None if found.summary.state is state.KnowledgeState.ERROR else 0
 
 
+def _naming_the_store(method: str, handler: Handler) -> Handler:
+    """Give a driver or OS failure a wire code, so its reason reaches the caller.
+
+    A full disk, a revoked permission or a database that will not open is not a refusal — nothing
+    the caller sends differently fixes it — and `core` deliberately lets these travel out as the
+    driver's own exception (`transactions.propagate`). Unwrapped they reach `server.py`'s
+    `except Exception` and become `internal_error` with an empty payload, putting the only
+    description of what happened in the service log, which is not where the caller is looking.
+
+    **The two classes caught are the whole of it, and widening is wrong rather than generous.**
+    Anything else arriving here is a defect in this service — a closed connection raises
+    `ValueError`, not `aiosqlite.Error` — and `internal_error` is the honest answer for a defect.
+    """
+
+    async def named(
+        db: aiosqlite.Connection,
+        ctx: ServiceContext,
+        envelope: ResolvedEnvelope,
+        params: dict[str, object],
+    ) -> RpcResult:
+        try:
+            return await handler(db, ctx, envelope, params)
+        except (aiosqlite.Error, OSError) as error:
+            raise ZikaronError(
+                ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error)
+            ) from error
+
+    return named
+
+
 #: The knowledge methods this module handles, by wire name. `server.py` merges this table with the
 #: primary and consolidator ones. Every one of them is a primary-agent method: a consolidator has
 #: no use for a corpus of files, and D32's split is what keeps them out of that mode entirely.
 KNOWLEDGE_METHODS: dict[str, Handler] = {
-    "knowledge_search": knowledge_search,
-    "knowledge_list": knowledge_list,
-    "knowledge_status": knowledge_status,
-    "knowledge_add": knowledge_add,
-    "knowledge_remove": knowledge_remove,
-    "knowledge_rename": knowledge_rename,
-    "knowledge_refresh": knowledge_refresh,
+    method: _naming_the_store(method, handler)
+    for method, handler in (
+        ("knowledge_search", knowledge_search),
+        ("knowledge_list", knowledge_list),
+        ("knowledge_status", knowledge_status),
+        ("knowledge_add", knowledge_add),
+        ("knowledge_remove", knowledge_remove),
+        ("knowledge_rename", knowledge_rename),
+        ("knowledge_refresh", knowledge_refresh),
+        ("knowledge_unlock", knowledge_unlock),
+    )
 }

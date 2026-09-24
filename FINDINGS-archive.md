@@ -3250,6 +3250,15 @@ Plan:
 
 
 ## References
+- **The CLI became a thin client, and the schema learned to move** —
+  `reviews/m31-cli-thin-client-review.md`. M31's review trail.
+- **kiro installed and driven on a foreign machine** — `research/kiro-container-run.md`. The
+  2026-09-24 container run that completed D34's second half: the installer against the config kiro
+  itself writes, `agentSpawn` proven to reach the model, 12 tools, consolidation end to end, and
+  the first behavioural evidence about the write policy under a real coding agent.
+- **`CLAUDE_PROJECT_DIR` reaches hooks, not shells** —
+  `research/claude-project-dir-reaches-hooks-not-shells.md`. Why D17's fallback rung is what every
+  typed command resolves through, with the limits of an n=1 measurement stated.
 - **The published artefact installed end to end** — `research/m30-docker-end-to-end.md`. The
   2026-09-24 `ubuntu:26.04` run: cold OS to working session against PyPI, with the commands to
   re-derive it. Holds what only a foreign cold machine could show — `--managed-python` refusing a
@@ -6183,3 +6192,32 @@ landed 2026-08-16, APPROVED after five rounds; its dogfooding evidence is
 `research/claude-code-dogfood-checkpoint.md`. M15 (the installer adapter) landed 2026-08-16,
 APPROVED after six rounds; what it built and what its rounds taught is in `FINDINGS-archive.md`
 §"M15 as built" — history, not a starting point.
+
+## The kiro container install, as planned (moved out of FINDINGS 2026-09-24)
+
+Run 2026-09-24; the record is `research/kiro-container-run.md`. This is the plan it was run
+against, kept because it names the cases and why each was chosen.
+
+
+**Operator decision 2026-09-24**, and separate from M31. The 2026-09-24 run covered **Claude Code
+only**, so half of D34 has never been installed on a machine that had not seen the project.
+
+**An agent config must exist first** — kiro's hooks and `mcpServers` live inside one, and `--agent`
+refuses a path that is not a file — **and where it lives decides detection.** Stable kiro reads them
+from `.kiro/agents/` **or** `~/.kiro/agents/` (`research/kiro-cli-hooks-and-introspect.md`), and
+nothing in `install/` requires `--agent` to point inside the project. A project-local config creates
+`.kiro/` and detection sees it; a global one creates nothing in the project, so that first install
+needs `--harness kiro` exactly as Claude Code's does. Either way the shipped files put `.kiro/`
+there, so the second install detects. **Run both locations** — `--agent` pointing outside the project
+has never met the real binary.
+
+**Cases to run:** the three content cases under `--format`'s already-has-hooks rule (no `hooks`
+block, object-format present, array-format present), and **no `--agent` at all**, where
+`KiroTarget.plan_merges` returns `()` — shipped files written, nothing merged, exit **0**. Whether a
+person reading that realises nothing is live is what eyes judge and no test can.
+
+**What needs the real binary:** `kiro-cli agent validate`'s complaints relayed through the installer,
+and the consolidator model-id check. Auth is *expected* to be a browser-link flow like Claude Code's,
+so the attached-pane procedure carries over — operator report, second-hand and unverified, and
+`research/kiro-mcp-lifecycle-probe.md` is why a documented kiro behaviour is not taken on trust.
+

@@ -182,22 +182,33 @@ class HarnessSpec(NamedTuple):
         client does not have — so the MCP half has a named cost and no named repair. This
         function is deliberately not the place to invent one.
 
-        **When a value *is* refused, the two clients diverge again**, because they fall back to
+        **When a value *is* refused, the clients diverge again**, because they fall back to
         different inputs — the hook to the harness's wandering payload `cwd`, the MCP client to its
-        fixed spawn cwd. So the refusal is safe for the store's *location* and not for the two
-        clients' *agreement*, in exactly the pathological case (a deleted project directory, a
-        container boundary) where nobody is watching.
+        fixed spawn cwd, `zikaron knowledge` to whichever directory the command was typed in. So
+        the refusal is safe for the store's *location* and not for the clients' *agreement*, in
+        exactly the pathological case (a deleted project directory, a container boundary) where
+        nobody is watching.
+        """
+        return self.named_project_dir() or fallback
+
+    def named_project_dir(self) -> Path | None:
+        """This harness's exported project directory, or `None` where there is no usable one.
+
+        One predicate rather than two, so a caller that needs to know *whether the variable
+        answered* cannot disagree with `store_scope_dir` about it — comparing the resolved
+        directory against the fallback is not that question, since a variable naming exactly the
+        fallback answers while looking as though it did not.
         """
         if self.project_dir_variable is None:
-            return fallback
+            return None
         named = os.environ.get(self.project_dir_variable)
         if not named:
-            return fallback
+            return None
         candidate = Path(named)
         # Absolute as well as existing: a *relative* value would be resolved against each
         # client's own process cwd, which is precisely the pair of different directories this
         # function exists to collapse. The harness sets an absolute path; this costs one call.
-        return candidate if candidate.is_absolute() and candidate.is_dir() else fallback
+        return candidate if candidate.is_absolute() and candidate.is_dir() else None
 
 
 #: Kiro states `max_output_size` explicitly in every object-format hook entry, so the budget here is

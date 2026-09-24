@@ -57,3 +57,26 @@ async def open_context(tmp_path: Path, overrides: str = "") -> AsyncIterator[Ser
             supersession_max_depth=cfg.get_int("supersession_max_depth"),
             activity=ActivityTracker(last_activity=time.monotonic()),
         )
+
+
+@asynccontextmanager
+async def context_over(store_dir: Path, config_source: Path) -> AsyncIterator[ServiceContext]:
+    """A `ServiceContext` over a store that **already exists**, for a caller that made it itself.
+
+    `open_context` creates one; this opens one, which is what a test driving a surface through its
+    own entry point needs — that surface is the thing under test and has already put a store where
+    it expects to find it.
+    """
+    cfg = resolve(config_source / "system.toml", config_source / "project.toml")
+    encoder = FakeEncoder()
+    async with await Store.open(store_dir, cfg) as store:
+        yield ServiceContext(
+            store=store,
+            config=cfg,
+            encoder=encoder,
+            index=IndexingContext.for_store(store, cfg, encoder),
+            retrieval=RetrievalSettings.from_config(cfg),
+            consolidation=ConsolidationSettings.from_config(cfg),
+            supersession_max_depth=cfg.get_int("supersession_max_depth"),
+            activity=ActivityTracker(last_activity=time.monotonic()),
+        )

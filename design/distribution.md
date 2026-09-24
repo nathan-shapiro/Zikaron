@@ -116,7 +116,7 @@ the corpus had written that rule down one round before breaking it again.)*
 
 **Why install-time only, never at call time.** `uv run`/`uvx` cost **+20 ms per invocation** (probe note
 §7), and `zikaron-hook` runs once per user message. That budget is the one this design has repeatedly
-paid to protect: D31 kept the thin clients **stdlib-only** on measured interpreter cost — 10.9 ms bare,
+paid to protect: D31 kept the hook **stdlib-only** on measured interpreter cost — 10.9 ms bare,
 20.6 ms with `socket` and `json`, 21.8 ms adding `sqlite3` — on the argument that an HTTP client in the
 hook would spend more than the transport saves. *(An earlier draft of this sentence said D31 made that
 choice "for 11 ms". D31 states no such figure; 11 was this document subtracting two of its numbers and
@@ -133,11 +133,28 @@ load-bearing, since a distribution build loads the system `libsqlite3.so` and so
 
 ### The front door
 
-**One `zikaron` console script, with `install`, `knowledge` and `doctor`.** Before M30 both of the
-first two were reachable only as `python -m zikaron.<x>`, which under the recommended acquisition is
-not reachable at all: `uv tool install` puts a package's console scripts on `PATH` and never the tool
-virtualenv's interpreter, so using them meant finding
+**One `zikaron` console script, with `init`, `install`, `knowledge` and `doctor`.** Before M30
+`install` and `knowledge` were reachable only as `python -m zikaron.<x>`, which under the recommended
+acquisition is not reachable at all: `uv tool install` puts a package's console scripts on `PATH` and
+never the tool virtualenv's interpreter, so using them meant finding
 `~/.local/share/uv/tools/zikaron/bin/python` first.
+
+**`init` is the only *typed* command that creates a store, and M31 is why it exists.** The harness's
+own clients still cause one on their first start, at the project root the harness spawned them in. Once `knowledge`
+became an RPC client, the service's own store creation was reachable from wherever the command was
+typed — so a verb run outside the project built a second store, answered every query from it
+correctly, and held none of the project's work. Every `knowledge` verb now refuses a project
+whose store does not exist (`zikaron/project/resolve.py`) — `install` writes harness artefacts and
+needs none, and `doctor` needs none either, since it reports on an installation that may be broken
+in the way that stops a store being creatable at all — which leaves exactly one act that creates
+one and makes it a thing the reader asked for by name. **The predicate is `memory.db`, not
+`.zikaron/`**: the service creates the directory for its log before it creates the store, so every
+first start that failed or was interrupted leaves a directory with no database — and keying on the
+directory would report that as initialized and let the next verb's connection create the store,
+which is this same defect with one more precondition in front of it. **A flag on the verbs that would otherwise fail was
+rejected**: a flag is a mode the reader carries and a verb is an act they performed, and what is
+created is the whole store — memories and the knowledge registry alike — rather than a corpus.
+`init` is idempotent, so a provisioning script may run it twice.
 
 **`--version` is the only flag the umbrella answers itself**, beside `-h`/`--help`. It reports the
 installed distribution's version through `importlib.metadata`, and where there is no distribution —
@@ -152,10 +169,14 @@ so absorbing them would rewrite every installed config to shorten two command li
 The install contract is unchanged by M30, and `tests/test_install_targets.py`'s golden artefacts are
 what assert it rather than inspection.
 
-**`python -m zikaron.install` and `python -m zikaron.knowledge` keep working**, because a host-Python
-install with several virtualenvs needs the form that says *which* interpreter's Zikaron is acting.
-`doctor` has no such form: it is new with the umbrella, so there is no documented invocation
-predating it to keep working, and `zikaron/knowledge/indexer/` likewise has none — it is spawned as
+**`python -m zikaron.install`, `python -m zikaron.knowledge` and `python -m zikaron.project` keep
+working**, because a host-Python install with several virtualenvs needs the form that says *which*
+interpreter's Zikaron is acting — and because a refusal has to name a command its reader can run:
+one that suggested the console script to somebody driving a source tree would fail twice.
+The first two keep theirs from before the umbrella; `zikaron.project` has one because that refusal
+picks its suggestion from how the caller was invoked, and a source checkout puts no console script
+on `PATH`. `doctor` has no such form — it is named in remedies but never has to adapt the spelling
+to its reader — and `zikaron/knowledge/indexer/` likewise has none — it is spawned as
 `sys.executable -m`, and an entry on a user's `PATH` is not what a machine-spawned process wants.
 
 **`doctor` exists because the interpreter decision supports two acquisition paths**, and the host one
@@ -323,6 +344,18 @@ longer matches what is installed.
 
 `0.1.0` is the first version with this scheme; everything before it was `0.0.0`, which was never a
 statement about anything.
+
+**Upgrading does not replace a running service, and since M31 that is visible.** A service is
+started by whichever build first needed one and keeps answering until `idle_timeout` passes with no
+calls — reset by every call, so an agent session in use holds it open for as long as it runs. An
+upgraded `zikaron knowledge` therefore talks to the older process, which validates `client.kind`
+against the kinds *it* knew and refuses `cli` with `bounds` on a field the reader never typed.
+`init`, the hook and `zikaron-mcp` are unaffected: `health` takes no envelope, and the other two
+send kinds every shipped build knows. **Nothing detects this** — `health()` carries no build
+version — so the remedy is the one §"Lifecycle" already gives for a config change: let it idle out,
+or `SIGTERM` it. **The schema range (D37) does not cover this**: it governs a binary meeting a
+store of another version, and a client meeting a *service* of another version is governed by
+nothing. A version handshake would be a design change rather than a fix, and is not taken.
 
 **A release is tagged `v<version>`, and `pyproject.toml` is what the version *is*.** The tag is a
 label on a commit and the file is the thing PyPI receives, so they can disagree — tagging `v0.2.0`

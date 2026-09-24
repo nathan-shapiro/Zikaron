@@ -22,7 +22,7 @@ _ROOT: Final = Path(__file__).resolve().parent.parent
 #: Every subcommand the umbrella offers, as the help text lists them. Spelled here rather than read
 #: from the dispatch table, so that a command silently dropped from that table fails rather than
 #: quietly agreeing with itself.
-_SUBCOMMANDS: Final = ("install", "knowledge", "doctor")
+_SUBCOMMANDS: Final = ("init", "install", "knowledge", "doctor")
 
 
 def test_the_console_script_resolves_to_something_callable() -> None:
@@ -113,6 +113,7 @@ def test_every_listed_subcommand_dispatches(name: str, capsys: pytest.CaptureFix
     [
         ("zikaron.install.main", "python -m zikaron.install"),
         ("zikaron.knowledge.main", "python -m zikaron.knowledge"),
+        ("zikaron.project.initialize", "python -m zikaron.project"),
     ],
 )
 def test_the_module_invocation_still_names_itself(

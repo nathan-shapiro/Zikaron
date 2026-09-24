@@ -507,8 +507,21 @@ Until then these six signals tell us the *direction* of the error, which is enou
 - It says nothing about how much detail to put in `content` versus `gist`, beyond the triage instruction.
 - It gives no guidance on writing a memory that supersedes another versus amending in place — that
   interacts with D25 and may need a line once we see what agents actually do.
-- The "err toward writing" bias is asserted from `~/Memory`'s evidence on a *character* agent. Whether
-  coding agents share that bias is untested.
+- The "err toward writing" bias was asserted from `~/Memory`'s evidence on a *character* agent.
+  **First evidence from a coding agent, 2026-09-24** (`research/kiro-container-run.md`): given
+  material that genuinely cost time to debug, it wrote unprompted and said why. Given three settled
+  design *decisions*, with this store as its only persistence channel, it wrote nothing and
+  justified that from the scope gate below — which is the gap in the next bullet rather than a
+  failure of the bias.
+- **The scope gate and the sixth "worth recording" bullet disagree.** *"This store is for what cost
+  someone time to discover"* excludes a convention somebody simply stated, while *"conventions and
+  preferences that are settled but written down nowhere"* invites it. An agent reading both took
+  the gate. Whether a decision taken in conversation is in scope is a D1 question, open in
+  `FINDINGS.md` Q7: widening invites every passing preference in, leaving it makes the next
+  argument happen twice.
+- **The 64-token gist bound has a measured cost and no instrumentation.** Two of three `remember`
+  calls in one observed session were refused on it (71 tokens, then 67, then 58). A refused write
+  emits no event, so the store cannot report this; `FINDINGS.md` Q18 is what would close it.
 - The prompt is now longer than the draft it replaced, and every line of it is injected once per session.
   Nothing measures whether the secrets and observations-not-orders paragraphs earn their tokens; they are
   there because the failure they prevent is durable and unrecoverable, which is a different argument from

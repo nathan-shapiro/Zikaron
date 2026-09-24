@@ -1,6 +1,6 @@
 """Which harness is running this process, and what its session label is.
 
-The two questions both thin clients ask before anything else. `design/harness.md` §"Detection,
+The two questions a client asks before anything else. `design/harness.md` §"Detection,
 session identity, and the nesting limit" is normative.
 """
 

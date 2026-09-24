@@ -1,4 +1,4 @@
-"""The six knowledge-base management methods: their wire shapes, and what they refuse.
+"""The knowledge-base management methods: their wire shapes, and what they refuse.
 
 What is checked here is the boundary — raw parameters in, the wire object out, and a refusal that
 arrives as a code a caller can branch on rather than as an internal error. The lifecycle behind it
@@ -29,7 +29,7 @@ from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import lifecycle, lock, meta, registry, reporting
 from zikaron.core.knowledge import paths as knowledge_paths
 from zikaron.core.knowledge.errors import (
-    DanglingKnowledgeBaseError,
+    CorpusRootMissingError,
     InvalidNameError,
     UnknownKnowledgeBaseError,
 )
@@ -318,8 +318,12 @@ class TestAdd:
 
 class TestList:
     async def test_an_empty_store_lists_nothing(self, tmp_path: Path) -> None:
+        """Both keys present and empty, rather than absent: a caller reads their contents."""
         async with open_context(tmp_path) as ctx:
-            assert await _call(ctx, "knowledge_list", {}) == {"knowledge_bases": []}
+            assert await _call(ctx, "knowledge_list", {}) == {
+                "knowledge_bases": [],
+                "orphans": [],
+            }
 
     async def test_it_carries_the_choosing_fields_and_not_the_diagnostic_ones(
         self, tmp_path: Path
@@ -465,11 +469,11 @@ class TestStatus:
         """
 
         async def _raises(*_args: object, **_kwargs: object) -> object:
-            raise DanglingKnowledgeBaseError("no database, and no code for it")
+            raise CorpusRootMissingError("the indexed directory is gone, and no code for it")
 
         monkeypatch.setattr(reporting, "status", _raises)
         async with open_context(tmp_path) as ctx:
-            with pytest.raises(DanglingKnowledgeBaseError):
+            with pytest.raises(CorpusRootMissingError):
                 await _call(ctx, "knowledge_status", {"knowledge_base": "docs"})
 
 
@@ -655,7 +659,7 @@ class TestRemove:
             unlinked = payload["files_unlinked"]
             assert isinstance(unlinked, list)
             assert unlinked
-            assert await _call(ctx, "knowledge_list", {}) == {"knowledge_bases": []}
+            assert (await _call(ctx, "knowledge_list", {}))["knowledge_bases"] == []
 
     async def test_the_final_snapshot_carries_the_diagnostic_half(self, tmp_path: Path) -> None:
         """It is the last chance to see what was destroyed: the corpus no longer exists to poll."""
@@ -884,7 +888,7 @@ class TestTheWholeLifecycleThroughTheTools:
 
             destroyed = await _call(ctx, "knowledge_remove", {"name": "records", "confirm": True})
             assert destroyed["removed"] is True
-            assert await _call(ctx, "knowledge_list", {}) == {"knowledge_bases": []}
+            assert (await _call(ctx, "knowledge_list", {}))["knowledge_bases"] == []
 
     async def test_a_search_advances_the_corpus_s_own_counters(self, tmp_path: Path) -> None:
         """The four §12 counters, through the path that actually raises them rather than through
@@ -951,7 +955,7 @@ class TestTranslatingARefusal:
         service's own internal-error path, where a bug belongs."""
         assert (
             dispatch_knowledge._translated(
-                DanglingKnowledgeBaseError("no database"),
+                CorpusRootMissingError("the indexed directory is gone"),
                 name="docs",
                 taken="docs",
                 supplied={"name": "docs"},
@@ -961,9 +965,9 @@ class TestTranslatingARefusal:
 
     def test_a_name_that_cannot_be_normalized_is_carried_as_it_was_written(self) -> None:
         """An error payload must not fail over the value it is reporting. No handler can reach this
-        today — a blank name is refused as `bounds` long before any of the three codes that name a
-        corpus — but the alternative to the fallback is a translation that raises inside an
-        `except`, replacing a clean refusal with an internal error."""
+        today — a blank name is refused as `bounds` long before any code that names a corpus — but
+        the alternative to the fallback is a translation that raises inside an `except`, replacing
+        a clean refusal with an internal error."""
         translated = dispatch_knowledge._translated(
             UnknownKnowledgeBaseError("nothing there"),
             name="   ",
@@ -977,9 +981,14 @@ class TestTranslatingARefusal:
 
 class TestTheMethodTable:
     def test_it_names_every_knowledge_method_the_design_states(self) -> None:
-        """One table, seven methods, and the names are the wire contract: a handler registered
-        under a name no client sends is a method that answers `METHOD_NOT_FOUND` in production and
-        passes every test that calls the Python function directly."""
+        """One table, and the names are the wire contract: a handler registered under a name no
+        client sends is a method that answers `METHOD_NOT_FOUND` in production and passes every
+        test that calls the Python function directly.
+
+        `knowledge_unlock` is here and is deliberately not an MCP tool — clearing a build lock is
+        the operator judgement `lifecycle.unlock` describes — so this set is larger than the tool
+        surface, which `zikaron.mcp.tool_names` declares and `test_mcp_server.py` asserts.
+        """
         assert set(dispatch_knowledge.KNOWLEDGE_METHODS) == {
             "knowledge_search",
             "knowledge_list",
@@ -988,4 +997,125 @@ class TestTheMethodTable:
             "knowledge_remove",
             "knowledge_rename",
             "knowledge_refresh",
+            "knowledge_unlock",
         }
+
+
+class TestUnlock:
+    """`knowledge_unlock` — the one management method with no MCP tool behind it."""
+
+    async def test_it_clears_a_foreign_lock_and_names_who_held_it(self, tmp_path: Path) -> None:
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            await write_meta(
+                await _database_of(ctx, "docs"),
+                lock_pid=str(DEAD_PID),
+                lock_host="another-machine",
+                lock_started_at=timestamp(),
+            )
+            payload = await _call(ctx, "knowledge_unlock", {"knowledge_base": "docs"})
+
+            cleared = payload["cleared"]
+            assert isinstance(cleared, dict)
+            assert cleared["pid"] == DEAD_PID
+            assert cleared["host"] == "another-machine"
+            assert set(cleared) == {"pid", "host", "started_at"}, (
+                "no rendered sentence on the wire: a caller rebuilds the holder and renders it "
+                "through `describe`, so one wording exists rather than one per surface"
+            )
+
+    async def test_no_lock_recorded_is_reported_rather_than_refused(self, tmp_path: Path) -> None:
+        """Nothing to clear is the state the caller wanted, reached without this call acting."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            assert await _call(ctx, "knowledge_unlock", {"knowledge_base": "docs"}) == {
+                "cleared": None
+            }
+
+    async def test_an_unknown_corpus_is_refused_by_the_name_the_caller_sent(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_context(tmp_path) as ctx:
+            with pytest.raises(ZikaronError) as excinfo:
+                await _call(ctx, "knowledge_unlock", {"knowledge_base": "absent"})
+            assert excinfo.value.code is ErrorCode.KNOWLEDGE_BASE_UNKNOWN
+            assert excinfo.value.data["name"] == "absent"
+
+    async def test_a_corpus_whose_database_is_gone_is_dangling_not_internal_error(
+        self, tmp_path: Path
+    ) -> None:
+        """The condition this method alone can reach, and the reason it has a code at all.
+
+        `knowledge_refresh` meets the same corpus through `builds.plan`, which reports it as the
+        `no_database` outcome rather than raising — so without a code here it would have been the
+        one reachable refusal answering `internal_error`.
+        """
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            (await _database_of(ctx, "docs")).unlink()
+            with pytest.raises(ZikaronError) as excinfo:
+                await _call(ctx, "knowledge_unlock", {"knowledge_base": "docs"})
+            assert excinfo.value.code is ErrorCode.KNOWLEDGE_BASE_DANGLING
+            assert excinfo.value.data["name"] == "docs"
+
+    async def test_a_blank_name_is_refused_as_bounds_naming_the_parameter_sent(
+        self, tmp_path: Path
+    ) -> None:
+        async with open_context(tmp_path) as ctx:
+            with pytest.raises(ZikaronError) as excinfo:
+                await _call(ctx, "knowledge_unlock", {"knowledge_base": "  "})
+            assert excinfo.value.code is ErrorCode.BOUNDS
+            assert excinfo.value.data["field"] == "knowledge_base"
+
+
+class TestTheForegroundCommand:
+    """The argv a build result carries is the spawn's own, never a second construction."""
+
+    async def test_add_reports_the_argv_the_spawn_returned(self, tmp_path: Path) -> None:
+        async with open_context(tmp_path) as ctx:
+            entry = _only(await _add(ctx, tmp_path))
+            assert entry["foreground_command"] == detach.spawn(
+                "docs", project=paths.scope_of(ctx.store_directory)
+            )
+
+    async def test_add_reports_the_database_it_created(self, tmp_path: Path) -> None:
+        async with open_context(tmp_path) as ctx:
+            payload = await _add(ctx, tmp_path)
+            assert payload["database_path"] == str(await _database_of(ctx, "docs"))
+
+    async def test_refresh_reports_no_database_path(self, tmp_path: Path) -> None:
+        """A refresh creates none, and a key present with a stale value is worse than an absent
+        one."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            assert "database_path" not in await _call(ctx, "knowledge_refresh", {})
+
+    async def test_a_corpus_no_build_started_for_carries_no_command(self, tmp_path: Path) -> None:
+        """`foreground_command` describes a build that was started. An obstacle means none was, so
+        offering a command to reproduce it would be offering one that reproduces nothing."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            await write_meta(
+                await _database_of(ctx, "docs"),
+                lock_pid=str(os.getpid()),
+                lock_host=lock.this_host(),
+                lock_started_at=timestamp(),
+            )
+            entry = _only(await _call(ctx, "knowledge_refresh", {"name": "docs"}))
+            assert entry["outcome"] == "already_indexing"
+            assert entry["foreground_command"] is None
+
+
+class TestListCarriesOrphans:
+    async def test_an_index_file_no_corpus_refers_to_is_reported(self, tmp_path: Path) -> None:
+        """Without this, a caller reading an empty `knowledge_bases` in a directory holding index
+        files concludes there is nothing there."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            database = await _database_of(ctx, "docs")
+            await registry.delete(ctx.store.connection, name="docs")
+            await ctx.store.connection.commit()
+
+            orphans = (await _call(ctx, "knowledge_list", {}))["orphans"]
+            assert isinstance(orphans, list)
+            assert [Path(str(one["path"])).name for one in orphans] == [database.name]

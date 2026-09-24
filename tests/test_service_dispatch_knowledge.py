@@ -8,6 +8,7 @@ first.
 
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from tests.fake_encoder import FakeEncoder
@@ -18,6 +19,8 @@ from zikaron.core.knowledge import lifecycle
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.service import dispatch_knowledge
 from zikaron.service.context import ServiceContext
+from zikaron.service.params import Handler
+from zikaron.service.serialize import RpcResult
 
 
 async def _with_corpus(ctx: ServiceContext, tmp_path: Path, name: str = "docs") -> None:
@@ -166,3 +169,99 @@ async def test_an_empty_name_list_asks_for_nothing_and_is_given_nothing(tmp_path
         await _with_corpus(ctx, tmp_path)
         payload = await _search(ctx, {"query": "protobuf", "knowledge_bases": []})
         assert payload["groups"] == []
+
+
+# ---------------------------------------------------------------------------
+# A driver or OS failure reaches the caller with its reason, not as `internal_error`.
+# ---------------------------------------------------------------------------
+
+
+def _stub(error: BaseException) -> Handler:
+    """A handler that only fails, standing in for whichever real one meets a bad disk."""
+
+    async def handler(*_: object) -> RpcResult:
+        raise error
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        aiosqlite.OperationalError("attempt to write a readonly database"),
+        aiosqlite.DatabaseError("database disk image is malformed"),
+        OSError(28, "No space left on device"),
+    ],
+)
+async def test_a_driver_or_os_failure_becomes_store_unavailable(
+    tmp_path: Path, failure: BaseException
+) -> None:
+    wrapped = dispatch_knowledge._naming_the_store("knowledge_list", _stub(failure))
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(ZikaronError) as excinfo:
+            await wrapped(ctx.store.connection, ctx, envelope(), {})
+    assert excinfo.value.code is ErrorCode.STORE_UNAVAILABLE
+    assert excinfo.value.data["operation"] == "knowledge_list"
+    assert str(failure) in str(excinfo.value.data["cause"])
+
+
+async def test_the_unwrapped_handler_lets_the_driver_failure_escape(tmp_path: Path) -> None:
+    """The mutation behind the test above: without the wrapper the same call raises the driver's
+    own exception, which `server.py` answers as `internal_error` with an empty payload."""
+    failure = aiosqlite.OperationalError("disk I/O error")
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(aiosqlite.OperationalError):
+            await _stub(failure)(ctx.store.connection, ctx, envelope(), {})
+
+
+async def test_a_refusal_passes_through_the_wrapper_unchanged(tmp_path: Path) -> None:
+    """The wrapper must not swallow a code a handler chose deliberately."""
+    refusal = ZikaronError(ErrorCode.KNOWLEDGE_BASE_UNKNOWN, name="docs")
+    wrapped = dispatch_knowledge._naming_the_store("knowledge_status", _stub(refusal))
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(ZikaronError) as excinfo:
+            await wrapped(ctx.store.connection, ctx, envelope(), {})
+    assert excinfo.value.code is ErrorCode.KNOWLEDGE_BASE_UNKNOWN
+
+
+def test_every_method_in_the_table_is_wrapped() -> None:
+    """A method added to the table without the wrapper answers `internal_error` for every driver
+    failure it meets, which is invisible until someone's disk fills."""
+    bare = {
+        name: getattr(dispatch_knowledge, name)
+        for name in dir(dispatch_knowledge)
+        if name.startswith("knowledge_")
+    }
+    assert set(bare) == set(dispatch_knowledge.KNOWLEDGE_METHODS)
+    unwrapped = [
+        name
+        for name, handler in dispatch_knowledge.KNOWLEDGE_METHODS.items()
+        if handler is bare[name]
+    ]
+    assert unwrapped == []
+
+
+async def test_a_store_that_cannot_be_written_reaches_the_caller_as_store_unavailable(
+    tmp_path: Path,
+) -> None:
+    """End to end through the table, rather than over a stub: a real driver failure on a real
+    method, with the driver's own words in the payload.
+
+    `query_only` stands in for a revoked permission or a read-only mount. It is refused with
+    `SQLITE_READONLY`, which `transactions.is_contention` does not classify as a lock, so it
+    travels out as the driver's exception exactly as those would.
+    """
+    async with open_context(tmp_path) as ctx:
+        root = write_tree(tmp_path / "docs", {"a.md": b"x\n"})
+        await ctx.store.connection.execute("PRAGMA query_only = ON")
+        with pytest.raises(ZikaronError) as excinfo:
+            await dispatch_knowledge.KNOWLEDGE_METHODS["knowledge_add"](
+                ctx.store.connection,
+                ctx,
+                envelope(),
+                {"name": "docs", "path": str(root), "description": "a"},
+            )
+        await ctx.store.connection.execute("PRAGMA query_only = OFF")
+    assert excinfo.value.code is ErrorCode.STORE_UNAVAILABLE
+    assert excinfo.value.data["operation"] == "knowledge_add"
+    assert "readonly" in str(excinfo.value.data["cause"])

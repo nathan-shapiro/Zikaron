@@ -14,6 +14,8 @@ unlike a conflict.
 
 from fastmcp.exceptions import ToolError
 
+from zikaron.service.rpc import WireError, parse_response
+
 
 class ServiceRejectionError(ToolError):
     """One JSON-RPC `error` object, raised so FastMCP reports it to the calling model.
@@ -58,16 +60,7 @@ def response_to_tool_result(response: dict[str, object]) -> object:
             from, and which indicates a bug in `zikaron-service` or in `zikaron.mcp.connection`'s
             own framing rather than an ordinary rejection a model should be told to retry.
     """
-    if "result" in response:
-        return response["result"]
-    error = response.get("error")
-    if not isinstance(error, dict):
-        raise TypeError(f"response has neither a result nor a well-formed error: {response!r}")
-    code = error.get("code")
-    message = error.get("message")
-    if not isinstance(code, int) or not isinstance(message, str):
-        raise TypeError(f"error object is missing code/message: {error!r}")
-    data = error.get("data")
-    if data is not None and not isinstance(data, dict):
-        raise TypeError(f"error.data is present but not an object: {error!r}")
-    raise ServiceRejectionError(code, message, data)
+    parsed = parse_response(response)
+    if not isinstance(parsed, WireError):
+        return parsed
+    raise ServiceRejectionError(parsed.code, parsed.message, parsed.data or None)

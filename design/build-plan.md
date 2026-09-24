@@ -1533,9 +1533,10 @@ deliberate deferral in §3.1a.** KB databases are created at `knowledge/<uuid4>.
 schema including `chunks_vec` and `chunks_fts`, and `meta` seeded from configuration.
 
 **The first decision of this milestone is a compatibility one, and it is not obvious.**
-`design/schema.md` §"`meta.schema_version`" states that v0 supports **exactly `schema_version = 1`** and
-that *"a newer `schema_version` is not [tolerated]"* — an unknown value is refused with
-`−32024 schema_incompatible`. So adding a table to `memory.db` forks:
+`design/schema.md` §"`meta.schema_version`" supported **exactly `schema_version = 1`** when this brief was
+written, and *"a newer `schema_version` is not [tolerated]"* — an unknown value is refused with
+`−32024 schema_incompatible`. (It supports a range since M31; §"Migration posture" is normative, and the
+additive-table rule this milestone wrote is unchanged by that.) So adding a table to `memory.db` forks:
 - **Bump to 2** and every older Zikaron **refuses to open the store** — correct by the stated contract,
   and a breaking change for anyone running two versions against one project.
 - **Do not bump**, on the grounds that the table is purely additive and no older code path queries it —
@@ -3413,6 +3414,252 @@ fetch-never-redistribute constraint forecloses anyway. No change to the installe
 Windows, no Intel Macs.
 
 ---
+
+## M31 — The knowledge CLI stops opening the store, and the schema learns to move
+
+Normative: `design/knowledge-index.md` §9 and its account of who spawns an indexer;
+`design/architecture.md` §Components' indexer row; `design/schema.md` §"Migration posture", which
+gains the supported range and the migration contract that section says the first such change must
+write; `design/overview.md` D31.
+
+**Invariant 18** — every v0 event is emitted inside a client call — is the one this milestone can
+break, because it is what licenses `event.client_kind` to be a closed set at all. A fourth member
+that no client call ever writes would make the column's `CHECK` a claim about nothing.
+
+**The knowledge CLI is the only human-facing surface that bypasses the service.**
+`zikaron/knowledge/main.py` opens `memory.db` through `knowledge/scope.py:open_store` for all six
+verbs, while `service/dispatch_knowledge.py` serves every one of those verbs over RPC already and
+`zikaron-mcp` is already a thin client over them. That is two writers against one registry, two
+implementations of each verb, and a CLI that cannot create a store at all, because `Store.open` is
+`existing_only` and `Store.create` needs the embedding artifact for the vector width. *That last one
+is fixed by `zikaron init` (item 9), not by giving the verbs the power: a verb able to start a
+service is a verb able to build a second store in whatever directory it was typed in.*
+
+**Operator rule: the CLI is a thin client, and `doctor` is the single exemption.** `doctor` reports
+on an installation that may be broken in exactly the way that stops the service starting, so any
+store check it grows opens the store directly. It opens none today; the exemption is standing
+permission, not a description.
+
+**The indexer keeps its direct open.** It *is* the build, it holds the model for the duration, and
+it is spawned rather than typed. What this milestone splits is `scope.open_store`'s two callers: the
+CLI's open goes, the indexer's stays.
+
+### The six verbs
+
+| Verb | Method | What the port costs beyond argument marshalling |
+|---|---|---|
+| `status` | `knowledge_status` | nothing; the result already carries reports and orphans |
+| `rename` | `knowledge_rename` | nothing |
+| `list` | `knowledge_list` | `KnowledgeListResult` carries no `orphans`, and the CLI prints them for both verbs. Widen the result rather than making `list` call `status`, so the two RPC methods keep answering the questions their names state |
+| `add` | `knowledge_add` | the result carries neither the created database's path nor the spawn argv, and **`--path` means different things on the two sides**: the CLI's is relative to the shell, `_corpus_root`'s is relative to the project root. The CLI resolves to absolute before sending |
+| `remove` | `knowledge_remove` | `--yes` keeps its spelling and becomes the `confirm` parameter, and the unconfirmed preview arrives as a raised `KNOWLEDGE_CONFIRM_REQUIRED` carrying `{name, state, files_indexed, chunks}` rather than as a result — so the CLI's preview is rendered from an error rather than printed on the way to exit 1 |
+| `refresh` | `knowledge_refresh` | `--force-unlock` has no method at all, and the per-corpus refusal text does not survive serialization |
+
+**`--path`'s two meanings is the one silent failure in the table.** A relative `--path` sent
+unresolved creates a corpus over a directory the caller did not name, reports `ok`, and answers
+searches from it — wrong, permanent and unreported, since the stored root is absolute and looks
+deliberate. `_corpus_root`'s docstring already states the rule it applies; the CLI's own help already
+states the other. The resolution belongs on the CLI side, where the shell's working directory is.
+
+### What the RPC surface owes the CLI
+
+**`knowledge_unlock(knowledge_base) -> {cleared}`.** `lifecycle.unlock` returns `LockHolder | None`
+and both cases are structural: the holder's pid, host and start time, or nothing to clear. A method
+rather than a parameter on `knowledge_refresh`, because clearing a lock and building an index are
+different acts with different failure modes — a refusal to clear must not read as a refusal to
+build — and because `knowledge_refresh` takes an optional name while clearing a lock requires one.
+
+**The spawn argv, per corpus, in `KnowledgeBuildResult`.** The CLI prints a `foreground` line that
+reproduces a detached build, and it prints *the argv the spawn reported* rather than a second
+construction of it — `_start_build`'s docstring is explicit that the two must not be able to differ.
+Once the service owns the spawn, that argv has to come back on the wire or the guarantee is lost.
+
+**A code for a failure that came from outside Zikaron.** `scope.execute` today prints
+`failed: <the driver's own error>` for a full disk, a revoked permission or a database that will not
+open. Over RPC an `aiosqlite.Error` or `OSError` escaping a handler reaches `server.py`'s
+`except Exception` and becomes `INTERNAL_ERROR` / `"internal error handling this request"` with no
+payload, and the reason goes only to the service log — which is not a file the person at the shell is
+reading. **`STORE_UNAVAILABLE` `{operation, cause}`** carries it: `operation` is the method, `cause`
+is the foreign text.
+
+**The rule that admits it, stated in `core/errors.py`: a caller branches on the code, never on
+wording.** That is what makes a field safe to fill with a sentence a person reads —
+`KNOWLEDGE_BASE_BUSY.holder` already is one. What is forbidden is the inverse: a distinction a
+caller must *act* on reaching it only as prose, so that rewording silently changes behaviour. Every
+such distinction gets its own code, or a declared field with a closed set of values.
+
+**The rule governs result fields as well as error payloads**, since the same question arises there:
+`KnowledgeBuildResult.reason` is a sentence beside `outcome`, and `outcome` is the closed set
+anything automated keys on. `store_unavailable.cause` is the one field whose text comes from
+outside Zikaron at all.
+
+**`PlannedBuild.refusal` needs nothing.** It is an `Exception`, and `BuildObstacle` is a closed
+four-member enum already serialized as `outcome`. Three members — `already_indexing`, `no_database`,
+`root_missing` — are fully determined by the enum plus the corpus's status, so the CLI renders its own
+sentence. The fourth, `unreadable`, is the driver's own exception, and it is `STORE_UNAVAILABLE`'s
+`cause`.
+
+**`scope.execute`'s two prefixes have to be rebuilt from codes.** It branches on Python exception
+type today — `KnowledgeError` and `ZikaronError` print `refused`, an `aiosqlite.Error` or `OSError`
+prints `failed` — and over RPC every one of them arrives as a wire error. The distinction is worth
+keeping and is not cosmetic, and `_report_obstacle`'s docstring already states it: **`refused` is
+this system declining something it understood and naming what to do instead; `failed` is a condition
+nothing the caller can send differently.** `STORE_UNAVAILABLE`, `SCHEMA_INCOMPATIBLE` and
+`STORE_IDENTITY` are on the second side; `BAD_CONFIG`, `STORE_BUSY` and `REINDEXING` are on the
+first, each naming an action.
+
+**Which side a code falls on belongs in `ErrorSpec`, not in a table the CLI keeps.** Every surface
+that renders a rejection needs the same answer, and a second copy of it is how two surfaces come to
+disagree about whether a caller can do anything. A field on the spec makes a new code state its own
+side at the point it is declared, where the question is answerable.
+
+### `cli` is a client kind, and that makes this the first schema move
+
+The CLI sends an envelope, and `ClientKind` names only the clients that existed before it. Sending
+`mcp` would be inert today — no knowledge handler records an event — and a lie that becomes
+load-bearing the first time one does. So **`ClientKind` gains `CLI = "cli"`**, which widens
+`_KNOWN_CLIENT_KINDS` by derivation, and `event.client_kind`'s `CHECK` has to widen with it.
+
+**SQLite cannot alter a constraint in place.** Measured on 3.45.1: `ALTER TABLE ... DROP CONSTRAINT`,
+`ADD CONSTRAINT` and `ALTER COLUMN` are all parse errors; `ALTER TABLE` supports RENAME TABLE, RENAME
+COLUMN, ADD COLUMN and DROP COLUMN, and a `CHECK` lives inside the table's `CREATE TABLE` text. The
+two routes that do work, timed against `~/Trading/LeibaTrader` (25,836 events, the largest store in
+existence) on a `VACUUM INTO` snapshot:
+
+| Route | Cost | Verified |
+|---|---|---|
+| the 12-step rebuild — new table, copy, drop, rename, recreate the five indexes | **~530 ms** | `integrity_check ok`, 25,836 rows |
+| `PRAGMA writable_schema` rewrite of `sqlite_schema.sql` plus a `schema_version` pragma bump | **~2 ms** | `integrity_check ok` |
+
+Both accept `cli` and still refuse a bogus value. Re-derive with
+`.venv/bin/python spikes/m31_check_widening.py`.
+
+**Take the 12-step.** The fast route buys half a second once per store by bypassing every validation
+SQLite has — a malformed `sql` string leaves a schema nothing checks until the next open — and half a
+second is affordable where it lands. The migration runs before the socket binds, and
+`hook/connect.py:HEALTH_POLL_DEADLINE_SECONDS` is 1.2 s against a cold context build measured at
+3.74 s, so a cold start is already past the hook's budget and the hook already degrades. It is paid
+once, on the first service start after the upgrade, and is invisible to every surface that was not
+going to wait anyway.
+
+**`meta.schema_version` becomes a range, which is what `schema.md` says the first such change gets.**
+That section reads *"The first version that needs to open more than one schema gets an explicit
+supported range plus a migration or capability contract, written then"* — this is that change.
+Version 2 is the widened `CHECK`. The contract:
+
+- **Only the service migrates.** `service/context.py` is the one opener that holds the store at
+  startup with write intent, so `Store.open` grows a parameter and only that call site passes it.
+- **Every other opener accepts the range read-only.** `knowledge/scope.py` for the indexer and
+  `mcp/connection.py` for the identity read open a store at either version and migrate neither. A
+  store at 1 reached by the indexer is a store the service created and has not yet reopened; the
+  indexer writes no events, so the narrow `CHECK` constrains nothing it does.
+- **Above the range still refuses** with `SCHEMA_INCOMPATIBLE` `{found, supported}`, whose
+  `supported` field stops being the constant `1`.
+- **Downgrade is not offered.** A store at 2 meeting a binary that supports only 1 is refused, which
+  is the gate working. `0.1.0` is one day old and has one user; the alternative — leaving the range at
+  1 and converging by introspection on every start — trades a recorded fact for a re-derived one.
+
+### Waiting, and the container case
+
+**`refresh --wait` polls `knowledge_status` until the build is over.** No new method, no new
+parameter on `knowledge_refresh`, and nothing spawned by the CLI: the build detaches exactly as it
+does today and the CLI stops returning early. The embedder never enters the CLI's process because
+nothing about this runs there.
+
+**The predicate is not "while the state is `indexing`".** `state.PRECEDENCE` puts `REINDEX_REQUIRED`
+ahead of `INDEXING`, so a corpus being rebuilt after an encoder mismatch reports `reindex_required`
+for the whole build, and a wait keyed on `indexing` would return before it started. The build is over
+when **its lock is gone** — `status`'s `details.lock`, absent or reclaimable. And "gone" alone is not
+enough either, because a lock is taken shortly *after* the spawn, so a fast first poll sees no lock
+and calls a build that never began finished. **`last_scan_started_at` closes that race**: the indexer
+writes it when it starts, so the wait ends when that value has advanced past what it was before the
+refresh *and* the lock is gone. The terminal `KnowledgeState` then decides the exit status — `ok` is
+0, everything else is not.
+
+**That is the whole CI answer, and the lock lease is deliberately not part of it.** A build lock
+records a pid and a host, and `lock.probe` returns `None` — *this machine cannot say* — whenever the
+recorded host is not this one. A container gets a fresh hostname per run, so an indexer killed at
+step end strands a lock the next container can never reclaim without `--force-unlock`. Same-host CI
+self-heals: the pid is probed, found gone, and the lock reclaimed. **`--wait` removes the
+mid-flight kill** rather than the stranding, which is enough: the remaining path to a stranded lock is
+a step that times out, which is a failure either way. An age-based lease would trade a stranded lock
+for a stolen one — a build genuinely running on another host, cut off mid-write — and the case that
+needs it, one `.zikaron` shared live across hosts, is not a case this design supports.
+
+**A waiting CLI holds the service open, and that is the point.** `idle_timeout` counts from the last
+touch and a poll is one, so the service outlives the build rather than expiring under it.
+
+**The build still detaches under `--wait`, and a CLI that dies mid-wait leaves it running.** That is
+the same situation as an agent calling `zikaron_knowledge_refresh` over MCP and then ending its
+session, which is already how this works and is correct: the caller asked for a corpus to be built,
+not for a process to be supervised. `--wait` adds a caller that chooses to stay.
+
+**Done when:**
+
+1. `zikaron knowledge`'s six verbs reach the store only through `ServiceConnection`, and the indexer
+   is `knowledge/scope.py`'s only remaining caller. **Verified by a test that runs every verb against
+   a project with no service running** and asserts each one starts it and succeeds — against a
+   project `zikaron init` has created a store in, which item 9 makes the precondition for all six.
+   Creating a store in a project that never had one is the case the direct open could not serve and
+   the reason for the change; item 9 is where it ended up.
+   `ErrorSpec` carries which side of refused/failed a code falls on, and `scope.execute` renders from
+   that rather than from an exception type.
+2. `knowledge_unlock` exists, `KnowledgeListResult` carries `orphans`, and `KnowledgeBuildResult`
+   carries the created database path and the per-corpus spawn argv. **The argv is asserted equal to
+   what `detach.spawn` reports**, not merely present, since a second construction is the defect the
+   `foreground` line exists to avoid.
+3. `STORE_UNAVAILABLE` `{operation, cause}` is raised where a knowledge handler meets an
+   `aiosqlite.Error` or `OSError`, and the CLI renders it as `failed: <cause>`. **Verified by
+   mutation**: with the raise site removed the same scenario reaches `INTERNAL_ERROR` and the CLI
+   prints nothing actionable. `core/errors.py` states the prose rule.
+4. `ClientKind.CLI` exists, `event.client_kind`'s `CHECK` lists it, and the CLI's envelope carries
+   `kind: "cli"`. **A test writes an event under each of the four kinds against a store created by
+   this build and against one migrated from version 1**, since those are two different tables. It
+   writes at the store layer rather than through a verb: no knowledge method records an event, which
+   is exactly why the widened `CHECK` has no other coverage — and why invariant 18 is worth re-reading
+   before adding a member that no call site produces.
+5. `meta.schema_version` supports `{1, 2}`; the service migrates 1 → 2 at open and no other opener
+   does; `> 2` refuses with `SCHEMA_INCOMPATIBLE` naming the range. **Verified on a store built at
+   version 1**, migrated, and then read by every opener — not on a fresh store, which never exercises
+   the step. Migration is idempotent: a second open at 2 does nothing and costs nothing.
+6. `refresh --wait` returns when the build is over and exits on the terminal `KnowledgeState`;
+   without it the behaviour is unchanged. **Verified against a build that never takes its lock** —
+   the spawn race above — which must not report success, and against one that fails, which must not
+   report it either.
+7. Every document that states the direct open or its rationale is corrected:
+   `knowledge/scope.py`'s module docstring, `knowledge/main.py`'s,
+   `design/architecture.md`'s indexer row — **reworded, not deleted**, since the indexer's own entry
+   point is still shell-started and still direct — `design/overview.md` D31, and
+   `design/knowledge-index.md` §9 together with its unreadable-`memory.db` row, whose two halves
+   become one route once the CLI *is* the RPC path. `design/schema.md` §"Migration posture" carries
+   the range and the migration contract, replacing the single-version table rather than appending to
+   it.
+   **Grep locates the candidates and does not decide coverage**: state each change as a before/after
+   pair of propositions, write down what the old one licensed, and check each conclusion by meaning.
+8. `_store_not_created`'s remedy is corrected rather than deleted. The condition does not go away: it
+   is the `connect_failure` of every `Store.open`, and `python -m zikaron.knowledge.indexer` run by
+   hand in a storeless project still reaches it. What stops existing is the CLI's route to it.
+9. **`zikaron init` exists and is the only typed command that creates a store; every `knowledge` verb
+   refuses a project that has none.** The predicate is `memory.db` rather than `.zikaron/`, since
+   the service creates the directory for its log before it creates the store — **covered by the
+   state a failed first start leaves**, where the directory test would report *already initialized*
+   for a store that does not exist. The check runs before the connection rather than after a
+   failure from it, since reaching the service is what creates a store — **verified by a test that
+   asserts the refusal leaves no `.zikaron/` behind**, which a check placed after the connection
+   would fail. `init` refuses a `--project` that is not a directory, since `ensure_store_dir` is
+   `mkdir(parents=True)` and the verbs' own refusal ends by offering `init`. The refusal names which rung of D17's ladder resolved the directory, because a wrong
+   `CLAUDE_PROJECT_DIR` is not repaired by changing directory. It may name a store found above it
+   and must bind nothing — **covered by the monorepo shape**, where a sibling package's store is
+   neither offered nor adopted. `init` is idempotent.
+
+10. `./check.sh` and `./check-matrix.sh --parallel` green.
+
+**Fence.** **No `search` verb on the CLI** — `knowledge_search` is served and the port would be
+cheap, but it is a new human surface with its own output design, and this milestone is a move rather
+than a widening. **No age-based lock lease**, for the reason above. **No store checks in `doctor`**:
+the exemption is granted, nothing yet needs it. **No migration framework** — one ordered step and the
+range that admits it, not a registry for steps nobody has written. **No change to the memory verbs or
+their tools**, which never had a CLI.
 
 ## Standing notes for whoever picks this up
 

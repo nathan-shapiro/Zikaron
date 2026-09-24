@@ -35,7 +35,7 @@ from zikaron.core.store.transactions import in_one_transaction, propagate
 
 def _schema_too_new(found: int) -> ZikaronError:
     return ZikaronError(
-        ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=meta.SUPPORTED_SCHEMA_VERSION
+        ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=list(meta.SUPPORTED_SCHEMA_VERSIONS)
     )
 
 

@@ -1,4 +1,5 @@
-"""A lazy, reconnecting handle to `zikaron-service`, held for the life of one MCP server process.
+"""A lazy, reconnecting handle to `zikaron-service`, held for the life of one client process — an
+MCP server's, or one `zikaron knowledge` command's.
 
 `architecture.md` §Lifecycle states this client's obligation precisely: "a client can connect just
 as the service decides to exit, and its request then fails. `zikaron-mcp` retries once through the
@@ -8,11 +9,11 @@ never retries the sequence. *This quotation read "Clients retry once", which tur
 single-subject rule into a universal one that the sentence after it refuses. A reader of this
 module would have concluded the hook retries too.*
 
-This module is that obligation, and nothing more —
-it opens no connection until something asks for one — no service call happens until the model
-calls a tool — and every later request reuses the same
-socket rather than reopening it per call, which is what lets one process serve many tool calls
-without repeating the ~101 ms cold start-if-absent cost every time.
+This module is that obligation, and nothing more — it opens no connection until something asks for
+one, so no service call happens until the model calls a tool or a verb runs, and every later request
+reuses the same socket rather than reopening it per call. That reuse is what lets one process serve
+many tool calls — or one `refresh --wait` poll every second — without repeating the ~101 ms cold
+start-if-absent cost every time.
 
 `service.lifecycle.connect_start_if_absent` already implements the six-step sequence — vet,
 connect, `flock`, connect again, spawn-and-poll if still dead, verify identity — exactly as this
@@ -130,7 +131,8 @@ async def _read_store_identity(store_dir: Path) -> str | None:
         ZikaronError: whatever `Store.open` raises for a store that **does** exist but fails to
             open — most commonly `REINDEXING` or `SCHEMA_INCOMPATIBLE`, or `BAD_CONFIG` for a
             corrupt `meta`. A tool handler that calls this lets any such error propagate as a
-            normal FastMCP tool error: there is no client-side action that would repair it, and
+            normal FastMCP tool error, and `zikaron knowledge` renders it from the code's declared
+            disposition: there is no client-side action that would repair it either way, and
             `zikaron-service` faces the identical failure on its own startup for the identical
             reason.
     """
@@ -218,8 +220,9 @@ class ServiceConnection:
         generate or track across requests.
 
         `kind` is supplied by the caller rather than fixed on this class, since one process serves
-        exactly one mode's own tool set but the same connection type serves both — `"mcp"` for the
-        primary agent's process, `"consolidator"` for the consolidator's.
+        exactly one mode's own surface but the same connection type serves all of them — `"mcp"`
+        for the primary agent's process, `"consolidator"` for the consolidator's, `"cli"` for the
+        knowledge command (`zikaron/knowledge/client.py`).
 
         Called by a tool handler *before* `request()`, so the label it carries can be stale by the
         time `request()` actually acquires its own lock and sends — `request()` re-reads

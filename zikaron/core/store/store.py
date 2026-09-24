@@ -21,15 +21,19 @@ import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
-from zikaron.core.store import ddl, meta, permissions
+from zikaron.core.store import ddl, meta, migration, permissions
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import Embedder
 
-#: The schema version every table and invariant in this build implements. Sourced from nowhere
-#: else: `zikaron.core.errors.ERROR_SPECS[ErrorCode.SCHEMA_INCOMPATIBLE]`'s payload fixes
-#: `supported` to the same integer, and a test asserts the two agree rather than one restating
-#: the other: one declaration, checked from two directions, rather than two that agree today.
-SUPPORTED_SCHEMA_VERSION: Final = 1
+#: What a store created by this build records. Declared here rather than derived from
+#: `migration.MIGRATIONS`, and asserted against it in `test_store.py`: one declaration checked from
+#: another direction, rather than two that agree today.
+CURRENT_SCHEMA_VERSION: Final = 2
+
+#: A store below `CURRENT_SCHEMA_VERSION` opens read-compatible and is brought forward only by the
+#: opener that asks (`Store.open(..., migrate=True)`), so a version bump is not a flag day for the
+#: indexer or for the MCP identity read.
+SUPPORTED_SCHEMA_VERSIONS: Final[tuple[int, ...]] = tuple(range(1, CURRENT_SCHEMA_VERSION + 1))
 
 _DB_FILENAME: Final = "memory.db"
 
@@ -115,6 +119,13 @@ def _store_not_created(db_path: Path) -> ZikaronError:
     The project directory can be named rather than left as a placeholder because `store_dir` is the
     `.zikaron` inside it. What creates the store is the service's own first start, never the
     installer — `architecture.md` §"First run" is normative.
+
+    **Two callers reach this, and `zikaron knowledge` is no longer one of them**: it is an RPC
+    client, and it refuses a project with no store before it connects. What remains is
+    `zikaron-mcp`'s identity read and the indexer run by hand in a project nothing has started a
+    service in. The remedy therefore names `zikaron init`, the one command whose job is to start a
+    service against a project that has none — naming a `knowledge` verb would name a command that
+    refuses for this very reason.
     """
     project = db_path.parent.parent.absolute()
     quoted = shlex.quote(str(project))
@@ -125,8 +136,9 @@ def _store_not_created(db_path: Path) -> ZikaronError:
         value=str(db_path),
         expected=(
             "an existing, openable memory.db — nothing has run Zikaron in "
-            f"{project} yet. The service creates the store on its first start, which starting an "
-            "agent session in that project triggers; if Zikaron is not installed there either, run "
+            f"{project} yet. The service creates the store on its first start, which either "
+            f"starting an agent session there or running `zikaron init --project {quoted}` "
+            "triggers; if Zikaron is not installed there either, run "
             f"`zikaron install --project {quoted} --harness claude-code` (or `--harness kiro "
             "--agent <your-agent-config>`) first"
         ),
@@ -167,7 +179,7 @@ def _reindexing_in_progress(since: str) -> ZikaronError:
 
 def _schema_too_new(found: int) -> ZikaronError:
     return ZikaronError(
-        ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=SUPPORTED_SCHEMA_VERSION
+        ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=list(SUPPORTED_SCHEMA_VERSIONS)
     )
 
 
@@ -331,7 +343,7 @@ class Store:
         store_id = str(uuid.uuid4())
         defaults = dict(
             meta.defaults_at_creation(
-                schema_version=SUPPORTED_SCHEMA_VERSION,
+                schema_version=CURRENT_SCHEMA_VERSION,
                 store_id=store_id,
                 embed_model=embed_model,
                 embed_dim=embed_dim,
@@ -344,22 +356,26 @@ class Store:
         return defaults
 
     @classmethod
-    async def open(cls, store_dir: Path, config: EffectiveConfig) -> Self:
+    async def open(cls, store_dir: Path, config: EffectiveConfig, *, migrate: bool = False) -> Self:
         """Open an existing store at `store_dir/memory.db`, validating on every call.
 
         Runs, in order: permission enforcement and the symlink refusal (tightening a store left
         wider than `0700`/`0600` by an older build or an operator's own `chmod`), the
         `reindexing` sentinel check (invariant 3 — a process that died mid-reindex must not be
         read through), all five required `meta` keys (`schema.md`'s "validation happens
-        twice"), the `schema_version` gate, invariant 11's physical `memory_vec` width check
-        (against `meta`, not only against the config — `meta` can drift from the table it
-        describes even when it agrees with the file), and finally invariant 11's
+        twice"), the `schema_version` gate and any migration it admits, invariant 11's physical
+        `memory_vec` width check (against `meta`, not only against the config — `meta` can drift
+        from the table it describes even when it agrees with the file), and finally invariant 11's
         `embed_model`/`embed_dim` comparison against the effective config.
 
         Args:
             store_dir: the `.zikaron` directory holding `memory.db`.
             config: the effective configuration this open is running under, compared against
                 `meta`'s dual-homed values rather than trusted silently.
+            migrate: whether this opener may bring an older store forward to
+                `CURRENT_SCHEMA_VERSION`. Only the service passes it — it is the one opener holding
+                the store at startup with write intent. Every other opener reads an older store at
+                the version it is, which is what stops a version bump being a flag day.
 
         Raises:
             ZikaronError: `BAD_CONFIG` if `store_dir` is a symlink; `REINDEXING` if the sentinel
@@ -367,7 +383,7 @@ class Store:
                 unparseable, or out of range, if the physical `memory_vec` column's width
                 disagrees with `meta.embed_dim`, or if `embed_model`/`embed_dim` disagrees with
                 the effective config (invariant 11); `SCHEMA_INCOMPATIBLE` if
-                `meta.schema_version` exceeds `SUPPORTED_SCHEMA_VERSION`.
+                `meta.schema_version` is above `CURRENT_SCHEMA_VERSION`.
         """
         # `enforce_existing_store_permissions` is itself synchronous filesystem I/O (symlink
         # checks, `stat`, a possible `chmod` per ancestor and per store file) — run through
@@ -387,7 +403,7 @@ class Store:
             connect_failure=lambda _: _store_not_created(db_path),
         )
         try:
-            current_meta = await cls._validate_on_open(db, config)
+            current_meta = await cls._validate_on_open(db, config, migrate=migrate)
         except BaseException:
             await db.close()
             raise
@@ -395,7 +411,7 @@ class Store:
 
     @staticmethod
     async def _validate_on_open(
-        db: aiosqlite.Connection, config: EffectiveConfig
+        db: aiosqlite.Connection, config: EffectiveConfig, *, migrate: bool
     ) -> meta.StoreMeta:
         """Every check `open` must run before handing back a `Store`, in the required order."""
         raw = await _read_meta_table(db)
@@ -406,8 +422,15 @@ class Store:
 
         current_meta = meta.parse_and_validate(raw)
 
-        if current_meta.schema_version > SUPPORTED_SCHEMA_VERSION:
+        if current_meta.schema_version > CURRENT_SCHEMA_VERSION:
             raise _schema_too_new(current_meta.schema_version)
+
+        if migrate:
+            # Ahead of the checks below, which describe the schema *this* build implements: run
+            # against the old shape they would refuse a store the migration is about to make valid.
+            reached = await migration.migrate(db, from_version=current_meta.schema_version)
+            if reached != current_meta.schema_version:
+                current_meta = meta.parse_and_validate(await _read_meta_table(db))
 
         physical_width = await _physical_vec0_width(db)
         if physical_width != current_meta.embed_dim:

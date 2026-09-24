@@ -125,7 +125,11 @@ class ServiceContext:
         directory with no store in it is the ordinary state of a project that has never run
         Zikaron, not a misconfiguration, and a design that required an operator or an installer to
         create the store before the service could ever start would mean the system can never reach
-        its own working state from an empty directory unassisted. `store_directory / "memory.db"`
+        its own working state from an empty directory unassisted. **What narrowed at M31 is who may
+        trigger that first start, not this**: a typed command reaches it only through `zikaron
+        init`, since a verb able to start a service is a verb able to build a second store in
+        whichever directory it was typed in (`architecture.md` §"First run"). The harness's own
+        clients are unaffected. `store_directory / "memory.db"`
         existing is the signal this function uses to decide which of `Store.open`/`Store.create`
         to call — checked directly rather than by attempting `open` and catching its "no such
         store" failure, since that failure's `bad_config` code is shared with several genuinely
@@ -240,7 +244,9 @@ class ServiceContext:
             there is one still to finish.
         """
         if (store_directory / "memory.db").exists():
-            store = await Store.open(store_directory, config)
+            # The one opener that migrates. It holds the store at startup with write intent and
+            # before the socket is bound, so no client can be mid-call while the schema moves.
+            store = await Store.open(store_directory, config, migrate=True)
             loading.declare_dim(store.meta.embed_dim)
             return store, loading, loading
         artifact = await asyncio.to_thread(loading.artifact)

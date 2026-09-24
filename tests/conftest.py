@@ -37,8 +37,11 @@ second call and did not revisit the sentence counting them.*
 """
 
 import gc
+import json
 import os
 import shutil
+import signal
+import socket
 import tempfile
 import threading
 import time
@@ -115,9 +118,11 @@ def _runtime_dir_is_never_the_developers(short_tmp_root: Path) -> Iterator[None]
     previous = os.environ.get("XDG_RUNTIME_DIR")
     directory = tempfile.mkdtemp(prefix="rt-", dir=short_tmp_root)
     os.environ["XDG_RUNTIME_DIR"] = directory
+    _SESSION_RUNTIME_DIR.append(Path(directory))
     try:
         yield
     finally:
+        _SESSION_RUNTIME_DIR.clear()
         if previous is None:
             os.environ.pop("XDG_RUNTIME_DIR", None)
         else:
@@ -141,9 +146,11 @@ def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         if spec.marker_variable is not None:
             monkeypatch.delenv(spec.marker_variable, raising=False)
         monkeypatch.delenv(spec.session_variable, raising=False)
-        # D17's store scope. This one repoints the **store**, so a
-        # test that sets a marker and then reaches resolution would otherwise adopt whichever
-        # project launched pytest — this repository — and read and write its real memories.
+        # D17's store scope. This one repoints the **store**, so a test that sets a marker and then
+        # reaches resolution would otherwise adopt whichever project launched pytest — this
+        # repository — and read and write its real memories. Measured since: the agent's own shell
+        # exports no such value (`research/claude-project-dir-reaches-hooks-not-shells.md`), so the
+        # launching process has to be one that does. A hook is, and a future version might be.
         if spec.project_dir_variable is not None:
             monkeypatch.delenv(spec.project_dir_variable, raising=False)
 
@@ -304,3 +311,78 @@ def _no_leaked_store_connections() -> Iterator[None]:
             "interpreter shutdown instead of reporting anything. Hold the store with `async with`.",
             pytrace=False,
         )
+
+
+#: The runtime directory this session created, recorded for the reaper below so that it sweeps a
+#: path this suite owns rather than whatever `$XDG_RUNTIME_DIR` happens to say at teardown. A
+#: mutable container rather than a rebound name, so the session fixture needs no `global`.
+_SESSION_RUNTIME_DIR: Final[list[Path]] = []
+
+
+def _reap_service_at(sock_path: Path) -> None:
+    """Kill and wait for whatever is listening at `sock_path`, asking it for its own pid.
+
+    Asked rather than read from anywhere, because a respawn makes a remembered pid name a process
+    that no longer exists — the reasoning `test_service_lifecycle_integration.py` states at length.
+    """
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(2.0)
+    try:
+        sock.connect(str(sock_path))
+        sock.sendall(
+            b'{"jsonrpc":"2.0","id":1,"method":"health","params":{},'
+            b'"client":{"session_id":"sweep","kind":"cli","pid":0}}\n'
+        )
+        answered = json.loads(sock.makefile("rb").readline())
+    except (OSError, ValueError):
+        return
+    finally:
+        sock.close()
+    result = answered.get("result")
+    if not isinstance(result, dict) or "pid" not in result:
+        return
+    pid = int(result["pid"])
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        try:
+            if os.waitpid(pid, os.WNOHANG) != (0, 0):
+                return
+        except ChildProcessError:
+            return
+        time.sleep(0.05)
+
+
+@pytest.fixture(autouse=True)
+def _no_service_outlives_its_test() -> Iterator[None]:
+    """Kill any `zikaron-service` a test left running, after every test.
+
+    **A service is meant to outlive the client that started it** — until `idle_timeout`, by design
+    — so every surface that starts one leaves one behind, and a suite that walked away would
+    accumulate them: processes holding stores under directories pytest is about to delete, one per
+    test that touched a client, for the whole run.
+
+    Swept here rather than per file because the leak follows the *client*, not the test module: any
+    test that drives `zikaron-mcp`, `zikaron knowledge` or the hook can start one, and a new test
+    file that does would otherwise leak silently.
+
+    **It sweeps the directory the session itself created, never the environment.** Reading
+    `$XDG_RUNTIME_DIR` at teardown would follow whatever a test left there: a test that sets it
+    through `os.environ` — the mechanism `_runtime_dir_is_never_the_developers` uses, and one whose
+    assignment no fixture teardown undoes — could point this at the developer's real runtime
+    directory and have it `SIGKILL` whatever answers `health` there. `monkeypatch.setenv` is safe
+    because its teardown precedes this fixture's; `os.environ` is not, and the difference is not
+    something a future test should have to know. So the path comes from the module-level value the
+    session fixture recorded, and nothing here can name a directory this suite did not make.
+    """
+    yield
+    if not _SESSION_RUNTIME_DIR:
+        return
+    runtime = _SESSION_RUNTIME_DIR[0] / "zikaron"
+    if not runtime.is_dir():
+        return
+    for sock_path in runtime.glob("*.sock"):
+        _reap_service_at(sock_path)

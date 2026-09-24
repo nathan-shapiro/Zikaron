@@ -24,7 +24,7 @@ import os
 import shlex
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
@@ -478,13 +478,29 @@ def _detect_format(document: dict[str, object], *, path: Path, requested: HookFo
         return HookFormat.OBJECT
     if isinstance(hooks, list):
         return HookFormat.ARRAY
-    if "hooks" in document:
+    if not _is_unset(document, "hooks"):
         raise InstallError(
             f"{path} has a `hooks` value that is neither an object nor an array "
             f"({type(hooks).__name__}). Fix or remove it before installing; this refuses rather "
             "than replace it."
         )
     return requested
+
+
+def _is_unset(document: Mapping[str, object], key: str) -> bool:
+    """Whether `key` carries no value a merge could drop — absent, or explicitly `null`.
+
+    **`null` is how kiro spells *unset*, and it writes it itself.** `kiro-cli agent create` emits
+    `toolsSettings`, `toolSchema`, `welcomeMessage` and `model` as `null`, and the agent it wrote
+    runs: `kiro-cli chat --agent <name>` answers normally. Measured 2026-09-24 against the real
+    binary, which is also the only reader whose opinion decides. Treating a present-but-`null` key
+    as a malformed value made this installer refuse the harness's own default output — the modal
+    input to `--agent`, not an exotic hand-edit — so the guards below ask this rather than `in`.
+
+    It does **not** loosen anything else: a value of the wrong *type* is still refused, because
+    that is a thing the user put there and a merge would destroy it to make room.
+    """
+    return document.get(key, None) is None
 
 
 def _guard_mergeable_shapes(document: dict[str, object], *, path: Path) -> None:
@@ -506,12 +522,12 @@ def _guard_mergeable_shapes(document: dict[str, object], *, path: Path) -> None:
                 )
     for key in ("tools", "allowedTools"):
         value = document.get(key)
-        if key in document and not isinstance(value, list):
+        if not _is_unset(document, key) and not isinstance(value, list):
             raise InstallError(
                 f"{path} has a `{key}` value that is not an array ({type(value).__name__}). Fix or "
                 "remove it before installing; this refuses rather than replace it."
             )
-    if "resources" in document and not isinstance(document.get("resources"), list):
+    if not _is_unset(document, "resources") and not isinstance(document.get("resources"), list):
         raise InstallError(
             f"{path} has a `resources` value that is not an array "
             f"({type(document.get('resources')).__name__}). Fix or remove it before installing."
@@ -527,14 +543,14 @@ def _guard_crew_shape(document: dict[str, object], *, path: Path) -> None:
     more — or less — than they had written down.
     """
     settings = document.get("toolsSettings")
-    if "toolsSettings" in document and not isinstance(settings, dict):
+    if not _is_unset(document, "toolsSettings") and not isinstance(settings, dict):
         raise InstallError(
             f"{path} has a `toolsSettings` value that is not an object "
             f"({type(settings).__name__}). Fix or remove it before installing."
         )
     if not isinstance(settings, dict):
         return
-    present = [key for key in _CREW_KEYS if key in settings]
+    present = [key for key in _CREW_KEYS if not _is_unset(settings, key)]
     if len(present) > 1:
         raise InstallError(
             f"{path} has both `toolsSettings.crew` and `toolsSettings.agent_crew`. The harness "
@@ -549,7 +565,7 @@ def _guard_crew_shape(document: dict[str, object], *, path: Path) -> None:
                 f"({type(crew).__name__}). Fix or remove it before installing."
             )
         for list_key in ("availableAgents", "trustedAgents"):
-            if list_key in crew and not isinstance(crew[list_key], list):
+            if not _is_unset(crew, list_key) and not isinstance(crew[list_key], list):
                 raise InstallError(
                     f"{path} has `toolsSettings.{crew_key}.{list_key}` as "
                     f"{type(crew[list_key]).__name__} rather than an array. Fix or remove it "
@@ -567,7 +583,7 @@ def _guard_existing_entries(
     command silently replaced. The two are installed together and must be refused together.
     """
     servers = document.get("mcpServers")
-    if "mcpServers" in document and not isinstance(servers, dict):
+    if not _is_unset(document, "mcpServers") and not isinstance(servers, dict):
         raise InstallError(
             f"{path} has an `mcpServers` value that is not an object "
             f"({type(servers).__name__}). Fix or remove it before installing."

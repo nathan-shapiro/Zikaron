@@ -17,6 +17,8 @@ from tests.design_tables import (
     section_lines,
     sql_statements,
 )
+from zikaron.core.events import ClientKind
+from zikaron.core.store import ddl
 from zikaron.core.store.ddl import FIXED_STATEMENTS, PRAGMAS, memory_vec_statement
 
 DOCUMENT = "schema.md"
@@ -102,6 +104,18 @@ def test_fixed_statements_create_every_table_the_design_names_except_memory_vec(
         match.group(1) for statement in FIXED_STATEMENTS for match in table_name.finditer(statement)
     }
     assert coded_tables == design_tables - {"memory_vec"}
+
+
+def test_event_client_kinds_check_lists_exactly_the_client_kind_enum() -> None:
+    """A `ClientKind` member added without a migration must redden the gate, not the first insert.
+
+    The enum and the `CHECK` are separate artifacts: one lives in this build, the other on disk in
+    every store already created. Adding a member here is a schema change, and nothing else notices
+    until a client of that kind tries to write.
+    """
+    (check,) = re.findall(r"client_kind IN \(([^)]*)\)", ddl.event_statement())
+    listed = tuple(value.strip().strip("'") for value in check.split(","))
+    assert listed == tuple(kind.value for kind in ClientKind)
 
 
 # ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **service** | A long-running process per project. Holds the embedding model in memory and the databases open, and answers requests over a Unix socket. Starts itself when needed and stops itself when idle. |
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
 | **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
-| **indexer** | A detached process started per knowledge-base build — by the service when an agent asks, or by the `zikaron.knowledge` command when you do. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
+| **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running the foreground command a build result prints. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
 The service exists for one measured reason: loading the embedding model costs about **780 ms**, and
 retrieval sits on the path of every message you send. Keeping the model resident turns that into a
@@ -222,9 +222,16 @@ zikaron install --project . --harness kiro --agent .kiro/agents/<your-agent>.jso
 ```
 
 If `zikaron` is not on your `PATH` — a source checkout whose virtualenv you have not activated —
-every command below also works as `python -m zikaron.<command>`, run with that virtualenv's
-interpreter. `zikaron doctor` and `zikaron --version` have no such form; both are new with the
-`zikaron` command.
+three commands have a module form you can run with that virtualenv's interpreter, and the spelling
+is not uniform:
+
+| command | module form |
+|---|---|
+| `zikaron install` | `python -m zikaron.install` |
+| `zikaron knowledge` | `python -m zikaron.knowledge` |
+| `zikaron init` | `python -m zikaron.project` |
+
+`zikaron doctor` and `zikaron --version` have no such form; both are new with the `zikaron` command.
 
 Omitting `--harness` falls back to the detection described under [Requirements](#requirements), which
 refuses rather than guessing when it cannot tell. `--agent` is kiro-only, and passing it under Claude
@@ -448,6 +455,7 @@ a knowledge base called design docs"*. It has tools to list, create, rename, ref
 remove them. The same verbs are available at a shell, for when no agent is running:
 
 ```bash
+zikaron init                         # once per project; safe to run twice
 zikaron knowledge list
 zikaron knowledge add "design docs" --path ./design \
     --description "Architecture and design records"
@@ -455,7 +463,21 @@ zikaron knowledge refresh            # every corpus; name one to narrow it
 zikaron knowledge status "design docs"
 ```
 
-Three things are worth knowing before you point one at a directory.
+**`init` comes first because every `knowledge` verb refuses a project with no store**, and it is the
+only command that creates one. In a project your agent has already opened there is a store
+already, and `init` will say so and exit 0 — so putting it at the top of a provisioning script
+costs at most the service start the next command would pay anyway. The **first** `init` — the one
+that creates the store — can outlast the deadline on a cold model cache and exit 1 while the
+service keeps fetching the model; running it again succeeds when the service was only slow, and the
+command points at `.zikaron/service.log` for when it was not.
+
+**They act on the project you run them in.** The directory is resolved as `--project` if you pass
+it, else the harness's own project directory if it exports one, else the directory you are standing
+in — so a command typed a few levels down is a different project from the one your agent uses, and
+saying so is the whole point of the refusal. It names the store it found above you, if there is one,
+and never acts on it.
+
+Three more things are worth knowing before you point a knowledge base at a directory.
 
 **Building takes minutes and runs in the background.** `add` and `refresh` start a build and return.
 A **first** build answers nothing at all while it runs: the corpus reports `reindex_required` for
@@ -463,6 +485,12 @@ its whole duration, and only becomes searchable when the build completes. A late
 answering from what is already indexed while it works — as does a `--full` one — with the exception
 of a rebuild forced by a changed embedding model, which empties the corpus before it starts and so
 answers nothing until it finishes. `status` says how far it has got.
+
+In a script or a CI step, use `zikaron knowledge refresh --wait`: it reports progress and returns
+only once no indexer is running against those corpora — including one an earlier `add` started, which
+it waits for rather than stepping past — exiting non-zero if any build left its corpus unusable.
+Without it the step can finish while an indexer is still running, and whatever kills the step kills
+the build too.
 
 **Nothing updates an index on its own.** There is no watcher and no schedule: a corpus drifts from
 its files until somebody refreshes it. A search says so when it can — a result whose file has

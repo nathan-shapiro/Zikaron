@@ -1,16 +1,14 @@
-"""Which store a knowledge-base command acts on, how it opens it, and how a failure reads.
+"""Which store the indexer acts on, how it opens it, and how a failure reads.
 
-Shared by the management command and by the indexer, because both are commands over one store and
-a second copy of this would let them disagree about which project they were pointed at — which is
-a silent, destructive kind of disagreement: two stores, two registries, and a knowledge base that
-exists to one command and not to the other.
+**The indexer opens `memory.db` directly, and it is the only thing here that does.** It *is* the
+build — it holds the embedding model for the duration and writes a corpus's own database — so
+routing it through the service would mean the service either doing that work itself or proxying
+every write of it. It is also the service's own detached child, spawned rather than typed, and the
+one case a person runs by hand is the foreground command a build result prints.
 
-**These commands open `memory.db` directly** rather than going through the service. Neither
-is on a latency path, both run when no harness process need exist, and their writes are small
-transactions — which is what WAL and `busy_timeout` are for. The service reads the same registry,
-and writes it too on the management verbs, so this is concurrent access between two writers rather
-than a table with a single owner. Requiring a service would make managing and building corpora
-depend on a harness being live.
+`zikaron knowledge` is a thin client of the service (`zikaron/knowledge/client.py`), so it reaches
+no store through here at all. A project that has never had one is `zikaron init`'s to create, since
+the service creates a store on its first start and `Store.open` cannot.
 """
 
 import asyncio
@@ -28,7 +26,7 @@ from zikaron.core.config.resolution import (
     project_config_path,
     resolve,
 )
-from zikaron.core.errors import ZikaronError
+from zikaron.core.errors import ERROR_SPECS, ZikaronError
 from zikaron.core.knowledge.errors import KnowledgeError, RegistryUnavailableError
 from zikaron.core.store.store import Store
 from zikaron.harness import detect
@@ -58,7 +56,7 @@ class OpenStore:
 def project_scope(project: Path | None) -> Path:
     """Which project a command acts on.
 
-    Resolved through the same harness seam both thin clients use, so a command and the agent's own
+    Resolved through the same harness seam every client uses, so a command and the agent's own
     tools address one store rather than two. An explicit project wins over the harness, since
     naming one is the caller saying they mean a different project from the one they are sitting in.
     """
@@ -114,6 +112,12 @@ def execute(
     Returns a status rather than exiting, so a test can drive a whole command in-process and read
     both what it returned and what it printed.
 
+    **A `ZikaronError` is rendered from its code's declared disposition; the other two are rendered
+    by type because they have no code to read.** A `KnowledgeError` describes a corpus and a driver
+    failure describes the machine — neither carries one — so the branch is on what the exception is
+    rather than on a judgement made here, and the one exception that *can* state its own disposition
+    does.
+
     Args:
         work: builds the coroutine to run. A factory rather than a coroutine, so nothing is
             created until there is an event loop to run it on.
@@ -124,7 +128,9 @@ def execute(
     except KnowledgeError as error:
         printer(f"refused: {error}")
     except ZikaronError as error:
-        printer(f"refused: {error.message} ({error.detail()})")
+        # The code's own declared disposition, so this renderer and the CLI's cannot disagree about
+        # whether a caller has a move: `schema_incompatible` is a failure, not a refusal.
+        printer(f"{ERROR_SPECS[error.code].disposition.value}: {error.message} ({error.detail()})")
     except (aiosqlite.Error, OSError) as error:
         # Every predictable refusal is raised above. This is the remainder — a full disk, a
         # revoked permission, a database that will not open — reported as a failed command rather

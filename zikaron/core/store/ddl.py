@@ -75,12 +75,15 @@ CREATE TABLE memory_chunk (
 
 _MEMORY_CHUNK_INDEX: Final = "CREATE INDEX idx_chunk_memory ON memory_chunk(memory_uuid)"
 
-_EVENT: Final = """
-CREATE TABLE event (
+#: Parameterized by name so a caller can ask for this table under a scratch one. **A migration step
+#: does not use it** — `core/store/migration.py` freezes each version's own text, because a step
+#: must build the schema of the version it names rather than whatever this file says today. What
+#: takes the parameter is the test that compares the two and reddens when they diverge.
+_EVENT_BODY: Final = """(
   id          INTEGER PRIMARY KEY,
   at          TEXT NOT NULL,
   session_id  TEXT,
-  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator')),
+  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli')),
   op_id       TEXT NOT NULL,
   kind        TEXT NOT NULL CHECK (kind IN (
                 'surface_call', 'surface', 'search', 'fetch', 'remember', 'amend', 'retire',
@@ -89,10 +92,18 @@ CREATE TABLE event (
               )),
   memory_uuid TEXT,
   detail      TEXT
-)
-"""
+)"""
 
-_EVENT_INDEXES: Final[tuple[str, ...]] = (
+
+def event_statement(name: str = "event") -> str:
+    return f"CREATE TABLE {name} {_EVENT_BODY}"
+
+
+_EVENT: Final = event_statement()
+
+#: Public for the same reason `event_statement` takes a name: the test that holds each migration
+#: step's frozen copy against what this file creates today.
+EVENT_INDEXES: Final[tuple[str, ...]] = (
     "CREATE INDEX idx_event_kind_at ON event(kind, at)",
     "CREATE INDEX idx_event_session ON event(session_id)",
     "CREATE INDEX idx_event_session_kind ON event(session_id, client_kind)",
@@ -186,7 +197,7 @@ FIXED_STATEMENTS: Final[tuple[str, ...]] = (
     _MEMORY_CHUNK,
     _MEMORY_CHUNK_INDEX,
     _EVENT,
-    *_EVENT_INDEXES,
+    *EVENT_INDEXES,
     _READ_RECEIPT,
     _CONSOLIDATION_RUN,
     _CONSOLIDATION_GROUP,
