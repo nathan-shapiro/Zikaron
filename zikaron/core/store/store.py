@@ -11,6 +11,7 @@ a process that died mid-reindex, or through a `schema_version` this build does n
 
 import asyncio
 import re
+import shlex
 import uuid
 from pathlib import Path
 from types import TracebackType
@@ -110,13 +111,25 @@ def _store_not_created(db_path: Path) -> ZikaronError:
     Scoped to the connect rather than to the whole open, because a database that connected and
     then refused a pragma has been created — saying it has not would send an operator looking for
     a missing file that is right there.
+
+    The project directory can be named rather than left as a placeholder because `store_dir` is the
+    `.zikaron` inside it. What creates the store is the service's own first start, never the
+    installer — `architecture.md` §"First run" is normative.
     """
+    project = db_path.parent.parent.absolute()
+    quoted = shlex.quote(str(project))
     return ZikaronError(
         ErrorCode.BAD_CONFIG,
         source=BadConfigSource.DERIVED,
         key="store_dir",
         value=str(db_path),
-        expected="an existing, openable memory.db — this store has not been created",
+        expected=(
+            "an existing, openable memory.db — nothing has run Zikaron in "
+            f"{project} yet. The service creates the store on its first start, which starting an "
+            "agent session in that project triggers; if Zikaron is not installed there either, run "
+            f"`zikaron install --project {quoted} --harness claude-code` (or `--harness kiro "
+            "--agent <your-agent-config>`) first"
+        ),
     )
 
 

@@ -60,7 +60,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 | D34 | Two harnesses, one implementation: kiro-cli and Claude Code, differences carried as data behind one seam |
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
-| D36 | Obtained by `uv tool install --managed-python git+…` (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x` with an artefact-shape rule |
+| D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x` with an artefact-shape rule |
 
 ## Current state — resume here
 
@@ -78,31 +78,23 @@ owning the fetch, and `release.yml`. Its brief in `design/build-plan.md` is norm
 `design/distribution.md` §§"The front door" and "Model acquisition" are where the shipped design now
 lives. **Merged as `f18c5cb`**, all four CI jobs green on `main`, Codecov reporting.
 
-### The release, and what is owed next
+### The release
 
-**`zikaron` is not on PyPI, `0.1.0` is unspent, and trusted publishing has never been exercised.**
-The first `v0.1.0` release built cleanly and failed at the upload *before authenticating*:
-`pypa/gh-action-pypi-publish` is a **Docker** action, so GitHub resolves its ref to a container image
-tag and a commit sha names one nobody publishes. Fixed on `main` (`21ef204`) to `@v1.14.2`; the
-release and its tag were deleted. The PyPI pending publisher, the `release` environment (**no
-protection rules** — a published release goes straight to PyPI) and `CODECOV_TOKEN` are all in place.
-`research/m30-operator-setup.md` holds the procedure and its evidence gaps.
+**`zikaron` 0.1.0 is on PyPI** — published 2026-09-24 from `release.yml`, sdist and wheel,
+`requires-python >=3.12`, MIT. **Trusted publishing is exercised rather than assumed**: no token
+exists in this repository or its secrets, the `release` environment carries no protection rules, and
+`invalid-publisher` did not occur. `README.md`'s `uv tool install --managed-python zikaron` and D36
+now resolve. `research/m30-operator-setup.md` holds the setup procedure.
 
-**What is owed is now one thing, and it is the operator's: re-cut the release** from `main`, tag
-`v0.1.0`. `invalid-publisher` is the live unknown — it would fail *after* the workflow is read, so the
-fix is on the PyPI publisher plus a job re-run, with no re-tagging. **Until the upload lands, `uv tool
-install zikaron` in `README.md` and D36 does not resolve.**
+**`pypa/gh-action-pypi-publish` is pinned `@v1.14.2`, never a sha** — it is a Docker action.
+`release.yml`'s comment and `test_no_action_is_pinned_to_a_moving_branch` are normative. Cutting a
+release: `design/distribution.md` §3 and `research/m30-operator-setup.md`.
 
-**`requirements-lock.txt` is deleted, and no lock file is tracked.** Nothing installed from it and no
-test read it, so nothing could redden when it drifted — and it had: `build==1.3.0`, a direct dev pin
-added at M30, never reached it. The `--constraint` route survives the file and is one `pip freeze`
-away; `design/coding-standards.md` §6 is normative, including the rule against adding one back
-without a reader. The Dependabot consequence is what makes it worth doing rather than merely tidy:
-pip now watches `pyproject.toml` alone, which is the signal wanted, and needs no `allow` filter.
+**No lock file is tracked**, and `design/coding-standards.md` §6 says why and forbids adding one
+back without a reader.
 
 **Dependabot is live** (`.github/dependabot.yml`): actions weekly and grouped, pip monthly and
-ungrouped. Its first run raised one actions PR, merged as `199ed4f`, and three for lockfile
-transitives, closed — the noise the deletion above removes at its source.
+ungrouped.
 
 **The publication guard's exemption for the pins is a single-file allowlist**, decided at M30 as
 that guard's docstring asked. A per-line marker would sit on every digest line and on each new one,
@@ -198,34 +190,114 @@ copied while the service held a WAL, gave 27 events and 2 memories against the l
 would have opened, answered every query, and contained nothing. Use `Connection.backup()` or
 `VACUUM INTO`, or copy all three of `memory.db`, `-wal` and `-shm`.
 
-### The end-to-end test in Docker, agreed and not yet run
+### The install path is proven end to end, on a machine that had never seen the project
 
-**Blocked on the PyPI upload**, because the path worth testing is the one `README.md` recommends.
-The point is reaching where CI structurally cannot: `integration_kiro` and `integration_claude` are
-deselected on every runner, so **nothing automated has ever exercised a real session pushing or
-searching**.
+**Run 2026-09-24 in `ubuntu:26.04`; the record and the commands to re-derive it are in
+`research/m30-docker-end-to-end.md`.** Four things were exercised for real there for the first time:
+**`sqlite-vec` loading on a uv-managed interpreter on a foreign OS**; the `/tmp` socket fallback,
+since a container has no `$XDG_RUNTIME_DIR`; **D32's tool withholding and push suppression under a
+real Claude Code subagent** rather than a stub; and both branches of the model-cache check in one
+container.
 
-**Shape, settled 2026-09-24.** A fresh `ubuntu:26.04` container — a different OS from this host, and
-one carrying no Python, which is the case `--managed-python` exists for. **Hybrid driving, not pure
-tmux**: `docker exec` for scripted steps, where stdout and an exit code are real, and a tmux pane
-only for Claude Code's TUI, where screen-scraping is the only option. Both verified available here;
-`tmux send-keys` / `capture-pane` demonstrated.
+**What it did not cover.** Push and pull: no `UserPromptSubmit` gist block was captured and no search
+was called — both have run for real many times under kiro on `~/Trading/LeibaTrader`, and what has
+never happened is a real Claude Code session doing either on another machine, or any *automated* run.
+macOS arm64, since the container is amd64 Linux, so the platform where `enable_load_extension` is
+reported off stays CI's alone. And memory *behaviour*, which needs a real workload rather than a
+container — operator decision.
 
-**Order: the "I already use Claude Code" journey first**, because that is the realistic user and it
-exercises the installer's *merge* path into an existing agent config rather than its create path.
-Then the greenfield sequence.
+### `main` carries user-facing fixes that `0.1.0` does not
 
-**The operator completes the Claude Code login personally in an attached pane** (`tmux attach`), then
-hands back — no credential passes through the agent or this transcript.
+Four defects found by installing the published artefact, all fixed in the tree and none of them in
+the release on PyPI: **`zikaron --version`** now exists (it was `unknown command`, exit 2); the
+**no-store refusal names what actually creates a store** — the service's first start, never the
+installer, per `architecture.md` §"First run"; **`README.md` names `--harness` in the install
+command**; and README now says where `uv` itself comes from.
 
-**What it is for**, and none of it is reachable from this machine: that `uv tool install
---managed-python zikaron` resolves the published artefact on another OS; that `zikaron doctor` on a
-genuinely cold machine reports the model *absent* and **exits 0**, which is M30's most easily-wrong
-decision; that the first fetch verifies the pinned digests; and that `README.md` §Install, followed
-literally by something that has never seen this project, works.
+### Next PR: the knowledge CLI becomes a thin client of the service
 
-**It says nothing about macOS arm64.** The container is amd64 Linux, so the platform D35 supports and
-where `enable_load_extension` is reported off stays CI's job alone.
+**Operator decision 2026-09-24, to be done once the `--version` work lands.**
+`zikaron/knowledge/main.py` opens `memory.db` directly through `zikaron/knowledge/scope.py:
+open_store`, while `zikaron/service/dispatch_knowledge.py` already serves all seven knowledge
+methods over RPC and the MCP server is already a thin client over them.
+
+**The indexer shares `open_store` and keeps it** — it is the service's own detached child and the
+process that holds the model for a build — so this **splits the CLI's open from the indexer's**
+rather than rerouting the shared helper. `mcp/connection.py`'s `Store.open`, which reads
+`meta.store_id` on every connect after the first, stays too — and is what keeps §9's foreground
+refusal true, since without it an unreadable store costs the CLI the full 10 s poll and a generic
+"no server became reachable" instead of a reason. What the change deletes is the one
+**human-facing management** surface that bypasses the service — the indexer's own entry point, run
+in the foreground by an operator, stays direct.
+
+It buys a CLI that **bootstraps without an agent** — what a provisioning script preparing a repo
+needs — and keeps the embedder out of the CLI, which the rejected alternative (`open_store` creating
+the store itself) could not, since `Store.create` needs the artifact for the vector width. The client
+half exists: `service/lifecycle.py:connect_start_if_absent`, already wrapped with retry and identity
+by `mcp/connection.py:ServiceConnection`. **Not** `hook/connect.py`, whose `connect_once` is a
+stdlib-only re-implementation for the hook's contract, which the CLI is not under.
+
+**Cost, and it is a latency question rather than a download one.** The cache is per user, so a cold
+*project* on a warm cache pays the model load and store creation; only a cold *cache* pays the
+64 MB. The socket is bound after the whole context is built, so `health()` cannot answer until the
+fetch lands and the store exists: the warm helper saw it answer **3.74 s** after the service's first
+log line in the container, the fetch at most 3.30 s of that, against
+`lifecycle._HEALTH_POLL_DEADLINE_SECONDS = 10.0` measured from spawn. It waits there; on a slower
+network the first call reports no reachable server while the service keeps fetching, and the second
+succeeds — M17's class on a surface with no degraded mode.
+
+**The provisioning-script case has a cost of its own**: after the change, a `knowledge add` from a
+script leaves a service running until `idle_timeout`, beside the detached indexer it already leaves.
+In a `docker build` step or a CI job everything alive at step end is killed, cutting the build off
+and leaving a dead lock holder and `reindex_required`. So the script case is a live shell, or a
+foreground/`--wait` option is owed — out of this PR's scope either way.
+
+**What the PR must correct, because each states the direct open or its rationale:**
+`zikaron/knowledge/scope.py`'s module docstring (*"Requiring a service would make managing and
+building corpora depend on a harness being live"* — already untrue, since the service starts on
+demand); `design/architecture.md`'s indexer row (*"opens the store itself and never goes through
+RPC"* — **reworded, not deleted**: the indexer's own entry point run by hand is still shell-started
+and still direct); `design/overview.md:81` and `:102`; `design/knowledge-index.md:1038`
+(*"spawned by the CLI (§9) or by the service"*), §9's account of who spawns and who refuses, and
+`:2468`'s unreadable-`memory.db` row, whose two halves become one route once the CLI *is* the RPC
+path; and `zikaron/knowledge/main.py`'s module docstring.
+
+**`_store_not_created`'s remedy is deleted rather than reworded** — but not because the condition
+goes away. It is the `connect_failure` of *every* `Store.open`, and of the three callers only
+`scope.open_store` omits the file check, so `python -m zikaron.knowledge.indexer` run by hand in a
+storeless project still reaches it. What stops existing is the *CLI's* route to it, since the service
+it now talks to creates the store; a one-line refusal suffices for the by-hand case, and
+`test_a_missing_store_points_at_the_service_rather_than_the_installer` goes with the remedy.
+
+**Bundle a live kiro-cli install in a container with it** (operator decision 2026-09-24) — the
+operational half of the same change. The 2026-09-24 run covered **Claude Code only**, so half of
+D34 has never been installed on a machine that had not seen the project.
+
+**An agent config must exist first** — kiro's hooks and `mcpServers` live inside one, and `--agent`
+refuses a path that is not a file — **and where it lives decides detection.** Stable kiro reads them
+from `.kiro/agents/` **or** `~/.kiro/agents/` (`research/kiro-cli-hooks-and-introspect.md`), and
+nothing in `install/` requires `--agent` to point inside the project. A project-local config creates
+`.kiro/` and detection sees it; a global one creates nothing in the project, so that first install
+needs `--harness kiro` exactly as Claude Code's does. Either way the shipped files put `.kiro/`
+there, so the second install detects. **Run both locations** — `--agent` pointing outside the project
+has never met the real binary.
+
+**Cases to run:** the three content cases under `--format`'s already-has-hooks rule (no `hooks`
+block, object-format present, array-format present), and **no `--agent` at all**, where
+`KiroTarget.plan_merges` returns `()` — shipped files written, nothing merged, exit **0**. Whether a
+person reading that realises nothing is live is what eyes judge and no test can.
+
+**What needs the real binary:** `kiro-cli agent validate`'s complaints relayed through the installer,
+and the consolidator model-id check. Auth is *expected* to be a browser-link flow like Claude Code's,
+so the attached-pane procedure carries over — operator report, second-hand and unverified, and
+`research/kiro-mcp-lifecycle-probe.md` is why a documented kiro behaviour is not taken on trust.
+
+**`pyproject.toml` carries `0.1.1.dev0`, and a release number is only set in the commit that gets
+tagged** — operator decision 2026-09-24. A `.dev` suffix between releases is what stops an
+unreleased tree reporting a version that reads as a release; `release.yml`'s tag check refuses to
+build while the suffix is there, so it cannot survive a release by accident.
+`design/distribution.md` §3 is normative, including the artefact-shape rule that decides patch
+versus minor when the number is finally set.
 
 ### Owed measurements
 
@@ -309,6 +381,11 @@ normative and APPROVED; M19–M25 landed. What is still open:
   untrusted-reference preamble is what stops a poisoned store steering the agent, but a standing
   preference is exactly the class that wants to bind, and the write policy invites them. Three
   ways out, none taken; `CLAUDE.md` is the right side of that seam for a rule that must bind.
+  **A fourth appeared unaided, n=1**: given both stores, a Claude Code session put the *evidentiary*
+  form of one fact in Zikaron — dated, scoped to what was observed — and the *directive* form
+  (*"Assume Unreal Engine conventions … when working here"*, no expiry) in Claude Code's own memory,
+  which has no such preamble. The cost is duplication with two staleness clocks and no link either way.
+  `research/m30-docker-end-to-end.md` §Coexistence.
 - **Q16** — **Recall: does the agent reach for memory unprompted?** Instrumented but unattributable — the
   `search` event records no actor and no occasion, and every agent in a session shares one id.
   Bursty, at 6–11% of turns. Under Claude Code the harness transcripts answer it externally, for

@@ -3250,6 +3250,12 @@ Plan:
 
 
 ## References
+- **The published artefact installed end to end** — `research/m30-docker-end-to-end.md`. The
+  2026-09-24 `ubuntu:26.04` run: cold OS to working session against PyPI, with the commands to
+  re-derive it. Holds what only a foreign cold machine could show — `--managed-python` refusing a
+  host interpreter, cold `doctor` exiting 0, `sqlite-vec` on a uv-managed build, the `/tmp` socket
+  fallback, D32's gating under a real subagent — plus the first observation of Zikaron coexisting
+  with Claude Code's own memory, and four defects it found.
 - **M30 front door review** — `reviews/m30-front-door-review.md`, seven rounds to APPROVED. Blockers
   by round: 4 / 0 / 1 / 1 / 2 / 1 / 0, and the last three were each created by the previous round's
   fix — which is why the operator's instruction to keep going past the soft cap was the right call.

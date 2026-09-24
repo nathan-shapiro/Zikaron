@@ -114,7 +114,12 @@ interpreter is deleted has a dangling `bin/python`, and `-m venv` run over it do
 
 ## The check gate
 **`./check.sh` is the gate for an ordinary edit and the definition of done for a change. Nothing is
-finished until it exits 0.** `./check-matrix.sh` is additionally required before a milestone lands.
+finished until it exits 0.** `./check-matrix.sh` is additionally required before a milestone lands —
+**and a pull request satisfies that requirement**, since `check.yml` runs `check.sh` once per
+supported version against the commit, which is the matrix's own claim with the tree identity taken
+from the SHA rather than from a fingerprint. So run the matrix locally when you want that answer
+*before* pushing, not as a ritual before every PR; re-running it after each prose fix in a review
+loop is waste, because the next edit invalidates the run anyway.
 `check.sh` runs `ruff format --check`, `ruff check`, `mypy --strict` over **the package and the
 tests**, then pytest with a coverage ratchet across **every** package under `zikaron/` — a test
 asserts that list is complete — under a 600 s `timeout`. **Pass the Bash tool's maximum timeout
@@ -193,6 +198,14 @@ format .`, not adjusting the code by hand to satisfy it.
   work found rather than what it touched, led by `M<N>:` for milestone work, then prose paragraphs
   — what was discovered, what was decided and why, what was withdrawn. No bullet lists, no
   narration of the process.
+- **Never set a release version in `pyproject.toml`.** Between releases the file carries a `.dev`
+  suffix — `0.1.1.dev0` after `0.1.0` shipped — and the release number is set *only* in the commit
+  that gets tagged, which is the operator's act. A PR that bumps `0.1.0` to `0.1.1` claims a release
+  that does not exist, and a `git+` or checkout install then reports a version indistinguishable
+  from a published one. When user-facing change lands and the next number is not yet decided, the
+  `.dev` suffix is already doing its job and nothing needs bumping. `design/distribution.md` §3 is
+  normative, and `release.yml`'s tag check refuses to build while the suffix is present, so it
+  cannot survive a release by accident.
 - **Never run a git command that discards uncommitted work.** Not `git checkout -- <path>`, not
   `git restore <path>`, not `git reset --hard`, not `git stash`, not `git clean`. Work is committed
   only at the moment a PR is asked for, so at any other time *everything* you have produced is

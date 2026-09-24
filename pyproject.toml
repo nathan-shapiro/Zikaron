@@ -10,7 +10,7 @@ name = "zikaron"
 # one is a minor bump, never a patch**, because those paths are written into harness config that an
 # upgrade has to be able to refresh, and a patch bump tells a reader nothing needs refreshing.
 # `design/distribution.md` §"The version scheme" is normative.
-version = "0.1.0"
+version = "0.1.1.dev0"
 # What a package index renders as the one-line summary, so it must name both stores: the memory
 # store, for what was learned by working here, and the knowledge index, for what the project already
 # wrote down.

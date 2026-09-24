@@ -8,6 +8,7 @@ failure that matters, which is an entry point naming a module path that does not
 """
 
 import importlib
+import importlib.metadata
 import tomllib
 from pathlib import Path
 from typing import Final
@@ -55,6 +56,38 @@ def test_help_lists_every_subcommand(capsys: pytest.CaptureFixture[str]) -> None
     printed = capsys.readouterr().out
     for name in _SUBCOMMANDS:
         assert f"\n  {name}" in printed, f"{name} is dispatchable but unlisted"
+
+
+def test_version_reports_the_installed_distribution(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--version"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.strip() == f"{NAME} {importlib.metadata.version(NAME)}"
+
+
+def test_version_is_honest_when_no_distribution_is_installed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A source tree nobody installed carries no metadata, and saying so is the point: raising here
+    would break the flag in the one situation it exists for, which is working out what is running.
+    """
+
+    def _absent(_: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(NAME)
+
+    monkeypatch.setattr(importlib.metadata, "version", _absent)
+    assert main(["--version"]) == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith(f"{NAME} unknown")
+    assert "source tree" in printed
+
+
+def test_usage_advertises_the_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """Unadvertised, it is a flag only somebody who already knew it would type — and it is the first
+    thing a bug report needs, from the reporter least able to guess at it.
+    """
+    main(["--help"])
+    assert f"{NAME} --version" in capsys.readouterr().out
 
 
 def test_an_unknown_command_names_what_was_typed(capsys: pytest.CaptureFixture[str]) -> None:

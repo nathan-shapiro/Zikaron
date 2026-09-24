@@ -532,6 +532,14 @@ table by 15× rather than the 300× a reader who checked only the general figure
   installer's `auto` is a **different question** from the hook's — "which harness is this project set up
   for", not "which harness am I running under" — and it refuses rather than guessing, naming both `--harness`
   values in the refusal.
+  **From a terminal outside a session, that refusal is the ordinary first-install outcome rather
+  than an edge case**, measured in `research/m30-docker-end-to-end.md`: a freshly trusted Claude Code
+  project has no `.claude/` — neither the trust dialog nor an ordinary tool use creates one — so the
+  project says nothing. `CLAUDECODE` is exported into the processes a session spawns, and it is the
+  *only* marker `_resolve_harness` reads, which splits the first install unevenly. Agent-run under
+  Claude Code, detection succeeds; under kiro, which exports no marker, an agent-run install is
+  detected only from a `.kiro/` already in the project; person-run into a project not yet set up, on
+  either harness, nothing says anything and the harness has to be named.
 
 ### Tool names are a substitution point, not just the spawn instruction
 
