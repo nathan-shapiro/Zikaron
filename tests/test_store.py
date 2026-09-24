@@ -2,6 +2,7 @@
 and invariants 1, 3 and 11 — the three this layer is responsible for.
 """
 
+import shlex
 import struct
 from contextlib import suppress
 from pathlib import Path
@@ -284,6 +285,33 @@ async def test_open_on_a_store_directory_that_does_not_exist_at_all_creates_noth
     with pytest.raises(ZikaronError):
         await Store.open(store_dir, config)
     assert not store_dir.exists()
+
+
+async def test_a_missing_store_points_at_the_service_rather_than_the_installer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`architecture.md` §"First run" is an operator decision that nothing upstream of the service
+    creates `memory.db`, so naming the installer as the remedy sends a reader round a loop.
+
+    **Relative store_dir, and a space in the project name, because both are load-bearing.** The
+    message's prose names the directory and its command line runs it: an unresolved path prints
+    `--project .`, and an unquoted one with a space is two arguments the installer refuses. An
+    absolute `tmp_path` alone would leave both guards passing with neither present.
+    """
+    monkeypatch.chdir(tmp_path)
+    project = Path.cwd() / "my project"  # what `absolute()` prefixes
+    store_dir = Path("my project") / ".zikaron"
+    config = _config(project)
+
+    with pytest.raises(ZikaronError) as excinfo:
+        await Store.open(store_dir, config)
+    expected = str(excinfo.value.data["expected"])
+    assert f"in {project} yet" in expected
+    assert shlex.quote(str(project)) in expected
+    assert "first start" in expected
+    # The relation, not a phrase: any message that leads with the installer fails this, whatever
+    # words surround it. Excluding one spelling would pass against every other spelling of it.
+    assert expected.index("first start") < expected.index("zikaron install")
 
 
 async def test_open_on_an_existing_db_with_no_meta_table_raises_bad_config_not_a_raw_error(

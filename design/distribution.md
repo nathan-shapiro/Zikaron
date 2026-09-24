@@ -139,6 +139,13 @@ not reachable at all: `uv tool install` puts a package's console scripts on `PAT
 virtualenv's interpreter, so using them meant finding
 `~/.local/share/uv/tools/zikaron/bin/python` first.
 
+**`--version` is the only flag the umbrella answers itself**, beside `-h`/`--help`. It reports the
+installed distribution's version through `importlib.metadata`, and where there is no distribution —
+a source tree nobody installed — it says so rather than raising, because the flag exists precisely
+for someone establishing what they are running. `doctor` deliberately does not repeat it — it could,
+by the same one-line call, and the choice is that a version belongs on the cheapest command rather
+than behind five checks that resolve a socket path and load an extension.
+
 **`zikaron-hook` and `zikaron-mcp` are deliberately not folded in.** Their absolute paths are written
 into harness configuration at install time — `architecture.md` §"The install contract" is normative —
 so absorbing them would rewrite every installed config to shorten two command lines no human types.
@@ -323,6 +330,18 @@ against a tree that still says `0.1.0` would publish a version the release page 
 `release.yml` refuses that before it builds, comparing the tag with its leading `v` stripped against
 `[project] version`. A bare `0.2.0` tag passes the same check; the `v` is the convention, not the
 mechanism.
+
+**Between releases the file carries a `.dev` suffix, and that is what says "not a release".** After
+`0.1.0` shipped the tree became `0.1.1.dev0`: PEP 440 sorts that *before* `0.1.1`, so it reads as
+"working toward the next version, not at it". The version number is only made a release number in
+the commit that gets tagged. **The check above is what enforces it** — `release.yml` compares the
+tag's stripped name against `[project] version`, so `v0.1.1` against a tree saying `0.1.1.dev0`
+fails before anything is built, and the suffix cannot survive a release by accident.
+
+What this buys is that `--version` (§"The front door") never reports a number that lies. A PyPI
+install reports a release; a `git+` or checkout install reports a `.dev` version, which identifies
+itself as unreleased rather than impersonating one. A bug report from such an install still needs
+the commit, because one `.dev` number spans every commit until the next bump.
 
 ---
 

@@ -132,16 +132,21 @@ and never fails your turn.
   which harness a project is for from the project itself (a `.claude/` or a `.kiro/` directory),
   falls back to the `CLAUDECODE` marker when the project says nothing, and **refuses — telling you
   to name the harness — when the project names both, or when neither the project nor the marker
-  says**. Under kiro it additionally validates the consolidator's model id against the binary,
-  because kiro substitutes an unknown model silently; Claude Code refuses one itself, at
-  spawn, so no such check is needed there.
+  says**. `CLAUDECODE` reaches the processes a session spawns, so a **Claude Code** agent asked to
+  run the installer is detected; kiro exports no marker, so there it is a `.kiro/` in the project or
+  nothing. A person running it from a terminal outside a session, into a project that has not been
+  set up yet, is the case where nothing says anything and `--harness` is required.
+
+  Under kiro it additionally validates the consolidator's model id against the binary, because kiro
+  substitutes an unknown model silently; Claude Code refuses one itself, at spawn, so no such check
+  is needed there.
 
 ## Install
 
 **Two supported paths, and the first is recommended for a reason worth reading.**
 
 ```bash
-# Recommended. `--managed-python` is not optional; the paragraph below says why.
+# Recommended. `--managed-python` is not optional; "Why `uv` is recommended" below says why.
 uv tool install --managed-python zikaron
 ```
 
@@ -149,6 +154,11 @@ uv tool install --managed-python zikaron
 # The same, from the repository rather than PyPI — for a version that has not been released.
 uv tool install --managed-python git+https://github.com/nathan-shapiro/Zikaron.git
 ```
+
+Both of those need [`uv`](https://docs.astral.sh/uv/) and **no Python**, which is the point; the
+`git+` form also needs `git` on `PATH`, which `uv` calls rather than bundles. `uv`'s own installer is
+`curl -LsSf https://astral.sh/uv/install.sh | sh`, and on a stripped-down image you may have to
+install `curl` and `ca-certificates` before that line will run.
 
 ```bash
 # Alternative — a source checkout on a Python you already have.
@@ -189,27 +199,39 @@ goes bad on disk *afterwards* is `zikaron doctor`'s to find rather than startup'
 64 MB on every start costs more of the push hook's budget than it is worth, which is measured in
 `design/distribution.md` §"Model acquisition". `zikaron doctor` reports which state your cache is in.
 
-Then install into the project you want Zikaron in:
+Then install into the project you want Zikaron in, naming the harness:
 
 ```bash
 cd /path/to/your/project
-zikaron install --project .
+zikaron install --project . --harness claude-code    # or: --harness kiro
 ```
 
-Under **kiro**, name the config for the agent you actually work in:
+**Name it on a first install, rather than leaving it to be detected.** Detection looks for a
+`.kiro/` or `.claude/` directory in the project and for `CLAUDECODE` in the environment, and it
+refuses rather than guessing when neither says. Running from an ordinary terminal, a first install
+is exactly the case where neither says anything: a Claude Code project has no `.claude/` yet —
+neither the trust dialog nor an ordinary tool use creates one — and `CLAUDECODE` is exported into
+the processes a session spawns, not into a terminal outside one. (Ask a *Claude Code* agent to run
+the installer and detection does succeed, because `CLAUDECODE` reaches it; kiro exports no marker,
+so there it is a `.kiro/` in the project or nothing.)
+
+Under **kiro**, also name the config for the agent you actually work in:
 
 ```bash
-zikaron install --project . --agent .kiro/agents/<your-agent>.json
+zikaron install --project . --harness kiro --agent .kiro/agents/<your-agent>.json
 ```
 
 If `zikaron` is not on your `PATH` — a source checkout whose virtualenv you have not activated —
 every command below also works as `python -m zikaron.<command>`, run with that virtualenv's
-interpreter. `zikaron doctor` has no such form; it is new with the `zikaron` command.
+interpreter. `zikaron doctor` and `zikaron --version` have no such form; both are new with the
+`zikaron` command.
 
-Pass `--harness claude-code` or `--harness kiro` to override the detection described under
-[Requirements](#requirements). `--agent` is kiro-only, and passing it under Claude Code is refused
-rather than ignored — there its entries go into fixed project files instead. To see exactly what
-would be written without writing anything, pass `--print-only` on either harness.
+Omitting `--harness` falls back to the detection described under [Requirements](#requirements), which
+refuses rather than guessing when it cannot tell. `--agent` is kiro-only, and passing it under Claude
+Code is refused rather than ignored — there its entries go into fixed project files instead. To see
+exactly what would be written without writing anything, pass `--print-only`; it previews past an
+absent harness binary or an unvalidated model, and says so — but it still has to know *which*
+harness, so pass `--harness` alongside it exactly as a real install would.
 
 Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
 the MCP config too:
@@ -380,6 +402,12 @@ is no prefetch at install time, so a first run reports it as fetched on first us
 last row reports rather than checks: the linked SQLite version varies between interpreter builds on
 one machine and there is no correct value to compare against, so stating it is the whole point.
 `zikaron doctor --project <dir>` checks another project's socket path.
+
+**`zikaron --version` names the version you installed**, which is the first thing to put in a bug
+report; `doctor` reports on the machine and leaves the version to this. A PyPI install reports a
+release. A `git+` install or a source checkout reports a `.dev` version — `0.1.1.dev0` means "after
+`0.1.0`, not released" — so it never impersonates a release, but it does span every commit until the
+next bump, and a bug report from one needs the commit as well.
 
 Then start a session with the agent you installed into. On start you should see nothing unusual — the
 write policy goes into the model's context, not to your terminal. Then, from the project directory:
