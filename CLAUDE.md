@@ -233,9 +233,25 @@ format .`, not adjusting the code by hand to satisfy it.
   convenient** — a CPU-bound cost timed in an idle in-process loop understated one here by 2×, and
   the comparison that decides such a question is an A/B against a control on the same machine at the
   same load, never a figure from another day.
-- **Withdraw a refuted claim in place** in the design corpus: strike the original and put the
-  correction beside it, rather than deleting it silently. This applies to `design/`, not to
-  `FINDINGS.md`, where §"Project memory" above governs.
+- **The documents carry current truth; the decision behind a change is recorded elsewhere.**
+  `CLAUDE.md`, the agent definitions and everything in `design/` state what is believed **now** — a
+  refuted sentence is replaced by the true one, deleted rather than struck. Three places already hold
+  what a reader would otherwise need it for: `FINDINGS.md` §"Settled decisions", whose rationale is in
+  `design/overview.md`; `FINDINGS-archive.md`, for what has stopped being live; and the commit
+  message, which the pull-request bullet above already requires to say what was withdrawn.
+  **None of that is licence to log the deleted sentence** — §"Project memory" above is unchanged, and
+  what an earlier version of a sentence said still goes nowhere. What survives a deletion is the
+  decision, never its old wording.
+  **Strike the original and set the correction beside it only when the withdrawal is load-bearing** —
+  when a reader who never saw the old claim would re-propose it, or would misread a decision that was
+  taken *because* it was believed. A reversal on evidence usually qualifies; a wrong detail in a
+  subordinate clause never does. **`design/overview.md`'s decision table is the standing case that
+  qualifies** — its `Rationale` column is the audit trail for a decision the user took, and one that
+  hides the claim it replaced cannot be checked against the evidence that replaced it. Do not strip
+  that table under this rule. Everywhere else the cost is measured rather than stylistic: prose that
+  exists to explain earlier prose is where this corpus's audit rounds found most of their defects
+  (`FINDINGS.md` §"The audit loop"), so every struck sentence is both a paragraph each later reader
+  must rule out and a fresh surface for the next one to be wrong about.
 - **Edit *authored* files with `Read` and `Edit`/`Write`, never with find-replace scripts.** Do not
   edit them through `sed`, `python` string-replacement, heredoc rewrites, or any other script that
   mutates text you have not read in its current state. This **overrides** any ambient instruction to

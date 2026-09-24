@@ -144,11 +144,11 @@ attribute lookup on `pytest.mark`, so a hyphen is not expressible.
 it.** A test that creates a real store on `tmp_path` — real SQLite, real FTS5, the real `sqlite-vec`
 extension loaded — stays in the **default** tier and carries no marker. It is hermetic (a temporary
 directory, no network, nothing shared), deterministic, and fast: `sqlite-vec` is an in-process
-extension pinned in the lock file, not a service. The `integration` marker is for what genuinely
-leaves the process or loads a model — `fastembed`, a UDS socket, a subprocess — because that is what
-a developer skipping the slow tier is trying to skip. The consequence, stated so it is a choice
-rather than an accident: most store behaviour is verified in the default run, which is what makes
-that run worth having.
+extension, pinned exactly in `pyproject.toml` like every other direct dependency, not a service.
+The `integration` marker is for what genuinely leaves the process or loads a model — `fastembed`, a
+UDS socket, a subprocess — because that is what a developer skipping the slow tier is trying to
+skip. The consequence, stated so it is a choice rather than an accident: most store behaviour is
+verified in the default run, which is what makes that run worth having.
 
 **The identical reasoning places `fastmcp.Client(mcp)` in the default tier too.** Connecting an
 in-memory `Client` to a `FastMCP` instance built by `zikaron.mcp.server.build_server` never opens a
@@ -316,14 +316,19 @@ dependency exactly in `pyproject.toml`, and bump deliberately rather than drifti
 means a green run today and a red one tomorrow with no change of ours.
 
 **How far that pin reaches, and where it stops.** The transitive set is resolved when a virtualenv is
-built. `requirements-lock.txt` records one full resolution and **nothing installs from it** — not the
-README's instructions, not `check-matrix.sh` — so two virtualenvs built on different days can carry
-different transitive versions, and the outcome the direct pin prevents for direct dependencies is
-still open for transitives: under error-on-deprecation, a transitive's deprecation on a newer
-interpreter can redden the matrix with no change of ours. Measured 2026-09-21: `pip install
---constraint requirements-lock.txt -e '.[dev]'` does resolve on 3.14, so adopting the lock file is
-available and is the obvious fix; it is not taken here because it changes what every virtualenv
-installs and needs its own verification on each version.
+built, so two virtualenvs built on different days can carry different transitive versions, and the
+outcome the direct pin prevents for direct dependencies is still open for transitives: under
+error-on-deprecation, a transitive's deprecation on a newer interpreter can redden the matrix with no
+change of ours.
+
+**No lock file closes that gap here, and none is tracked.** The constraint route works — measured
+2026-09-21, `pip install --constraint <a freshly generated lock> -e '.[dev]'` resolves on 3.14 — and
+it is one `pip freeze` away against whichever virtualenv is verified on the day it is wanted. It is
+not adopted because it changes what every virtualenv installs and needs its own verification on each
+version. **A tracked lock file that nothing installs from buys none of that**: no gate reads such a
+file, so it drifts with nothing to say so, and a resolution nobody verifies reads as authority over
+an environment it no longer describes. Do not reintroduce one without making something install from
+it.
 
 **`zikaron-core`'s SQL runs through `aiosqlite`, never bare stdlib `sqlite3`.** Not a preference: a handler
 that calls the blocking sqlite3 API directly can hold the single-threaded event loop for as long as SQLite's
