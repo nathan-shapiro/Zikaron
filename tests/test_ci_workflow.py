@@ -598,6 +598,12 @@ def test_no_action_is_pinned_to_a_moving_branch(path: Path) -> None:
     a bare major on a first-party action is a deliberate, documented alias. Anything else — a branch
     name like `release/v1`, which is what the PyPI publishing action's own docs recommend — moves
     under the workflow and is caught here rather than by a suffix list that has to guess the names.
+
+    **A commit sha is the strongest pin for a JavaScript action and does not resolve at all for a
+    Docker one.** GitHub turns a Docker action's ref into a container image tag, so `@<sha>` becomes
+    `ghcr.io/<owner>/<action>:<sha>` — a tag publishers do not cut. The first release failed that
+    way, after a green build, with `manifest unknown`. For those actions a release tag is the
+    tightest pin available, which is why this test admits one.
     """
     moving = [
         use
