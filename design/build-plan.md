@@ -3661,6 +3661,133 @@ the exemption is granted, nothing yet needs it. **No migration framework** — o
 range that admits it, not a registry for steps nobody has written. **No change to the memory verbs or
 their tools**, which never had a CLI.
 
+## M32 — The injected prose, and the field that makes the next one measurable
+
+Normative: `design/retrieval.md` §"Push output format"; `design/write-policy.md` §2, which becomes
+two fences; `design/schema.md` §"The `event` log, per kind", whose `surface_call` row gains a field;
+`design/architecture.md` §"MCP tool surface (the five memory verbs)", whose mechanics-versus-policy
+split this milestone moves; `design/harness.md` §Subagents. The authored replacement text is
+`reviews/injected-prose-review.md` §Round 2 and is the input to this milestone, not its output.
+
+**The read path is not used and the prose is the first suspect.** Of `(session, uuid)` pairs
+surfaced and then written to in the same session, excluding pairs D26 compelled a fetch for, the
+agent read the record first in **1 of 363** before the current preamble landed and **0 of 47**
+after (`experiments/read_path_baseline.py`). The instruction to fetch is present, twice, and that
+is what it achieves. D13 designed the gist to point at a record the agent then reads; on this
+evidence **the gist is the whole memory**.
+
+### The field comes first, and the reason is a measurement that already failed once
+
+`surface_call.detail` (`design/schema.md:658`) carries twelve fields about how retrieval ran and
+**nothing about which preamble the push rendered**, which `design/retrieval.md` states outright. So
+the only available comparison is by timestamp, and a timestamp split bundles the text change with
+the store's growth, the week's tasks and the harness. That is not hypothetical: the first attempt at
+the baseline pooled both periods and reported 2.49%, six to nine times the true rate, and finding
+the boundary at all needed archaeology into a service-restart instant recorded in
+`FINDINGS-archive.md`.
+
+`surface_call` is the cheap row to stamp — one per push against `surface`'s one per memory, 4,072
+against 20,290 on `~/Trading/LeibaTrader`. **Add one field naming the rendered variant.**
+`tests/test_event_kinds.py` parses the design table and asserts `EVENT_SPECS` matches it, so the
+table and the constant move together or the gate reddens.
+
+**Stamp a digest of the rendered preamble, and keep exactly one constant.** The field is a short
+hash computed from the text the service just rendered, not a hand-assigned id and not a selector
+between variants. It cannot drift from the text it names, it needs no maintenance, and it deletes
+the superseded prose on schedule like everything else here. A second constant kept alive to be the
+old arm would be the one thing this corpus has a standing rule against: a copy nobody maintains,
+which the next reader must rule out.
+
+**A digest is opaque, so it needs a decoder: `research/injected-prose-log.md`.** Append-only, one
+entry per version — the digest, the date it went live, the exact rendered bytes in a fence, and one
+line on what changed. Without it the field says only that two rows saw different text, and
+recovering *which* text means the git archaeology this milestone exists to stop. This does not
+reopen the superseded-prose rule: the log is **data rather than belief**, read to decode a column
+and never for instruction, and its entries are **frozen at write time**, so unlike maintained prose
+there is nothing in it that can drift. The gate holds its head honest — the test that asserts the
+digest tracks the constant also asserts the live constant has an entry whose bytes reproduce it, so
+the log cannot fall silently behind the code.
+
+**That gives up within-period alternation, which was never powered.** `~/Trading/LeibaTrader`
+produced 47 eligible pairs in the four days after the last change, and alternating arms halves that.
+Only a move from ~0.3% to roughly 10% — a factor of thirty — is detectable there inside a week, and
+a move that large is not something the store's growth or a week's tasks produce, so a before/after
+comparison carries it. Anything smaller is undetectable on this store either way, and the arms would
+buy precision the sample cannot supply. What the digest does buy is the thing that actually broke
+the first attempt: every row says which text it saw, so periods are bounded exactly and forever,
+with no archaeology into service-restart instants.
+
+### The three surfaces
+
+| Surface | Shipped | New | Budget |
+|---|---|---|---|
+| Push block framing | 829 | 498 | — |
+| `agentSpawn`, main agent | 6,569 | 2,929 | 66% → 29% |
+| `agentSpawn`, subagent | 6,569 (identical) | 2,860 | 68% → 29% |
+
+UTF-16 units, the unit `HarnessSpec.exceeds_injection_budget` counts. Four changes carry the
+argument, and each is a claim this milestone is betting on:
+
+- **A tag pair, not a Markdown heading.** `## Project memory — reference only` is the commonest
+  shape of text a model reads and writes. The block also lands *after* the user's message on Claude
+  Code and *before* it on kiro, so it needs bounding at both ends: `HEADER` becomes an opening tag
+  and a new `FOOTER` closes it.
+- **"headline", not "abstract".** An abstract is the one summary form convention treats as
+  sufficient to cite, so the shipped text names the gist with the word for the behaviour it is
+  trying to stop. "Title" was considered and rejected: `design/write-policy.md` demands claim-shaped
+  gists, so a frame calling the line a label is contradicted by every line beneath it. A headline is
+  claim-shaped and is understood not to be the article. **The write policy's instruction does not
+  move; only its noun does.**
+- **The trigger is read-time task relevance**, replacing *"before you state one as fact"*, which
+  names an event the model does not detect. `block.py`'s rejection of a *resemblance* test stands —
+  task relevance is not belief resemblance.
+- **The write-time rules move to `zikaron_memory_remember` and `zikaron_memory_amend`.** The gist
+  bound, expiry-in-gist, secrets, observations-not-orders and subject-not-quote all govern the text
+  of an argument, and a tool description is in context exactly when that argument is being filled.
+  It also costs no injection budget, being cached prefix rather than hook output. Q18 recorded two
+  of three writes lost to the 64-token bound, at a call site whose description never mentioned it.
+
+**Two spawn variants.** The shipped text tells subagents *"If you were spawned as a subagent,
+nothing is injected for you at all"* — delivered, in full, to subagents. The code already knows the
+addressee (`subagent_policy.run` is a separate path), so `resolved_policy_text` takes the event and
+the second paragraph differs. Every other paragraph is shared.
+
+### Invariants and what can break
+
+Invariant 10 — events inside the transaction they describe — is untouched; this adds a field to an
+existing row, not a row. The exposure is elsewhere. `design/write-policy.md` §2's fence must move
+**byte-for-byte** with the constant (`tests/test_hook_write_policy.py`), and it is now two fences
+under two sub-headings. `tests/test_install_assets.py` pins eleven phrases that currently live in
+the spawn text and will live in a tool description; each must be present verbatim at its new home or
+deliberately re-pinned. `tests/test_install_limits.py` reads a byte figure out of a comment in
+`zikaron/hook/limits.py` and another out of a heading in `design/architecture.md`; both are restated
+for two variants. The full list of code lines, design passages and tests is
+`reviews/injected-prose-review.md` §Round 2 §4.
+
+### Done when
+
+`./check.sh` and `./check-matrix.sh --parallel` are green; the three surfaces carry the new text and
+the gate's phrase pins name their new homes; `surface_call.detail` carries the preamble digest in
+both the design table and `EVENT_SPECS`, and a test asserts the digest tracks the constant rather
+than being written down beside it; `research/injected-prose-log.md` exists with its first entries,
+and the gate refuses a live constant with no entry reproducing its bytes; the two spawn variants are
+delivered by addressee and a test asserts the subagent envelope carries the subagent constant; the
+superseded prose is deleted from the code rather than kept as an arm;
+`experiments/read_path_baseline.py` splits on the digest rather than on `--cut`; and every figure
+this milestone moves is re-measured rather than restated.
+
+### Scope fence
+
+**Not in this milestone:** any change to what push *selects* — `surface_min_score`, a relevance
+floor, `rrf_k`, `fusion_depth` (Q2). The habituation finding is real and structural, and moving the
+selection at the same time as the text would confound the one comparison this milestone exists to
+make possible. **Not** the structural options in §Round 2 finding 12 — pull returning `content`
+(amends D5), push injecting rank-1 `content` (amends D12) — both are design changes needing the
+operator, and both are cheaper to judge once the rewritten prose has reported. **Not** the M32
+evaluator candidate;
+a `preToolUse` gate cannot see an assertion, and no tool is called at the moment a claim is written.
+**Not** running the A/B: this milestone makes it possible and leaves it to a later one.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

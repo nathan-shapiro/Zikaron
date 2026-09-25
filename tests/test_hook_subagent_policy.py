@@ -13,7 +13,7 @@ import pytest
 from zikaron.hook import subagent_policy
 from zikaron.hook.write_policy import (
     OVERRIDE_EMPTY,
-    WRITE_POLICY_PROMPT,
+    SUBAGENT_WRITE_POLICY_PROMPT,
 )
 from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME
 from zikaron.service import paths
@@ -50,7 +50,10 @@ class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
     def test_anything_that_is_not_exactly_the_consolidator_gets_the_policy(
         self, tmp_path: Path, agent_type: object
     ) -> None:
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type) == WRITE_POLICY_PROMPT
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type)
+            == SUBAGENT_WRITE_POLICY_PROMPT
+        )
 
     def test_a_near_miss_on_the_consolidators_name_is_not_the_consolidator(
         self, tmp_path: Path
@@ -59,7 +62,9 @@ class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
         without being it must not silently lose its policy.
         """
         near = f"{CONSOLIDATOR_AGENT_NAME}-experimental"
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type=near) == WRITE_POLICY_PROMPT
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, agent_type=near) == SUBAGENT_WRITE_POLICY_PROMPT
+        )
 
 
 class TestTheOverrideIsHonouredHereToo:
@@ -83,7 +88,8 @@ class TestTheOverrideIsHonouredHereToo:
         store.chmod(0o700)
         (store / "write-policy.md").write_text("   \n", encoding="utf-8")
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent")
+            == SUBAGENT_WRITE_POLICY_PROMPT
         )
         log = paths.hook_log_path(store).read_text(encoding="utf-8")
         assert OVERRIDE_EMPTY in log
@@ -96,7 +102,8 @@ class TestItNeverRaises:
         """The caller's contract is to emit a policy; no failure beneath may cost it that."""
         missing = tmp_path / "nowhere" / "deeper"
         assert (
-            subagent_policy.run(scope_dir=missing, agent_type="some-agent") == WRITE_POLICY_PROMPT
+            subagent_policy.run(scope_dir=missing, agent_type="some-agent")
+            == SUBAGENT_WRITE_POLICY_PROMPT
         )
 
     def test_a_store_path_that_is_a_file_still_yields_the_shipped_policy(
@@ -104,5 +111,6 @@ class TestItNeverRaises:
     ) -> None:
         (tmp_path / ".zikaron").write_text("not a directory")
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == WRITE_POLICY_PROMPT
+            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent")
+            == SUBAGENT_WRITE_POLICY_PROMPT
         )

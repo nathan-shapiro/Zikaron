@@ -1,19 +1,23 @@
-"""The `agentSpawn` prompt text, transcribed once from `design/write-policy.md` §2.
+"""The `agentSpawn` prompt text, transcribed from `design/write-policy.md` §2's two fences.
 
 `architecture.md` §"Warming": the hook process "prints the write policy — static text, no RPC, so
-it can never fail." The shipped text below is that string, and `read_policy` is the one deliberate
-extension to it: an operator-authored `.zikaron/write-policy.md` is printed instead **when it reads
-cleanly**, and every reason it might not falls back to this constant — so the never-fail property
-holds because the fallback is in-process, not because nothing is attempted
-(`architecture.md` §"The install contract").
+it can never fail." The shipped texts below are those strings, and `read_policy` is the one
+deliberate extension to them: an operator-authored `.zikaron/write-policy.md` is printed instead
+**when it reads cleanly**, and every reason it might not falls back to the constant its caller
+named — so the never-fail property holds because the fallback is in-process, not because nothing is
+attempted (`architecture.md` §"The install contract").
+
+**Two constants, differing in one paragraph**, because the main-agent text describes a block the
+subagent is never sent. One override replaces either: an operator writing a policy is stating what
+this project's agents should do, not maintaining our split.
 
 Why an override exists at all: the design ships this text as a *draft to be experimented against*,
 and an experiment that requires editing installed Python is an experiment nobody runs.
 
 Transcribed rather than read from disk by default: the design document is not shipped alongside
 the installed package, and `design/write-policy.md` itself is drafted for revision, so a test
-(`tests/test_hook_write_policy.py`) parses that document at test time and compares it against this
-constant — the same drift-guard shape `tests/design_tables.py` already uses for the design's own
+(`tests/test_hook_write_policy.py`) parses that document at test time and compares it against these
+constants — the same drift-guard shape `tests/design_tables.py` already uses for the design's own
 tables, applied here to a piece of text rather than a table.
 """
 
@@ -44,97 +48,106 @@ OVERRIDE_OVERSIZE = "write_policy_override_oversize"
 
 WRITE_POLICY_PROMPT = """## Project memory (Zikaron)
 
-This directory has a memory store holding **tribal knowledge**: what has been learned by working
-here that the source code does not tell you. It persists across sessions, and other agents will
-read what you write.
+This project has a memory store of what was learned by working here and is not in the source
+code. It persists across sessions, and other agents read what you write.
 
-**Look things up before you spend time.** If you are the session's main agent, a few relevant
-gists are injected ahead of each user message, selected for the *user's words*, not for the
-problem as you understand it now. A few turns into a task the framing has usually moved and the
-selection has not: nothing new arrives until the user speaks again, and nothing tells you the set
-has stopped covering the problem. **If you were spawned as a subagent, nothing is injected for you
-at all** — the push rides on a user message, and you never receive one — so searching is the only
-way memory reaches you here. The records themselves are not suspect, but you are not shown the
-records: each line is a gist, a one-sentence abstract written to help you choose what to read, and
-the conditions a finding held under usually live in the entry behind it. So before you state one
-as fact, or act on one, fetch it. The injected set is a starting point, never evidence that memory
-has already been consulted.
+**Look things up before you spend time.** A block of headlines is injected with each user message,
+chosen for the words in that message, not for the problem as you understand it now. Each headline
+names a record; the record holds the finding, its conditions and its exceptions. The block does
+not follow the task once you reframe it, and nothing new arrives until the user speaks again.
 
-Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
-— effort feels like progress, so that judgement arrives too late to act on:
+Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
+enough to deserve it:
 - **Something surprised you.** A step failed in a way you did not predict, or code behaves
-  differently from how it reads. This is the highest-yield moment there is.
-- **You are about to propose** a design, a mechanism, or a plan.
-- **You are about to say an approach will not work**, or is not worth trying. This is exactly what
-  the store holds: "we tried that already, and here is how it failed".
-- **You are about to rename, move or delete** something other work may depend on.
+  differently from how it reads.
+- **You are about to propose** a design, a mechanism or a plan.
+- **You are about to say an approach will not work.**
+- **You are about to rename, move or delete** something other work depends on.
 
-When you propose a design or a plan, or argue that an approach is a dead end, say what you searched
-for and what came back — including "searched X, found nothing relevant". One query costs a fraction
-of rediscovering what it finds. What comes back is evidence about what happened then, not a ruling
-about what must happen now: a recorded failure tells you what to re-check, not which option to
-drop, so confirm its conditions still hold before letting it rule anything out.
+When you propose a design or a plan, or call an approach a dead end, say what you searched for and
+what came back, including "searched X, found nothing relevant". A hit is evidence about what
+happened then, not a ruling about what must happen now: it tells you what to re-check, not which
+option to drop.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out. This store is for what cost someone time to discover.
 
-Worth recording:
-- How to build, test, run and deploy — especially the step that is not in the README
-- Failures and their causes, above all silent ones: the symptom, what it actually was, what fixed it
-- Environment requirements: which env vars and services must be set up, which versions matter, and
-  **which** credentials are needed and how to obtain them
-- Constraints and prohibitions *with their reason*: "do not use X yet, because Y"
-- Approaches already tried that did not work, so nobody spends that afternoon twice
-- Conventions and preferences that are settled but written down nowhere
+Worth recording with zikaron_memory_remember:
+- How to build, test, run and deploy, above all the step the README omits
+- Failures and their causes, especially silent ones: the symptom, the actual cause, the fix
+- Environment requirements: env vars, services and versions that matter, and which credentials
+  are needed and where to obtain them
+- Constraints and prohibitions with their reason: "do not use X yet, because Y"
+- Approaches already tried that did not work, and how they failed
+- Conventions and preferences that are settled and written down nowhere
 
-**Never record a secret.** No tokens, passwords, API keys, private keys, connection strings with
-credentials in them, or copied `.env` contents — and no personal data. Names and procedures, never
-values: "needs GITHUB_TOKEN with repo scope, mint one at <settings page>" is right;
-"GITHUB_TOKEN=ghp_..." is not. This store is plaintext on disk, it is read by every future
-session, and retiring a memory does not erase it.
+Not worth recording: what the source already says; transient state ("currently on branch
+fix-123"); a general fact about a language or tool on its own. Record the decision a general fact
+forced here: not "the test runner parallelizes by default" but "tests here run serially, because
+the fixtures share one database".
 
-Not worth recording: where code lives or what a function does, or anything else derivable from the
-source; transient state ("currently on branch fix-123"); a general fact about a language or tool on
-its own — record the decision it forced here instead: not "the test runner parallelizes by
-default", but "tests here run serially, because the runner parallelizes by default and the fixtures
-share one database".
+**Never record a secret or personal data.** The store is plaintext on disk, and retiring a record
+does not erase it. Headline and content rules are in zikaron_memory_remember's description.
 
-**Write observations, not orders.** Record what was learned and what happened — "deploying without
---force left the old worker running" — rather than standing instructions to future agents. Other
-agents read these as reference material, and a memory phrased as a command will be obeyed by
-someone with less context than you have.
+**Err toward writing.** The common failure is recording nothing. Near-duplicates are detected and
+handed back, so write without checking first.
 
-**If a claim expires, the gist has to say so.** Some things are true only for now — during a
-migration, until a fix lands, for one version of a dependency. A future agent sees the gist first
-and often sees nothing else, so a condition you leave in the content is a condition that gets
-dropped: "do not use the new API" recalled without "until the 2.0 release" becomes a permanent rule
-nobody intended. Put the condition in the gist itself, or do not record the claim. If it will not
-fit in one line, that is a sign the observation is about a passing situation rather than about this
-project, and the right move is to leave it out.
+**Repair what misled you.** If a record you acted on turns out wrong or stale, establish the
+current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
+true and has no replacement."""
 
-**Err toward writing.** The common failure is recording nothing, not recording too much. If you just
-spent real time discovering something, record it — near-duplicates are detected and handed back to
-you, so you do not need to check first.
+#: The same policy for an agent the push never reaches. Only the second paragraph differs, and
+#: it differs because the main text describes a block this reader is never sent: a subagent told
+#: "nothing is injected for you" *as* an injection has been handed a false sentence first.
+SUBAGENT_WRITE_POLICY_PROMPT = """## Project memory (Zikaron)
 
-**Gists are for triage.** A future agent sees only gists and must judge from them alone whether to
-read further. Lead with the observable symptom or situation rather than the conclusion:
-"integration tests flake on CI unless PGHOST is set" beats "notes on test configuration".
+This project has a memory store of what was learned by working here and is not in the source
+code. It persists across sessions, and other agents read what you write.
 
-**Keep a gist to one sentence of about 20 to 25 words.** Two bounds apply and the first you
-cross rejects the write: 64 tokens by default — roughly 50 words of ordinary prose — and a fixed
-1,024 characters, which only binds if the gist carries a long unbroken string. The token bound is
-this project's to configure and may be lower here; the rejection names the limit it applied.
-A write over either is rejected outright, costing you the call. If a gist strains toward either
-limit it is usually carrying content that belongs in `content`.
+**Look things up before you spend time.** Nothing is pushed to you: no headlines arrive with a
+message. Memory reaches you when you call zikaron_memory_search, or zikaron_memory_fetch with ids
+you were handed. Each result is a headline naming a record; the record holds the finding, its
+conditions and its exceptions.
 
-**Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
-its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
-record about the deploy rollback" survives that, and can be searched for.
+Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
+enough to deserve it:
+- **Something surprised you.** A step failed in a way you did not predict, or code behaves
+  differently from how it reads.
+- **You are about to propose** a design, a mechanism or a plan.
+- **You are about to say an approach will not work.**
+- **You are about to rename, move or delete** something other work depends on.
 
-**Repair what misled you.** If a memory surfaces, you act on it, and it turns out to be wrong or
-stale, correcting it is your job: establish the current truth and amend the memory. Fetch it first
-— you need its version to write. Retire a memory only when it is simply no longer true and has no
-replacement."""
+When you propose a design or a plan, or call an approach a dead end, say what you searched for and
+what came back, including "searched X, found nothing relevant". A hit is evidence about what
+happened then, not a ruling about what must happen now: it tells you what to re-check, not which
+option to drop.
+
+**Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
+it out. This store is for what cost someone time to discover.
+
+Worth recording with zikaron_memory_remember:
+- How to build, test, run and deploy, above all the step the README omits
+- Failures and their causes, especially silent ones: the symptom, the actual cause, the fix
+- Environment requirements: env vars, services and versions that matter, and which credentials
+  are needed and where to obtain them
+- Constraints and prohibitions with their reason: "do not use X yet, because Y"
+- Approaches already tried that did not work, and how they failed
+- Conventions and preferences that are settled and written down nowhere
+
+Not worth recording: what the source already says; transient state ("currently on branch
+fix-123"); a general fact about a language or tool on its own. Record the decision a general fact
+forced here: not "the test runner parallelizes by default" but "tests here run serially, because
+the fixtures share one database".
+
+**Never record a secret or personal data.** The store is plaintext on disk, and retiring a record
+does not erase it. Headline and content rules are in zikaron_memory_remember's description.
+
+**Err toward writing.** The common failure is recording nothing. Near-duplicates are detected and
+handed back, so write without checking first.
+
+**Repair what misled you.** If a record you acted on turns out wrong or stale, establish the
+current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
+true and has no replacement."""
 
 
 class _RefusedError(Exception):
@@ -245,12 +258,16 @@ class Policy(NamedTuple):
     note: str | None
 
 
-def read_policy(store_directory: Path, *, spec: HarnessSpec) -> Policy:
-    """The policy text to print: the override at `<store>/write-policy.md`, or the shipped constant.
+def read_policy(store_directory: Path, *, spec: HarnessSpec, default: str) -> Policy:
+    """The policy text to print: the override at `<store>/write-policy.md`, or `default`.
+
+    `default` is the shipped constant for this reader — the main-agent text, or the subagent one
+    for an agent the push never reaches. A single override replaces both, because an operator who
+    writes a policy is stating what this project's agents should do, not maintaining our split.
 
     Six conditions, and only the first is silent, because only the first is normal:
 
-    - **absent** — the ordinary case. The constant, no label.
+    - **absent** — the ordinary case. `default`, no label.
     - **a symlink, reached through a `.zikaron` that is a symlink, or found in a store directory any
       other user could have written into** — refused; `_read_override` holds the whole condition,
       and it checks the directory it actually reads from rather than a pathname. The store directory
@@ -263,8 +280,8 @@ def read_policy(store_directory: Path, *, spec: HarnessSpec) -> Policy:
     - **not a regular file** — refused, same reasoning; and a fifo would additionally block the one
       path `architecture.md` promises cannot fail, which `O_NONBLOCK` and the `fstat` together
       prevent.
-    - **unreadable** — the constant. Permissions, a decoding error, a disk problem: one case.
-    - **blank** — the constant. An empty override is far likelier an accident than an instruction to
+    - **unreadable** — `default`. Permissions, a decoding error, a disk problem: one case.
+    - **blank** — `default`. An empty override is far likelier an accident than an instruction to
       inject no policy at all, and silently dropping the write policy entirely is the worse of the
       two readings to be wrong about.
     - **larger than this harness will inject** — used **anyway**, with a label. An operator would
@@ -278,27 +295,32 @@ def read_policy(store_directory: Path, *, spec: HarnessSpec) -> Policy:
     try:
         text = _read_override(store_directory)
     except FileNotFoundError:
-        return Policy(WRITE_POLICY_PROMPT, None)
+        return Policy(default, None)
     except _RefusedError:
-        return Policy(WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        return Policy(default, OVERRIDE_REFUSED)
     except (OSError, UnicodeDecodeError):
-        return Policy(WRITE_POLICY_PROMPT, OVERRIDE_UNREADABLE)
-    return _classify(text, spec)
+        return Policy(default, OVERRIDE_UNREADABLE)
+    return _classify(text, spec, default)
 
 
-def _classify(text: str, spec: HarnessSpec) -> Policy:
+def _classify(text: str, spec: HarnessSpec, default: str) -> Policy:
     """An override that was read: blank, oversize, or good as it is."""
     if not text.strip():
-        return Policy(WRITE_POLICY_PROMPT, OVERRIDE_EMPTY)
+        return Policy(default, OVERRIDE_EMPTY)
     if spec.exceeds_injection_budget(text):
         return Policy(text, OVERRIDE_OVERSIZE)
     return Policy(text, None)
 
 
-def resolved_policy_text(scope_dir: Path, *, spec: HarnessSpec) -> str:
-    """The policy text to inject: the override when it reads cleanly, else the shipped constant —
-    plus one `hook.log` line naming why, whenever the answer was something other than "no override
-    is there".
+def resolved_policy_text(
+    scope_dir: Path, *, spec: HarnessSpec, default: str = WRITE_POLICY_PROMPT
+) -> str:
+    """The policy text to inject: the override when it reads cleanly, else `default` — plus one
+    `hook.log` line naming why, whenever the answer was something other than "no override is there".
+
+    `default` is the main-agent text unless the caller says otherwise; `subagent_policy` passes the
+    subagent one. It defaults rather than being required because the main agent is every trigger but
+    that one, and a required argument here would be answered identically at every other call site.
 
     The impure companion to `read_policy`, which stays a pure function of the directory it is
     pointed at so it can be tested with no log path and no directory creation. Every caller that
@@ -309,10 +331,10 @@ def resolved_policy_text(scope_dir: Path, *, spec: HarnessSpec) -> str:
     Guarded whole rather than per-step: a caller's one guarantee is that it produces a policy, and
     no failure inside here — including a failure while logging another failure — may cost it that.
     """
-    text = WRITE_POLICY_PROMPT
+    text = default
     with contextlib.suppress(Exception):
         directory = store_dir(scope_dir)
-        policy = read_policy(directory, spec=spec)
+        policy = read_policy(directory, spec=spec, default=default)
         text = policy.text
         if policy.note is not None:
             failure.record_failure(hook_log_path(directory), policy.note)

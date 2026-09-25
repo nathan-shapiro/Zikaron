@@ -131,12 +131,12 @@ The **gist** is one line, and its only job is to let a future agent decide wheth
 Lead with the observable symptom or situation rather than the conclusion: "integration tests flake on
 CI unless PGHOST is set" beats "notes on test configuration".
 
-**Length: aim for one sentence of about 20 to 25 words.** Two bounds apply and the first you cross rejects the write: 64 tokens by default — roughly 50
-words of ordinary prose — and a fixed 1,024 characters, which only binds if the gist carries a long
+**Length: aim for one sentence of about 20 to 25 words.** Two bounds apply and the first you cross rejects the write: 64 tokens by default
+and a fixed 1,024 characters, which only binds if the gist carries a long
 unbroken string. The token bound is the project's to configure and may be lower here; the
 rejection names the limit it applied. A write over either is **rejected outright**, so you lose
-the call and have to author it again. Gists that work in practice run 20 to 35 tokens; if yours is straining toward the
-limit, that is usually a sign it is carrying content rather than a cue.
+the call and have to author it again. A gist straining toward the limit is carrying content rather
+than a cue.
 
 **If you cannot lead with one observable symptom or situation, the entries are probably not one
 finding.** A merged gist that becomes a list — "three findings: this, that, the other" — cannot be
@@ -146,20 +146,22 @@ sharp gists over one with a table of contents. Splitting costs one extra record;
 contents costs the retrievability of everything under it.
 
 The **content** carries the detail, written as an observation of what was learned here — not as an
-instruction. "Deploying without --force left the old worker running" is right; "always deploy with
---force" is not. Records phrased as orders get obeyed by agents with far less context than whoever
-wrote them.
+instruction. So is the gist: "Deploying without --force left the old worker running" is right;
+"always deploy with --force" is not, in either field. Records phrased as orders get obeyed by agents
+with far less context than whoever wrote them, and the gist is the half every future agent is shown.
 
 **A condition that limits a claim must survive into the gist you write.** If an entry is only true
 during a migration, until a fix lands, or for one version of a dependency, that condition has to
-appear in the gist itself — not only in the content you carry over. A future agent often sees the
+appear in the gist itself — not only in the content you carry over. A future agent almost always
+sees the
 gist alone, so a qualifier you leave behind turns a temporary finding into a permanent rule nobody
 intended. If the condition will not fit, do not fold that entry into a record whose gist cannot
 carry it: promote it on its own instead.
 
-**Never record a secret.** If an entry contains a token, password, key or credential-bearing
-connection string, do not carry the value into a long-term record: name what is needed and how to
-obtain it instead. This store is plaintext on disk, and retiring a record does not erase it.
+**Never record a secret or personal data.** If an entry contains a token, password, key or
+credential-bearing connection string, do not carry the value into a long-term record: name what is
+needed and how to obtain it instead. If it contains a person's private details, leave them out of
+what you write. This store is plaintext on disk, and retiring a record does not erase it.
 
 ## Details that will come up
 

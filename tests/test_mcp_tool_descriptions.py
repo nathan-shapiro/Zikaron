@@ -204,24 +204,32 @@ async def test_no_description_names_a_tool_its_own_server_does_not_have(tmp_path
             assert named <= registered, f"{tool.name} on {mode} names {named - registered}"
 
 
-async def test_both_read_paths_say_a_gist_is_an_abstract_and_name_when_to_fetch(
+async def test_both_read_paths_call_a_gist_a_headline_and_name_when_to_fetch(
     tmp_path: Path,
 ) -> None:
     """Push and pull hand back the same lossy thing, so both have to say so.
 
     An agent meets one path or the other, never a document describing both, and learns nothing
     about the second from the first — so a warning carried on one surface alone leaves the other
-    surface inviting exactly the failure it was written to stop: stating a condensed abstract as
-    the finding. Asserted together, in one test, because the defect is the *gap between* them and
-    two separate tests would both stay green while it opened.
+    surface inviting exactly the failure it was written to stop: stating a condensed line as the
+    finding. Asserted together, in one test, because the defect is the *gap between* them and two
+    separate tests would both stay green while it opened.
+
+    The word is pinned as well as the instruction. "Abstract" was the previous noun and is the one
+    summary form convention treats as sufficient to cite, so it invited the behaviour these
+    sentences exist to prevent; a revision drifting back to it would otherwise pass.
     """
     description = await _description_of("primary", "zikaron_memory_search", tmp_path)
     # The policy is the third surface and the one a byte-parity check alone would not defend: it and
-    # its design mirror can lose the sentence together in a single edit with every other test green.
+    # its design mirror can lose the word together in a single edit with every other test green.
     for surface in (description, PREAMBLE, WRITE_POLICY_PROMPT):
         flat = " ".join(surface.split())
-        assert "abstract" in flat
-        assert "act on one" in flat
+        assert "headline" in flat
+        assert "abstract" not in flat
+    # Naming the tool belongs to the two surfaces that hand back a headline. The spawn policy does
+    # not: it is read once, before any headline exists, and the cue has to sit where the lines are.
+    for surface in (description, PREAMBLE):
+        assert "zikaron_memory_fetch" in " ".join(surface.split())
 
 
 @pytest.mark.parametrize("tool_name", ["zikaron_memory_search", "zikaron_memory_fetch"])
@@ -233,7 +241,7 @@ async def test_every_memory_read_surface_frames_its_results_as_reference_materia
 
     `zikaron_knowledge_search`'s equivalent frame is guarded by phrase a few tests above, and these
     two carry the same claim, one of them on the only surface that returns `content` — the one the
-    push block's "fetch before you assert" sends more reads to. Flattened before matching because
+    push block's own fetch cue sends more reads to. Flattened before matching because
     the phrase wraps across a line in the source, so a plain search finds only whichever copy
     happens to fit.
     """

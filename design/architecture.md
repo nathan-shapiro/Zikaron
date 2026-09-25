@@ -1197,7 +1197,12 @@ Evidence: `research/claude-code-mcp-result-truncation.md`.
 ## MCP tool surface (the five memory verbs)
 
 Tool *descriptions* carry the mechanics — the version precondition, the dedup payload, retire semantics —
-because per D30 they sit in context at the point of decision, while D18's `agentSpawn` prose carries policy.
+and, since M32, the rules for the two arguments a write fills: the headline's form and bound,
+expiry-in-headline, observations-not-orders, the secrets boundary and subject-not-quote live in
+`zikaron_memory_remember`'s description and are referenced from `zikaron_memory_amend`'s, because a
+description is in context at the instant the argument it governs is being filled and costs no
+injection budget. D18's `agentSpawn` prose carries what no description can prompt: the write trigger,
+the scope test and the recall occasions.
 
 **Every tool name is `zikaron_<subsystem>_<verb>`, and the subsystem segment is load-bearing rather
 than decorative.** One `--mode primary` process serves two stores that answer different questions —
@@ -1221,11 +1226,12 @@ zikaron_memory_search(query: str, limit: int = 5, include_retired: bool = false)
      `state` ∈ live | superseded | retired, so triage can see a demoted row for what it is.
      Ordered by the total order in retrieval.md; the order is stated to the agent, best first.
      No version field, and therefore no licence to write. Empty store returns [].
-     No `content` field either, and the description says so in those terms: a result is an
-     abstract of a record rather than the record, and it names the moment to fetch — before
-     asserting or acting on one. Both read paths carry that, in the same terms, because they
-     hand back the same lossy thing and an agent meeting it on one path learns nothing about
-     the other; retrieval.md §"Push output format" carries the push side and its reasoning.
+     No `content` field either, and the description says so in those terms: `gist` is a record's
+     headline rather than the record, and the cue is to fetch every uuid the agent is going to
+     use — read-time task relevance, not a moment of assertion the model does not observe. Both
+     read paths carry that, in the same terms, because they hand back the same lossy thing and an
+     agent meeting it on one path learns nothing about the other; retrieval.md §"Push output
+     format" carries the push side and its reasoning.
      The description names zikaron_knowledge_search as where the other store is searched:
      this one holds what agents recorded, that one what the project itself wrote down.
      The pairing is stated on both tools (knowledge-index.md §8.3 carries the other half),
@@ -1246,7 +1252,7 @@ zikaron_memory_fetch(uuids: list[str])       # 1–50 uuids
      Carries the same untrusted-reference frame the push block, `zikaron_memory_search` and
      `zikaron_knowledge_search` carry, and it is the surface that most needs it: it is the only one returning `content`,
      which the write policy discourages from being instruction-shaped and v0 cannot check — and
-     the push block's own "fetch before you assert" sends more reads here by design.
+     the push block's own fetch cue sends more reads here by design.
      **Mints a read receipt** for every record returned (schema.md invariant 9), which is what
      licenses a later write. It is the only way to license a write to a row this session did
      not itself just write, or just receive back in a conflict payload.
@@ -2245,23 +2251,14 @@ things and refuses rather than guesses when it cannot.
   is **65536**, deliberately well above the 10240 default, and what that margin does and does not buy is
   worth stating precisely, because an earlier version of this paragraph claimed more than was true.
 
-  **What is measured.** The shipped `agentSpawn` output is the write policy at **6599 bytes** (6569
-  characters), which fits 65536, the 10240 an array install inherits, and Claude Code's 10,000-unit
-  budget. It read 2950 until the recall-trigger and search-gate paragraphs were added to the shipped
-  constant, 5487 as last measured on 2026-08-14, 6098 until 2026-09-22, when naming the *second*
-  gist bound — 1,024 characters alongside the 64 tokens — added 132 bytes, and 6230 until the same
-  day's correction of the recall paragraph, which had told **every Claude Code subagent** that gists
-  are injected ahead of each message it receives when that population receives none — the policy is
-  delivered to subagents there and the push is not. **It was 5942 immediately before the 2026-09-20
-  recall rewrite, which added 220 bytes** — so the 08-16 policy edits (the subject-reference
-  paragraph and the general-fact clause) had already moved it by ~450 with nobody re-measuring, and
-  an earlier version of *this sentence* blamed the whole 5487 → 6143 jump on the 09-20 change — and
-  6143 was itself an intermediate figure, two reviewer-driven rewordings before 6162, which is what
-  this sentence said until D1's amendment finally reached the shipped constant and removed the
-  "a separate system covers code structure, symbols and layout" clause — 64 bytes, and **a fourth
-  instance of the hazard this paragraph exists to describe, committed inside the paragraph describing
-  it**: the suite asserts the *fits* rather than the figure, so the number goes stale without failing
-  anything, every time. A push block of five rows whose gists are ordinary prose at the largest
+  **What is measured.** The shipped `agentSpawn` output is the write policy at **2929 bytes** (2929
+  characters) for a main agent, and the subagent variant at **2860 bytes** (2860 characters). Both
+  fit 65536, the 10240 an array install inherits, and Claude Code's 10,000-unit budget.
+  **Do not restate either figure anywhere else.**
+  The suite asserts that the text *fits*, never what it measures, so a number copied into prose goes
+  stale on the next wording change without reddening anything — which happened to this paragraph
+  repeatedly while it recorded each previous value. `tests/test_install_limits.py` recomputes from
+  the constants. A push block of five rows whose gists are ordinary prose at the largest
   `gist_max_tokens` any configuration permits (256) is a few kilobytes, and fits.
 
   **What tokens do not bound, and the second bound that does.** `gist_max_tokens` bounds *tokens*, and
@@ -2271,8 +2268,9 @@ things and refuses rather than guesses when it cannot.
   them would overflow any `max_output_size` — after which the harness truncates the block **in silence**.
   The write path therefore also enforces `GIST_MAX_CHARACTERS`, in UTF-16 code units, ahead of the token
   bound and reported against field `gist.characters` (`schema.md` §Bounds). That is what makes this
-  section's margin claim provable rather than merely observed: a five-row block is at most 6,429 units, and
-  UTF-8 needs at most 3 bytes per unit, so at most 19,287 bytes against the shipped 65,536. Asserted by
+  section's margin claim provable rather than merely observed: a five-row block is bounded in UTF-16 units by
+  `GIST_MAX_CHARACTERS` plus the framing, and UTF-8 needs at most 3 bytes per unit, so its byte ceiling
+  against the shipped 65,536 follows — both figures stated once in `schema.md` §Bounds. Asserted by
   `tests/test_install_limits.py`, and named in the user-facing troubleshooting notes so the bound is not
   something only a test knows.
 - **`kiro-cli agent validate` signals a complaint by *writing to stderr*, not by exiting non-zero**,

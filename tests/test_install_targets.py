@@ -25,6 +25,7 @@ import yaml
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, TIMEOUT_MS
+from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT
 from zikaron.install import harness
 from zikaron.install.assets import (
     CLAUDE_CODE_SPAWN_INSTRUCTION,
@@ -1055,7 +1056,9 @@ class TestTheInstalledConfigDrivesTheRealHook:
 
         envelope = json.loads(stdout)
         assert envelope["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
-        assert "tribal knowledge" in envelope["hookSpecificOutput"]["additionalContext"]
+        # The subagent variant, not the main-agent one: the text that reaches an agent the push
+        # never serves must not open by describing a block it will never be sent.
+        assert envelope["hookSpecificOutput"]["additionalContext"] == SUBAGENT_WRITE_POLICY_PROMPT
 
     def test_the_installed_subagent_hook_says_nothing_to_the_consolidator(
         self, tmp_path: Path

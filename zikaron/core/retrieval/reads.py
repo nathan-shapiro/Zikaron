@@ -285,6 +285,7 @@ async def surface(
                 query=_query_shape(external),
                 n_returned=len(returned),
                 n_demoted=sum(1 for ranked in returned if ranked.demoted),
+                preamble_digest=block.PREAMBLE_DIGEST,
             ),
             memory_uuid=None,
         )

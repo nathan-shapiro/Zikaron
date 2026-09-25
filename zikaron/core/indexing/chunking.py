@@ -58,13 +58,13 @@ SEPARATOR_TOKENS: Final = 1
 #: the worst case — five gists of astral characters — would exceed the budget it is supposed to
 #: prove.
 #:
-#: **The number, and what it buys.** A five-row injected block's fixed framing measures 1,309
-#: units, so five gists at this bound come to 6,429 — 64% of the smallest injection budget any
-#: supported harness states. UTF-8 needs at most three bytes per UTF-16 unit (a
-#: Basic-Multilingual-Plane character is one unit and at most three bytes; an astral character is
-#: two units and four bytes), so the same block is at most 19,287 bytes against the largest
-#: byte-denominated budget, 29% of it. The framing is preamble prose and moves when that prose does,
-#: so every figure in this paragraph is recomputed rather than carried.
+#: **The number, and what it buys.** Five gists at this bound plus the block's framing fit every
+#: supported harness's injection budget in that harness's own unit — UTF-16 units for Claude Code,
+#: bytes for kiro at UTF-8's ceiling of three bytes per unit (a Basic-Multilingual-Plane character
+#: is one unit and at most three bytes; an astral character is two units and four bytes). The
+#: figures are stated once, in `schema.md` §Bounds under `gist.characters`, and
+#: `tests/test_install_limits.py` recomputes them from `block.render`; they move whenever the
+#: preamble does, so they are not restated here.
 #:
 #: **The trade it makes.** Measured across prose styles at 3.89 to 6.55 characters per token, this
 #: binds above roughly 156 tokens of plain English: comfortably clear of the default gist token

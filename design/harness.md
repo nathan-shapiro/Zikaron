@@ -206,7 +206,8 @@ context, because no push fires there at all.
 
 **The write policy is delivered to subagents, precisely.** `SessionStart` fires once per session, so a
 subagent would otherwise inherit Zikaron's tools having never seen D30's policy. The rule is: inject the
-policy on `SubagentStart` for every `agent_type` **except `zikaron-consolidator`**, whose policy is its own
+policy — its subagent variant, `SUBAGENT_WRITE_POLICY_PROMPT`, which says nothing is pushed because nothing
+is — on `SubagentStart` for every `agent_type` **except `zikaron-consolidator`**, whose policy is its own
 system prompt.
 
 **The channel is not the one the rest of the design uses**, and this was measured only after a draft asserted
@@ -449,8 +450,8 @@ rather than in anyone's head. Both the bound and the budget count **UTF-16 code 
 above, and UTF-8 needs at most **3 bytes per UTF-16 unit** — a Basic-Multilingual-Plane character is one unit
 and at most three bytes, an astral character is two units and four bytes, so the widest *per unit* is the
 three-byte BMP character rather than the four-byte astral one. A five-row block fitting 10,000 units is
-therefore at most 30,000 bytes, comfortably inside kiro's shipped 65,536; at the gist bound the real figure
-is 19,287. That ×3 is a real ceiling from the encoding — worth distinguishing from the invented "four bytes
+therefore at most 30,000 bytes, comfortably inside kiro's shipped 65,536; the figure at the gist bound is
+`schema.md` §Bounds' and moves with the preamble. That ×3 is a real ceiling from the encoding — worth distinguishing from the invented "four bytes
 per token" factor an earlier `tests/test_install_limits.py` asserted, which was a guess and was wrong in the
 opposite direction. Entirely different standing.
 

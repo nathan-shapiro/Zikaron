@@ -3250,12 +3250,35 @@ Plan:
 
 
 ## References
+- **The prose Zikaron injects, authored and then checked as built** —
+  `reviews/injected-prose-review.md`. Five rounds across M32: a critique of the shipped text against
+  the measured read rate, then the replacement text written outright, then three rounds verifying
+  what landed. Round 3 found the prose log attributing a measurement to the wrong text; Round 4
+  found the same error one entry down, in Round 3's own replacement. Carries the reasoning for
+  keeping `gist` as the field name while "headline" is the role, and for not converging the
+  consolidator's vocabulary.
+- **Every version of the injected framing** — `research/injected-prose-log.md`. The digest→text
+  decoder for `surface_call.detail.preamble_digest`, append-only and gated by
+  `tests/test_injected_prose_log.py`. Read it before attributing any read-rate measurement to a
+  particular prose: the pre-digest era spans framings it does not record.
+- **Jev, and the guardrail-judge category** — `research/jev.md`. TypeSafe AI's "System One"
+  classifier identified and ruled out for a `preToolUse` judge on deployment shape: hosted-only, p50
+  379–422 ms measured independently at n=60, nothing to pin. Surveys the category and separates the
+  fixed-harm-taxonomy guardrails (Llama Guard, ShieldGemma, Granite Guardian, Lakera, `llm-guard`)
+  from the two custom-policy leads — Invariant Guardrails' local rule-engine DSL over tool-call
+  traces, and a tiny local classifier. Its own latency conclusion inherits a budget premise
+  `FINDINGS.md` now corrects.
 - **The CLI became a thin client, and the schema learned to move** —
   `reviews/m31-cli-thin-client-review.md`. M31's review trail.
 - **kiro installed and driven on a foreign machine** — `research/kiro-container-run.md`. The
   2026-09-24 container run that completed D34's second half: the installer against the config kiro
   itself writes, `agentSpawn` proven to reach the model, 12 tools, consolidation end to end, and
   the first behavioural evidence about the write policy under a real coding agent.
+- **One real consolidation run, and what it exposed** —
+  `research/leibatrader-consolidation-2026-09-24.md`. M18's spill firing in production and leaving
+  no trace; a merge moving the claim while the uuid stays; a wrong memory believed and propagated;
+  the measured negativity of the corpus and the scope gate that causes it; and the evaluator-with-
+  teeth candidate, with the `preToolUse` citation.
 - **`CLAUDE_PROJECT_DIR` reaches hooks, not shells** —
   `research/claude-project-dir-reaches-hooks-not-shells.md`. Why D17's fallback rung is what every
   typed command resolves through, with the limits of an n=1 measurement stated.
@@ -6220,4 +6243,73 @@ person reading that realises nothing is live is what eyes judge and no test can.
 and the consolidator model-id check. Auth is *expected* to be a browser-link flow like Claude Code's,
 so the attached-pane procedure carries over — operator report, second-hand and unverified, and
 `research/kiro-mcp-lifecycle-probe.md` is why a documented kiro behaviour is not taken on trust.
+
+
+## M31 as built (moved out of FINDINGS 2026-09-24)
+
+Merged as `d0d44a6`. The decisions it took, as they were recorded while it was live. Current truth
+is in the design corpus: `design/distribution.md` §"The front door" for `init` and the refusal,
+`design/overview.md` D31/D37, `design/knowledge-index.md` §§8.2 and 9, and
+`design/architecture.md` §"Store identity is verified, not assumed" for the path-spelling hazard.
+The review trail is `reviews/m31-cli-thin-client-review.md`.
+
+
+**Built, green on `./check.sh`, and reviewed to zero blockers — the loop was stopped there by
+operator decision rather than run to a bare approval.** `design/build-plan.md` §M31 is normative for
+scope, the verbs, the RPC methods they needed, and the fence. The matrix is the PR's
+(`CLAUDE.md` §"The check gate").
+
+**`~/Trading/LeibaTrader` is pinned to this branch until it merges.** Its service runs from this
+repository's editable install, so it migrated that store to schema 2 on its next cold start —
+26,300 events, `integrity_check ok`. `main` and the published `0.1.0` declare
+`SUPPORTED_SCHEMA_VERSION = 1` and refuse anything above it, so reverting the branch strands that
+store.
+
+Operator rule, 2026-09-24: **the CLI is a thin client of the service, and `doctor` is the single
+exemption** — any store check it grows opens the store directly, because it reports on an
+installation that may be broken in the way that stops the service starting. The indexer keeps its
+direct open and is now `scope.open_store`'s only caller.
+
+**Two surfaces beyond the brief, both operator business rather than agent business.**
+`knowledge_unlock` is an RPC method with **no MCP tool**, and `refresh --wait` blocks until no
+indexer is running against a named corpus. `design/knowledge-index.md` §§8.2, 9 carry both.
+
+**Creating a store is `zikaron init`'s act alone among typed commands, and every `knowledge` verb
+refuses a project that has none — operator decisions 2026-09-24, on a measured defect.** Rationale
+and the rejected alternatives: `design/distribution.md` §"The front door". **D17's ladder is
+unchanged** and the check happens after it. **The predicate is `memory.db`, not `.zikaron/`** — the
+service creates the directory for its log before the store, so a failed first start leaves one
+without the other. **No ancestor walk binds anything**; the refusal may look upward only to *name*
+what it found.
+
+**A typed `--project` is `resolve()`d, never merely made absolute, and that is a correctness
+constraint rather than tidiness.** The socket is keyed on the resolved store path while identity is
+compared on the *spelling* the service was started with, so `--project ..` or a symlinked path
+starts a service the agent's own MCP server and hook then refuse with `store_identity` on every
+call until it idles out. Every other client is physical by construction through `Path.cwd()`;
+whether the harness's own `CLAUDE_PROJECT_DIR` is physical is **unmeasured**, and a symlinked one
+would reproduce the mismatch in the other direction. `design/architecture.md` §"Store identity is
+verified, not assumed" carries it, and the lasting repair — comparing resolved paths on both sides
+— is not taken here.
+
+**Neither supported harness exports a project directory to a shell.** `CLAUDE_PROJECT_DIR` reaches
+the hook and `zikaron-mcp`, not the terminal an agent or a person types in, and kiro names no such
+variable at all (`spec.KIRO.project_dir_variable is None`). So D17's fallback rung, not its harness
+rung, is what every CLI invocation actually resolves through — measured, with its limits, in
+`research/claude-project-dir-reaches-hooks-not-shells.md`. Re-derive by running
+`echo "${CLAUDE_PROJECT_DIR:-unset}"` in a shell the harness spawned, and by reading `spec.py`'s two
+`project_dir_variable` values.
+
+**Three decisions taken 2026-09-24, with their rationale where it lives:** `meta.schema_version`
+becomes a range and `ClientKind` gains `CLI` — **D37**, `design/overview.md` §4; a caller branches on
+the code and never on wording — `zikaron/core/errors.py`'s module docstring; `refresh --wait` rather
+than an age-based lock lease — `design/build-plan.md` §M31.
+
+**SQLite cannot alter a constraint in place, and the two routes that work differ sharply in cost.**
+`ALTER TABLE ... DROP/ADD CONSTRAINT` and `ALTER COLUMN` are parse errors on 3.45.1. Against
+`~/Trading/LeibaTrader` (25,836 events, the largest store) on a `VACUUM INTO` snapshot: the 12-step
+rebuild costs **~530 ms**, a `PRAGMA writable_schema` rewrite **~2 ms**, both `integrity_check ok`
+with `cli` accepted and a bogus value still refused. **M31 takes the 12-step** — the saving is once
+per store, and the fast route bypasses every validation SQLite has. Re-derive with
+`.venv/bin/python spikes/m31_check_widening.py`.
 

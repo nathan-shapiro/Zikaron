@@ -102,8 +102,9 @@ async def test_the_block_carries_the_frame_the_order_and_whole_uuids(tmp_path: P
         )
 
         assert printed.startswith(block.HEADER)
+        assert printed.endswith(block.FOOTER + "\n")
         assert block.PREAMBLE in printed
-        assert "most relevant first" in printed
+        assert "best match first" in printed
         assert f"1. [{uuid}] integration tests need {_TERM}" in printed
         assert "…" not in printed
 
@@ -569,8 +570,9 @@ def test_the_block_is_empty_when_there_is_nothing_to_print() -> None:
 def test_the_block_numbers_from_one_in_the_order_given() -> None:
     printed = block.render([_pool_row("a"), _pool_row("b")])
     lines = printed.splitlines()
-    assert lines[-2].startswith("1. [a]")
-    assert lines[-1].startswith("2. [b]")
+    assert lines[-3].startswith("1. [a]")
+    assert lines[-2].startswith("2. [b]")
+    assert lines[-1] == block.FOOTER
 
 
 def test_the_block_refuses_a_row_push_cannot_retrieve() -> None:
@@ -592,18 +594,21 @@ def test_the_designs_sample_block_states_the_preamble_this_code_prints() -> None
     sample = fenced_code("retrieval.md", "## Push output format", "")
     assert block.HEADER in sample
     assert block.PREAMBLE in sample
+    assert block.FOOTER in sample
 
 
-def test_the_block_says_a_gist_is_an_abstract_and_names_when_to_fetch() -> None:
+def test_the_block_calls_a_gist_a_headline_and_names_when_to_fetch() -> None:
     """An agent reading a gist as the finding asserts a condensed claim without its qualifications.
 
     Two halves, and neither works alone: saying what a gist leaves out gives the agent no moment to
-    act on, and naming the moment without saying why leaves the gist looking sufficient. The moment
-    is deliberately about what the agent is doing — asserting or acting — rather than about whether
-    the gist resembles what it already believes, since that judgement is made mid-task by an agent
-    that already thinks it has the answer.
+    act on, and naming the moment without saying why leaves the gist looking sufficient. "Headline"
+    carries the first half in one word — claim-shaped, as the write policy asks a gist to be, and
+    understood not to be the article, which "abstract" is not. The moment is whether a line is about
+    the work in front of the reader, answerable while the block is being read, rather than whether
+    the gist resembles what the reader already believes: that judgement is made mid-task by an agent
+    which already thinks it has the answer.
     """
     flat = " ".join(block.PREAMBLE.split())
-    assert "abstract of a longer record" in flat
-    assert "not the finding itself" in flat
-    assert "Before you state one as fact, or act on one, fetch it by uuid" in flat
+    assert "headline" in flat
+    assert "A headline is not the record" in flat
+    assert "call zikaron_memory_fetch with those ids" in flat

@@ -20,27 +20,45 @@ from zikaron.hook.write_policy import (
     OVERRIDE_OVERSIZE,
     OVERRIDE_REFUSED,
     OVERRIDE_UNREADABLE,
+    SUBAGENT_WRITE_POLICY_PROMPT,
     WRITE_POLICY_PROMPT,
     read_policy,
 )
 
 DOCUMENT = "write-policy.md"
-HEADING = "## 2. The prompt"
+HEADING = "### Main agent"
+SUBAGENT_HEADING = "### Subagent"
 
 
 def test_prompt_matches_the_design_document_exactly() -> None:
     assert fenced_code(DOCUMENT, HEADING, "") == WRITE_POLICY_PROMPT
 
 
-def test_prompt_is_a_single_line_gist_instruction_present() -> None:
+def test_subagent_prompt_matches_the_design_document_exactly() -> None:
+    assert fenced_code(DOCUMENT, SUBAGENT_HEADING, "") == SUBAGENT_WRITE_POLICY_PROMPT
+
+
+def test_the_two_variants_differ_only_in_how_memory_reaches_the_reader() -> None:
+    """The split exists for one paragraph, and everything after it is one text with two deliveries.
+
+    Asserted as a property rather than by quoting the shared part, so a rule added to one variant
+    and forgotten in the other reddens here instead of reaching only half the agents.
+    """
+    marker = "Search with zikaron_memory_search"
+    assert WRITE_POLICY_PROMPT.split(marker)[1] == SUBAGENT_WRITE_POLICY_PROMPT.split(marker)[1]
+    assert "A block of headlines is injected" in WRITE_POLICY_PROMPT
+    assert "Nothing is pushed to you" in SUBAGENT_WRITE_POLICY_PROMPT
+
+
+def test_prompt_is_a_single_line_recall_instruction_present() -> None:
     """A cheap, independent sanity check that the drift guard above is reading the right block —
     not a duplicate assertion of its content, but a check on a property the exact-match test
     could theoretically pass by accident if both sides were wrong in the identical way (e.g. an
-    empty string on both). `write-policy.md` §1 states the gist instruction is load-bearing
-    (D13's relevance-triage argument), so its absence would mean this guard is reading the wrong
-    fence entirely.
+    empty string on both). The recall occasions are the one paragraph that must be read by an agent
+    *not* already reaching for the search tool, so their absence would mean this guard is reading
+    the wrong fence entirely.
     """
-    assert "Gists are for triage" in WRITE_POLICY_PROMPT
+    assert "Something surprised you" in WRITE_POLICY_PROMPT
 
 
 def test_prompt_is_stripped_of_markdown_fence_markers() -> None:
@@ -65,19 +83,28 @@ class TestReadPolicyOverride:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, None)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            None,
+        )
 
     def test_a_missing_store_directory_is_the_absent_case(self, tmp_path: Path) -> None:
         """The very first session of a project, before anything has created `.zikaron` — the most
         common state this function will ever be called in, and it must be the silent one."""
-        assert read_policy(tmp_path / ".zikaron", spec=KIRO) == (WRITE_POLICY_PROMPT, None)
+        assert read_policy(tmp_path / ".zikaron", spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            None,
+        )
 
     def test_a_clean_override_replaces_the_constant_with_no_label(self, tmp_path: Path) -> None:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("## My own policy\n\nRecord less.\n")
-        assert read_policy(store, spec=KIRO) == ("## My own policy\n\nRecord less.\n", None)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            "## My own policy\n\nRecord less.\n",
+            None,
+        )
 
     def test_a_symlinked_override_is_refused_and_labelled(self, tmp_path: Path) -> None:
         """The case the refusal exists for: this text is printed straight into a model's context, so
@@ -90,7 +117,7 @@ class TestReadPolicyOverride:
         secret = tmp_path / "id_rsa"
         secret.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
         (store / "write-policy.md").symlink_to(secret)
-        text, note = read_policy(store, spec=KIRO)
+        text, note = read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT)
         assert note == OVERRIDE_REFUSED
         assert text == WRITE_POLICY_PROMPT
         assert "PRIVATE KEY" not in text
@@ -107,12 +134,18 @@ class TestReadPolicyOverride:
         (elsewhere / "write-policy.md").write_text("## Injected through a symlinked store\n")
         store = tmp_path / ".zikaron"
         store.symlink_to(elsewhere)
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_a_file_where_the_store_directory_should_be_is_refused(self, tmp_path: Path) -> None:
         store = tmp_path / ".zikaron"
         store.write_text("not a directory")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_an_override_in_a_world_writable_store_is_refused(self, tmp_path: Path) -> None:
         """The case an obvious reading gets wrong: no symlink is involved, so `O_NOFOLLOW` cannot
@@ -123,7 +156,7 @@ class TestReadPolicyOverride:
         store.mkdir(mode=0o777)
         store.chmod(0o777)
         (store / "write-policy.md").write_text("## Authored by somebody else\n")
-        text, note = read_policy(store, spec=KIRO)
+        text, note = read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT)
         assert note == OVERRIDE_REFUSED
         assert text == WRITE_POLICY_PROMPT
         assert "somebody else" not in text
@@ -134,7 +167,10 @@ class TestReadPolicyOverride:
         store.chmod(0o700)
         store.chmod(0o770)
         (store / "write-policy.md").write_text("## Authored by the group\n")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_a_group_readable_store_is_also_refused(self, tmp_path: Path) -> None:
         """`0750` cannot be written by the group, but it is not the boundary the design draws, and a
@@ -145,7 +181,10 @@ class TestReadPolicyOverride:
         store.chmod(0o700)
         store.chmod(0o750)
         (store / "write-policy.md").write_text("## Readable by the group\n")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_a_private_store_still_honours_its_override(self, tmp_path: Path) -> None:
         """The ordinary case, asserted beside the refusals so the check cannot pass by refusing
@@ -154,7 +193,7 @@ class TestReadPolicyOverride:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("## Mine\n")
-        assert read_policy(store, spec=KIRO) == ("## Mine\n", None)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == ("## Mine\n", None)
 
     def test_a_directory_swapped_in_after_validation_cannot_supply_the_policy(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -183,7 +222,7 @@ class TestReadPolicyOverride:
             hostile.rename(private)
 
         monkeypatch.setattr(write_policy, "_require_private", _swap_then_check)
-        text, note = read_policy(private, spec=KIRO)
+        text, note = read_policy(private, spec=KIRO, default=WRITE_POLICY_PROMPT)
         assert note is None
         assert text == "## The real one\n"
         assert "Swapped in" not in text
@@ -195,7 +234,10 @@ class TestReadPolicyOverride:
         *pathname* check that a later read resolved again. Opening the directory first means an
         absent one raises before any child is looked at, so there is no window to create one in.
         """
-        assert read_policy(tmp_path / ".zikaron", spec=KIRO) == (WRITE_POLICY_PROMPT, None)
+        assert read_policy(tmp_path / ".zikaron", spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            None,
+        )
 
     def test_a_fifo_override_is_refused_without_blocking(self, tmp_path: Path) -> None:
         """Opening a fifo for reading blocks until a writer arrives, which would hang the one path
@@ -205,7 +247,10 @@ class TestReadPolicyOverride:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         os.mkfifo(store / "write-policy.md")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_a_directory_in_the_overrides_place_is_refused_and_labelled(
         self, tmp_path: Path
@@ -214,7 +259,10 @@ class TestReadPolicyOverride:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").mkdir()
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_REFUSED)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_REFUSED,
+        )
 
     def test_an_unreadable_override_falls_back_and_is_labelled(self, tmp_path: Path) -> None:
         store = tmp_path / ".zikaron"
@@ -224,7 +272,10 @@ class TestReadPolicyOverride:
         override.write_text("unreadable")
         override.chmod(0o000)
         try:
-            assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_UNREADABLE)
+            assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+                WRITE_POLICY_PROMPT,
+                OVERRIDE_UNREADABLE,
+            )
         finally:
             override.chmod(0o600)
 
@@ -237,14 +288,20 @@ class TestReadPolicyOverride:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_bytes(b"\xff\xfe\x00 not utf-8")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_UNREADABLE)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_UNREADABLE,
+        )
 
     def test_a_blank_override_falls_back_and_is_labelled(self, tmp_path: Path) -> None:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("   \n\t\n")
-        assert read_policy(store, spec=KIRO) == (WRITE_POLICY_PROMPT, OVERRIDE_EMPTY)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            WRITE_POLICY_PROMPT,
+            OVERRIDE_EMPTY,
+        )
 
     def test_an_oversize_override_is_used_anyway_and_labelled(self, tmp_path: Path) -> None:
         """Used, not truncated and not refused: a harness that overruns its injection budget
@@ -255,7 +312,10 @@ class TestReadPolicyOverride:
         store.chmod(0o700)
         oversize = "x" * (MAX_OUTPUT_SIZE + 1)
         (store / "write-policy.md").write_text(oversize)
-        assert read_policy(store, spec=KIRO) == (oversize, OVERRIDE_OVERSIZE)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            oversize,
+            OVERRIDE_OVERSIZE,
+        )
 
     def test_an_override_exactly_at_the_limit_is_not_labelled(self, tmp_path: Path) -> None:
         """The bound is inclusive: `>` the budget, not `>=`. A fixture one byte over and one byte
@@ -266,7 +326,7 @@ class TestReadPolicyOverride:
         store.chmod(0o700)
         at_limit = "x" * MAX_OUTPUT_SIZE
         (store / "write-policy.md").write_text(at_limit)
-        assert read_policy(store, spec=KIRO) == (at_limit, None)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (at_limit, None)
 
     def test_kiros_bound_counts_bytes_not_characters(self, tmp_path: Path) -> None:
         """Kiro's `max_output_size` is a byte cap, and multi-byte characters are exactly where a
@@ -281,7 +341,10 @@ class TestReadPolicyOverride:
         text = "—" * (MAX_OUTPUT_SIZE // 3 + 1)
         assert len(text) < MAX_OUTPUT_SIZE
         (store / "write-policy.md").write_text(text)
-        assert read_policy(store, spec=KIRO) == (text, OVERRIDE_OVERSIZE)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
+            text,
+            OVERRIDE_OVERSIZE,
+        )
 
     def test_claude_codes_bound_counts_characters_not_bytes(self, tmp_path: Path) -> None:
         """The converse of the test above, and the reason the unit travels with the number rather
@@ -295,7 +358,7 @@ class TestReadPolicyOverride:
         text = "—" * CLAUDE_CODE.injection_budget
         assert len(text.encode("utf-8")) > CLAUDE_CODE.injection_budget
         (store / "write-policy.md").write_text(text)
-        assert read_policy(store, spec=CLAUDE_CODE) == (text, None)
+        assert read_policy(store, spec=CLAUDE_CODE, default=WRITE_POLICY_PROMPT) == (text, None)
 
     def test_an_override_between_the_two_budgets_is_labelled_only_on_the_smaller_harness(
         self, tmp_path: Path
@@ -310,8 +373,11 @@ class TestReadPolicyOverride:
         between = "x" * (CLAUDE_CODE.injection_budget + 1)
         assert len(between.encode("utf-8")) < KIRO.injection_budget
         (store / "write-policy.md").write_text(between)
-        assert read_policy(store, spec=KIRO) == (between, None)
-        assert read_policy(store, spec=CLAUDE_CODE) == (between, OVERRIDE_OVERSIZE)
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (between, None)
+        assert read_policy(store, spec=CLAUDE_CODE, default=WRITE_POLICY_PROMPT) == (
+            between,
+            OVERRIDE_OVERSIZE,
+        )
 
     def test_the_shipped_policy_fits_every_supported_harness(self) -> None:
         """The constant this module falls back to is the one text guaranteed to be injected, so it
