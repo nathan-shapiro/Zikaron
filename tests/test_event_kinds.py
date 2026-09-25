@@ -277,6 +277,7 @@ def test_an_enum_member_and_its_plain_value_are_interchangeable() -> None:
                 "lexical_skipped": True,
                 "n_returned": 3,
                 "n_demoted": 0,
+                "preamble_digest": "0123456789ab",
             }
         )
 
@@ -301,6 +302,7 @@ def test_a_typed_detail_serializes_to_the_contracts_flat_key_order() -> None:
         query=QueryShape(query_tokens=4, query_truncated=False, lexical_skipped=True),
         n_returned=3,
         n_demoted=1,
+        preamble_digest="0123456789ab",
     )
     payload = detail.as_detail()
     assert tuple(payload) == EVENT_SPECS[EventKind.SURFACE_CALL].field_names

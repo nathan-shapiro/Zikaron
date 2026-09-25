@@ -16,7 +16,8 @@
 >
 > **Harness delta (D34): the paragraph above is kiro's reach, and it is not Claude Code's.** Claude Code
 > fires `SubagentStart` carrying `agent_type`, which makes the per-agent rule expressible — so
-> `hook/subagent_policy.run` delivers this text to **every subagent except `zikaron-consolidator`**,
+> `hook/subagent_policy.run` delivers the subagent variant of this text (§2) to **every subagent
+> except `zikaron-consolidator`**,
 > an unknown `agent_type` included, deliberately. Three consequences for the paragraph above, on that
 > harness: it does not reach top-level sessions only; a general-purpose subagent writing through MCP
 > **does** get this guidance, so the "accepted cost" is kiro's alone; and carrying a policy in the
@@ -32,9 +33,12 @@
 
 **Two rules are here because of a production failure rather than an argument — one observed, one
 reported.** The older is
-below; the newer is §2's instruction to fetch a record before asserting from its gist, added
-2026-09-20 after an agent in real use reported taking gists as findings and answering from them
-(`FINDINGS-archive.md` §"The gist-as-abstract fix, and M27" records the report and both records).
+below; the newer is the read side's fetch cue, added 2026-09-20 after an agent in real use reported
+taking gists as findings and answering from them
+(`FINDINGS-archive.md` §"The gist-as-abstract fix, and M27" records the report and both records). It
+first lived in this prompt as *fetch before you state one as fact*; M32 moved it to the two surfaces
+that hand back a headline — the injected block and `zikaron_memory_search`'s description — and
+changed its trigger to read-time task relevance (`retrieval.md` §"Push output format").
 "If a claim expires, the gist has to say so" was added 2026-08-03, in the first hour of real
 dogfooding. An agent asked to record project knowledge wrote the gist *"do not tune rrf_k/fusion_depth/arm
 weighting during retrieval work — it's a deliberate standing instruction"*, with the condition that makes
@@ -92,106 +96,128 @@ gist is injected into a future model's context. That makes two failure modes wor
 
 ## 2. The prompt
 
+Two variants, differing only in their second paragraph. The main-agent text describes the block
+pushed with each user message; the subagent text says nothing is pushed, because nothing is —
+and a subagent told *"nothing is injected for you"* **as an injection** has been handed a false
+sentence as its first context. `zikaron/hook/subagent_policy.py` selects the second.
+
+### Main agent
+
 ```
 ## Project memory (Zikaron)
 
-This directory has a memory store holding **tribal knowledge**: what has been learned by working
-here that the source code does not tell you. It persists across sessions, and other agents will
-read what you write.
+This project has a memory store of what was learned by working here and is not in the source
+code. It persists across sessions, and other agents read what you write.
 
-**Look things up before you spend time.** If you are the session's main agent, a few relevant
-gists are injected ahead of each user message, selected for the *user's words*, not for the
-problem as you understand it now. A few turns into a task the framing has usually moved and the
-selection has not: nothing new arrives until the user speaks again, and nothing tells you the set
-has stopped covering the problem. **If you were spawned as a subagent, nothing is injected for you
-at all** — the push rides on a user message, and you never receive one — so searching is the only
-way memory reaches you here. The records themselves are not suspect, but you are not shown the
-records: each line is a gist, a one-sentence abstract written to help you choose what to read, and
-the conditions a finding held under usually live in the entry behind it. So before you state one
-as fact, or act on one, fetch it. The injected set is a starting point, never evidence that memory
-has already been consulted.
+**Look things up before you spend time.** A block of headlines is injected with each user message,
+chosen for the words in that message, not for the problem as you understand it now. Each headline
+names a record; the record holds the finding, its conditions and its exceptions. The block does
+not follow the task once you reframe it, and nothing new arrives until the user speaks again.
 
-Search when one of these happens, rather than when the effort ahead feels big enough to deserve it
-— effort feels like progress, so that judgement arrives too late to act on:
+Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
+enough to deserve it:
 - **Something surprised you.** A step failed in a way you did not predict, or code behaves
-  differently from how it reads. This is the highest-yield moment there is.
-- **You are about to propose** a design, a mechanism, or a plan.
-- **You are about to say an approach will not work**, or is not worth trying. This is exactly what
-  the store holds: "we tried that already, and here is how it failed".
-- **You are about to rename, move or delete** something other work may depend on.
+  differently from how it reads.
+- **You are about to propose** a design, a mechanism or a plan.
+- **You are about to say an approach will not work.**
+- **You are about to rename, move or delete** something other work depends on.
 
-When you propose a design or a plan, or argue that an approach is a dead end, say what you searched
-for and what came back — including "searched X, found nothing relevant". One query costs a fraction
-of rediscovering what it finds. What comes back is evidence about what happened then, not a ruling
-about what must happen now: a recorded failure tells you what to re-check, not which option to
-drop, so confirm its conditions still hold before letting it rule anything out.
+When you propose a design or a plan, or call an approach a dead end, say what you searched for and
+what came back, including "searched X, found nothing relevant". A hit is evidence about what
+happened then, not a ruling about what must happen now: it tells you what to re-check, not which
+option to drop.
 
 **Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
 it out. This store is for what cost someone time to discover.
 
-Worth recording:
-- How to build, test, run and deploy — especially the step that is not in the README
-- Failures and their causes, above all silent ones: the symptom, what it actually was, what fixed it
-- Environment requirements: which env vars and services must be set up, which versions matter, and
-  **which** credentials are needed and how to obtain them
-- Constraints and prohibitions *with their reason*: "do not use X yet, because Y"
-- Approaches already tried that did not work, so nobody spends that afternoon twice
-- Conventions and preferences that are settled but written down nowhere
+Worth recording with zikaron_memory_remember:
+- How to build, test, run and deploy, above all the step the README omits
+- Failures and their causes, especially silent ones: the symptom, the actual cause, the fix
+- Environment requirements: env vars, services and versions that matter, and which credentials
+  are needed and where to obtain them
+- Constraints and prohibitions with their reason: "do not use X yet, because Y"
+- Approaches already tried that did not work, and how they failed
+- Conventions and preferences that are settled and written down nowhere
 
-**Never record a secret.** No tokens, passwords, API keys, private keys, connection strings with
-credentials in them, or copied `.env` contents — and no personal data. Names and procedures, never
-values: "needs GITHUB_TOKEN with repo scope, mint one at <settings page>" is right;
-"GITHUB_TOKEN=ghp_..." is not. This store is plaintext on disk, it is read by every future
-session, and retiring a memory does not erase it.
+Not worth recording: what the source already says; transient state ("currently on branch
+fix-123"); a general fact about a language or tool on its own. Record the decision a general fact
+forced here: not "the test runner parallelizes by default" but "tests here run serially, because
+the fixtures share one database".
 
-Not worth recording: where code lives or what a function does, or anything else derivable from the
-source; transient state ("currently on branch fix-123"); a general fact about a language or tool on
-its own — record the decision it forced here instead: not "the test runner parallelizes by
-default", but "tests here run serially, because the runner parallelizes by default and the fixtures
-share one database".
+**Never record a secret or personal data.** The store is plaintext on disk, and retiring a record
+does not erase it. Headline and content rules are in zikaron_memory_remember's description.
 
-**Write observations, not orders.** Record what was learned and what happened — "deploying without
---force left the old worker running" — rather than standing instructions to future agents. Other
-agents read these as reference material, and a memory phrased as a command will be obeyed by
-someone with less context than you have.
+**Err toward writing.** The common failure is recording nothing. Near-duplicates are detected and
+handed back, so write without checking first.
 
-**If a claim expires, the gist has to say so.** Some things are true only for now — during a
-migration, until a fix lands, for one version of a dependency. A future agent sees the gist first
-and often sees nothing else, so a condition you leave in the content is a condition that gets
-dropped: "do not use the new API" recalled without "until the 2.0 release" becomes a permanent rule
-nobody intended. Put the condition in the gist itself, or do not record the claim. If it will not
-fit in one line, that is a sign the observation is about a passing situation rather than about this
-project, and the right move is to leave it out.
-
-**Err toward writing.** The common failure is recording nothing, not recording too much. If you just
-spent real time discovering something, record it — near-duplicates are detected and handed back to
-you, so you do not need to check first.
-
-**Gists are for triage.** A future agent sees only gists and must judge from them alone whether to
-read further. Lead with the observable symptom or situation rather than the conclusion:
-"integration tests flake on CI unless PGHOST is set" beats "notes on test configuration".
-
-**Keep a gist to one sentence of about 20 to 25 words.** Two bounds apply and the first you
-cross rejects the write: 64 tokens by default — roughly 50 words of ordinary prose — and a fixed
-1,024 characters, which only binds if the gist carries a long unbroken string. The token bound is
-this project's to configure and may be lower here; the rejection names the limit it applied.
-A write over either is rejected outright, costing you the call. If a gist strains toward either
-limit it is usually carrying content that belongs in `content`.
-
-**Point at another record by its subject, not by quoting its gist.** A gist is rewritten whenever
-its record is corrected, so a quoted gist becomes a pointer to text that no longer exists — "the
-record about the deploy rollback" survives that, and can be searched for.
-
-**Repair what misled you.** If a memory surfaces, you act on it, and it turns out to be wrong or
-stale, correcting it is your job: establish the current truth and amend the memory. Fetch it first
-— you need its version to write. Retire a memory only when it is simply no longer true and has no
-replacement.
+**Repair what misled you.** If a record you acted on turns out wrong or stale, establish the
+current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
+true and has no replacement.
 ```
 
-Mechanics deliberately left to the MCP tool descriptions rather than duplicated here: the version
-precondition and its read receipt (D26), what the dedup response contains and how to resolve a duplicate
-(D15), and the retire-versus-supersede distinction (D16, D25). Tool descriptions are always in context at the
-point of decision, which is the better place for them.
+### Subagent
+
+```
+## Project memory (Zikaron)
+
+This project has a memory store of what was learned by working here and is not in the source
+code. It persists across sessions, and other agents read what you write.
+
+**Look things up before you spend time.** Nothing is pushed to you: no headlines arrive with a
+message. Memory reaches you when you call zikaron_memory_search, or zikaron_memory_fetch with ids
+you were handed. Each result is a headline naming a record; the record holds the finding, its
+conditions and its exceptions.
+
+Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
+enough to deserve it:
+- **Something surprised you.** A step failed in a way you did not predict, or code behaves
+  differently from how it reads.
+- **You are about to propose** a design, a mechanism or a plan.
+- **You are about to say an approach will not work.**
+- **You are about to rename, move or delete** something other work depends on.
+
+When you propose a design or a plan, or call an approach a dead end, say what you searched for and
+what came back, including "searched X, found nothing relevant". A hit is evidence about what
+happened then, not a ruling about what must happen now: it tells you what to re-check, not which
+option to drop.
+
+**Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
+it out. This store is for what cost someone time to discover.
+
+Worth recording with zikaron_memory_remember:
+- How to build, test, run and deploy, above all the step the README omits
+- Failures and their causes, especially silent ones: the symptom, the actual cause, the fix
+- Environment requirements: env vars, services and versions that matter, and which credentials
+  are needed and where to obtain them
+- Constraints and prohibitions with their reason: "do not use X yet, because Y"
+- Approaches already tried that did not work, and how they failed
+- Conventions and preferences that are settled and written down nowhere
+
+Not worth recording: what the source already says; transient state ("currently on branch
+fix-123"); a general fact about a language or tool on its own. Record the decision a general fact
+forced here: not "the test runner parallelizes by default" but "tests here run serially, because
+the fixtures share one database".
+
+**Never record a secret or personal data.** The store is plaintext on disk, and retiring a record
+does not erase it. Headline and content rules are in zikaron_memory_remember's description.
+
+**Err toward writing.** The common failure is recording nothing. Near-duplicates are detected and
+handed back, so write without checking first.
+
+**Repair what misled you.** If a record you acted on turns out wrong or stale, establish the
+current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
+true and has no replacement.
+```
+
+Left to the MCP tool descriptions rather than duplicated here: the mechanics — the version precondition
+and its read receipt (D26), what the dedup response contains and how to resolve a duplicate (D15), the
+retire-versus-supersede distinction (D16, D25) — and, since M32, the rules for the text of a write: the
+headline's form and bound, expiry-in-headline, observations-not-orders, the secrets boundary and
+subject-not-quote, all in `zikaron_memory_remember`'s description and referenced from
+`zikaron_memory_amend`'s. A description is in context at the instant the argument it governs is being
+filled, and costs no injection budget; the prompt above keeps one line on secrets and points at the
+rest. What stays here is what no description can prompt: the write trigger, the scope test and the
+recall occasions.
 
 ### Inspection, deletion, and the one thing D16 cannot do
 The store is a plain SQLite file at `<scope>/.zikaron/memory.db`, mode 0600, never committed (D19). A user can
@@ -357,27 +383,15 @@ correctly appraising your own state. The rejection case is the one the store is 
 "we tried that already, and here is how it failed" is the memory a confident dead-end claim would
 otherwise waste.
 
-Two supports sit beside it, both from the same account. The **sufficiency illusion** is stated in the
-injected block and not only here: five on-point gists make memory feel already consulted, while they
-matched the *user's words* and go stale as soon as the problem is reframed, and nothing arrives to
-say so. The policy is read once per session; the block prints once per message, which is where the
-impression is actually formed, at a cost of **179 units per push** against the smaller of the two
-harness caps — the paragraph measures **178** UTF-16 units and adds 179 with the newline that
-separates it in the rendered block. *Two corrections to one figure. The unit was "bytes against the
-harness's own output cap", which is singular and kiro-shaped: that cap is 65,536 **bytes**, Claude
-Code's is 10,000 **UTF-16 units**, and the two denominators are different arguments. And the number
-was **187**, which it has never been — the text is byte-identical since the commit that introduced
-it. **The round that fixed the unit wrote a justification for why the number need not change
-instead of measuring it**, which is this corpus's own "re-derive every number you are handed",
-failed on a number nobody handed me: I inherited it from the sentence I was editing. The
-neighbouring **342** below is right, because that one was measured when the unit was pinned. This
-read "the neighbouring 377", which is a real figure — it belongs to `retrieval.md` and is the
-gist-abstract paragraph's size — and appears in this file nowhere except inside that sentence about
-it. **A correction that cites a neighbour should check the neighbour is one.***
-The
-block carries a second paragraph from §1's pair — a gist is an abstract of its record, fetch before
-asserting from it — which is the larger addition at 342 units per push; `retrieval.md` §"Push output
-format" carries its rationale, its ceiling and its cost. And a
+Two supports sit beside it, both from the same account. The **sufficiency illusion** — five on-point
+headlines make memory feel already consulted, while they matched the *user's words* and stop covering
+the problem as soon as it is reframed, and nothing arrives to say so — is stated here and in
+`zikaron_memory_search`'s description, and deliberately **not** in the injected block: the moment it
+has to be read is mid-task, once the framing has moved, which the block, printed at the top of a
+message, has already passed, so saying it there would spend uncached characters on every message to
+reach a reader who is no longer looking. The block spends its room on the fetch instead
+(`retrieval.md` §"Push output format"), and every figure for what it costs is computed from
+`block.FRAMING` rather than written here. And a
 **gate** — a design, plan or dead-end claim must state what was searched for and what came back,
 including that nothing relevant did — because it is the only lever with a checking mechanism, and
 the agent ranked it first on the evidence that everything it did reliably was gated. The scope
@@ -522,10 +536,11 @@ Until then these six signals tell us the *direction* of the error, which is enou
 - **The 64-token gist bound has a measured cost and no instrumentation.** Two of three `remember`
   calls in one observed session were refused on it (71 tokens, then 67, then 58). A refused write
   emits no event, so the store cannot report this; `FINDINGS.md` Q18 is what would close it.
-- The prompt is now longer than the draft it replaced, and every line of it is injected once per session.
-  Nothing measures whether the secrets and observations-not-orders paragraphs earn their tokens; they are
-  there because the failure they prevent is durable and unrecoverable, which is a different argument from
-  measured benefit and should not be mistaken for one.
+- The prompt is about half the length of the draft it replaced — the write-time rules moved to
+  `zikaron_memory_remember`'s description at M32 — and every line of it is still injected once per
+  session. Nothing measures whether the recall occasions or the gate earn their tokens, and nothing
+  measures whether the rules now in the description are read at the call: a refused write emits no
+  event (Q18), so the bound's two-of-three losses are the only signal and they were counted by hand.
 - No mechanism enforces the secret prohibition. It is prompt text, and prompt text is a request. A
   deterministic pre-write scan for high-entropy strings and known key prefixes is the obvious follow-up and
   costs no LLM call — it is not in v0 because a false positive would refuse a legitimate write, and D15's

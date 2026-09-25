@@ -163,8 +163,29 @@ the run — a refusal far broader than what the gate reads.
 another — code, `pyproject.toml`, the scripts. Prose cannot**, so a documentation edit needs
 `./check.sh` and nothing more. Note that `check.sh` *does* read much of the prose: the drift guards
 parse `README.md`, `CLAUDE.md`, `FINDINGS.md`, `FINDINGS-archive.md` and the design corpus, so
-"it's only a document" is never a reason to skip the gate. `grep -rn '<filename>' tests/*.py`
-settles whether a given file is an input.
+"it's only a document" is never a reason to skip the gate.
+
+**But the gate goes at the end of the editing, not after each edit.** A prose change cannot alter
+`ruff`, `mypy` or coverage, and the guards that read it are a small subset of a **~330 s** suite —
+the six files that parse the prose run in **~39 s**, an order of magnitude cheaper:
+
+```bash
+.venv/bin/pytest -q --no-cov tests/test_design_pointers_resolve.py tests/test_distribution.py \
+  tests/test_publication_hygiene.py tests/test_markdown_renders_as_written.py \
+  tests/test_definition_of_done_sites.py tests/test_quoted_design_prose_is_verbatim.py
+```
+
+**Iterate against that subset; run `./check.sh` once, when the editing is done.** Nothing here
+relaxes the gate as the definition of done — what it forbids is spending a full suite per paragraph,
+and then spending another because the next message changed the paragraph. **When a conversation is
+still live, the edits are not done**, however finished a given one feels.
+
+**Deriving that subset needs both halves, and a name-grep alone is wrong.**
+`grep -rn '<filename>' tests/*.py` finds the guards that name the file, and **misses every test that
+globs the corpus** — `test_quoted_design_prose_is_verbatim.py` reaches `FINDINGS.md` through
+`REPO.rglob("*.md")` and never spells the name. Add `grep -rn -E 'rglob|glob' tests/*.py` and read
+what the matches cover. A subset that is wrong about its inputs is worse than the slow suite,
+because it is green for the wrong reason.
 
 The formatter's output is authoritative: a `format --check` failure means running `.venv/bin/ruff
 format .`, not adjusting the code by hand to satisfy it.

@@ -54,4 +54,8 @@ def run(*, scope_dir: Path, agent_type: object) -> str | None:
     # Resolved through the seam rather than assumed to be the one harness that sends this trigger:
     # a path that hard-coded a harness here would be the forked code path the single-implementation
     # rule exists to prevent, however unreachable the other branch looks today.
-    return write_policy.resolved_policy_text(scope_dir, spec=detect.current_spec())
+    return write_policy.resolved_policy_text(
+        scope_dir,
+        spec=detect.current_spec(),
+        default=write_policy.SUBAGENT_WRITE_POLICY_PROMPT,
+    )

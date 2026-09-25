@@ -140,8 +140,24 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
         assert "zikaron_memory_fetch" not in _flat(CONSOLIDATOR_PROMPT)
 
 
-class TestTheSharedRulesAreInBothTexts:
-    """Both texts must carry them, because the consolidator never sees the injected write policy.
+async def _authoring_surfaces(tmp_path: Path) -> list[str]:
+    """Every text that governs the prose of a record being written.
+
+    The consolidator's prompt, because it rewrites gists during a merge and never sees the injected
+    write policy; and `zikaron_memory_remember`'s description, which is where these rules live for
+    the primary agent. They sit in the tool rather than in the spawn text because each one governs
+    an argument the model is filling at the moment the description is in front of it, and because a
+    description costs no injection budget.
+    """
+    mcp = build_server("primary", scope_dir=tmp_path)
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    remember = next(t for t in tools if t.name == "zikaron_memory_remember")
+    return [remember.description or "", CONSOLIDATOR_PROMPT]
+
+
+class TestTheSharedRulesAreOnEveryAuthoringSurface:
+    """Both texts must carry them, because the consolidator never sees the primary's tools.
 
     Asserted as a property of each text rather than as one being a copy of the other: the audiences
     differ, so the wording should too, and a copy test would force them to converge or be deleted.
@@ -152,39 +168,40 @@ class TestTheSharedRulesAreInBothTexts:
     away.
     """
 
-    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
-    def test_it_prohibits_recording_secrets(self, text: str) -> None:
-        assert "Never record a secret" in _flat(text)
-        assert "plaintext on disk" in _flat(text), "the reason travels with the rule"
+    async def test_it_prohibits_recording_secrets(self, tmp_path: Path) -> None:
+        for text in await _authoring_surfaces(tmp_path):
+            assert "Never record a secret" in _flat(text)
+            assert "plaintext on disk" in _flat(text), "the reason travels with the rule"
 
-    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
-    def test_it_asks_for_observations_rather_than_orders(self, text: str) -> None:
-        assert "less context than" in _flat(text), "the rule's reason must travel with it"
-        assert "--force" in _flat(text), "and the worked example that makes it concrete"
+    async def test_it_asks_for_observations_rather_than_orders(self, tmp_path: Path) -> None:
+        for text in await _authoring_surfaces(tmp_path):
+            assert "less context than" in _flat(text), "the rule's reason must travel with it"
+            assert "--force" in _flat(text), "and the worked example that makes it concrete"
 
-    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
-    def test_it_states_what_a_gist_is_for(self, text: str) -> None:
-        assert "whether to read further" in _flat(text)
-        assert "Lead with the observable symptom" in _flat(text)
+    async def test_it_states_what_a_headline_is_for(self, tmp_path: Path) -> None:
+        for text in await _authoring_surfaces(tmp_path):
+            assert "whether to read further" in _flat(text)
+            assert "Lead with the observable symptom" in _flat(text)
 
-    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
-    def test_it_bounds_a_gist_with_a_number_an_agent_can_act_on(self, text: str) -> None:
+    async def test_it_bounds_a_headline_with_a_number_an_agent_can_act_on(
+        self, tmp_path: Path
+    ) -> None:
         """ "Keep it short" left an agent to discover the bound by losing a call, and one did."""
-        assert "20 to 25 words" in _flat(text)
-        assert "64 tokens" in _flat(text)
+        for text in await _authoring_surfaces(tmp_path):
+            assert "20 to 25 words" in _flat(text)
+            assert "64 tokens" in _flat(text)
 
-    @pytest.mark.parametrize("text", [WRITE_POLICY_PROMPT, CONSOLIDATOR_PROMPT])
-    def test_it_requires_an_expiring_claim_to_carry_its_condition_in_the_gist(
-        self, text: str
+    async def test_it_requires_an_expiring_claim_to_carry_its_condition(
+        self, tmp_path: Path
     ) -> None:
         """The fourth shared rule, and the one the consolidator was missing: it rewrites gists
         during a merge, so it can strip a condition the write policy required — recreating the
         measured failure where an expired prohibition was recalled as a permanent one.
         """
-        flat = _flat(text)
-        assert "permanent rule" in flat
-        assert "until a fix lands" in flat, "both illustrate the condition concretely"
-        assert "gist" in flat
+        for text in await _authoring_surfaces(tmp_path):
+            flat = _flat(text)
+            assert "permanent rule" in flat
+            assert "until a fix lands" in flat, "both illustrate the condition concretely"
 
 
 class TestTheRulesEachTextCarriesAlone:
@@ -215,8 +232,8 @@ class TestTheRulesEachTextCarriesAlone:
 
     def test_the_policy_disarms_the_effort_judgement_rather_than_only_replacing_it(self) -> None:
         """Naming events is not enough alone: the old category reads as permission to defer until
-        the effort feels big, so the reason it fails is stated beside the events."""
-        assert "effort feels like progress" in _flat(WRITE_POLICY_PROMPT)
+        the effort feels big, so the contrast is stated beside the events."""
+        assert "not when the effort ahead feels big enough" in _flat(WRITE_POLICY_PROMPT)
 
     def test_the_policy_requires_a_proposal_to_state_what_recall_returned(self) -> None:
         """A claim that has to carry its own search cannot be satisfied by not searching, and
@@ -225,14 +242,15 @@ class TestTheRulesEachTextCarriesAlone:
         assert "say what you searched for and what came back" in flat
         assert "found nothing relevant" in flat
 
-    def test_both_the_policy_and_the_block_say_the_selection_stops_covering_the_task(self) -> None:
-        """The sufficiency illusion is created by the block, once per message, so the block is where
-        it has to be answered — the policy is read once per session and then competes with every
-        push after it. Asserted of both, since either alone leaves a gap.
+    def test_the_policy_says_the_selection_stops_covering_the_task(self) -> None:
+        """The sufficiency illusion needs answering somewhere, and the block is not where it pays.
+
+        The moment it has to be read is mid-task, once the framing has moved — which the block,
+        printed at the top of a message, has already passed. Saying it there costs uncached
+        characters on every message to reach a reader who is no longer looking, so the policy and
+        `zikaron_memory_search`'s description carry it and the block spends its room on the fetch.
         """
         assert "not for the problem as you understand" in _flat(WRITE_POLICY_PROMPT)
-        assert "Once you reframe the problem the selection no longer follows" in _flat(PREAMBLE)
-        assert "no new one arrives" in _flat(PREAMBLE)
 
     def test_only_a_record_whose_claim_is_untrue_is_ever_called_stale(self) -> None:
         """Two different unreliabilities, and one word was doing both jobs.

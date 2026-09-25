@@ -248,6 +248,7 @@ EVENT_SPECS: Final[Mapping[EventKind, EventSpec]] = MappingProxyType(
                 DetailField("lexical_skipped"),
                 DetailField("n_returned"),
                 DetailField("n_demoted"),
+                DetailField("preamble_digest"),
             ),
         ),
         EventKind.SURFACE: EventSpec(
@@ -492,6 +493,7 @@ class SurfaceCallDetail(EventDetail):
     query: QueryShape
     n_returned: int
     n_demoted: int
+    preamble_digest: str
 
 
 @dataclass(frozen=True, slots=True)

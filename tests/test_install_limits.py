@@ -37,7 +37,7 @@ from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import limits as limits_module
 from zikaron.hook import push
 from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
-from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
+from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
 
 #: The push limit the design fixes for the injected block: the top five gists.
 _PUSH_LIMIT = 5
@@ -114,15 +114,16 @@ def test_the_design_states_the_size_the_shipped_policy_actually_is() -> None:
     multi-byte one moves only the first.
     """
     section = "\n".join(section_lines(_POLICY_SIZE_DOCUMENT, _POLICY_SIZE_HEADING))
-    stated = re.search(r"write policy at \*\*(\d+) bytes\*\* \((\d+)\s*\n?\s*characters\)", section)
-    assert stated is not None, (
-        f"{_POLICY_SIZE_DOCUMENT} / {_POLICY_SIZE_HEADING} no longer states the policy's size in "
-        "the form this guard reads; restate it or move the guard, but do not leave it unpinned"
+    stated = re.findall(r"\*\*(\d+) bytes\*\* \((\d+)\s*\n?\s*characters\)", section)
+    assert len(stated) == 2, (
+        f"{_POLICY_SIZE_DOCUMENT} / {_POLICY_SIZE_HEADING} no longer states both policy sizes in "
+        "the form this guard reads; restate them or move the guard, but do not leave either "
+        "unpinned — there are two variants and pinning one is how the other goes stale"
     )
-    assert (int(stated[1]), int(stated[2])) == (
-        len(WRITE_POLICY_PROMPT.encode("utf-8")),
-        len(WRITE_POLICY_PROMPT),
-    )
+    assert [(int(size), int(length)) for size, length in stated] == [
+        (len(text.encode("utf-8")), len(text))
+        for text in (WRITE_POLICY_PROMPT, SUBAGENT_WRITE_POLICY_PROMPT)
+    ]
 
 
 def test_the_comment_on_the_cap_states_the_size_the_shipped_policy_actually_is() -> None:
@@ -138,13 +139,20 @@ def test_the_comment_on_the_cap_states_the_size_the_shipped_policy_actually_is()
     comment that carries no runtime value to assert against.
     """
     source = Path(limits_module.__file__).read_text(encoding="utf-8")
-    stated = re.search(r"the shipped policy text is (\d+) bytes", source)
+    stated = re.search(
+        r"the shipped policy text is (\d+) bytes and\s*\n?#:\s*"
+        r"the subagent variant is (\d+) bytes",
+        source,
+    )
     assert stated is not None, (
-        "zikaron/hook/limits.py no longer states the policy's size in the form this guard reads; "
-        "restate it or move the guard, but do not leave it unpinned — and do not round it to a "
+        "zikaron/hook/limits.py no longer states both policy sizes in the form this guard reads; "
+        "restate them or move the guard, but do not leave either unpinned — and do not round to a "
         "`kB` prefix, which is what hid the last staleness"
     )
-    assert int(stated[1]) == len(WRITE_POLICY_PROMPT.encode("utf-8"))
+    assert (int(stated[1]), int(stated[2])) == (
+        len(WRITE_POLICY_PROMPT.encode("utf-8")),
+        len(SUBAGENT_WRITE_POLICY_PROMPT.encode("utf-8")),
+    )
 
 
 def test_the_write_policy_also_fits_the_default_an_array_install_inherits() -> None:
@@ -268,10 +276,9 @@ def test_the_designs_stated_worst_case_block_matches_what_the_block_actually_ren
 
     `schema.md`'s `gist.characters` row states the worst-case block in both units as the derivation
     that makes `GIST_MAX_CHARACTERS` worth having. That figure is framing plus five gists, so it
-    moves whenever the preamble's prose moves — which has now happened twice in one change, each
-    time re-carried by hand to six separate sites while every test stayed green. Five of those
-    sites are prose or comments no test reads; this is the sixth, and it is the normative one the
-    others claim to derive from.
+    moves whenever the preamble's prose moves — which it did repeatedly while being re-carried by
+    hand to several sites no test reads. Those sites now point here instead of restating it, so this
+    is the only place the figure lives and it is the normative one.
     """
     rows = table_with_columns("schema.md", "## Bounds", ("Bound", "Value", "Why"))
     why = [row["Why"] for row in rows if "gist.characters" in row["Bound"]]

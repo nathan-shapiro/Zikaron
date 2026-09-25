@@ -307,7 +307,8 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
     )
     assert pushed.returncode == 0
     assert pushed.stderr == ""
-    assert "## Project memory — reference only" in pushed.stdout
+    assert "<zikaron-memories>" in pushed.stdout
+    assert pushed.stdout.rstrip("\n").endswith("</zikaron-memories>")
     assert _MEMORIES[0][0] in pushed.stdout
     assert written[0] in pushed.stdout, "the block prints whole uuids so a fetch takes one call"
 
