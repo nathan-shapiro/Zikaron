@@ -244,10 +244,10 @@ Measured across four configurations (§6):
   registration — a frontmatter `mcpServers:` block is silently ignored.
 
 **Both `--mode` registrations live session-wide in `.mcp.json`** — two entries, `zikaron` with
-`--mode primary` and `zikaron-consolidator` with `--mode consolidator` — because that is the only way a
-subagent can reach a server at all. The consolidator subagent's frontmatter `tools:` therefore *selects
-among session-visible tools* rather than getting a registration of its own, which is exactly why the
-exposure below follows. Under kiro the two modes are registered in two different agent configs, which is
+`--mode primary` and `zikaron-consolidator` with `--mode consolidator` — because that is the only way
+a subagent can reach a server at all. Each carries `alwaysLoad` (§"MCP tools may arrive deferred").
+The consolidator subagent's frontmatter `tools:` therefore *selects among session-visible tools*
+rather than getting a registration of its own, which is exactly why the exposure below follows. Under kiro the two modes are registered in two different agent configs, which is
 what made the gating mechanical there.
 
 **The exposure, stated at its true size.** The primary agent holds the four verbs *and* `search` and `fetch`,
@@ -394,6 +394,103 @@ This is also **a better explanation for §9's `installer-probe` observation** th
 Neither reading is refuted at n=1 apiece, but connection state was *inferred from* the naming failure,
 and deferral explains the naming failure directly.
 
+**And deferral withholds the *descriptions*, which is why the install writes `alwaysLoad`.** A deferred
+tool is listed **by name alone**, its schema unloaded, and the description arrives only when the agent
+loads that verb. What that looks like in practice: M16 found the zikaron tools absent from the initial
+list, and a `~/Trading/LeibaTrader` transcript shows an agent loading each verb by exact name just
+before first use — piecemeal and late. **What it did between session start and each of those loads is
+not established**, and the agent's own account of it is not evidence: asked afterwards, it reported
+never having had the descriptions at all, which the transcript's loads contradict. That is the same
+*class* of error `FINDINGS-archive.md` §"The read path is barely used" records — a self-report
+contradicted by the log — though not the same direction: that one flattered the system, this one
+flatters the agent. Either way the log is what counts, and it is why the heading above hedges.
+
+**So the claim `write-policy.md` and `build-plan.md` §M32 both rest on — that a description is in context
+at the instant the argument it governs is being filled — holds only for a verb already loaded.** Whether
+that is so depends on how crowded the harness's tool list is, which is the user's environment rather
+than ours — so the fix below exempts our servers instead of trying to change it.
+
+**The fix is `alwaysLoad: true` on both `.mcp.json` entries, and it is the installer's to write.**
+Claude Code takes a per-server exemption from deferral, and the install writes it for the primary and
+the consolidator both. Verified in a session after the change: **nineteen tools deferred, none of them
+Zikaron's.** Re-verified from a fresh session once the descriptions were brought under budget —
+**every verb on both servers carried a full description, none name-only and none truncated**, which is
+the whole claim this key and §"Tool descriptions are capped" exist to make.
+
+**It stays on the consolidator even though nothing needs it today — operator decision 2026-09-29,
+taken as a defensive default rather than on the measurement.** Measured without the key, that
+subagent's five entries — its four verbs plus `Read` — all arrived with full descriptions, because
+deferral fires on a crowded list and that one is not. **That is a fact about the current verb count,
+not about the design**, and it expires the day a fifth verb lands or a user grants that subagent tools
+of their own. A guarantee that holds only while a list stays short is the kind that fails silently when
+it is extended, so the measurement is evidence the key is idle rather than grounds to drop it.
+
+**`ENABLE_TOOL_SEARCH` is rejected on scope.** It turns deferral off for *every* server in the project —
+the user's context budget, not ours — where the per-server key spends only our own. It is also the
+user's global setting, which an OS-level managed one can override. Both it and `alwaysLoad` are present
+in 2.1.277.
+
+**What it costs**: Zikaron's tool schemas are in context from session start, which is the budget
+deferral exists to protect — bounded by the per-description cap (§"Tool descriptions are capped"). A
+server-level `instructions` field would carry prose for a fraction of that, and whether it delivers is
+an unrun probe rather than a plan. **The consolidator's share is paid in every *primary* session**,
+since registration is session-wide, while the benefit accrues only inside a subagent granted one
+server and `Read` — a list short enough that deferral does not fire on it today, per the measurement
+above, which is why that key is insurance against a longer list rather than a live need.
+
+**What refuses a Claude Code artefact is ownership rather than equality**, so a field this installer
+changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a `.mcp.json` entry, and for a settings hook group the
+command **list**, equal to ours rather than merely containing it — so a group carrying our command
+beside one of the user's is refused, not rewritten. Anything else is rewritten and reported.
+`architecture.md` §"The install contract" states both predicates and the merge, and kiro's equivalents,
+for servers and hooks alike, still compare whole.
+
+## Tool descriptions are capped, and the cut takes the tail
+
+**Claude Code truncates a long MCP tool description, appending `… [truncated]`.** Measured on the wire
+descriptions this server sends: one at 2,054 characters truncates, one at 1,848 does not, which first
+bracketed the cap to **[1,848, 2,054)** — at or above the shorter, strictly below the longer. A fresh
+session has since carried **every** shipped description untruncated (§"MCP tools may arrive deferred"),
+so the verified lower bound is now the longest one this server sends — a few characters under
+`DESCRIPTION_BUDGET` rather than far under it. **The exact value is not established here**: 2,048 is the
+power of two inside the range and so the likeliest constant, but no documentation was read for it and
+2,000 is not excluded either.
+
+**Counted in code points**, which is what the guard asserts with `len()`. The harness is Node and
+§"Injection budgets" measured its other cap in UTF-16 units; the two counts agree only while every
+description stays in the BMP, which the same guard asserts rather than assumes — a description that
+gained an emoji would redden it, which is the point.
+
+**So two claims hold with different strength, and the weaker one is the budget itself.** That every
+description this server ships survives is **measured**, in a live session. That one could grow to
+1,900 and still survive is **inferred from 2,048 being the likely constant** — the measurements put the
+cap at or above the longest description sent, and the longest sent is short of 1,900, so nothing has
+ever exercised the budget itself. It is a bet on the constant rather than a tested margin:
+`DESCRIPTION_BUDGET` in `tests/test_mcp_tool_descriptions.py`, asserted against the wire per mode.
+`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` does not appear in 2.1.277, so nothing here assumes the cap is
+configurable.
+
+**The cut takes the end, so ordering is a delivery decision.** Rules appended to a long description are
+the first thing lost — which is what happened to the citation rule M33 shipped and to `remember`'s
+entire `Returns` block, including how to resolve a `near_duplicates` offer. Order a description by
+consequence, not by narrative.
+
+**Measure the wire, not the file — and note that the wire is still not what the model sees.** The
+description FastMCP sends is the dedented docstring, so a guard reading `primary.py` passes on text the
+server never sends. But the wire is only necessary, not sufficient: the harness cuts *afterwards*, which
+is how `test_mcp_tool_descriptions.py` came to pin a phrase past the cut while reading the wire
+correctly. That gap is what `DESCRIPTION_BUDGET` closes and no phrase pin can. To measure:
+
+```
+.venv/bin/python -c "
+import asyncio
+from unittest.mock import MagicMock
+from fastmcp import FastMCP
+from zikaron.mcp.primary import register_primary_tools
+mcp = FastMCP('probe'); register_primary_tools(mcp, MagicMock())
+for t in asyncio.run(mcp._list_tools()): print(len(t.description or ''), t.name)"
+```
+
 ## Injection budgets
 
 **One shared conservative bound of 10,000 characters** for the push block and the write policy, and the unit
@@ -486,7 +583,7 @@ Four artefacts, against kiro's two-plus-a-merge:
 |---|---|---|
 | Hook entries | `.claude/settings.local.json` | merged; **three** entries, not two — see below |
 | Tool approval | the same `settings.local.json` | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
-| MCP servers | `.mcp.json` | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`) |
+| MCP servers | `.mcp.json` | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
 | Consolidator | `.claude/agents/zikaron-consolidator.md` | YAML frontmatter, prompt as body |
 | Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | YAML frontmatter, body |
 
@@ -598,3 +695,33 @@ consolidator`, which is where D32 implements it anyway.
   inherited `max_output_size`.
 - **No model check.** Claude Code refuses an unknown id at spawn, loudly (§"The consolidator's model"), so
   the `--list-models` membership test has no analogue and needs none.
+- **Subagents whose `tools:` allowlist cannot reach Zikaron's server.** An explicit `tools:` list in a
+  Claude Code subagent's frontmatter **overrides** the project-wide MCP registration the target otherwise
+  relies on, so such an agent sees no Zikaron verb and every artefact this install writes is still
+  correct — the case `~/Dividends` cost an hour to diagnose in 2026-09. The install scans the project's
+  `.claude/agents/*.md`, parsing **only the block between the first two `---`, and only when the file
+  opens with one** — the prose body that follows is not YAML, and a file not opening with `---` has no
+  frontmatter at all, so it sets no `tools:` and inherits everything. The key resolves at column zero
+  with or without a space before its colon, which YAML accepts and whose omission would read the file
+  as setting no list at all — the *silent* direction. Its value may be a block list, a comma-separated
+  inline string, or a **flow sequence** `[Read, mcp__zikaron]`, whose brackets are stripped before
+  splitting or the first and last entries match nothing and a sound agent is named; entries may be
+  quoted and may carry a trailing `#` comment. **Two spellings YAML accepts are deliberately not
+  read** — a block scalar (`tools: >-` with the entries indented beneath) and a flow sequence whose
+  bracket closes on a later line — because neither is a plausible way to write a tools list and both
+  fail by naming an agent that is fine, which costs a name to check rather than a silence. It names
+  each agent whose
+  list holds no entry equal to `mcp__{MCP_SERVER_NAME}` or
+  beginning `mcp__{MCP_SERVER_NAME}__`. **Equality-or-`__`-prefix, never a bare prefix**: the
+  consolidator's server is `zikaron-consolidator`, so a `startswith` test would pass an agent that can
+  reach only the consolidator. **The one agent the installer writes itself is skipped**, matched on the
+  filename from `CONSOLIDATOR_AGENT_NAME` — its narrow grant is D32 working — while any *other* agent
+  holding only that grant is named, because it belongs to the consolidator alone. Two cases are
+  **out of scope**: an agent with no `tools:` list and `disallowedTools: mcp__zikaron` is equally blind, and
+  so is a **user-level agent under `~/.claude/agents/`**, which takes the same frontmatter and is usable in
+  any project while sitting outside a scan of the project's own directory. Neither is named, said here so
+  the next diagnosis does not re-derive it. Detection only — a user's
+  allowlist is a deliberate grant, and widening it to reach our own tools is a decision that is not ours.
+  **kiro has no analogue**, because its entries go *into* an agent config and `--agent` makes the merge
+  explicit. **`zikaron doctor` runs the same function** (`distribution.md` §"The front door"), which is
+  what makes this outlive the install: the agent that cannot see Zikaron is usually written after it.

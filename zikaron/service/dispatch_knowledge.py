@@ -27,6 +27,11 @@ driver's own exception, so the method table wraps every handler to give them `st
 and carry the driver's text as `cause` — the one payload field in this system holding text that
 did not originate here, and so the one that is not ours to reword.
 
+**Contention is the exception, and it goes the other way.** A locked store *is* something the caller
+can resend, so it becomes `store_busy` rather than `store_unavailable`, which every other surface in
+this system already does; `ErrorSpec` puts the two codes on opposite sides of refused-versus-failed
+for that reason. The wrapper below is where the split is made.
+
 **`knowledge_unlock` is served here and is deliberately not an MCP tool.** Clearing a build lock is
 a judgement about what else is running on a machine, which `lifecycle.unlock` states is the
 operator's; an agent meeting a held lock is meant to wait or report it, not to decide the holder is
@@ -58,6 +63,7 @@ from zikaron.core.knowledge.errors import (
     UnknownKnowledgeBaseError,
 )
 from zikaron.core.knowledge.meta import GitMode
+from zikaron.core.store.transactions import is_contention
 from zikaron.knowledge.indexer import detach
 from zikaron.service import paths
 from zikaron.service.context import ServiceContext
@@ -234,7 +240,7 @@ def _refusals_as_wire_errors(
 async def knowledge_search(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],
 ) -> KnowledgeSearchResult:
     """`knowledge_search(query, knowledge_bases?, limit_per_kb?)
@@ -253,7 +259,7 @@ async def knowledge_search(
 async def knowledge_list(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],  # noqa: ARG001 — this method takes none; the table's shape passes one.
 ) -> KnowledgeListResult:
     """`knowledge_list() -> {knowledge_bases, orphans}` — every corpus, projected down to the
@@ -270,7 +276,7 @@ async def knowledge_list(
 async def knowledge_status(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],
 ) -> KnowledgeStatusResult:
     """`knowledge_status(knowledge_base?) -> {knowledge_bases, orphans}`."""
@@ -327,17 +333,25 @@ def _corpus_root(ctx: ServiceContext, supplied: str) -> Path:
 
 
 def _spawn(
-    ctx: ServiceContext, planned: Sequence[builds.PlannedBuild], *, full: bool
+    ctx: ServiceContext,
+    planned: Sequence[builds.PlannedBuild],
+    *,
+    full: bool,
+    op_id: str,
 ) -> dict[str, list[str]]:
     """Start a detached indexer for every corpus nothing stops, and return without waiting.
 
     Returns each started corpus's argv as the spawn reported it, so the result can carry the
     command that reproduces a build in the foreground without constructing one a second time.
+
+    `op_id` is this call's, which each child records on its own event row. It travels in the
+    environment rather than the argv precisely so the returned command stays the one that reproduces
+    the build: an attribution token is not an input that changes what a build does.
     """
     project = paths.scope_of(ctx.store_directory)
     return {
         entry.knowledge_base.name: detach.spawn(
-            entry.knowledge_base.name, project=project, full=full
+            entry.knowledge_base.name, project=project, full=full, spawned_by_op_id=op_id
         )
         for entry in planned
         if entry.may_start
@@ -347,7 +361,7 @@ def _spawn(
 async def knowledge_add(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> KnowledgeBuildResult:
     """`knowledge_add(name, path, description, include?, exclude?, git_mode?, max_file_bytes?)
@@ -373,7 +387,7 @@ async def knowledge_add(
     )
     return KnowledgeBuildResult(
         planned=planned,
-        spawned=_spawn(ctx, planned, full=False),
+        spawned=_spawn(ctx, planned, full=False, op_id=envelope.op_id),
         git_modes=(created.git_mode.value, created.git_mode_effective.value),
         database_path=str(created.database_path),
     )
@@ -382,7 +396,7 @@ async def knowledge_add(
 async def knowledge_refresh(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> KnowledgeBuildResult:
     """`knowledge_refresh(name?, full?) -> {knowledge_bases}` — one `outcome` per corpus.
@@ -402,13 +416,15 @@ async def knowledge_refresh(
         planned = await builds.plan(
             ctx.store_directory, db, ctx.config, names=None if name is None else [name]
         )
-    return KnowledgeBuildResult(planned=planned, spawned=_spawn(ctx, planned, full=full))
+    return KnowledgeBuildResult(
+        planned=planned, spawned=_spawn(ctx, planned, full=full, op_id=envelope.op_id)
+    )
 
 
 async def knowledge_unlock(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],
 ) -> KnowledgeUnlockResult:
     """`knowledge_unlock(knowledge_base) -> {cleared}` — clear a build lock nothing else will.
@@ -427,7 +443,7 @@ async def knowledge_unlock(
 async def knowledge_rename(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],
 ) -> KnowledgeRenameResult:
     """`knowledge_rename(name, new_name) -> {knowledge_bases}` — a registry update, touching no
@@ -444,7 +460,7 @@ async def knowledge_rename(
 async def knowledge_remove(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — every handler takes one; this method records no event.
+    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
     params: dict[str, object],
 ) -> KnowledgeRemoveResult:
     """`knowledge_remove(name, confirm) -> {removed, knowledge_bases, files_unlinked}`.
@@ -513,6 +529,11 @@ def _naming_the_store(method: str, handler: Handler) -> Handler:
     `except Exception` and become `internal_error` with an empty payload, putting the only
     description of what happened in the service log, which is not where the caller is looking.
 
+    **A locked store is the exception, and it is the one of these a caller can act on.** It gets
+    `store_busy`, which the design states as retryable, where everything else here says the machine
+    is wrong. Split here rather than in `core/knowledge/`, which holds no wire code by design —
+    `core/knowledge/errors.py` is explicit that this module is the boundary that gives them codes.
+
     **The two classes caught are the whole of it, and widening is wrong rather than generous.**
     Anything else arriving here is a defect in this service — a closed connection raises
     `ValueError`, not `aiosqlite.Error` — and `internal_error` is the honest answer for a defect.
@@ -526,7 +547,20 @@ def _naming_the_store(method: str, handler: Handler) -> Handler:
     ) -> RpcResult:
         try:
             return await handler(db, ctx, envelope, params)
-        except (aiosqlite.Error, OSError) as error:
+        except aiosqlite.Error as error:
+            # **Contention is the one retryable answer the design gives**, so it must not collapse
+            # into `store_unavailable`, which tells a caller nothing it sends differently will help.
+            # It arrives as `SQLITE_BUSY_SNAPSHOT` rather than a waited-out timeout on the verbs
+            # that write the registry, because `registry.ensure_table` opens the transaction with a
+            # presence read: the write holds a WAL snapshot before asking for the lock, and a
+            # commit landing in that window is refused at once. A read-only verb reaches contention
+            # on the one call that creates the table, or through its own corpus database.
+            if is_contention(error):
+                raise ZikaronError(ErrorCode.STORE_BUSY, verb=method) from error
+            raise ZikaronError(
+                ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error)
+            ) from error
+        except OSError as error:
             raise ZikaronError(
                 ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error)
             ) from error

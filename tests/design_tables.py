@@ -19,6 +19,7 @@ input can be tested without a malformed document on disk.
 
 import re
 import tomllib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -43,17 +44,33 @@ class DesignTableError(Exception):
 
 
 @dataclass(frozen=True)
+class Reference:
+    """A `@`-marked alternative: a set the design names instead of spelling out.
+
+    `@Enum.attr` is that attribute mapped over the enum's members in order; `@NAME` is a
+    module-level export. Both stand for several values, so a reference is left **unresolved** by
+    the parser and expanded by `resolve`, which takes the mapping from a caller that may import
+    the package. The marker is required rather than inferred: a bare token beside a group already
+    means a literal, and reading one as a reference would change what every existing use of that
+    form means.
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
 class ParsedField:
     """One field of a payload or detail object, as the design writes it.
 
     `values` is the closed set stated after the field's name — strings where the design quotes
-    them and integers where it does not — and is empty when the design states no set, either
-    because the value is open or because it is illustrated rather than enumerated. `nullable`
-    records that `null` was one of the stated alternatives.
+    them, integers where it does not, and a `Reference` where the design names a set rather than
+    listing it — and is empty when the design states no set, either because the value is open or
+    because it is illustrated rather than enumerated. `nullable` records that `null` was one of the
+    stated alternatives.
     """
 
     name: str
-    values: tuple[str | int, ...] = ()
+    values: tuple[str | int | Reference, ...] = ()
     nullable: bool = False
 
 
@@ -248,13 +265,24 @@ def _top_level_commas(inner: str) -> list[str]:
     return parts
 
 
+#: Marks an alternative as the *name* of a set rather than a member of one. Only meaningful beside
+#: the payload group; inside it there is no reader for a multi-valued alternative, so one there is
+#: refused rather than read as a literal beginning with a punctuation character.
+_REFERENCE_MARKER: Final = "@"
+
+
 def _parse_alternatives(name: str, stated: str) -> ParsedField:
     if not stated.strip():
         return ParsedField(name)
-    values: list[str | int] = []
+    values: list[str | int | Reference] = []
     nullable = False
     for alternative in stated.split("|"):
         stated_value = literal(alternative)
+        if stated_value.startswith(_REFERENCE_MARKER):
+            raise DesignTableError(
+                f"{name!r}: {stated_value!r} names a set inside the payload group, where only "
+                "members may be stated — state it beside the group instead"
+            )
         if stated_value == "null":
             nullable = True
             continue
@@ -280,6 +308,11 @@ def parse_payload(cell: str) -> tuple[ParsedField, ...]:
     A cell may state a field's closed set two ways — inside the group after a colon, or beside
     it as `name in a | b` — and both are read, because a set stated the second way constrains
     the payload every bit as much as one stated the first way. Remaining prose is commentary.
+
+    An alternative beside the group may be a `@`-marked `Reference` naming a set rather than a
+    member of one, and is returned unresolved: expanding it needs the package, and this module
+    imports none of it — every drift guard imports this one, so a broken import here would become a
+    collection failure in each of them. `resolve` is the second half.
     """
     if "{" not in cell:
         raise DesignTableError(f"no payload group in {cell!r}")
@@ -295,14 +328,23 @@ def parse_payload(cell: str) -> tuple[ParsedField, ...]:
     return tuple(_with_stated_sets(fields, cell))
 
 
+def _beside_the_group(alternatives: str) -> tuple[str | int | Reference, ...]:
+    """One beside-the-group alternative list, with `@`-marked names left as `Reference`s."""
+    return tuple(
+        Reference(value.removeprefix(_REFERENCE_MARKER))
+        if value.startswith(_REFERENCE_MARKER)
+        else value
+        for value in (literal(part) for part in alternatives.split("|"))
+        if value
+    )
+
+
 def _with_stated_sets(fields: list[ParsedField], cell: str) -> list[ParsedField]:
-    stated: dict[str, tuple[str, ...]] = {}
+    stated: dict[str, tuple[str | int | Reference, ...]] = {}
     for name, alternatives in _STATED_SET.findall(cell):
         if name in stated:
             raise DesignTableError(f"{name!r} constrained twice in one cell: {cell!r}")
-        stated[name] = tuple(
-            value for value in (literal(part) for part in alternatives.split("|")) if value
-        )
+        stated[name] = _beside_the_group(alternatives)
     known = {field.name for field in fields}
     unknown = set(stated) - known
     if unknown:
@@ -316,6 +358,38 @@ def _with_stated_sets(fields: list[ParsedField], cell: str) -> list[ParsedField]
         else field
         for field in fields
     ]
+
+
+def resolve(
+    fields: Sequence[ParsedField], references: Mapping[str, Sequence[str]]
+) -> tuple[ParsedField, ...]:
+    """`fields` with every `Reference` replaced, in place, by the values `references` names.
+
+    The split exists so this module stays package-free: the mapping is the one thing that has to
+    import what it names, and it is built by the caller — a test, which sits above every layer.
+
+    Spliced in order rather than appended, so a reference among literals keeps the position the
+    design wrote it in; a set the design names is as ordered as one it lists.
+
+    Raises:
+        DesignTableError: a reference names something `references` does not hold. Refused rather
+            than left as a literal, which would survive as a value that merely compares unequal and
+            send a reader looking for the wrong mistake.
+    """
+    resolved: list[ParsedField] = []
+    for field in fields:
+        values: list[str | int | Reference] = []
+        for value in field.values:
+            if not isinstance(value, Reference):
+                values.append(value)
+                continue
+            if value.name not in references:
+                raise DesignTableError(
+                    f"{field.name!r} names {value.name!r}, which is not one of {sorted(references)}"
+                )
+            values.extend(references[value.name])
+        resolved.append(ParsedField(field.name, tuple(values), field.nullable))
+    return tuple(resolved)
 
 
 def parse_field_values(

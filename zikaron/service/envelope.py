@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.events import ClientKind
+from zikaron.core.events import REQUEST_CLIENT_KINDS
 
 #: `architecture.md`: "a string of ≤128 chars with no control characters, or explicit `null` for
 #: the bootstrap form." Both halves of that sentence are enforced here.
@@ -30,7 +30,10 @@ _SESSION_ID_MAX_CHARS: Final = 128
 #: therefore the entire mechanism `label_source` rests on.
 _MINTED_PREFIX: Final = "zk-"
 
-_KNOWN_CLIENT_KINDS: Final = frozenset(str(kind) for kind in ClientKind)
+#: The kinds a request may name, taken from `REQUEST_CLIENT_KINDS` rather than from `ClientKind`:
+#: the store's `CHECK` admits one member more than the wire does, and deriving the accepted set from
+#: the enum here is what would let a client file its writes under it.
+_ACCEPTED_CLIENT_KINDS: Final = frozenset(str(kind) for kind in REQUEST_CLIENT_KINDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +114,8 @@ def parse_envelope(raw: object) -> ClientEnvelope:
         )
 
     kind = raw.get("kind")
-    if not isinstance(kind, str) or kind not in _KNOWN_CLIENT_KINDS:
-        raise _reject_field("client.kind", limit=sorted(_KNOWN_CLIENT_KINDS), actual=kind)
+    if not isinstance(kind, str) or kind not in _ACCEPTED_CLIENT_KINDS:
+        raise _reject_field("client.kind", limit=sorted(_ACCEPTED_CLIENT_KINDS), actual=kind)
 
     pid_raw = raw.get("pid")
     # `bool` is an `int` subclass, and a request sending `true` for `pid` must not silently
@@ -140,19 +143,30 @@ def resolve(envelope: ClientEnvelope) -> ResolvedEnvelope:
     """
     session_id = envelope.session_id
     resolved_session_id = (
-        session_id if session_id is not None and _conforms(session_id) else _mint_session_id()
+        session_id if session_id is not None and _conforms(session_id) else mint_session_id()
     )
-    op_id = envelope.op_id if envelope.op_id is not None else _mint_op_id()
+    op_id = envelope.op_id if envelope.op_id is not None else mint_op_id()
     return ResolvedEnvelope(
         session_id=resolved_session_id, kind=envelope.kind, pid=envelope.pid, op_id=op_id
     )
 
 
-def _mint_session_id() -> str:
+def mint_session_id() -> str:
+    """A fresh label in the service's reserved namespace, which `label_source` reads as `minted`.
+
+    Public because the spawned indexer mints one too: a build is no client call, so it has no
+    envelope to take a label from, and `event.session_id` is `NOT NULL` (invariant 18). It reaches
+    this function rather than spelling `zk-` again, since that prefix is the whole mechanism
+    `label_source` rests on and a second spelling of it is a second thing to keep true.
+    """
     return f"{_MINTED_PREFIX}{uuid.uuid4()}"
 
 
-def _mint_op_id() -> str:
+def mint_op_id() -> str:
+    """A fresh `op_id`, on the rule every writer follows: one unit of work, one `op_id`.
+
+    Public for the same reason as `mint_session_id`. A build's unit of work is the build.
+    """
     return str(uuid.uuid4())
 
 

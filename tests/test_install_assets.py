@@ -159,13 +159,20 @@ async def _authoring_surfaces(tmp_path: Path) -> list[str]:
 class TestTheSharedRulesAreOnEveryAuthoringSurface:
     """Both texts must carry them, because the consolidator never sees the primary's tools.
 
-    Asserted as a property of each text rather than as one being a copy of the other: the audiences
-    differ, so the wording should too, and a copy test would force them to converge or be deleted.
+    **Each rule is pinned by its operative clause, plus whatever makes that clause checkable** —
+    the reason it exists, a second bound, or the worked example, depending on the rule. What none
+    of them is pinned by alone is an example's token: `PGHOST` and `--force` both survive the
+    deletion or inversion of the very instruction they illustrate, so a test spending its only
+    assertion on one stays green while the rule goes away.
 
-    **Each assertion names the operative clause, not a worked example's token.** Earlier versions
-    checked that `--force` and `PGHOST` appeared — tokens that survive the deletion or inversion of
-    the very instruction they illustrate, so the test would have stayed green while the rule went
-    away.
+    **The pins are literals both texts must contain, which is a bounded compromise and not the
+    intent.** The audiences differ, so the two should be free to word a rule differently, and a
+    shared literal pulls them together. What keeps the pull small is that almost every one is a
+    short clause any correct rendering already contains — `plaintext on disk`, `64 tokens`,
+    `permanent rule`. `--force` is the exception and the honest cost of this scheme: it fixes the
+    *example* both texts illustrate the rule with, which a correct rendering need not have chosen.
+    **A pin that needs a whole sentence copied is the signal it has gone too far**: split that row
+    per surface rather than rewording one text to satisfy the other.
     """
 
     async def test_it_prohibits_recording_secrets(self, tmp_path: Path) -> None:

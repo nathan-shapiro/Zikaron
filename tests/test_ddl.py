@@ -19,7 +19,13 @@ from tests.design_tables import (
 )
 from zikaron.core.events import ClientKind
 from zikaron.core.store import ddl
-from zikaron.core.store.ddl import FIXED_STATEMENTS, PRAGMAS, memory_vec_statement
+from zikaron.core.store.ddl import (
+    ACCESS_LOG_PRAGMAS,
+    BUSY_TIMEOUT_MS,
+    FIXED_STATEMENTS,
+    PRAGMAS,
+    memory_vec_statement,
+)
 
 DOCUMENT = "schema.md"
 HEADING = "## Tables"
@@ -42,6 +48,23 @@ def _split_pragmas_and_ddl(statements: list[str]) -> tuple[list[str], list[str]]
 def test_the_three_pragmas_match_the_design_exactly(design_statements: list[str]) -> None:
     design_pragmas, _ = _split_pragmas_and_ddl(design_statements)
     assert [normalize_sql(p) for p in PRAGMAS] == design_pragmas
+
+
+def test_the_access_log_s_connection_differs_from_the_store_s_in_exactly_three_pragmas() -> None:
+    """The private connection is the store's set with three deliberate changes, and no others.
+
+    Each of the three is a reason `schema.md` §"`call` is an access log" gives: the timeout at zero
+    so a caller waits for nothing, `synchronous = NORMAL` so the row is a WAL append rather than an
+    `fsync` on every response path, and `wal_autocheckpoint` at zero so a commit crossing the page
+    threshold does not run a checkpoint there either. A **fourth** difference arriving unremarked is
+    what this refuses: the connection would then diverge from the store's in a way nobody chose.
+    """
+    assert set(ACCESS_LOG_PRAGMAS) - set(PRAGMAS) == {
+        "PRAGMA busy_timeout = 0",
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA wal_autocheckpoint = 0",
+    }
+    assert set(PRAGMAS) - set(ACCESS_LOG_PRAGMAS) == {f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}"}
 
 
 def test_every_fixed_statement_appears_in_the_design_in_the_same_order(

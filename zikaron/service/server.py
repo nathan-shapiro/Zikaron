@@ -21,14 +21,15 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from zikaron.core.errors import ZikaronError
+from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.events import MS_PER_SECOND
 from zikaron.service import dispatch, rpc
 from zikaron.service.asyncio_compat import attached_connection_count, unix_server_kwargs
 from zikaron.service.context import ServiceContext
 from zikaron.service.dispatch_consolidation import CONSOLIDATOR_METHODS
 from zikaron.service.dispatch_knowledge import KNOWLEDGE_METHODS
 from zikaron.service.envelope import ResolvedEnvelope, parse_envelope, resolve
-from zikaron.service.params import Handler
+from zikaron.service.params import Handler, event_origin
 from zikaron.service.rpc import ProtocolErrorCode, RequestParseError, RpcRequest
 
 _METHODS: Mapping[str, Handler] = {
@@ -105,8 +106,22 @@ async def _dispatch_request(ctx: ServiceContext, request: RpcRequest) -> str | N
 
 async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> str:
     """`_dispatch_request`'s actual work, always returning a line — the notification suppression
-    and activity bracketing are both the caller's job, so this function's every branch can simply
-    answer."""
+    and activity bracketing are both the caller's job.
+
+    **The exits ahead of dispatch answer directly and write no `call` row**, each for its own
+    reason. `health` is the liveness probe a client polls while waiting for the service to become
+    ready, and an access log recording it would be mostly that. A malformed envelope is
+    *mechanically* unloggable: resolution raised, so none of the three fields an `event` row needs
+    exists. An unknown method reports a client defect rather than anything about a Zikaron surface,
+    nothing having been dispatched. `_handle_line` holds one more, for a line that never parsed into
+    a request at all. `schema.md` §"`call` is an access log" is normative for the set.
+
+    **What is dispatched takes one shared write-then-return.** `_run_handler` assigns the line for
+    all three of its outcomes and this function attempts the row afterwards, so nothing the write
+    does can reach the caller — three branches each returning their own line would be three places
+    for that property to stop holding, and it matters because the row is attempted after the handler
+    has *committed*.
+    """
     if request.method == "health":
         status = dispatch.health(ctx)
         return rpc.encode_result(request.request_id, status.as_json())
@@ -129,20 +144,59 @@ async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> st
             session_id=envelope.session_id,
         )
 
+    dispatched = await _run_handler(ctx, request, envelope, handler)
+    await ctx.access_log.record(
+        origin=event_origin(envelope),
+        method=request.method,
+        refused=dispatched.refused,
+        duration_ms=dispatched.duration_ms,
+    )
+    return dispatched.line
+
+
+@dataclass(frozen=True, slots=True)
+class _Dispatched:
+    """What one dispatched handler produced: the line to answer, and what to record about it.
+
+    `refused` is `None` for a result and the code otherwise, typed over both error enums so the
+    access log's own converter has something no bare string satisfies. `duration_ms` covers the
+    handler alone: envelope resolution is paid by every call alike, and folding it in would make the
+    figure less comparable without making it more true.
+    """
+
+    line: str
+    refused: ErrorCode | ProtocolErrorCode | None
+    duration_ms: float
+
+
+async def _run_handler(
+    ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, handler: Handler
+) -> _Dispatched:
+    """One handler, all the way to the line that answers it and the figures the access log records.
+
+    Every branch **assigns** rather than returns, which is what leaves its caller one place to
+    attempt the row. Two things still leave this function with no line to answer and therefore no
+    row: **either encoder raising** — `encode_result` on a result, or `encode_error` on a `data`
+    value `json.dumps` will not take — and **a `CancelledError` escaping the handler**, at shutdown,
+    which `except Exception` deliberately does not catch. The first two are service defects, and
+    `_handle_line`'s outer guard answers `internal_error` for them; the third is an ordinary
+    teardown. Named so none is read as a gap.
+    """
+    started = time.perf_counter()
     try:
         result = await handler(ctx.store.connection, ctx, envelope, request.params)
-        return rpc.encode_result(
-            request.request_id, result.as_json(), session_id=envelope.session_id
-        )
     except ZikaronError as error:
-        return rpc.encode_error(
+        elapsed = time.perf_counter() - started
+        line = rpc.encode_error(
             request.request_id,
             int(error.code),
             error.message,
             dict(error.data),
             session_id=envelope.session_id,
         )
+        return _Dispatched(line=line, refused=error.code, duration_ms=elapsed * MS_PER_SECOND)
     except Exception:
+        elapsed = time.perf_counter() - started
         # A genuine bug in a handler, not a `ZikaronError` — logged here, inside the resolved
         # scope, so both the log line and the response carry the label that would otherwise be
         # lost the instant this exception left the `try` above.
@@ -151,12 +205,20 @@ async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> st
             request.method,
             envelope.session_id,
         )
-        return rpc.encode_error(
+        line = rpc.encode_error(
             request.request_id,
             ProtocolErrorCode.INTERNAL_ERROR,
             "internal error handling this request",
             session_id=envelope.session_id,
         )
+        return _Dispatched(
+            line=line,
+            refused=ProtocolErrorCode.INTERNAL_ERROR,
+            duration_ms=elapsed * MS_PER_SECOND,
+        )
+    elapsed = time.perf_counter() - started
+    line = rpc.encode_result(request.request_id, result.as_json(), session_id=envelope.session_id)
+    return _Dispatched(line=line, refused=None, duration_ms=elapsed * MS_PER_SECOND)
 
 
 async def _handle_line(ctx: ServiceContext, line: bytes) -> str | None:

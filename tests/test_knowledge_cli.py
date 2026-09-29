@@ -79,7 +79,12 @@ def started(monkeypatch: pytest.MonkeyPatch) -> list[_Started]:
     """
     asked: list[_Started] = []
 
-    def _record(name: str, *, project: Path, full: bool = False) -> list[str]:
+    def _record(
+        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
+    ) -> list[str]:
+        del (
+            spawned_by_op_id
+        )  # An attribution the child records; this command's tests read the argv.
         asked.append(_Started(name=name, project=project, full=full))
         return detach.command(name, project=project, full=full)
 

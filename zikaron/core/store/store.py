@@ -28,7 +28,7 @@ from zikaron.core.store.embedder import Embedder
 #: What a store created by this build records. Declared here rather than derived from
 #: `migration.MIGRATIONS`, and asserted against it in `test_store.py`: one declaration checked from
 #: another direction, rather than two that agree today.
-CURRENT_SCHEMA_VERSION: Final = 2
+CURRENT_SCHEMA_VERSION: Final = 3
 
 #: A store below `CURRENT_SCHEMA_VERSION` opens read-compatible and is brought forward only by the
 #: opener that asks (`Store.open(..., migrate=True)`), so a version bump is not a flag day for the

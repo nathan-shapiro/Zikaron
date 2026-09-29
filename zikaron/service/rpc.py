@@ -7,10 +7,11 @@ where a method name becomes a call into `core`.
 
 **Two error ranges, never confused.** JSON-RPC 2.0 reserves -32768..-32000 for the protocol itself
 and leaves the top hundred codes to the application (`zikaron.core.errors.ErrorCode`,
-`-32099..-32000`). This module owns exactly the four *protocol*-level codes below that band — a
-line that is not valid JSON, a shape that is not a valid request, a method nobody registered, or
-params a handler cannot even attempt to read — none of which is a rejection `core` could ever
-raise, because `core` is never reached.
+`-32099..-32000`). This module owns the *protocol*-level codes below that band, and none of them is
+a rejection `core` could raise. All but one say `core` was never reached at all — a line that is not
+valid JSON, a shape that is not a valid request, a method nobody registered, params a handler cannot
+even attempt to read. `INTERNAL_ERROR` is the exception and says the opposite: a handler was entered
+and raised something no layer named.
 """
 
 import json
@@ -19,15 +20,25 @@ from enum import IntEnum
 from typing import Final
 
 
-#: The five protocol-level codes JSON-RPC 2.0 itself defines, distinct from any Zikaron
-#: `ErrorCode` by numeric range alone — a client can tell "the transport rejected this" from "the
-#: application rejected this" without inspecting anything but the number.
+#: The protocol-level codes JSON-RPC 2.0 itself defines, distinct from any Zikaron `ErrorCode` by
+#: numeric range alone — a client can tell "the transport rejected this" from "the application
+#: rejected this" without inspecting anything but the number.
 class ProtocolErrorCode(IntEnum):
     PARSE_ERROR = -32700
     INVALID_REQUEST = -32600
     METHOD_NOT_FOUND = -32601
     INVALID_PARAMS = -32602
     INTERNAL_ERROR = -32603
+
+    @property
+    def wire_name(self) -> str:
+        """The stable snake_case name for this code, spelled as `ErrorCode.wire_name` spells one.
+
+        The access log records a refusal by name rather than by number, because a signal query
+        written against `-32603` is a number nobody can check — and it records refusals from both
+        enums, so both have to answer the same question the same way.
+        """
+        return self.name.lower()
 
 
 _JSONRPC_VERSION: Final = "2.0"

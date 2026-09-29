@@ -347,9 +347,7 @@ class TestWhatIsDecidedBeforeTheModelLoads:
 
         async def _go() -> None:
             async with scope.open_store(project) as store:
-                await indexer_main.build(
-                    store.directory, store.connection, store.config, name="nothing-by-that-name"
-                )
+                await indexer_main.build(store, name="nothing-by-that-name")
 
         with pytest.raises(UnknownKnowledgeBaseError):
             asyncio.run(_go())

@@ -1843,7 +1843,9 @@ requires elsewhere. The precise rule, in three parts:
   either rejects as a unit at the boundary or answers per uuid; a mutation is atomic across every row it names.
 - **It may commit audit events.** `version_conflict` and `no_receipt` are `event` kinds that D30's
   version-conflict signal *counts*, so they have to be durable; they commit in their own transaction, one row
-  per offending uuid. No other error writes an event.
+  per offending uuid. **No other error writes a *semantic* event.** Every refusal that reached dispatch —
+  `bounds` included — is recorded by the access log's `call` row instead, written after the handler in its
+  own transaction and best-effort (`schema.md` §"`call` is an access log").
 - **A version conflict also mints a receipt.** The conflict payload returns the current full record, so it
   mints a `conflict` receipt at the current version in the same transaction (`schema.md` invariant 9) —
   without which D26's "re-decide in one round trip" would be false, because the retry would fail for want of
@@ -1855,7 +1857,7 @@ consolidator, different orders leak different amounts of the store. There are **
 memory verb
 class. **The knowledge index's verbs are not a third ladder and are specified elsewhere**
 (`knowledge-index.md` §§8.4, 8.6): they name no rows, mint no receipts, and reach `bounds`, the
-`knowledge_base_*` codes and `store_unavailable`. Rung 0 applies to them as it does to every enveloped method.
+`knowledge_base_*` codes, `store_busy` and `store_unavailable`. Rung 0 applies to them as it does to every enveloped method.
 
 **Both ladders share rung 0: label resolution.** The envelope's `session_id` is normalized to a non-null label
 *before* rung 1 of either ladder (§"Resolution is a preamble, not a step of the method"). It has to precede
@@ -1990,12 +1992,12 @@ behaviour. Every such distinction gets its own code, or a declared field with a 
 | −32013 | `not_in_group` | an `absorb` uuid that is not an **actionable member** of this group — outside the group, already dispositioned, a member of a group that is still `pending` and so has delivered no version to act on, or (rung 6) still an undispositioned member that has left `tier='journal' AND active=1`, so a serve would record it `vacated`; also an empty `absorb` list | `{group_id, uuids}` — **uuids only**; no state, version or prose, so the error is not an existence oracle, and the rung-6 case discloses nothing new because that caller passed the receipt check. Recovery is `next_group`, which records the disposition or delivers the pending group (§"Validation precedence") |
 | −32014 | `bad_merge_target` | `merge` target is not in this group's persisted authorization set, or is no longer `tier='long_term' AND active=1` | `{group_id, uuid, reason}` with `reason ∈ not_authorized \| not_targetable`. `not_authorized` covers every uuid outside the authorization set **whether or not it exists**, deliberately, so the two cases are indistinguishable to the caller |
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
-| −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored") |
+| −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored"). **On the `knowledge_*` methods `verb` carries the wire method name rather than the bare operation** every other raise site passes, because their bare verbs collide with the memory store's: an unqualified `search` would leave a caller unable to tell which subsystem was locked |
 | −32021 | `index_failed` | embedding or index maintenance failed; nothing was written. Only the `index_write` stage runs inside a transaction — `prepare` raises the other three before `BEGIN` | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
 | −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook never reads the store on this, like every other failure (§"Degraded modes") |
 | −32023 | `bad_config` | **any of three sources**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`); a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration"); **or** a **derived** path — `store_dir` or `runtime_dir`, neither of which is a configuration key | `{source:'meta'\|'file'\|'derived', file, key, value, expected}` — `file` is the layer the offending key came from and is required for `source:'file'`, because with two layers "which file has the typo" is otherwise a hunt; it is absent for the other two sources, which have no file to name — the hook never reads the store on this, like every other failure |
 | −32024 | `schema_incompatible` | `meta.schema_version` above the supported range (`schema.md` §"Migration posture") | `{found, supported}`, where `supported` is the whole range rather than its maximum — a build that opens only one version and one that opens several must not send the same payload. A version inside the range but below `CURRENT_SCHEMA_VERSION` is not this error: it opens, and the service alone migrates it; below the range is `bad_config`, the row above. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
-| −32025 | `store_unavailable` | a `knowledge_*` method met a driver or OS failure `core` deliberately lets travel out unnamed (`transactions.propagate`): a full disk, a revoked permission, a corpus database that will not open | `{operation, cause}`. `cause` is **the driver's or the OS's own text** — the only payload field in this table carrying text from outside Zikaron, since it is not ours to reword, cannot be enumerated, and nothing invented at this boundary would say it better. A caller branches on the **code**; `cause` is for the person reading it. Unwrapped these reach `internal_error` with an empty payload, putting the only description in the service log |
+| −32025 | `store_unavailable` | a `knowledge_*` method met a driver or OS failure `core` deliberately lets travel out unnamed (`transactions.propagate`): a full disk, a revoked permission, a corpus database that will not open — **other than contention, which is `store_busy` on these methods as it is everywhere else**, since that is the one result a caller acts on differently | `{operation, cause}`. `cause` is **the driver's or the OS's own text** — the only payload field in this table carrying text from outside Zikaron, since it is not ours to reword, cannot be enumerated, and nothing invented at this boundary would say it better. A caller branches on the **code**; `cause` is for the person reading it. Unwrapped these reach `internal_error` with an empty payload, putting the only description in the service log |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 | −32040 | `knowledge_base_unknown` | a `knowledge_*` method named a corpus the registry has no row for | `{name}` — the **normalized** spelling, since that is what the registry stores and what `list` reports |
 | −32041 | `knowledge_base_exists` | `knowledge_add` with a name already taken, or `knowledge_rename` to one. Never an upsert: silently reconfiguring a corpus underneath whoever created it is worse than a failed call (`knowledge-index.md` §8.4) | `{name}` |
@@ -2014,11 +2016,13 @@ maintenance and a rolled-back write; inventing a `read_failed` would add a code 
 differently. The rule stated once so no read path decides it locally: **map contention, propagate everything
 else.**
 
-**That rule is the memory verbs'.** The knowledge methods deliberately differ: every one of them,
-`knowledge_search` included, is wrapped so a driver or OS failure becomes `store_unavailable` carrying
-the driver's own text. The asymmetry is the two subsystems' different readers — a memory read answers a
-model mid-turn, which can do nothing with a disk error and should see the service's own log carry it,
-while a knowledge verb also answers a person at a shell, for whom that text *is* the diagnosis.
+**That rule is the memory verbs'.** The knowledge methods share its first half and deliberately
+depart on its second: every one of them, `knowledge_search` included, is wrapped so contention
+becomes `store_busy` as it does everywhere, while any *other* driver or OS failure becomes
+`store_unavailable` carrying the driver's own text rather than propagating. The asymmetry is the two
+subsystems' different readers — a memory read answers a model mid-turn, which can do nothing with a
+disk error and should see the service's own log carry it, while a knowledge verb also answers a
+person at a shell, for whom that text *is* the diagnosis.
 
 **Empty store, stated so nobody has to guess:** `search` → `[]`; `fetch` → `{records: [], missing: [...]}`;
 `surface` → prints nothing at all, no header, no empty block; `next_group` → `{done: true}`;
@@ -2043,7 +2047,9 @@ either store.
 `surface` — denotes the *operation*, not the wire method.** This section is the one place the wire
 name is stated, and it is the only place a client implementer should read a method name off. The
 same split already runs through `event.kind` and the `{verb}` field of `store_busy`, which name
-operations in that same vocabulary and are unaffected by what a method is called on the wire.
+operations in that same vocabulary and are unaffected by what a method is called on the wire — with
+one exception the error table states: on the `knowledge_*` methods that field carries the wire name,
+because their bare verbs collide with the memory store's.
 
 The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `memory_amend` and
 `memory_retire`, plus:
@@ -2087,13 +2093,17 @@ The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `me
   Named here because they are served by this socket and
   belong on any list of what this service answers; not described here, because one tool surface
   described in two documents is the drift this one spends its length avoiding. They read the
-  knowledge-base registry in `memory.db` and each corpus's own database, and touch no other table.
+  knowledge-base registry in `memory.db` and each corpus's own database, and touch no other table of
+  it — the access log's `call` row, written by the seam rather than by these handlers, is the one
+  thing any of them adds to `memory.db` outside the registry, which `add`, `remove` and `rename`
+  write by definition.
 
 Every method takes the `client` envelope described under §RPC **except `health()`**, the one unlabelled
-primitive named above — the `knowledge_*` methods included, though none of them writes an event
-against the label it is given: the knowledge index's own counters live in each corpus's `meta`
-rather than in the memory store's `event` log, and nothing about a search or a corpus's lifecycle
-is attributed to a session.
+primitive named above — the `knowledge_*` methods included. None of them writes a *semantic* event:
+the knowledge index's own counters live in each corpus's `meta` rather than in the memory store's
+`event` log. Each is nonetheless recorded by the access log's `call` row under the label it was
+given, and a corpus build by a `knowledge_build` row under a label the indexer mints for itself
+(`schema.md` §"What is instrumented, what is not, and why").
 
 ## Distribution artefacts
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose
@@ -2186,8 +2196,19 @@ Three rules go with it, and each closes a way the measurement could be lost:
 
 > **Harness delta (D34).** This contract is kiro's. Claude Code writes four artefacts — two JSON (`.claude/settings.local.json`, `.mcp.json`)
 > and two YAML-frontmatter Markdown files and needs no
-> model-id validation. The collision, backup and refuse-on-difference discipline below is harness-independent
-> and applies to both. `design/harness.md`.
+> model-id validation. The collision and backup discipline below is harness-independent. **The
+> refuse-on-difference rule is not, and what differs is what counts as a difference**: kiro compares a
+> server entry *and* a hook entry whole, while Claude Code refuses only on **ownership** —
+> `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for `.mcp.json`, and for a settings
+> hook group the command **list**, equal to ours rather than merely containing it. So a
+> field this installer changes is an upgrade rather than a conflict, and **not refusing does not mean not
+> saying**: `.mcp.json` merges per key, so a user's own key on Zikaron's entry survives and is reported
+> alongside anything overwritten, while a Zikaron hook group of ours whose other fields differ is
+> rewritten and reported; refusing on those differences instead would block every existing install's
+> upgrade the day a timeout moved. `--force` replaces either whole **and says what of the user's own it
+> discarded** — taking over another install is what the flag is for and is not announced, but it arrives
+> for reasons unrelated to whatever else it overwrites.
+> `design/harness.md`.
 
 Installation is a **program**, not a documented procedure, and the reason is one rule above: "packaging
 validates the id against the installed harness and fails loudly if it is unknown" needs a mechanism, and the

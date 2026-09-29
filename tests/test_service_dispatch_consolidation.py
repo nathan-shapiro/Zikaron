@@ -5,11 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from tests.fake_encoder import FakeEncoder, unit_at
+from tests.served_group_fixtures import AGENT as _AGENT
+from tests.served_group_fixtures import (
+    ANCHOR,
+    MEMBER,
+    plan_embedding,
+    set_long_term,
+    write_anchored_pair,
+    write_orphan_pair,
+)
+from tests.served_group_fixtures import CONSOLIDATOR as _CONSOLIDATOR
 from tests.service_fixtures import envelope, open_context
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.events import ClientKind
-from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.service import dispatch, dispatch_consolidation
 from zikaron.service.context import ServiceContext
 from zikaron.service.dispatch_consolidation import (
@@ -19,63 +27,8 @@ from zikaron.service.dispatch_consolidation import (
     ServedGroupResult,
 )
 
-_AGENT = envelope(session_id="agent-session", kind="mcp", pid=100)
-_CONSOLIDATOR = envelope(session_id="agent-session", kind=ClientKind.CONSOLIDATOR.value, pid=4242)
-
-# Two prose pairs at a 10-degree angle: cosine ~0.985, comfortably above the default
-# `orphan_edge_cutoff` (0.65), and each other's only neighbour, so they satisfy `mutual_k`'s
-# default of 5 trivially and form one orphan group deterministically.
-_A = ("proto codegen fails on staging", "the compiler version drifts from requirements.txt")
-_B = ("proto codegen also fails locally", "the same compiler drift shows up in the dev container")
-
-
-async def _set_long_term(ctx: ServiceContext, uuid: str) -> None:
-    await ctx.store.connection.execute(
-        "UPDATE memory SET tier = 'long_term' WHERE uuid = ?", (uuid,)
-    )
-    await ctx.store.connection.commit()
-
-
-async def _write_orphan_pair(ctx: ServiceContext) -> tuple[str, str]:
-    assert isinstance(ctx.encoder, FakeEncoder)
-    for gist, content, degrees in ((*_A, 0.0), (*_B, 10.0)):
-        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
-        ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
-    first = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _A[0], "content": _A[1]}
-    )
-    second = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _B[0], "content": _B[1]}
-    )
-    return first.uuid, second.uuid
-
-
-# A long-term anchor plus one journal member at a close angle, so the anchored group's `merge`
-# target is legally the long-term row rather than a journal member — `merge` only ever accepts a
-# row already in the group's persisted anchor/candidate set, never a fellow journal member, so an
-# orphan pair (no long-term row at all) has nothing legal to `merge` into.
-_ANCHOR = ("proto codegen fails on staging", "the compiler version drifts from requirements.txt")
-_MEMBER = ("proto codegen also fails locally", "the same compiler drift shows up in the container")
-
-
-async def _write_anchored_pair(ctx: ServiceContext) -> tuple[str, str]:
-    """Returns `(anchor_uuid, member_uuid)` — the anchor already `tier='long_term'`."""
-    assert isinstance(ctx.encoder, FakeEncoder)
-    for gist, content, degrees in ((*_ANCHOR, 0.0), (*_MEMBER, 10.0)):
-        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
-        ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
-    anchor = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _ANCHOR[0], "content": _ANCHOR[1]}
-    )
-    await _set_long_term(ctx, anchor.uuid)
-    member = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _MEMBER[0], "content": _MEMBER[1]}
-    )
-    return anchor.uuid, member.uuid
-
-
 # A third long-term row, close to the member's own angle so the candidate query — built from the
-# served set's gists — surfaces it as a genuine `RankedRecord`. Kept distinct from `_ANCHOR` so
+# served set's gists — surfaces it as a genuine `RankedRecord`. Kept distinct from the anchor so
 # retrieval does not simply return the anchor a second time.
 _CANDIDATE = (
     "proto codegen breaks in CI too",
@@ -87,25 +40,19 @@ async def _write_anchor_member_and_candidate(ctx: ServiceContext) -> tuple[str, 
     """Returns `(anchor_uuid, member_uuid, candidate_uuid)` — anchor and candidate both
     `tier='long_term'`, so `next_group`'s `candidates` field is genuinely non-empty rather than
     the accidentally-untested-empty case every other fixture in this file produces."""
-    assert isinstance(ctx.encoder, FakeEncoder)
-    for gist, content, degrees in (
-        (*_ANCHOR, 0.0),
-        (*_MEMBER, 10.0),
-        (*_CANDIDATE, 12.0),
-    ):
-        embedded = f"{gist}{PREFIX_SEPARATOR}{content}"
-        ctx.encoder.planned[embedded] = unit_at(degrees, ctx.encoder.dim)
+    for gist, content, degrees in ((*ANCHOR, 0.0), (*MEMBER, 10.0), (*_CANDIDATE, 12.0)):
+        plan_embedding(ctx, gist, content, degrees)
     anchor = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _ANCHOR[0], "content": _ANCHOR[1]}
+        ctx.store.connection, ctx, _AGENT, {"gist": ANCHOR[0], "content": ANCHOR[1]}
     )
-    await _set_long_term(ctx, anchor.uuid)
+    await set_long_term(ctx, anchor.uuid)
     member = await dispatch.remember(
-        ctx.store.connection, ctx, _AGENT, {"gist": _MEMBER[0], "content": _MEMBER[1]}
+        ctx.store.connection, ctx, _AGENT, {"gist": MEMBER[0], "content": MEMBER[1]}
     )
     candidate = await dispatch.remember(
         ctx.store.connection, ctx, _AGENT, {"gist": _CANDIDATE[0], "content": _CANDIDATE[1]}
     )
-    await _set_long_term(ctx, candidate.uuid)
+    await set_long_term(ctx, candidate.uuid)
     return anchor.uuid, member.uuid, candidate.uuid
 
 
@@ -139,7 +86,7 @@ async def test_next_group_on_an_empty_run_reports_done(tmp_path: Path) -> None:
 
 async def test_a_second_worker_with_a_different_pid_is_told_busy(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
-        await _write_orphan_pair(ctx)
+        await write_orphan_pair(ctx)
         await dispatch_consolidation.next_group(ctx.store.connection, ctx, _CONSOLIDATOR, {})
 
         stranger = envelope(
@@ -154,7 +101,7 @@ async def test_next_group_serves_the_anchored_group_and_merge_completes_it(
     tmp_path: Path,
 ) -> None:
     async with open_context(tmp_path) as ctx:
-        anchor, member = await _write_anchored_pair(ctx)
+        anchor, member = await write_anchored_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )
@@ -229,7 +176,7 @@ async def test_merge_on_a_conflicting_version_returns_a_group_conflict_shape(
     tmp_path: Path,
 ) -> None:
     async with open_context(tmp_path) as ctx:
-        anchor, member = await _write_anchored_pair(ctx)
+        anchor, member = await write_anchored_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )
@@ -254,7 +201,7 @@ async def test_merge_on_a_conflicting_version_returns_a_group_conflict_shape(
 
 async def test_promote_new_row_creates_a_long_term_record(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
-        first, second = await _write_orphan_pair(ctx)
+        first, second = await write_orphan_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )
@@ -281,7 +228,7 @@ async def test_promote_new_row_creates_a_long_term_record(tmp_path: Path) -> Non
 
 async def test_discard_retires_both_members_and_records_the_reason(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
-        first, second = await _write_orphan_pair(ctx)
+        first, second = await write_orphan_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )
@@ -307,7 +254,7 @@ async def test_discard_retires_both_members_and_records_the_reason(tmp_path: Pat
 
 async def test_merge_with_a_repeated_absorb_uuid_is_rejected_as_bounds(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
-        first, second = await _write_orphan_pair(ctx)
+        first, second = await write_orphan_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )
@@ -335,7 +282,7 @@ async def test_merge_with_a_repeated_absorb_uuid_is_rejected_as_bounds(tmp_path:
 
 async def test_merge_naming_a_group_from_a_stranger_worker_is_rejected(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
-        first, second = await _write_orphan_pair(ctx)
+        first, second = await write_orphan_pair(ctx)
         served = await dispatch_consolidation.next_group(
             ctx.store.connection, ctx, _CONSOLIDATOR, {}
         )

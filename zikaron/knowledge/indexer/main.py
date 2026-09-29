@@ -9,17 +9,17 @@ anybody who has to run the same build where its output can be seen.
 import argparse
 import asyncio
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
-import aiosqlite
-
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.indexing.encoder import FastEmbedEncoder
-from zikaron.core.knowledge import builds, disposal, lifecycle, scan
+from zikaron.core.knowledge import builds, disposal, lifecycle, registry, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.knowledge import scope
+from zikaron.knowledge.indexer import build_log
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -56,20 +56,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 async def _run(args: argparse.Namespace) -> int:
     async with scope.open_store(args.project) as store:
-        return await build(
-            store.directory, store.connection, store.config, name=args.name, full=args.full
-        )
+        return await build(store, name=args.name, full=args.full)
 
 
-async def build(
-    store_dir: Path,
-    db: aiosqlite.Connection,
-    config: EffectiveConfig,
-    *,
-    name: str,
-    full: bool = False,
-) -> int:
-    """Run one build and print an account of it. Returns a process exit status.
+async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int:
+    """Run one build, print an account of it, and record what it cost. Returns an exit status.
 
     **The refusals are decided before the model is loaded**, which is a second of CPU and the most
     expensive thing this command does. It is wasted either way when a build is refused — in the
@@ -77,19 +68,64 @@ async def build(
     see. The build itself re-establishes each refusal, since the check and the build are not one
     transaction.
 
+    **The corpus is resolved here, before `prepare`, and the rule for which failures get a row is
+    positional rather than by class.** `prepare` returns the corpus only on success and none of the
+    refusals it raises carries an `id`, so a catch site has nothing to key a row by unless this
+    function already holds one. `registry.require` therefore runs **outside** the `try`: nothing
+    raised before it returns writes a row, and everything raised after it is written under the id it
+    bound, whatever its class. So `require`'s own two refusals write none, while the same
+    `UnknownKnowledgeBaseError` raised later — by the refresh's own resolution, after a `remove`
+    landed between the reads — *is* written, because by then an id is in hand. A rule by class could
+    not express that difference.
+
+    `registry.ensure` ahead of it is not optional: store creation makes no registry table, and until
+    this function existed `prepare` was the first thing to create it — so a bare `require` would put
+    its `SELECT` ahead of any creation and fail with *no such table* on any store no knowledge verb
+    has touched.
+
+    **On the success path the row is attempted after the report and after the `try`/`except`, and
+    what that protects is narrower than it looks.** `build_log` guards the statement itself, so a
+    driver failure writing the row is already swallowed wherever the call sits. What placement
+    decides is the **rest** of `succeeded`, which is unguarded: inside the `try`, a failure building
+    that payload would enter the failure catch, write a *second* row saying `ok=false` for a build
+    that **completed**, and re-raise — status 1 and a false failure row over a built corpus.
+
+    `except Exception` and deliberately not `BaseException`: a `KeyboardInterrupt` or a
+    `CancelledError` must not be made to wait out `busy_timeout` on a lock so that its own death can
+    be recorded. Such a build writes no row.
+
     Args:
-        store_dir: the `.zikaron` directory this store lives in.
-        db: an open connection to `memory.db`, which carries the registry.
-        config: the effective configuration: which encoder to load, how many chunks to embed per
-            pass, and what to compare the built corpus's identity against afterwards.
+        store: the open store to build against — its directory, its connection, its effective
+            configuration, and the `schema_version` that decides whether an event row is attempted
+            at all, since a direct run never migrates one.
         name: which knowledge base to build.
         full: reindex every admitted file rather than only what changed.
     """
-    await builds.prepare(store_dir, db, config, name=name)
-    refreshed = await lifecycle.refresh(
-        store_dir, db, config, name=name, build=await build_settings(config, full=full)
+    started = time.perf_counter()
+    db = store.connection
+    await registry.ensure(db)
+    registered = await registry.require(db, name)
+    log = build_log.BuildLog.opened(
+        db,
+        knowledge_base_id=registered.id,
+        full=full,
+        schema_version=store.schema_version,
+        started=started,
     )
+    try:
+        await builds.prepare(store.directory, db, store.config, name=name)
+        refreshed = await lifecycle.refresh(
+            store.directory,
+            db,
+            store.config,
+            name=name,
+            build=await build_settings(store.config, full=full),
+        )
+    except Exception as error:
+        await log.failed(error)
+        raise
     _print_report(refreshed)
+    await log.succeeded(refreshed.result)
     return 0
 
 

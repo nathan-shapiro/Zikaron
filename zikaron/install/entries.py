@@ -222,15 +222,38 @@ def _array_entry(hook_command: Path, trigger: str) -> dict[str, object]:
     }
 
 
+#: The `.mcp.json` key that exempts one server from Claude Code's deferred tool loading.
+#:
+#: **Without it a description arrives late, per verb, or not at all.** Claude Code defers MCP tools
+#: when the tool list is crowded: they are listed by *name* with schemas unloaded, and a description
+#: comes only when the agent loads that verb — which a production transcript shows it doing one verb
+#: at a time, just before first use. The write-time rules M32 and M33 put in
+#: `zikaron_memory_remember`'s description ride that channel
+#: (`design/harness.md` §"MCP tools may arrive deferred").
+#:
+#: **Per-server, which is why it is the installer's to write** rather than a setting asking the user
+#: to turn deferral off project-wide. That section states the alternative and why it was rejected.
+ALWAYS_LOAD_KEY: Final = "alwaysLoad"
+
+#: The fields of a `.mcp.json` server entry that say **which install** wrote it: an absolute
+#: interpreter path and the `--mode`. Anything else is a key this installer adds and may add more
+#: of, so a merge compares only these — see `targets._refuse_conflicting`.
+MCP_OWNERSHIP_FIELDS: Final = ("command", "args")
+
+
+def server_entry(commands: Commands, *, mode: str, always_load: bool = False) -> dict[str, object]:
+    """One server entry. The single declaration of an entry's shape, so no caller rebuilds it."""
+    entry: dict[str, object] = {"command": str(commands.mcp), "args": ["--mode", mode]}
+    if always_load:
+        entry[ALWAYS_LOAD_KEY] = True
+    return entry
+
+
 def mcp_servers_value(commands: Commands, *, mode: str) -> dict[str, object]:
     """The `mcpServers` entry for one mode: `primary` for a user's own agent, `consolidator` for
-    ours."""
-    return {
-        MCP_SERVER_NAME: {
-            "command": str(commands.mcp),
-            "args": ["--mode", mode],
-        }
-    }
+    ours. **No `alwaysLoad`** — the key is Claude Code's `.mcp.json` vocabulary and kiro's agent
+    config has no such field; nothing is known to defer there either."""
+    return {MCP_SERVER_NAME: server_entry(commands, mode=mode)}
 
 
 def claude_tool_vocabulary() -> dict[str, str]:
@@ -279,13 +302,15 @@ def claude_mcp_servers_value(commands: Commands) -> dict[str, object]:
     **session-wide** to be reachable by any subagent at all, so the consolidator's server cannot
     live inside the consolidator's own definition the way it does under kiro. That is the same fact
     that makes D32's other half unenforceable here, reported by the installer rather than hidden.
+
+    **Both carry `alwaysLoad`, and it stays on the consolidator even though nothing needs it
+    today — operator decision 2026-09-29, a defensive default rather than a reading of the
+    measurement.** `design/harness.md` §"MCP tools may arrive deferred" carries the measurement and
+    why it is not grounds to drop the key.
     """
     return {
-        **mcp_servers_value(commands, mode="primary"),
-        CONSOLIDATOR_AGENT_NAME: {
-            "command": str(commands.mcp),
-            "args": ["--mode", "consolidator"],
-        },
+        MCP_SERVER_NAME: server_entry(commands, mode="primary", always_load=True),
+        CONSOLIDATOR_AGENT_NAME: server_entry(commands, mode="consolidator", always_load=True),
     }
 
 

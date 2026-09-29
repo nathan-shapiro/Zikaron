@@ -128,20 +128,28 @@ CREATE TABLE event (
   id          INTEGER PRIMARY KEY,
   at          TEXT NOT NULL,
   session_id  TEXT,
-  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli')),
-                                    -- from the request envelope. Makes cross-client session linkage
-                                    -- OBSERVABLE: pushes come from 'hook', writes from 'mcp'.
-                                    -- No 'service' value: every v0 event is emitted inside a client
-                                    -- call, which is also why invariant 18 can hold.
-                                    -- 'cli' records no event today; it is admitted because the
-                                    -- envelope `zikaron knowledge` sends names it. Widening this
-                                    -- CHECK is what schema_version 2 IS (§"Migration posture").
+  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli',
+                                                   'indexer')),
+                                    -- from the request envelope, except 'indexer'. Makes
+                                    -- cross-client session linkage OBSERVABLE: pushes come from
+                                    -- 'hook', writes from 'mcp'.
+                                    -- No 'service' value: the service emits every event it writes
+                                    -- inside a client call, which is why invariant 18 can speak of
+                                    -- the envelope at all.
+                                    -- 'indexer' is the exception and has no envelope: a build is a
+                                    -- spawned process that opens the store directly, so it mints
+                                    -- its own session_id and op_id (invariant 18).
+                                    -- Widening this CHECK is what BOTH schema_version 2 and 3 ARE
+                                    -- (§"Migration posture"): 2 admitted 'cli'; 3 admitted 'indexer'
+                                    -- here and two kinds in the CHECK below, in one rebuild.
                                     -- NO label_source column. It is DERIVED from session_id --
                                     -- `session_id LIKE 'zk-%'` is 'minted', anything else is
                                     -- 'harness' -- so storing it would be a second source of truth
                                     -- for a pure function (architecture.md §"`label_source` is
                                     -- derived, not stored").
-  op_id       TEXT NOT NULL,        -- one RPC = one op_id; correlates the events of a single call
+  op_id       TEXT NOT NULL,        -- one RPC = one op_id; correlates the events of a single call.
+                                    -- An indexer build has no RPC and mints one per build, on the
+                                    -- same rule: one unit of work, one op_id
   kind        TEXT NOT NULL CHECK (kind IN (
                 'surface_call',     -- push path fired; EXISTS EVEN AT ZERO RESULTS
                 'surface',          -- one per memory the push path returned (D12)
@@ -157,7 +165,12 @@ CREATE TABLE event (
                 'version_conflict', -- D26 rejected a write
                 'no_receipt',       -- D26 rejected a write for want of a read receipt
                 'group_served',     -- one per row a consolidation serve actually delivered
-                'consolidate_run'
+                'consolidate_run',
+                'call',             -- at most one per dispatched RPC, at the seam; the ACCESS log,
+                                    -- where every kind above is SEMANTIC. Exempt from invariant 10:
+                                    -- it commits after the handler, in its own transaction, and is
+                                    -- best-effort -- hence "at most"
+                'knowledge_build'   -- at most one per indexer build; the only kind no client emits
               )),
   memory_uuid TEXT,
   detail      TEXT                  -- JSON; per-kind shape fixed below, never free-form
@@ -378,10 +391,19 @@ disagree. It is also what makes "a store predating this table opens and answers 
 construction rather than by test, since the memory store's own open path is not touched at all.
 
 **Measured, because the ensure runs on every registry open and the memory path's latency is what the
-knowledge index's out-of-process indexer exists to protect:** `CREATE TABLE IF NOT EXISTS` against a table
-that **already exists** takes no write lock — it succeeds while another connection holds the writer lock —
-while the same statement against an absent table does take it and blocks. The steady-state cost is a schema
-read, and contention is possible only on the one occasion the table is genuinely created.
+knowledge index's out-of-process indexer exists to protect:** the ensure **reads `sqlite_master` and
+issues nothing when the table is there**, so the steady-state cost is that read and contention is
+possible only on the one occasion the table is genuinely created.
+
+~~`CREATE TABLE IF NOT EXISTS` against a table that already exists takes no write lock — it succeeds
+while another connection holds the writer lock — while the same statement against an absent table does
+take it and blocks.~~ **Withdrawn on measurement**: on the long-lived connection the service holds,
+the no-op form asks for the write lock and waits out the full `busy_timeout`, where the same statement
+on a freshly opened connection to the same file does not
+(`research/m33-registry-ensure-takes-the-write-lock.md`). Every knowledge verb calls the ensure first,
+so each of them was answering `store_unavailable` whenever any write had been in flight for five
+seconds. Struck rather than replaced because a reader who met only the sentence above would
+re-propose the unconditional `CREATE` as the simpler code.
 
 **This table is outside every invariant in §"Invariants the code must hold".** Those are stated over the
 memory store, and none of them mentions it; the knowledge index states its own (`knowledge-index.md` §13,
@@ -647,11 +669,15 @@ write, which is what `FINDINGS.md` open question 2 needs.
 
 `detail` is JSON with a **fixed shape per kind**. Untyped detail was the reason three of D30's six
 signals were not reproducible. Every event carries `op_id`; one RPC call emits one `op_id`'s worth of
-events, **inside the same transaction as the mutation it describes** (invariant 10), so no signal can
-observe a write that did not commit. Every event also carries `client_kind` straight from the request envelope,
-which is what makes cross-client session linkage checkable rather than assumed (§"Linked sessions" below). It
-does **not** carry `label_source`: that is a pure function of `session_id` (`^zk-` ⇒ `minted`, else `harness`),
-computed by whoever wants it — `architecture.md` §"`label_source` is derived, not stored".
+**semantic** events, **inside the same transaction as the mutation it describes** (invariant 10), so no
+signal can observe a write that did not commit. Two kinds sit outside that sentence by design: the access
+log's `call` row commits *after* the handler in its own transaction, and `knowledge_build` answers to no RPC
+at all — §"`call` is an access log" and §"What is instrumented, what is not, and why". Every event also
+carries `client_kind` straight from the request envelope, `knowledge_build` excepted, whose writer has
+no envelope and mints its own label; that column is what makes cross-client session linkage checkable
+rather than assumed (§"Linked sessions" below). It does **not** carry `label_source`: that is a pure
+function of `session_id` (`^zk-` ⇒ `minted`, else `harness`), computed by whoever wants it —
+`architecture.md` §"`label_source` is derived, not stored".
 
 | `kind` | Cardinality | `memory_uuid` | `detail` |
 |---|---|---|---|
@@ -670,6 +696,8 @@ computed by whoever wants it — `architecture.md` §"`label_source` is derived,
 | `no_receipt` | **one row per uuid lacking a receipt** in the rejected call | the contested uuid | `{verb, version_presented}` |
 | `group_served` | **one row per row whose prose this serve actually delivered** — one per member of the **served set** (`architecture.md` §"Serving": the group's members with `disposition IS NULL` after re-validation), one per candidate, and one for the anchor when an anchor was delivered. A serve-time-vacated member emits **none**; a vacated anchor emits none; a member dispositioned by an earlier call is not in the served set and so emits none on a re-serve | that uuid | `{group_id, run_id, role:'member'\|'candidate'\|'anchor', version_served, serve_count}` — `version_served` is **NOT NULL**, because the event exists only for a row that was delivered at that version; `serve_count` is the group's delivery count **including this delivery**, so the first delivery emits `1` (invariant 17) |
 | `consolidate_run` | one per run transition | NULL | `{run_id, phase:'planned'\|'complete'\|'expired'\|'abandoned'\|'taken_over', n_groups, n_members, n_deferred}` |
+| `call` | **at most one per dispatched RPC, succeeded or refused** — "at most", because the row is best-effort and a dropped one is a stated outcome; the exits that precede dispatch emit none, enumerated below. It carries **its call's own `op_id`**, so an `op_id` with a semantic row and no `call` row *is* a dropped access-log row. The rate is over **distinct `op_id`s**, not rows — a push writes six semantic rows under one, a `fetch` of *n* uuids *n* — or a dropped push would count six times a dropped `remember` and the figure would move with the mix of verbs — **bounded**, or it is not: every pre-schema-3 row qualifies, and so does every `knowledge_build` by construction. The query excludes `client_kind='indexer'` and starts at `event.id > (SELECT min(id) FROM event WHERE kind='call')`. That is a **floor** — the first post-migration calls may themselves have dropped — and a floor is accepted rather than adding a `meta` key, whose initialization contract and validation are more surface than an exact boundary is worth here. §"Retention"'s re-derivation takes the same bound | NULL | `{method, ok, error_code, duration_ms}` — `method` carries no `values`: it is closed by construction at its only call site, since `request.method` is a `_METHODS` key by the time a row is attempted and `core/` cannot import that table. `error_code` is NULL when `ok`, else the **`wire_name`** of a member of `ErrorCode` **or** of `rpc.ProtocolErrorCode`, since a handler that raises what neither anticipated is answered `INTERNAL_ERROR` from the second. The name rather than the wire integer, so a signal query reads `'bounds'`. `error_code ∈ @ErrorCode.wire_name \| internal_error` — a marked **reference** the drift guard resolves rather than a set spelled out here, so `log_event`'s membership check holds as for every other closed-set field; nullable per the table below; the seam's converter is typed `ErrorCode \| ProtocolErrorCode -> str` **in addition**, so `mypy` refuses a bare string at the call site (§"`call` is an access log"). `duration_ms` covers the handler alone, not envelope resolution: a **float**, from `time.perf_counter()`, because an integer field reads 0 for a `knowledge_list` and would make the cheapest calls indistinguishable from an unmeasured one. **No argument values**, per that section |
+| `knowledge_build` | **at most one** per indexer build, whatever outcome its own code reaches — "at most" for the same best-effort reason as `call`, and because **a process killed or a foreground run interrupted writes none**: `KeyboardInterrupt` and `CancelledError` sit outside `except Exception` deliberately, and a row write on interrupt would hold Ctrl-C behind `busy_timeout` | NULL | `{knowledge_base_id, spawned_by_op_id, full, rebuilt, ok, error_code, duration_ms, files_indexed}` — the registry **`id`**, not the name, since `knowledge_rename` exists and a history keyed by a renameable field breaks at one. `spawned_by_op_id` attributes the build to the verb that spawned it; **`full` is the flag the build was *asked* for and `rebuilt` says whether the encoder identity forced a whole-corpus reindex regardless** — null only on a failed build, beside `files_indexed`, and without it those minutes file under "incremental"; `duration_ms` is as `call`'s, spanning `build()` including the model load; `error_code ∈ @ErrorCode.wire_name \| @BUILD_ONLY_WIRE_NAMES \| build_failed`, nullable per the table below — recording a `KnowledgeError`'s own `wire_name`, a `ZikaronError`'s `code.wire_name`, or `build_failed`; **`files_indexed` is the corpus left behind, not what this build wrote** (`counters.py`), so a no-change rescan reports the whole corpus. §"What is instrumented, what is not, and why" is normative |
 
 **`promote`'s two forms have two different cardinalities, stated because one physical row can hold two
 roles.** In the `new_row` form the created record and the absorbed members are different rows, so the call
@@ -746,9 +774,13 @@ same as one that cannot be null — the answer for such a field is a design ques
 | `retire` | `superseded_by` | an outright retirement names no replacement, and the retire-count signal splits on exactly this null |
 | `merge` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | the size fields describe authored prose, and only the `target` row authored any |
 | `promote` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | as `merge`, except that the authoring row is the `created` or `flipped` one |
+| `call` | `error_code` | null **iff** `ok`. A succeeded call names no refusal |
+| `knowledge_build` | `error_code`, `files_indexed`, `rebuilt`, `spawned_by_op_id` | `error_code` null **iff** `ok`, as above. **`files_indexed` and `rebuilt` are null iff `ok` is false**: both are read off the `ScanResult` that `scan.run` returns only after it completes, so a build that was refused before the scan and one that died inside it alike have no corpus-left-behind to count and no settled answer to whether it rebuilt. **0 means a completed scan indexed nothing**, which is why neither defaults. `spawned_by_op_id` is null **iff** no spawning `op_id` was in the build's environment — which a re-run of the printed `foreground_command` never has, since the token travels outside the argv |
 
-`group_served.version_served` is the one detail field this document declares **NOT NULL** outright, and it is
-absent from the table above for that reason rather than by omission.
+`group_served.version_served` and `knowledge_build.knowledge_base_id` are the detail fields this document
+declares **NOT NULL** outright, and they are absent from the table above for that reason rather than by
+omission. A build with no `id` resolved writes no row at all (§"What is instrumented"), which is what lets
+that field be non-null and mean what it says.
 
 **Serve-time vacating is recorded in state, deliberately not in the event log.** A member found no longer
 `tier='journal' AND active=1` inside the serve transaction is not delivered, so it emits no `group_served` —
@@ -765,6 +797,442 @@ distinguishable there, and the distinction is load-bearing for anyone reading th
 
 So `consolidation_group_member.version_served` is NULL **iff** the member has never been delivered, and there
 is exactly one `group_served` event per (serve, delivered row) pair.
+
+### `call` is an access log, and every other kind is a semantic one
+
+The kinds above answer *what happened to the store* — this memory was amended, this group was served.
+`call` answers a different question, *what was asked of it*, including everything that was asked and
+refused. Both are wanted and neither substitutes for the other: a refusal changes no state and so
+appears in no semantic kind, while a `call` row says a mutation was requested without saying which row
+moved.
+
+**It is emitted at the seam rather than per verb, and that is the whole design.** `server.py`'s
+`_METHODS` merges the three dispatch tables into one mapping, so an event logged there covers every
+method by construction — including one added later, which is in the table whether or not anybody
+remembered the log. Per-verb instrumentation makes completeness a matter of discipline, and the
+knowledge verbs are what that discipline already cost: all eight shipped dark.
+
+**What `call` does not carry: argument values.** A `knowledge_search` query and a `memory_remember`
+gist are user prose, and `write-policy.md`'s secrets boundary exists because this store is plaintext
+on disk. Sizes and counts only — `search.detail` already records `query_chars` rather than the query,
+and that is the precedent this follows.
+
+**`error_code` keeps its membership check, and the layering problem does not force a weaker one.**
+`EVENT_SPECS` is in `core/events.py` and `ProtocolErrorCode` in `service/rpc.py`, which
+`coding-standards.md` §1 puts out of `core/`'s reach — so the *enum* cannot be imported. But a
+`DetailField`'s `values` is a tuple of strings, not of enum members, and the reachable domain is
+`ErrorCode.wire_name` — importable in `core/` — plus the single string `internal_error`. So the field
+declares `values=tuple(code.wire_name for code in ErrorCode) + (…,)` with that one literal, and
+`nullable=True`. **One literal is not a restated enumeration**; a test asserts it equals
+`ProtocolErrorCode.INTERNAL_ERROR.wire_name`, which a test may do because it sits above both layers.
+The seam's converter stays typed `ErrorCode | ProtocolErrorCode -> str` so `mypy --strict` refuses a
+bare string at the call site, and `log_event`'s promised runtime re-check holds here as everywhere
+else.
+
+**But the table has to state that set, and the drift guard has to learn how.**
+`test_event_kinds.py::test_detail_value_sets_match_the_design_table` binds every declared `values` to
+what its table cell states, treating a cell that states nothing as `()` — so a composed tuple is red
+unless the cell declares it, and declaring it by spelling every `ErrorCode` member plus a literal into
+one cell is the restated-enumeration defect this document exists to avoid, and would then fail
+`test_the_closed_sets_are_enums_carrying_exactly_the_designs_values`, whose dictionary today holds
+only enum-backed sets.
+
+**So `parse_payload`'s beside-the-group form gains a reference, marked by `@`.** The bare token in
+that form already means a *literal* — `architecture.md`'s error table has written
+`reason ∈ not_authorized \| not_targetable` since before this milestone, and
+`test_design_tables.py` pins it — so a reference must be marked rather than inferred, or every
+existing use of that form changes meaning along with the parser test. **`@` appears in no `∈` span
+this milestone did not write** — the pre-existing ones are `architecture.md`'s three error-table rows
+and §"Migration posture"'s two, and none carries the marker. The `call` cell therefore
+carries `` `error_code ∈ @ErrorCode.wire_name \| internal_error` `` and the build's
+`` `error_code ∈ @ErrorCode.wire_name \| @BUILD_ONLY_WIRE_NAMES \| build_failed` ``: `@Enum.attr` maps
+that attribute over the enum's members in order, `@NAME` is a module-level export, everything else is
+a literal exactly as today.
+
+**`parse_payload` returns a reference unresolved, and what resolves it imports nothing from the
+package.** Every drift guard imports `design_tables.py`, so a resolver there that imported the package
+would turn one broken import into a collection failure in each of them. The split: a package-free
+`design_tables.resolve(fields, references)` raises `DesignTableError` on an `@name` the mapping lacks —
+so a typo fails closed rather than surviving as a literal that merely compares unequal — and **the
+mapping**, the one thing that must import `ErrorCode` and `BUILD_ONLY_WIRE_NAMES`, is built in
+`test_event_kinds.py` and passed in. The enum guard's rule widens from *an enum* to *an enum, or a
+tuple composed from one*.
+
+**The cheaper route was to exempt these two fields by name in the first guard and check the
+composition elsewhere, and it was rejected**: the table would then be the single declaration for every
+detail set but two, which is precisely the property that guard exists to hold.
+
+**The exits below precede dispatch and each emits nothing.** They are exclusions rather than gaps.
+The test that covers them drives calls rather than reading `_METHODS` — every method once well-formed
+and once refused, each yielding one row on an uncontended store, and every exit below yielding none —
+so the list is complete **as of that test's inputs**. An exit added later that fires on some other
+input would be invisible to it, which is why this is stated rather than claimed by construction.
+
+| Exit | Why it emits no `call` |
+|---|---|
+| `health()` | the unlabelled primitive (invariant 18). A client's start-if-absent sequence polls it while waiting for the service to become ready, so logging it would make this an index of liveness polling |
+| an unparseable line | `parse_request`'s `PARSE_ERROR`, `INVALID_REQUEST` and `INVALID_PARAMS`, **or a line that is not UTF-8**, which answers `PARSE_ERROR` before `parse_request` runs — all raised in `_handle_line` before dispatch is entered at all. **Mechanically unloggable**: no `RpcRequest` exists, so there is nothing to attribute |
+| a malformed envelope | **mechanically unloggable** for the same reason one rung later: resolution raised, so no `session_id`, `client_kind` or `op_id` exists, and every `event` row needs all three |
+| an unknown method | a `ResolvedEnvelope` is in hand, but the name is not in `_METHODS`, so nothing was dispatched and the wire already answers `METHOD_NOT_FOUND`. It reports a client defect, not a Zikaron surface |
+
+**So one `ProtocolErrorCode` member can ever reach a `call` row: `internal_error`.** Every other is
+decided by an exit above, before dispatch. The converter's type stays the union — that is what makes
+`mypy` the check — but **the reachable domain is `ErrorCode.wire_name` plus `internal_error`**, and a
+signal query written to expect `invalid_params` here would wait forever.
+
+**`call` is exempt from invariant 10, and cannot be otherwise.** The seam sees a handler only once it
+has committed or rolled back, so the event commits in its own transaction afterwards. A mutation can
+therefore commit while its `call` row does not, and where the two disagree **the semantic kinds are
+the authority on what happened to the store**.
+
+**Best-effort is a mechanism here, not an intention, and getting it wrong reintroduces M17.** Every
+connection this store opens carries `PRAGMA busy_timeout = 5000` (`core/store/ddl.py`), and the seam
+returns its response line only after everything before the `return` completes. An access-log write
+inheriting that timeout would put **five seconds of the caller's latency** behind a lock it has no
+stake in.
+
+**Where that wait lands differs by verb, and the difference decides what a test can prove.**
+
+- **The memory verbs already hold the lock.** `reads.surface` emits `surface_call` by `log_event`
+  inside its own transaction, so a `memory_surface` that answered at all did so with the write lock
+  in hand. For these, a store held continuously by another writer fails **the handler**, at
+  `store_busy`, with or without this milestone — so a test that merely holds the lock throughout
+  proves nothing about the access log, and that is the trap.
+- **Five of the knowledge verbs do not.** `knowledge_list`, `knowledge_status` and `knowledge_search`
+  read the registry and write only a corpus database; `knowledge_refresh`'s plan and `knowledge_unlock`
+  touch `memory.db` read-only. For those five the `call` row is **the call's first and only
+  `memory.db` write**, and a held lock isolates it exactly — **on a store whose registry table
+  exists**. The first knowledge verb on a fresh store *creates* it, and for that one call sits with
+  the memory verbs, which is the precondition any held-lock test on a knowledge verb has to
+  establish.
+
+  ~~`registry.ensure_table` records the measurement that makes this hold — `CREATE TABLE IF NOT
+  EXISTS` against an existing table "takes no write lock at all".~~ **Withdrawn on measurement, and
+  the withdrawal is load-bearing because it is the reason the property holds at all.** On the
+  long-lived connection the service actually holds, that statement asks for the write lock and waits
+  out the full `busy_timeout` behind an unrelated writer — where the same statement on a freshly
+  opened connection to the same file does not
+  (`research/m33-registry-ensure-takes-the-write-lock.md`). So every knowledge verb was failing with
+  `store_unavailable` whenever any write had been in flight for five seconds. `ensure_table` now
+  **reads `sqlite_master` and issues nothing when the table is there**, so the five verbs above write
+  nothing rather than writing cheaply, and the bullet holds by construction instead of by a claim
+  about how SQLite locks a no-op. Stated rather than silently replaced because a reader who met only
+  the new sentence would re-propose the unconditional `CREATE` as the simpler code.
+- **The other three sit with the memory verbs.** `knowledge_add` inserts a registry row,
+  `knowledge_remove` deletes one and `knowledge_rename` updates one, each inside `in_one_transaction`
+  on `memory.db` — so a held lock fails them in the handler after the full `busy_timeout`, and a test
+  built on one of them proves nothing about the access log.
+
+What the access-log write contends with is therefore a writer taking the lock in the window between a
+lock-taking verb's commit and the row attempt, the service's own other in-flight handlers, and — for
+one of those five — any held lock at all. So:
+
+- **Nothing the access-log write does reaches the response.** The response line is **encoded before
+  the row is attempted** and returned unchanged whatever happens to it, so the property holds by
+  construction rather than by a guard somebody has to keep correct. The three post-dispatch branches
+  — a result, a `ZikaronError`, an unhandled exception — therefore *assign* their line and share one
+  write-then-return, rather than each returning its own: three copies of the write would be three
+  places for the property to stop holding. **Two further exits are accepted as unlogged**, both
+  leaving no line to assign so that no row is attempted: **either encoder raising** — `encode_result`
+  on a result, or `encode_error` on a `data` value `json.dumps` will not take, which `_handle_line`'s
+  outer guard answers `internal_error` for, a dispatched call with no `call` row carrying the one code
+  that elsewhere means a handler crashed — and **a `CancelledError` escaping the handler** at
+  shutdown, which `except Exception` deliberately does not catch. The first is a service defect; the
+  second is ordinary teardown. Named so neither is read as a gap. This matters because the write
+  sits after the handler has *committed*: a failure propagating from there would answer
+  `internal_error` for a `memory_remember` that is durably in the store, the agent would retry, and
+  the store would gain a duplicate. Contention is dropped silently; any other **driver** error, and a
+  payload the contract refuses, are dropped too and logged to the service log **once, until the next
+  row succeeds** — a full disk fails every call, so one line per call floods the log and one line
+  ever hides the recovery. A connection `finalize` has closed is neither of those: it stops the log,
+  which is the bullet below, and is reported outside that latch because it can fire only once.
+- **On its own connection, opened with `busy_timeout = 0` rather than toggled.** A toggle on the
+  shared connection would leave it at zero for whatever other handler's statement ran in that window
+  — coroutines interleave between awaits even though aiosqlite serializes statements — turning an
+  unrelated caller's write into a spurious `STORE_BUSY`. What is borrowed from
+  `core/knowledge/counters.py` is its `is_contention` swallow, **not** its toggle, which is safe only
+  because that caller owns its connection. The connection is opened through
+  `connection.open_connection`, never bare `sqlite3` — a handler calling `sqlite3` directly can hold
+  the event loop for the whole of SQLite's retry, which that function exists to prevent. Its
+  `busy_timeout` is set to zero **once, at open**, before the connection is used, so there is no
+  toggle and therefore no window. It is opened in `ServiceContext` **after** `Store.open(migrate=True)`
+  so it never meets a `CHECK` that would refuse its rows, and closed with the store — **including on
+  `assemble`'s failure path**, which today closes the store and re-raises, and would otherwise leak a
+  connection opened moments before the construction that failed. It loads
+  sqlite-vec that it will never use, because `open_connection` does: one extension load per service
+  start is not worth a second opener variant, and a bare-`sqlite3` path to avoid it is the thing that
+  function forbids.
+- **If `finalize` closes that connection, the access log stops and the service log says so once.**
+  `transactions.finalize` closes a connection whose rollback failed, and the next statement on it
+  raises `ValueError` rather than an `aiosqlite.Error`. Reopening on the next call would retry
+  against a store that could not be repaired; stopping is the same trade this layer takes everywhere
+  — one noisy failure over one quiet wrong answer — and a restart restores it. **An exception no
+  layer below named takes the same exit**, since a failure nothing classified is not one to keep
+  writing through; the writer closes the connection on its way out rather than only dropping the
+  reference, because on that cause it is still open and `aiosqlite`'s worker thread is not a daemon.
+- **It sets `PRAGMA synchronous = NORMAL`, which the store's own connection does not.** `synchronous`
+  is per-connection, and under WAL `NORMAL` syncs at checkpoint rather than at each commit — so the
+  row is a WAL append with no `fsync`, **per connection and per call**, since its frames ride the shared
+  connection's next `FULL` sync at no measurable cost
+  (`research/m33-access-log-cost.md` §"a page-cache reset"). That connection keeps `FULL` and its
+  durability.
+  What that gives up is the last few access-log rows after a power loss, which is already inside
+  "best-effort"; what it avoids is an `fsync` on **every dispatched RPC's response path**, the class
+  M30 measured at twice its idle figure under load. Without this the added cost is a synced commit
+  per call, which is why it is a pragma rather than an afterthought.
+  **`wal_autocheckpoint` goes to zero on the same connection**, for the same reason one rung out:
+  it is per-connection, so a `call` commit crossing the default page threshold would run the
+  checkpoint — database-file `fsync` included — on a caller's response path. The shared connection
+  keeps the default, so the WAL is checkpointed at whichever of **its** commits finds the WAL past
+  `wal_autocheckpoint`'s page threshold, or at the store's close; this one simply never pays for it.
+  **Threshold-gated rather than per-commit**, so a checkpoint is a cost some hundreds of commits apart
+  and cannot be a per-call one. The bound is stated rather than assumed because it is conditional: a
+  session that only searches the knowledge index writes a WAL frame per `call` and nothing else, so
+  the checkpoint waits. Every push writes `surface_call`, which is what keeps that wait short in
+  practice.
+- **What a second connection costs beyond the write itself, stated so it is not discovered.** It
+  competes for the write lock with the service's own writes, so a `call` row can be dropped by the
+  service serving another request, not only by an outside writer. And **committing at all costs the
+  *next* handler its page cache**: a WAL reader that begins a transaction after another connection
+  committed re-reads the pages it touches — a per-call cost inside the handler, scaling with that call's
+  own footprint, that no placement of the row *on its own connection* moves
+  (`research/m33-access-log-cost.md` §"a page-cache reset"). The write's own cost on the caller's
+  response path sits outside this bullet: it is the idle per-call delta that note measures against an
+  unlogged control.
+
+**So the access log undercounts under contention, by construction.** A `STORE_BUSY` refusal is the
+**likeliest** case — the store that refused the mutation is apt to refuse the row recording it,
+though the handler's `busy_timeout` expired seconds earlier and a `store_busy` row that does land is
+ordinary. A permanent limit rather than a defect to engineer away, and not a guarantee that the value
+never appears.
+
+### What is instrumented, what is not, and why
+
+**The indexer is instrumented, and it is the one event no client emits.** A build is the most
+expensive operation the product performs. It is a spawned process that opens `memory.db` directly
+(`knowledge/scope.py`), so it has no envelope to take a label from and mints its own `session_id` and
+`op_id` as the service does for a bootstrap envelope — which is what keeps invariant 18's closing
+sentence true. `client_kind = 'indexer'` exists for it alone — **and the wire refuses it.**
+Were `envelope.py` to derive the accepted set from
+`ClientKind` itself, a client sending `client: {kind: "indexer"}` would be accepted the day `INDEXER`
+landed, its writes filed under the kind reserved for a spawned build: excluded from the drop-rate query,
+ignored by linkage, and advertised in
+a `bounds` payload's `limit` as a value to send. The accepted kinds are therefore `ClientKind` **minus
+`INDEXER`**, declared once beside the enum and read by `parse_envelope`, so the `CHECK` admits one
+value more than any request may carry. A test sends that kind and asserts `bounds` on `client.kind`
+with a `limit` that does not list it.
+
+**`knowledge_build.error_code` shares `call`'s vocabulary, and the numeric codes stay at the
+boundary.** `core/knowledge/errors.py` gives each class a **`wire_name` string and no numeric code** —
+which is what that module's own docstring already argues for, since these classes describe a corpus
+rather than anything a client asked for, and `dispatch_knowledge` remains *"the boundary that gives
+them codes"*. So `DanglingKnowledgeBaseError` reports `knowledge_base_dangling` whether a
+`knowledge_refresh` was refused or a build died on it, and **a test asserts that every class the
+boundary maps to an `ErrorCode` carries that code's `wire_name`** — agreement enforced mechanically
+rather than by discipline, without moving the wire contract into the layer that cannot know it is
+being reached over one.
+
+*(A table of class → `ErrorCode` in `core/` would make agreement impossible to break rather than
+merely checked, and was rejected on that trade: it falsifies the stated rationale in two module
+docstrings, and a design should not rewrite two arguments to save one test.)*
+
+**What a row records is fixed per exception class:**
+
+- **A `KnowledgeError` records its own `wire_name`**, so one condition keeps one name wherever it
+  appears. Classes reachable only in a build — `CorpusRootMissingError` and the like — carry names no
+  wire path maps. **`RegistryUnavailableError`'s is declared and unreachable**, since it refuses
+  before a connection exists; declared anyway, because the alternative is a class this module holds
+  that the vocabulary silently omits.
+- **A `ZikaronError` records `code.wire_name`.** A build raises them itself and they are not
+  "unexpected": `INDEX_FAILED` at the chunk, embed and index-write stages, `BAD_CONFIG` from a
+  corpus's `meta`, `SCHEMA_INCOMPATIBLE` from a corpus file a newer build wrote. **This case fixes
+  the set's shape.** Were those names outside `values`, `EventSpec.validate` would raise `ValueError`
+  inside the row write — which no longer kills the build, since no row write is ever its reported
+  outcome, but is worse than that: **the one failure worth recording would go unrecorded**, lost to a
+  line on stderr, and precisely on the builds that failed.
+- **Anything else records `build_failed`** — a driver error, an `OSError`, an exception no layer
+  named. `internal_error` is not reused: it lives in `service/rpc.py`, and while `knowledge/scope.py`
+  shows the indexer may import from `service/` — it takes `paths` — a wire code is the one thing that
+  module is written not to hold.
+
+**So `values` is declared, not walked over `__subclasses__()`**, which would make it depend on import
+order. `core/knowledge/errors.py` exports `BUILD_ONLY_WIRE_NAMES` — the classes no wire path maps —
+and `core/events.py` composes `values` as **every `ErrorCode.wire_name`, plus those, plus
+`build_failed`**. Composing there rather than in `errors.py` keeps that module free of `ErrorCode`, so
+its *"deliberately not `ZikaronError`"* docstring stands unamended. A test holds the build-only names
+disjoint from every `ErrorCode.wire_name`, since a shared vocabulary is only useful if two conditions
+cannot collide on one string.
+
+**A second test makes the set complete rather than merely consistent**: every concrete
+`KnowledgeError` subclass's `wire_name` must be in `knowledge_build.error_code`'s `values`.
+
+**Why it is needed.** Without it the export is a hand-maintained list, and a class added later that
+the boundary does not map and the export forgets records a name outside `values` —
+`EventSpec.validate` raises inside the failure-path write, the line goes to stderr, and **the build's
+own failure goes unrecorded**, the outcome the `ZikaronError` bullet above calls worse than a crash.
+
+**Two things the test has to get right, or it does the opposite of its job.** It walks
+`__subclasses__()` **transitively**, because that call returns direct subclasses alone: the hierarchy
+is flat today, and an intermediate base added later would hide its children. And it **imports every
+module under `zikaron/` first, the `__main__` entry points excepted**, with `walk_packages`' `onerror`
+set to raise — because `__subclasses__()` sees only what has been imported, so a subclass declared
+beside the code that raises it and imported by nothing is invisible; because three `__main__` modules
+call `sys.exit(main())` at import and would run the program under pytest's argv; and because
+`walk_packages` swallows `ImportError` by default, which would leave the walk green over the packages
+it could not load. Those entry points declare no classes, so excluding them loses nothing.
+
+**This does not contradict *"declared, not walked"***, which scopes composing `values` in `core/`,
+where import state is the caller's. A test controls its own imports and sits above the layers.
+
+**The relation to `call`'s `values` is overlap, not containment.** The two share every
+`ErrorCode.wire_name`; `internal_error` is `call`'s alone, and **`BUILD_ONLY_WIRE_NAMES` plus
+`build_failed`** are the build's alone — named as the export rather than by its members, so the
+sentence stays true when a third build-only class lands.
+
+**A spawn the service never made is not a build; a child that started and was then refused is.** The
+service's own plan can refuse before spawning, and no process starts, so no `knowledge_build` row
+exists. But the child re-establishes every refusal for itself — the check and the build are not one
+transaction — so `builds.prepare` and `scan.run` can raise `IndexerBusyError`,
+`DanglingKnowledgeBaseError` or `CorpusRootMissingError` **inside a process that started**. That is a
+build with a row: `ok=false`, `error_code` the refusing class's `wire_name`, `files_indexed` null. An
+agent's `refresh` racing an operator's foreground run is the ordinary way to reach it.
+
+**The row is written inside `build()`, on the connection `open_store` yielded, before the exception
+leaves that scope.** `scope.execute` renders a failure *after* `async with store` has exited, so a
+write placed there would meet a closed connection — the `ValueError`-on-a-closed-connection class
+§"`call` is an access log" already names. For an exception no layer named that means catching
+`Exception` at that point, writing the row **inside its own guard**, and re-raising the original —
+the write sits in the handler that exists to record somebody else's failure, so an unguarded one
+would escape that handler and replace the very exception it was recording.
+**`Exception` and not `BaseException`, deliberately**: a `KeyboardInterrupt` or a `CancelledError`
+must not be made to wait out `busy_timeout` on a lock so that its own death can be recorded. Such a
+build writes no row, which is why a killed child is among the states §"the absence of the join proves
+nothing" below says the log cannot tell apart.
+
+**On the success path the row is attempted after `_print_report` and — load-bearing — *after* the
+`try`/`except`, not at the end of its body.** Inside it, a failure of the success write would enter the
+failure catch, write a *second* row saying `ok=false` for a build that completed, and re-raise: status
+1 and a false failure row over a built corpus. Outside it, that write's own failure cannot reach the
+catch that exists to record somebody else's.
+
+**What it protects is narrower than "a non-contention failure of the write", and the narrowing was
+found by mutating the placement rather than by reading it.** The statement is guarded where it is
+issued, so a driver failure writing the row is swallowed wherever the call sits — moving it inside the
+`try` changes nothing about that. What is unguarded is the **rest** of the success call: reading the
+attribution, and building the payload. So the mutation is caught only by a test that makes *that* part
+fail, and a test that breaks a dependency both paths share cannot see it at all: the failure write
+breaks too, neither placement writes a row, and the two are indistinguishable.
+
+**No row write is ever the reason a build reports failure, on either path.** A non-contention failure
+of either write goes to stderr and the build's own outcome stands — status 0 on the success path, and
+on the failure path the *original* exception is what is re-raised, so `refused: a build is already
+running …` stays that rather than becoming a chained driver error. The build's outcome is the answer;
+the row is the audit. That is the trade `call` already takes — *losing an audit row is a measurement
+gap, corrupting a caller's answer is not* — applied to both writers rather than one.
+
+**And `build()` resolves the registry row itself, before `prepare`, or the refusals that owe a row
+arrive with nothing to key it by.** `prepare` raises its refusal and returns the `KnowledgeBase` only
+on success, and none of `IndexerBusyError`, `DanglingKnowledgeBaseError` or `CorpusRootMissingError`
+carries an `id` — so at the catch site there is no id unless `build()` already holds one.
+`registry.ensure(db)` and then `registry.require(db, name)` supply it — the pair `lifecycle.unlock` and
+`remove` open with, and **`ensure` is not optional**: `Store.open` creates no registry table, and
+`prepare` → `plan` was the call that did, so a `require` hoisted above it would put a `SELECT` ahead of
+the `CREATE TABLE IF NOT EXISTS` and fail with *no such table* on any store no knowledge verb has
+touched.
+
+**The rule is positional, and the catch reads no class at all.** `require` runs **outside the `try`
+that guards the rest**, so nothing raised before it returns writes a row — no id exists — and
+everything raised after it is written under the id it bound, whatever its class. `require`'s own two
+documented refusals therefore write none, while **the same `UnknownKnowledgeBaseError` raised later**,
+by `refresh`'s own resolution after a `remove` landed between the reads, *is* written, because by then
+`build()` holds an id. A rule by class could not express that, and stating one would have a builder
+re-raise the class inside the `try` and lose exactly the race this paragraph exists for.
+
+**Nothing raised before an id or a connection exists writes a row** — instances rather than a closed
+set, since the rule is positional. `require`'s two documented refusals land before an id. So does
+`RegistryUnavailableError` from `scope.open_store`, before a build begins at all. And so does a
+`ZikaronError` from `Store.open` itself — `schema_incompatible` on a store a newer service migrated,
+`bad_config` on a missing `meta` key — which `open_store` passes through un-renamed, catching only
+`aiosqlite.Error` and `OSError`. There is no corpus whose cost any of these is, and a row keyed by
+nothing joins to nothing.
+
+The record of such a child is only that a build was asked for: the spawning verb's `call` row, **which
+names no corpus**, and in the race a `remove` row near it in time — and after that `remove` the
+registry row is gone, so nothing in `memory.db` says which corpus it was. **For a foreground run the
+operator's terminal names it; for a spawned child nothing durable does** — `detach.spawn` opens it
+with `stderr=DEVNULL`, so its `refused: no knowledge base named …` goes nowhere, and the name was last
+seen in the `refresh` result's `foreground_command`, in the caller's context and on no disk. Both
+cases are ordinary: a foreground re-run with a typo, and a corpus removed while a build for it was
+still resolving its name — the window being *before* the child's `require`, since a `remove` landing
+after it is the written case above.
+
+**The absence of the join proves nothing, and that is worth stating before somebody queries it.** A
+`refresh` or `add` `call` row at `ok=true` with no `knowledge_build` row carrying its `op_id` is what
+**at least these** states look like: a per-corpus refusal that spawned nothing (below), a build still
+running since the row is written at the end, a child that died before it held
+an id, a row dropped under contention, and **a child killed before its catch ran** — the OOM killer on
+an embedding batch, a `SIGKILL` clearing a stuck build, a foreground Ctrl-C. The `call` row holds no
+argument and no result, so it cannot say which — it cannot even say the call spawned. **Only the
+presence of the join is evidence.**
+
+**Where `IndexerBusyError` is recorded differs by verb.** For **`refresh` and `add` the refusal
+is a per-corpus outcome inside a *succeeding* call** — `dispatch_knowledge.knowledge_refresh` reports
+it against that corpus so one unbuildable base never denies the others a build — so the `call` row
+reads `ok=true`, and the refusal appears in **no event at all**. **`remove` and `unlock` raise it as
+the call's own `knowledge_base_busy`** — and on *opposite* readings of the recorded pid: `remove`
+refuses when the holder cannot be shown dead, `unlock` when it can be shown alive. Both land as the
+same string in `call.error_code`, indistinguishable there.
+**The `refresh`/`add` gap is accepted rather than overlooked**: a corpus that is *always* busy is a
+real diagnosis and this log will not give it, which is a thing to know before reading a clean `call`
+history as a clean build history.
+
+**`spawned_by_op_id` travels in the environment, and every part of that is load-bearing.** Without the
+edge nothing joins a build's cost to its requester, since the build mints a label of its own and only
+the spawning `call` row knows whether an agent or a person asked. It is **not** on the argv because
+`detach.spawn` returns the argv the child actually ran and `knowledge-index.md` §8.4 prints that as the
+command to reproduce a build — a flag the printed form stripped would break that identity. `spawn`
+passes `env` as a **per-spawn copy, never an assignment into the service's own environment**: a
+long-lived service spawning many builds would otherwise attribute every later one to the first caller,
+and the row would look complete while being wrong. **The copy omits the variable when no token is
+passed**, rather than inheriting one, or a service started from a shell that exported it would
+attribute every unattributed build to that value. `ZIKARON_SPAWNED_BY_OP_ID` is declared once in
+`detach.py`, which already owns the argv, and read by the indexer's entry point.
+
+**The three fields that describe the work are each ambiguous unless pinned, and each misreads a cost
+history in the same direction.** `full` is the flag the build was *asked* for; an identity-forced
+rebuild reindexes the whole corpus at `full=false` (`scan.rebuilt_identity`), so **`rebuilt` is a
+separate field** and a query grouping cost by `full` alone files those minutes under "incremental".
+`files_indexed` is `counters.py`'s reading — *the corpus the scan leaves behind*, explicitly not the
+files this scan wrote, so a 0.26 s no-change rescan reports the same count as the full build before
+it. Both live on the `ScanResult` that `scan.run` returns only on completion, which is why both are
+null on a failed build rather than defaulted. And `duration_ms` spans `build()` **including the model
+load**, because that is the elapsed cost somebody actually paid and the load is not a constant across
+a cold and a warm cache; a work-only figure is not recoverable from either choice, so the one a person
+would recognise wins.
+
+**`files_indexed` also being in the base's own `meta` is not duplication.** `ScanCounters` resets per
+scan, so `meta` answers *what does this corpus look like now* while only this log answers *what has
+building it cost over time*, which is the question the kind exists for.
+
+**The build decides by version rather than by catching the constraint, and `OpenStore` carries the
+version for it.** `open_store` yields an `OpenStore` of project, directory, connection and config
+today, and no `meta`; at M33 it gains `schema_version`, from the `meta` `Store.open` validated, so a
+build attempts the row only when the store it opened is at 3 or above and writes nothing below that.
+
+**The reason is not that catching hides a defect** — a row write's failure is now reported rather than
+raised, so a caught `CHECK` hides no more than the stderr line does. It is that **a store below 3 is
+an ordinary state for a direct run, not a failure to print**: a direct build never migrates (D37), so
+catching would print *could not record build* on every foreground build against an unmigrated store,
+and the version is in hand before the write.
+
+**A payload spill is deliberately silent.** `mcp/spill.py` emits no event and `zikaron/mcp/` imports
+no logger *by design*; reporting a spill would mean a new RPC on the one path that exists to keep
+that client thin. The silence is affordable because the failure it would report is observable from
+the store already: a payload the consolidator cannot be served leaves its group undispositioned, so
+the group is re-served until `serve_count` reaches `max_group_serves` and its status becomes
+`deferred`. **`consolidation.spill_threshold` is therefore judged by the groups that reach `deferred`
+rather than by a spill count.** Anyone tempted to add the event should change this paragraph first,
+not quietly break the no-logger property.
 
 ### Linked sessions — what makes a cross-client signal computable
 
@@ -800,6 +1268,16 @@ condition is exactly what an env-less harness breaks:
 - `label_source` still says which happened — `harness` vs `minted`, derived from the label's prefix rather than
   read from a column — so a `minted`-heavy population is visible immediately. Two rungs, two values; the third
   value (`ancestry`) is gone with the rung.
+- **`call` widens what counts as linked, and the widening is the instrument working rather than drifting.**
+  Linkage is defined over `client_kind`, not over kind, so a session whose only `mcp` traffic was *refused*
+  now qualifies where it previously contributed nothing. That is the right answer to the question this
+  signal asks — the two clients did resolve the same label, which is all it measures — but it is a step in
+  a reported rate, so **coverage is not comparable across the schema 3 boundary**. `client_kind='indexer'`
+  enters neither side: a build shares no session with a hook. **A `label_source` population count is taken
+  positively, over `client_kind IN ('hook','mcp')`** — the two clients this diagnosis is about. A build
+  mints by construction, and a typed command mints legitimately from any shell no harness spawned, which
+  is the ordinary operator case; counting either would read as *the harness variable was absent from some
+  client's environment*, the one conclusion this instrument exists to support.
 - The two cross-client signals are computed **over linked sessions only**. An unlinked writing session would
   otherwise be counted as a zero-write hook session — inflating exactly the under-writing rate D30 exists to
   measure, and in the direction that would confirm its prior. That is the worst available failure, which is
@@ -892,10 +1370,19 @@ call does and does not change"), so mutation calls rejected as `bounds`, `not_fo
 `group_expired`, `store_busy`, `index_failed` or `bad_config` are counted **nowhere** and are invisible to this
 signal. So it measures concurrency among calls that got far enough to be audited — which is the population
 D26's one-round-trip retry contract is actually about — and it does *not* measure malformed or unauthorized
-write attempts. A one-per-call attempt event would make those countable and was rejected: it would put a store
-write on the cheapest rejection path (`bounds`, decided before any state is read), it could not commit inside
-the transaction it describes when there is no mutation, so invariant 10 would need an exception, and it still
-could not record `store_busy` — the one rejection where the store is by definition unwritable.
+write attempts. **`call` makes them countable, and it is counted separately from this signal rather than
+folded into it** — this denominator stays receipt-gated mutation calls, because widening it would divide
+contention by call volume and measure something else.
+
+A one-per-call event was rejected when this signal was specified, on three grounds, and M33 took two of them
+as costs rather than obstacles. It does put a store write on the cheapest rejection path — a `bounds` refusal
+is decided before any state is read — and that is now the point, since an unrecorded refusal is what made a
+session issuing three `remember` calls record one. It does need an exception to invariant 10, which that
+invariant now states, because the seam sees a handler only after it has committed. **The third ground stands
+as a bias rather than a bar**: a `store_busy` rejection is the one likeliest to lose its row, since the store
+that just refused the mutation is apt to refuse the row recording it — though the handler's `busy_timeout`
+expired seconds earlier and the row often lands — so `call` undercounts under contention, and by more for
+that code than for any other (§"`call` is an access log").
 
 (b) **`remember` is a committed, observable, logically-mutating call (invariant 2) and is deliberately not in
 this denominator**, which round 11 caught the prose promising. It is excluded because it is not *receipt-gated*:
@@ -913,7 +1400,18 @@ the population is named.
 **Nothing in `event` is deleted on a schedule.** Measured: a full `surface_call` row costs **454 bytes**
 including both indexes, so at ~1,000 events/day — a heavy single project at ~200 user messages — the table
 grows about **200 MB/year** live (166 MB `VACUUM`ed, plus 20–30% for WAL and free pages). A normal project is
-under 20 MB/year. The store is per-directory (D8, D17), gitignored (D19), and **no hot path reads `event`**,
+under 20 MB/year.
+**That figure predates `call` and is a floor, not a current number.** Every dispatched RPC now adds a row: a
+five-gist push is seven rows where it was six, a search two where it was one, a fetch of *n* uuids *n*+1 —
+and the knowledge verbs, which contributed nothing, now contribute one apiece.
+**Re-derived rather than scaled, since the multiplier depends on a project's mix of calls: `call` adds
+22.4 MB/year at 463.7 bytes a row and 132 calls a day, which is 18.8% more rows than that log already
+holds** — measured on a migrated snapshot of a heavy real project, and a **floor**, since the knowledge
+verbs left no `op_id` in it to count. `research/m33-schema-three-and-call-volume.md`; re-derive with
+`.venv/bin/python spikes/m33_schema_three_and_call_volume.py`. A derivation from a store's *own* history
+instead should **bound itself at the first `call` row** the way the drop-rate query does: rows written
+before the migration would otherwise drag the per-day figure toward a regime that no longer exists.
+The store is per-directory (D8, D17), gitignored (D19), and **no hot path reads `event`**,
 so a large table costs disk and slows only the signal queries in §"D30's six signals, as queries".
 
 Age-pruning was considered and **rejected on two grounds**, the first of which is not about size at all:
@@ -1204,10 +1702,18 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
    `consolidation_group_candidate` therefore precedes existence, version and receipt, and its error payloads
    name uuids only, never state or prose. The full precedence ladder for every mutating verb, primary and
    consolidator, is `architecture.md` §"Validation precedence".
-10. **Events commit with their mutation** (see §"The `event` log, per kind"). No event outside the
-    transaction it describes. A **rejected** call commits no domain mutation but does commit its audit
+10. **Events commit with their mutation** (see §"The `event` log, per kind"). No **semantic** event outside
+    the transaction it describes. A **rejected** call commits no domain mutation but does commit its audit
     events and, for a version conflict, the receipt for the record it returned — enumerated in
     `architecture.md` §"Errors".
+    **`call` is exempt, and `knowledge_build` falls outside rather than violating.** The access log is
+    written at the seam, which sees a handler only after it has committed or rolled back, so a `call` row
+    commits in its own transaction afterwards; where it and a semantic kind disagree, the semantic kind is
+    the authority. A build describes no `memory.db` mutation to share a transaction with — it writes its
+    corpus's own database, which this log does not describe. Neither exemption
+    weakens the invariant's purpose, which is that no signal may observe a write that did not commit: both
+    kinds are counted **per call or per build**, never joined to a memory, and `names_memory` is false for
+    each.
 11. **`embed_model` / `embed_dim` are checked against `meta` on open.** A mismatch means a full reindex, not
     a best-effort continue — D20 established that same-dimension model swaps corrupt `vec0` silently with no
     schema protection.
@@ -1345,6 +1851,11 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
     is a **wire state, never a stored one** — no table and no event can hold it. The `memory.session_id`
     and `event.session_id` columns stay nullable only to leave room for a future import that genuinely has
     no session; nothing in v0 writes NULL there.
+    **The indexer has no envelope either, and mints rather than omits.** A build is a spawned process
+    reaching the store directly, not a request, so nothing normalizes an envelope for it; it mints its own
+    `zk-` label and `op_id` before writing `knowledge_build`. That is what keeps the sentence above true —
+    a NULL would be the first stored one — and it holds the `op_id` rule every RPC follows: one unit of
+    work, one `op_id`, here one build.
 19. **Shard identity is persisted, complete, and consistent within a subgroup.** The shards of one cohesive
     subgroup are the rows of a run sharing an `order_key`, and for any such set:
 
@@ -1445,7 +1956,23 @@ downgrading.
 **Exactly one opener migrates: the service.** `Store.open` takes `migrate`, and `service/context.py` is the
 only call site that passes it — the one opener holding the store at startup with write intent, before the
 socket is bound, so no client can be mid-call while the schema moves. The indexer and the MCP identity read
-open an older store at the version it is and change nothing.
+open an older store at the version it is and **never move it**.
+
+**So the indexer can meet a store whose `CHECK` refuses `knowledge_build`, and a build must not fail
+for it.** A build reached through `zikaron knowledge` is spawned by the service, which has therefore
+already migrated; a build run directly — the argv `detach.command` returns, which a verb reports as
+`foreground_command` — has no such guarantee. **The build therefore decides from
+`meta.schema_version`, which `OpenStore` carries for it, and attempts no row below version 3** —
+rather than writing one and catching the constraint, which would report an ordinary state as a
+failure on every foreground build against an unmigrated store.
+
+**A build waits for its row where `call` refuses to, and the asymmetry is the point.** `call` declines to
+wait because a caller is holding a response; a build has no latency budget — it has just spent minutes — and
+that row is the only record of the minutes. So the build's write takes its connection's ordinary
+`busy_timeout` and swallows contention only after it, dropping the row only under five continuous seconds of
+contention rather than whenever the service happens to be mid-write. Written as a **fresh**
+`in_one_transaction` with no read left open on that connection: a stale WAL snapshot turns the attempt into
+an immediate `SQLITE_BUSY_SNAPSHOT`, which `is_contention` swallows leaving no trace of why.
 
 **A migration runs as one transaction across every pending step**, and writes `meta.schema_version` inside
 it. A store interrupted partway would otherwise sit at a version no build implements, which is a state
@@ -1468,13 +1995,14 @@ both are binding:
   meaning of an existing key, or a new invariant it would violate by writing.
 - **A new binary over an old store** — anything it will write that the old store's constraints refuse.
 
-**The second direction is easy to read past, and version 2 is entirely that case.** It widens
-`event.client_kind`'s `CHECK` to admit `cli`. An old binary reading a widened store reads every row
-correctly and would never write the new value, so on the first direction alone this change does not qualify
-— and a reader applying only that half would conclude, wrongly, that it needs no version. What makes it one
+**The second direction is easy to read past, and every version so far is entirely that case.** Each widens a
+`CHECK` on `event`: version 2 admits `client_kind = 'cli'`, version 3 admits the `call` and
+`knowledge_build` kinds and `client_kind = 'indexer'`. An old binary reading a widened store reads every row
+correctly and would never write the new values, so on the first direction alone none of this qualifies — and
+a reader applying only that half would conclude, wrongly, that a widening needs no version. What makes it one
 is that a *new* binary meeting a store still carrying the narrow `CHECK` has no way to know, and the first
-`cli` event it writes fails at insert time on a constraint nothing warned it about. **The version is how a
-binary knows which shape it is holding.**
+row it writes with a new value fails at insert time on a constraint nothing warned it about. **The version is
+how a binary knows which shape it is holding.**
 
 **Why not introspect the schema on every open instead.** It costs a `sqlite_schema` read per start, and
 worse, it makes *has this store been brought forward* a derived fact with no record: a migration that was

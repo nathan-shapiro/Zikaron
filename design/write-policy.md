@@ -215,9 +215,13 @@ retire-versus-supersede distinction (D16, D25) — and, since M32, the rules for
 headline's form and bound, expiry-in-headline, observations-not-orders, the secrets boundary and
 subject-not-quote, all in `zikaron_memory_remember`'s description and referenced from
 `zikaron_memory_amend`'s. A description is in context at the instant the argument it governs is being
-filled, and costs no injection budget; the prompt above keeps one line on secrets and points at the
-rest. What stays here is what no description can prompt: the write trigger, the scope test and the
-recall occasions.
+filled, and costs no injection budget; the prompt above keeps one line on secrets and points at the rest.
+**Under Claude Code that holds because the install makes it hold**: it defers MCP tools when the tool
+list is crowded, listing them by name with schemas unloaded, so the Claude Code target writes
+`alwaysLoad` on both servers to exempt them (`design/harness.md` §"MCP tools may arrive deferred").
+Without that key a description arrives only when the agent loads the verb, which is per verb and late.
+What stays here rather than in a description is what no description can prompt: the write trigger,
+the scope test and the recall occasions.
 
 ### Inspection, deletion, and the one thing D16 cannot do
 The store is a plain SQLite file at `<scope>/.zikaron/memory.db`, mode 0600, never committed (D19). A user can
@@ -468,6 +472,16 @@ it degrades gracefully where an exact key does not. And it is robust to the one 
 invalidate it — **consolidation rewrites gists**, and a subject-shaped reference survives that by
 construction, with nothing needing to be added to the consolidator's own prompt.
 
+**The rule covers a citation in a document, and the paragraph above is why that needed saying.** It is
+written as a record→record rule whose stated reason is gist rewriting, so an id written into a project's
+own `STATE.md` reads as outside it — and the sentence about a retired record still resolving reads as a
+reassurance that a uuid is safe to keep. It is not, and the reconciliation is the finding: **a uuid that
+ever existed always resolves — to the row, never to the claim.** Consolidation moves the claim to another
+uuid and leaves the absorbed row fetchable but demoted (D16, D25), so the citation resolves to a husk;
+and the hallucination this section predicts is now observed rather than predicted, two of six ids
+measured on one store resolving to nothing at all. So a document points at a memory by its subject, on
+the same terms a record does. `zikaron_memory_remember`'s description carries the agent-facing half.
+
 ## 3. How we find out which way it errs
 
 We cannot judge this from the prompt text, so v0 ships instrumentation instead of confidence. All cheap,
@@ -533,14 +547,18 @@ Until then these six signals tell us the *direction* of the error, which is enou
   the gate. Whether a decision taken in conversation is in scope is a D1 question, open in
   `FINDINGS.md` Q7: widening invites every passing preference in, leaving it makes the next
   argument happen twice.
-- **The 64-token gist bound has a measured cost and no instrumentation.** Two of three `remember`
-  calls in one observed session were refused on it (71 tokens, then 67, then 58). A refused write
-  emits no event, so the store cannot report this; `FINDINGS.md` Q18 is what would close it.
+- **The 64-token gist bound has a measured cost, counted by hand before it was instrumented.** Two of
+  three `remember` calls in one observed session were refused on it (71 tokens, then 67, then 58) —
+  a rate nothing in the store could report, because a refused write left no row. **M33 makes it a
+  query**: a `call` event at the service seam records the method and the error code of every refusal,
+  so the bound's cost stops depending on somebody watching one session. `schema.md` §"`call` is an
+  access log" is normative for what that row carries and where it stops.
 - The prompt is about half the length of the draft it replaced — the write-time rules moved to
   `zikaron_memory_remember`'s description at M32 — and every line of it is still injected once per
-  session. Nothing measures whether the recall occasions or the gate earn their tokens, and nothing
-  measures whether the rules now in the description are read at the call: a refused write emits no
-  event (Q18), so the bound's two-of-three losses are the only signal and they were counted by hand.
+  session. Nothing measures whether the recall occasions or the gate earn their tokens. Whether the
+  rules now in the description are read at the call becomes partly answerable at M33, since a refusal
+  writes a `call` row — but a write that was never attempted still emits nothing, and that is the half
+  the seam cannot see.
 - No mechanism enforces the secret prohibition. It is prompt text, and prompt text is a request. A
   deterministic pre-write scan for high-entropy strings and known key prefixes is the obvious follow-up and
   costs no LLM call — it is not in v0 because a false positive would refuse a legitimate write, and D15's

@@ -27,6 +27,11 @@ from zikaron.core.knowledge.errors import (
 )
 from zikaron.core.store.transactions import in_one_transaction, propagate
 
+#: The one table the knowledge index keeps in `memory.db`. Named apart from the DDL below because
+#: `ensure_table` asks whether it is there before creating it, and two spellings of one table name
+#: is one way for the question and the answer to be about different tables.
+TABLE_NAME: Final = "knowledge_bases"
+
 #: Transcribed from `schema.md`, which is the contract for it; a test compares the two.
 #:
 #: `IF NOT EXISTS` is load-bearing rather than defensive. This is the **only** site that creates
@@ -105,16 +110,37 @@ def normalize_name(name: str) -> str:
 async def ensure_table(db: aiosqlite.Connection) -> None:
     """Create `knowledge_bases` if this store does not have it yet.
 
-    Cheap enough to run on every open, and measured to be: `CREATE TABLE IF NOT EXISTS` against a
-    table that already exists takes no write lock at all — it succeeds while another connection
-    holds the writer lock — so the steady-state cost is a schema read, and the one occasion it
-    contends is the one occasion it has real work to do.
+    **The presence check is a read of `sqlite_master`, and issuing the `CREATE` unconditionally is
+    what it replaces.** `CREATE TABLE IF NOT EXISTS` against a table that already exists is a no-op
+    in effect — but measured on the connection the service actually holds, it still asks for the
+    write lock and waits out `busy_timeout` behind an unrelated writer, where the same statement on
+    a freshly opened connection to the same file does not
+    (`research/m33-registry-ensure-takes-the-write-lock.md`). Every knowledge verb calls this first,
+    so each of them answered `store_unavailable` whenever another write had held the lock for that
+    whole timeout. A read that finds the table present performs **no write at all**, which is the
+    property `schema.md` §"`call` is an access log" rests on when it calls the access log's row the
+    first and only `memory.db` write of a `knowledge_list`.
+
+    The `IF NOT EXISTS` stays, so two callers that both find it absent still cannot collide.
 
     Must be called inside a transaction the caller owns. A bare `CREATE TABLE` with no transaction
     open runs in autocommit, which would leave the table behind after a caller's later statement
     failed and rolled back.
     """
+    if await _table_exists(db):
+        return
     await db.execute(CREATE_TABLE)
+
+
+async def _table_exists(db: aiosqlite.Connection) -> bool:
+    # `sqlite_master`, not its `sqlite_schema` alias, which SQLite added in 3.33.0. D35 declares no
+    # SQLite floor for a host-Python install, and the store's own two readers of this table
+    # (`core/store/store.py`, `core/knowledge/database.py`) use the older name — so a floor must not
+    # arrive here silently, in a statement nothing would fail on until somebody's build was old.
+    rows = await db.execute_fetchall(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE_NAME,)
+    )
+    return bool(list(rows))
 
 
 async def ensure(db: aiosqlite.Connection) -> None:
@@ -122,7 +148,7 @@ async def ensure(db: aiosqlite.Connection) -> None:
 
     The two exist because the table has exactly one creation site and two kinds of caller: a verb
     already inside a transaction, which must not open a second one, and every read that merely
-    needs the table to be there. Both reach the same statement, which is what keeps a store created
+    needs the table to be there. Both reach `ensure_table`, which is what keeps a store created
     before this table existed opening and answering normally by construction rather than by a test.
     """
     await in_one_transaction(db, ensure_table, failure=propagate)

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final
 import aiosqlite
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.events import EventOrigin
 from zikaron.core.records.memory import CallParams
 from zikaron.service.envelope import ResolvedEnvelope
 from zikaron.service.serialize import RpcResult
@@ -42,6 +43,17 @@ def call_params(envelope: ResolvedEnvelope, *, max_depth: int) -> CallParams:
         client_kind=envelope.kind,
         op_id=envelope.op_id,
         max_depth=max_depth,
+    )
+
+
+def event_origin(envelope: ResolvedEnvelope) -> EventOrigin:
+    """The resolved envelope, as the three fields every `event` row carries about its caller.
+
+    What the access log takes, since it has no supersession policy to apply and would otherwise have
+    to invent a `max_depth` it has no business holding.
+    """
+    return EventOrigin(
+        session_id=envelope.session_id, client_kind=envelope.kind, op_id=envelope.op_id
     )
 
 

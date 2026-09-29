@@ -7,6 +7,7 @@ while the code is the contract SQLite publishes.
 """
 
 import sqlite3
+import time
 import uuid
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from zikaron.core.knowledge.errors import (
     InvalidNameError,
     UnknownKnowledgeBaseError,
 )
+from zikaron.core.store import ddl
+from zikaron.core.store.connection import open_connection
 
 
 async def _ensure(db: aiosqlite.Connection) -> None:
@@ -209,3 +212,49 @@ class TestTheOrdinaryVerbs:
             )
             with pytest.raises(ValueError, match="uuid"):
                 await registry.list_all(db)
+
+
+class TestWhatEnsuringTheTableCosts:
+    """Every knowledge verb calls `ensure` first, so what it costs is what each of them costs.
+
+    Measured before this was written, on the connection the service actually holds: issuing
+    `CREATE TABLE IF NOT EXISTS` unconditionally asks for the write lock and waits out
+    `busy_timeout` behind an unrelated writer, where the same statement on a freshly opened
+    connection to the same file does not
+    (`research/m33-registry-ensure-takes-the-write-lock.md`). So a `knowledge_search` failed with
+    `store_unavailable` whenever any write was in flight for five seconds, and the access log's own
+    isolation could not be tested through any verb at all.
+    """
+
+    async def test_a_store_that_already_has_the_table_is_left_alone_under_a_held_lock(
+        self, tmp_path: Path
+    ) -> None:
+        """The property the fix buys: a present table means **no write**, not a cheap one.
+
+        Asserted through a held lock rather than by counting statements, because "takes no write
+        lock" is the claim `schema.md` rests on and a statement count would not notice the day
+        SQLite changes its mind about a no-op.
+        """
+        async with open_store(tmp_path) as (_store_dir, db):
+            await registry.ensure(db)
+            holder, _inode = await open_connection(
+                _store_dir / "memory.db", pragmas=ddl.PRAGMAS, existing_only=True
+            )
+            try:
+                await holder.execute("BEGIN IMMEDIATE")
+                await holder.execute("INSERT INTO meta (key, value) VALUES ('held', '1')")
+                started = time.perf_counter()
+                await registry.ensure(db)
+                elapsed = time.perf_counter() - started
+                await holder.rollback()
+            finally:
+                await holder.close()
+        assert elapsed < ddl.BUSY_TIMEOUT_MS / 5_000, f"it waited {elapsed:.3f}s for the lock"
+
+    async def test_a_store_without_the_table_still_gets_one(self, tmp_path: Path) -> None:
+        """The other half, and the one the read could have broken: absent still means created."""
+        async with open_store(tmp_path) as (_store_dir, db):
+            assert await registry._table_exists(db) is False
+            await registry.ensure(db)
+            assert await registry._table_exists(db) is True
+            assert list(await registry.list_all(db)) == []

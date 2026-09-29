@@ -29,16 +29,24 @@ from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import lifecycle, lock, meta, registry, reporting
 from zikaron.core.knowledge import paths as knowledge_paths
 from zikaron.core.knowledge.errors import (
+    BUILD_ONLY_WIRE_NAMES,
     CorpusRootMissingError,
+    DanglingKnowledgeBaseError,
+    DuplicateNameError,
+    IndexerBusyError,
     InvalidNameError,
+    InvalidRootError,
+    InvalidSettingError,
+    KnowledgeError,
+    SettingBounds,
     UnknownKnowledgeBaseError,
 )
 from zikaron.knowledge.indexer import detach
 from zikaron.service import dispatch_knowledge, paths
 from zikaron.service.context import ServiceContext
 
-#: Every corpus a spawn was asked for, in order, as `(name, project, full)`.
-type Spawns = list[tuple[str, Path, bool]]
+#: Every corpus a spawn was asked for, in order, as `(name, project, full, spawned_by_op_id)`.
+type Spawns = list[tuple[str, Path, bool, str | None]]
 
 
 @pytest.fixture(autouse=True)
@@ -54,8 +62,10 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> Spawns:
     """
     recorded: Spawns = []
 
-    def fake_spawn(name: str, *, project: Path, full: bool = False) -> list[str]:
-        recorded.append((name, project, full))
+    def fake_spawn(
+        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
+    ) -> list[str]:
+        recorded.append((name, project, full, spawned_by_op_id))
         return ["python", "-m", "zikaron.knowledge.indexer", "--", name]
 
     monkeypatch.setattr(detach, "spawn", fake_spawn)
@@ -118,7 +128,9 @@ class TestAdd:
             assert entry["state"] == "reindex_required", (
                 "nothing is stored until the first build completes, which is the truth"
             )
-            assert spawns == [("docs", paths.scope_of(ctx.store_directory), False)]
+            assert spawns == [
+                ("docs", paths.scope_of(ctx.store_directory), False, envelope().op_id)
+            ]
 
     async def test_the_project_a_build_is_started_in_is_the_store_s_own(
         self, tmp_path: Path, spawns: Spawns
@@ -127,7 +139,7 @@ class TestAdd:
         build a different store's corpus — silently, since both would succeed."""
         async with open_context(tmp_path) as ctx:
             await _add(ctx, tmp_path)
-            (_name, project, _full) = spawns[0]
+            (_name, project, _full, _op_id) = spawns[0]
             assert project / ".zikaron" == ctx.store_directory
 
     async def test_it_reports_the_git_probe_it_just_ran(self, tmp_path: Path) -> None:
@@ -718,7 +730,9 @@ class TestRefresh:
             spawns.clear()
             payload = await _call(ctx, "knowledge_refresh", {"name": "docs"})
             assert _only(payload)["outcome"] == "started"
-            assert spawns == [("docs", paths.scope_of(ctx.store_directory), False)]
+            assert spawns == [
+                ("docs", paths.scope_of(ctx.store_directory), False, envelope().op_id)
+            ]
 
     async def test_full_is_carried_through_to_the_build(
         self, tmp_path: Path, spawns: Spawns
@@ -727,7 +741,7 @@ class TestRefresh:
             await _add(ctx, tmp_path)
             spawns.clear()
             await _call(ctx, "knowledge_refresh", {"name": "docs", "full": True})
-            assert spawns == [("docs", paths.scope_of(ctx.store_directory), True)]
+            assert spawns == [("docs", paths.scope_of(ctx.store_directory), True, envelope().op_id)]
 
     async def test_no_name_reaches_every_corpus(self, tmp_path: Path, spawns: Spawns) -> None:
         async with open_context(tmp_path) as ctx:
@@ -738,7 +752,7 @@ class TestRefresh:
             bases = payload["knowledge_bases"]
             assert isinstance(bases, list)
             assert {str(one["outcome"]) for one in bases} == {"started"}
-            assert {name for name, _project, _full in spawns} == {"docs", "runbooks"}
+            assert {name for name, _project, _full, _op_id in spawns} == {"docs", "runbooks"}
 
     async def test_no_name_over_an_empty_store_is_an_empty_answer(self, tmp_path: Path) -> None:
         async with open_context(tmp_path) as ctx:
@@ -821,7 +835,7 @@ class TestRefresh:
             assert isinstance(bases, list)
             outcomes = {str(one["name"]): str(one["outcome"]) for one in bases}
             assert outcomes == {"docs": "no_database", "runbooks": "started"}
-            assert [name for name, _project, _full in spawns] == ["runbooks"]
+            assert [name for name, _project, _full, _op_id in spawns] == ["runbooks"]
 
     async def test_an_unknown_name_fails_the_call(self, tmp_path: Path, spawns: Spawns) -> None:
         """With one name given there is nothing else in the answer, so the refusal is the whole
@@ -977,6 +991,71 @@ class TestTranslatingARefusal:
         assert translated is not None
         assert translated.code is ErrorCode.KNOWLEDGE_BASE_UNKNOWN
         assert translated.data["name"] == "   "
+
+
+#: One refusal per class the boundary maps, beside the code it must map to. Instances rather than
+#: classes, because the translation branches on `isinstance` and three of these carry a field it
+#: reads. `_translated` is driven with each, so this is checked against the boundary rather than
+#: being a second copy of it.
+_MAPPED_REFUSALS: tuple[tuple[KnowledgeError, ErrorCode], ...] = (
+    (DuplicateNameError("taken"), ErrorCode.KNOWLEDGE_BASE_EXISTS),
+    (UnknownKnowledgeBaseError("nothing there"), ErrorCode.KNOWLEDGE_BASE_UNKNOWN),
+    (DanglingKnowledgeBaseError("its database is gone"), ErrorCode.KNOWLEDGE_BASE_DANGLING),
+    (
+        IndexerBusyError(
+            "a build holds it",
+            holder=lock.LockHolder(pid=DEAD_PID, host="here", started_at=timestamp()),
+        ),
+        ErrorCode.KNOWLEDGE_BASE_BUSY,
+    ),
+    (InvalidNameError("blank", value="docs"), ErrorCode.BOUNDS),
+    (InvalidRootError("no such directory", path=Path("/nowhere")), ErrorCode.BOUNDS),
+    (
+        InvalidSettingError(
+            "out of range", bounds=SettingBounds(key="max_file_bytes", value=0, expected="1..")
+        ),
+        ErrorCode.BOUNDS,
+    ),
+)
+
+
+class TestOneConditionKeepsOneName:
+    """A refusal reaches a client as a numeric code and a failed build's log as a name, and the two
+    have to be the same condition under two spellings.
+
+    The numeric codes stay at this boundary deliberately — `core/knowledge/errors.py` describes a
+    corpus and cannot know it is being reached over a wire — so agreement is held by test rather
+    than by a shared table. A table in `core/` would make it unbreakable instead of merely checked,
+    and was rejected: it falsifies the stated rationale in two module docstrings, which is too much
+    to spend to save one test.
+    """
+
+    @pytest.mark.parametrize(("refusal", "code"), _MAPPED_REFUSALS, ids=str)
+    def test_a_mapped_refusal_records_the_name_of_the_code_it_becomes(
+        self, refusal: KnowledgeError, code: ErrorCode
+    ) -> None:
+        name = "docs"
+        translated = dispatch_knowledge._translated(
+            refusal, name=name, taken=name, supplied={"name": name}
+        )
+        assert translated is not None, type(refusal).__qualname__
+        assert translated.code is code
+        assert type(refusal).wire_name == code.wire_name
+
+    def test_every_class_is_either_mapped_or_declared_build_only(self) -> None:
+        """Neither list may quietly grow at the other's expense.
+
+        Without this a class the boundary *does* map could be added to `BUILD_ONLY_WIRE_NAMES` and
+        satisfy every other guard while claiming a name no wire code holds it to.
+        """
+        mapped = {type(refusal) for refusal, _ in _MAPPED_REFUSALS}
+        build_only = {
+            subclass
+            for subclass in KnowledgeError.__subclasses__()
+            if subclass.wire_name in BUILD_ONLY_WIRE_NAMES
+        }
+        assert mapped.isdisjoint(build_only)
+        assert mapped | build_only == set(KnowledgeError.__subclasses__())
 
 
 class TestTheMethodTable:

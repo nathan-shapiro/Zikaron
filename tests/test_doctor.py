@@ -18,6 +18,8 @@ from zikaron.core.indexing.model_cache import FASTEMBED_CACHE_VARIABLE, snapshot
 from zikaron.core.indexing.model_pin import PinnedArtifact
 from zikaron.doctor import checks
 from zikaron.doctor.main import main, rendered
+from zikaron.install import agent_scan
+from zikaron.service import paths, security
 
 #: A synthetic artefact, because a digest cannot be reversed into bytes a test can write. The
 #: shipped pin's own shape is asserted in `test_indexing_acquisition.py`; what is under test here is
@@ -217,6 +219,33 @@ class TestTheSocketPathBound:
         )
         assert finding.outcome is checks.Outcome.PASSED
 
+    def test_the_command_names_the_socket_the_service_would_actually_bind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`--project` names a project; the socket is hashed from the **store** directory inside it.
+
+        The hash is a fixed width, so the length check this row exists for answers the same
+        whichever path it is handed — which is why handing it the project went unnoticed. What that
+        got wrong is the path it *prints*: a socket nothing binds. Driven through `main`, since the
+        defect was in what `main` passes rather than in the check.
+
+        Both paths are asserted, because they differ only in their hash: a test naming only the
+        right one would pass on a `store_dir` that happened to render similarly.
+        """
+        monkeypatch.setenv(FASTEMBED_CACHE_VARIABLE, str(tmp_path / "cache"))
+        monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+        runtime = paths.runtime_dir(xdg_runtime_dir="/run/user/1000", uid=security.current_uid())
+        from_store = paths.socket_path(
+            runtime, paths.store_dir(tmp_path).resolve(), platform=sys.platform
+        )
+        from_project = paths.socket_path(runtime, tmp_path.resolve(), platform=sys.platform)
+        assert from_store != from_project, "the two must differ, or this test proves nothing"
+
+        assert main(["--project", str(tmp_path)]) == 0
+        printed = capsys.readouterr().out
+        assert str(from_store) in printed
+        assert str(from_project) not in printed
+
     def test_an_over_long_runtime_directory_fails_with_the_refusals_own_remedy(
         self, tmp_path: Path
     ) -> None:
@@ -304,3 +333,75 @@ class TestTheCommand:
         assert len(lines) == 3
         assert "second" in lines[1]
         assert lines[2].strip() == "remedy: do this"
+
+
+class TestTheSubagentScan:
+    """`distribution.md` §"The front door" is normative: the row reports and never fails.
+
+    **Where it earns its keep is here rather than at install time.** The install sees the agents
+    that exist on the day it runs; the next blind agent is written a week after one, and an
+    install-time-only check never sees it.
+    """
+
+    def test_no_agents_directory_leaves_the_row_out_entirely(self, tmp_path: Path) -> None:
+        """*Nothing was named* and *this was not checked* are different answers, and an absent row
+        is the second — so the condition is on the directory rather than on a detected harness,
+        which this command has no flag for."""
+        assert checks.report_blind_subagents(project=tmp_path) is None
+
+    def test_a_directory_naming_nobody_says_so_rather_than_going_quiet(
+        self, tmp_path: Path
+    ) -> None:
+        agent_scan.agents_directory(tmp_path).mkdir(parents=True)
+        finding = checks.report_blind_subagents(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.REPORTED
+        assert "none" in finding.detail
+
+    def test_a_blind_agent_is_named_with_the_grant_to_add(self, tmp_path: Path) -> None:
+        """**`REPORTED`, never `FAILED`**: a user's allowlist is a deliberate grant, and an agent
+        excluding every `mcp__*` on purpose must not make this command exit non-zero forever — which
+        is the status a script reads. The advice therefore travels in `detail`, since a `REPORTED`
+        finding carries no `remedy`."""
+        directory = agent_scan.agents_directory(tmp_path)
+        directory.mkdir(parents=True)
+        (directory / "income-quant.md").write_text(
+            "---\ntools:\n  - Read\n  - Bash\n---\n\nprose\n", encoding="utf-8"
+        )
+        finding = checks.report_blind_subagents(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.REPORTED
+        assert finding.remedy is None
+        assert "income-quant.md" in finding.detail
+        assert agent_scan.GRANT in finding.detail
+
+    def test_a_blind_agent_does_not_make_the_command_exit_non_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv(FASTEMBED_CACHE_VARIABLE, str(tmp_path / "cache"))
+        directory = agent_scan.agents_directory(tmp_path)
+        directory.mkdir(parents=True)
+        (directory / "income-quant.md").write_text(
+            "---\ntools:\n  - Read\n---\n\nprose\n", encoding="utf-8"
+        )
+        assert main(["--project", str(tmp_path)]) == 0
+        assert "income-quant.md" in capsys.readouterr().out
+
+    def test_the_ordered_list_of_checks_is_what_run_all_returns(self, tmp_path: Path) -> None:
+        """`distribution.md` states the order, and `run_all` binds itself to it — the omission this
+        milestone is already fixing one document over was a check added without that entry.
+
+        The scan sits after the socket path and before the version report, which is the one row that
+        cannot fail for a different reason.
+        """
+        agent_scan.agents_directory(tmp_path).mkdir(parents=True)
+        names = [
+            finding.name
+            for finding in checks.run_all(
+                store_dir=tmp_path / ".zikaron",
+                project=tmp_path,
+                environ={},
+                platform="linux",
+            )
+        ]
+        assert names[-2:] == ["subagents reaching zikaron", "sqlite version"]

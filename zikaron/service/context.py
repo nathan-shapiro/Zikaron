@@ -27,6 +27,7 @@ from zikaron.core.indexing.encoder import BackgroundLoadedEncoder, Encoder, Fast
 from zikaron.core.indexing.writes import IndexingContext
 from zikaron.core.retrieval.retrieve import RetrievalSettings
 from zikaron.core.store.store import Store
+from zikaron.service.access_log import AccessLog
 
 
 @dataclass(slots=True)
@@ -89,6 +90,10 @@ class ServiceContext:
     consolidation: ConsolidationSettings
     supersession_max_depth: int
     activity: ActivityTracker
+    #: The `call` event's writer, on a connection of its own. Required rather than defaulted: a
+    #: default would let a context be built with the seam's instrumentation silently off, which is
+    #: the state this milestone exists to end. A stopped `AccessLog` is the explicit way to say so.
+    access_log: AccessLog
     #: The deferred load behind `encoder`, when there is one, for a holder that must react to a
     #: load or identity failure rather than wait to trip over it. `None` whenever `encoder` is
     #: already a loaded artifact — a directly-constructed context, or a store this process created.
@@ -189,7 +194,11 @@ class ServiceContext:
         except BaseException:
             loading.release()
             raise
+        access_log: AccessLog | None = None
         try:
+            # After the store, and after its migration: the one opener that may move the schema has
+            # just run, so this connection never meets a `CHECK` that would refuse its rows.
+            access_log = await AccessLog.open(store.path)
             index = IndexingContext.for_store(store, config, encoder)
             return cls(
                 store=store,
@@ -201,20 +210,10 @@ class ServiceContext:
                 consolidation=ConsolidationSettings.from_config(config),
                 supersession_max_depth=config.get_int("supersession_max_depth"),
                 activity=ActivityTracker(last_activity=time.monotonic()),
+                access_log=access_log,
             )
         except BaseException:
-            try:
-                await store.close()
-            except BaseException:
-                # The construction failure is what a caller needs to diagnose; a close failure
-                # on top of it is a second, secondary fact worth recording but not worth letting
-                # displace the first. The bare `raise` below re-raises the construction failure
-                # specifically — confirmed directly, since Python's "currently handled exception"
-                # reverts to the outer one once this inner `except` block finishes without
-                # itself re-raising.
-                logging.getLogger("zikaron.service").exception(
-                    "failed to close the store while handling an earlier startup failure"
-                )
+            await _close_after_failed_startup(store, access_log)
             raise
 
     @staticmethod
@@ -253,5 +252,36 @@ class ServiceContext:
         return await Store.create(store_directory, config, artifact), artifact, None
 
     async def close(self) -> None:
-        """Close the underlying store connection. Safe to call once."""
-        await self.store.close()
+        """Close both connections this context holds. Safe to call once.
+
+        The store's close is in a `finally`, so a failure closing the access log cannot leave it
+        open: `aiosqlite`'s worker thread is non-daemon, and an abandoned store keeps the
+        interpreter alive with nothing printed (`coding-standards.md` §6).
+        """
+        try:
+            await self.access_log.close()
+        finally:
+            await self.store.close()
+
+
+async def _close_after_failed_startup(store: Store, access_log: AccessLog | None) -> None:
+    """Close whatever `assemble` had already opened, without displacing the failure that got here.
+
+    The construction failure is what a caller needs to diagnose; a close failure on top of it is a
+    second, secondary fact worth recording but not worth letting replace the first. So each close is
+    attempted and each failure is logged, and the caller's bare `raise` re-raises the construction
+    failure — Python's "currently handled exception" reverts to the outer one once an inner `except`
+    finishes without itself re-raising.
+    """
+    logger = logging.getLogger("zikaron.service")
+    if access_log is not None:
+        try:
+            await access_log.close()
+        except BaseException:
+            logger.exception(
+                "failed to close the access log while handling an earlier startup failure"
+            )
+    try:
+        await store.close()
+    except BaseException:
+        logger.exception("failed to close the store while handling an earlier startup failure")

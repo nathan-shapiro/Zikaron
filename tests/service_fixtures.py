@@ -20,6 +20,7 @@ from zikaron.core.consolidation.context import ConsolidationSettings
 from zikaron.core.indexing.writes import IndexingContext
 from zikaron.core.retrieval.retrieve import RetrievalSettings
 from zikaron.core.store.store import Store
+from zikaron.service.access_log import AccessLog
 from zikaron.service.context import ActivityTracker, ServiceContext
 from zikaron.service.envelope import ResolvedEnvelope
 
@@ -39,6 +40,22 @@ def envelope(
 
 
 @asynccontextmanager
+async def _access_log(store: Store) -> AsyncIterator[AccessLog]:
+    """A live access log over `store`, closed however the test ends.
+
+    Live rather than stopped, deliberately. Every dispatch test then runs with the seam's
+    instrumentation on, which is what makes a test *about* the access log ordinary rather than
+    special — and a shape that could be built with it off would let the whole of it be unexercised
+    while every dispatch test still passed. A test that wants the unlogged control closes it.
+    """
+    log = await AccessLog.open(store.path)
+    try:
+        yield log
+    finally:
+        await log.close()
+
+
+@asynccontextmanager
 async def open_context(tmp_path: Path, overrides: str = "") -> AsyncIterator[ServiceContext]:
     """A real store on `tmp_path`, opened directly (not through `ServiceContext.assemble`) so a
     `FakeEncoder` can stand in for `FastEmbedEncoder` — hermetic and fast, per
@@ -46,7 +63,10 @@ async def open_context(tmp_path: Path, overrides: str = "") -> AsyncIterator[Ser
     """
     cfg = config(tmp_path, overrides)
     encoder = FakeEncoder()
-    async with await Store.create(tmp_path / ".zikaron", cfg, encoder) as store:
+    async with (
+        await Store.create(tmp_path / ".zikaron", cfg, encoder) as store,
+        _access_log(store) as log,
+    ):
         yield ServiceContext(
             store=store,
             config=cfg,
@@ -56,6 +76,7 @@ async def open_context(tmp_path: Path, overrides: str = "") -> AsyncIterator[Ser
             consolidation=ConsolidationSettings.from_config(cfg),
             supersession_max_depth=cfg.get_int("supersession_max_depth"),
             activity=ActivityTracker(last_activity=time.monotonic()),
+            access_log=log,
         )
 
 
@@ -69,7 +90,10 @@ async def context_over(store_dir: Path, config_source: Path) -> AsyncIterator[Se
     """
     cfg = resolve(config_source / "system.toml", config_source / "project.toml")
     encoder = FakeEncoder()
-    async with await Store.open(store_dir, cfg) as store:
+    async with (
+        await Store.open(store_dir, cfg) as store,
+        _access_log(store) as log,
+    ):
         yield ServiceContext(
             store=store,
             config=cfg,
@@ -79,4 +103,5 @@ async def context_over(store_dir: Path, config_source: Path) -> AsyncIterator[Se
             consolidation=ConsolidationSettings.from_config(cfg),
             supersession_max_depth=cfg.get_int("supersession_max_depth"),
             activity=ActivityTracker(last_activity=time.monotonic()),
+            access_log=log,
         )

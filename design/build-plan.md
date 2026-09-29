@@ -614,8 +614,9 @@ compare shipped content.
 reads, driven through the real shipped commands; a regression guard asserts the kiro artefacts are unchanged
 from what M12 shipped; each Claude Code artefact parses in its own format (JSON, JSON, YAML frontmatter +
 body, YAML frontmatter + body); re-running an install after a content change is detected and reported without
-`--force`; the collision, backup and refuse-on-difference behaviours are exercised identically against both
-targets; and the Claude Code install reports both the `.mcp.json` approval step and the primary agent's
+`--force`; the collision and backup behaviours are exercised identically against both targets, and
+refuse-on-difference against each target's own predicate (`architecture.md` §"The install contract");
+and the Claude Code install reports both the `.mcp.json` approval step and the primary agent's
 exposure to the four consolidation verbs.
 
 **Settled by the operator before any code, because each changes the shape of the work** *(added during
@@ -3609,7 +3610,8 @@ not for a process to be supervised. `--wait` adds a caller that chooses to stay.
    what `detach.spawn` reports**, not merely present, since a second construction is the defect the
    `foreground` line exists to avoid.
 3. `STORE_UNAVAILABLE` `{operation, cause}` is raised where a knowledge handler meets an
-   `aiosqlite.Error` or `OSError`, and the CLI renders it as `failed: <cause>`. **Verified by
+   `aiosqlite.Error` that is not contention, or an `OSError`, and the CLI renders it as
+   `failed: <cause>`. **Verified by
    mutation**: with the raise site removed the same scenario reaches `INTERNAL_ERROR` and the CLI
    prints nothing actionable. `core/errors.py` states the prose rule.
 4. `ClientKind.CLI` exists, `event.client_kind`'s `CHECK` lists it, and the CLI's envelope carries
@@ -3744,6 +3746,11 @@ argument, and each is a claim this milestone is betting on:
 - **The write-time rules move to `zikaron_memory_remember` and `zikaron_memory_amend`.** The gist
   bound, expiry-in-gist, secrets, observations-not-orders and subject-not-quote all govern the text
   of an argument, and a tool description is in context exactly when that argument is being filled.
+  **That premise was unverified when this milestone relied on it.** Claude Code defers MCP tools when
+  the tool list is crowded, so a description then arrives only when the verb is loaded; the install now
+  writes `alwaysLoad` to exempt both
+  servers (`design/harness.md` §"MCP tools may arrive deferred"). Noted because a reader would otherwise
+  take the delivery for granted, which is what this milestone did.
   It also costs no injection budget, being cached prefix rather than hook output. Q18 recorded two
   of three writes lost to the 64-token bound, at a call site whose description never mentioned it.
 
@@ -3787,6 +3794,616 @@ operator, and both are cheaper to judge once the rewritten prose has reported. *
 evaluator candidate;
 a `preToolUse` gate cannot see an assertion, and no tool is called at the moment a claim is written.
 **Not** running the A/B: this milestone makes it possible and leaves it to a later one.
+
+## M33 — Everything we care about is instrumented, or is deliberately not
+
+Normative: `design/schema.md` §"The `event` log, per kind" and §"Migration posture";
+`design/knowledge-index.md` §"8.4 Management tools"; `design/architecture.md` §"Service RPC surface".
+`design/overview.md` D27 fixes provenance at `created_at`/`updated_at`/`session_id` and this
+milestone does not touch it: what is added is *events about calls*, not fields on records.
+
+**Half the product records nothing, and this was found by trying to read a result off the store.**
+A session on `~/Trading/LeibaTrader` reported searching both stores; the event log showed no `search`
+at all, and the conclusion drawn — that the agent had named a tool it did not call — was wrong,
+because `zikaron_knowledge_search` emits nothing and cannot be contradicted. **An uninstrumented
+surface does not read as absent, it reads as evidence against the user.** That is the failure this
+milestone exists to remove, and it is worth more than the counts it will produce.
+
+### Instrument the seam, not the verbs — every endpoint, by default
+
+**Operator decision: every service endpoint records that it was called.** Not a judgement per verb
+about whether that one is interesting. The reason is not the metric, it is where the instrumentation
+lives: `server.py`'s `_METHODS` merges the three dispatch tables into **one** mapping, and a call
+logged *there* covers every method by construction. A method added later is instrumented because it
+is in the table, not because somebody remembered — which is precisely how the knowledge verbs became
+dark. Per-verb instrumentation makes completeness a matter of discipline; seam instrumentation makes
+it structural, and a test can assert the two are the same set.
+
+**The surface is 19 endpoints and 8 of them emit nothing today** — every knowledge verb:
+
+| Table | n | Emits an event today |
+|---|---|---|
+| `PRIMARY_METHODS` | 6 | `memory_remember`/`amend`/`retire`/`search`/`surface`/`fetch` all do, semantically |
+| `CONSOLIDATOR_METHODS` | 5 | all do |
+| `KNOWLEDGE_METHODS` | 8 | **none**. `dispatch_knowledge.py` contains no `log_event` |
+
+**One new kind for the whole surface, not one per verb.** A `call` event naming the method, emitted
+at the seam, its fields fixed by §"The call event's shape" below. That widens `event.kind` once
+rather than once per verb, and it answers the question this milestone was scoped around — *was the
+endpoint called* — for all 19 at once. A second kind, `knowledge_build`, covers the expensive
+operation that is not an endpoint at all (§"What the seam does not reach"); the two ship in one
+migration because the rebuild is what costs, not the kind.
+
+**It also dissolves two questions that would otherwise need their own answers.** A `BOUNDS` rejection
+becomes a `call` event naming `memory_remember` and that error code, with no bespoke `refused` kind
+and no event naming a row that does not exist — Q18's "three calls recorded one" closes. And "what
+does a knowledge event name?" stops being a question: a call event names a **method**, not a memory,
+so `memory_uuid` stays null and nothing has to generalise.
+
+**The existing kinds stay, and are a different thing.** They are semantic — *this memory was
+amended* — and a call log is an access log. Both are wanted: the first says what happened to the
+store, the second says what was asked of it, including everything that was asked and refused.
+
+**Price the volume before committing to it.** A `call` row per `memory_surface` is one extra row per
+user message; `~/Trading/LeibaTrader` has 4,079 `surface_call` rows, so the order of magnitude is
+thousands per store per month, against 26,300 events today. Almost certainly fine, and worth
+measuring rather than assuming — `schema.md` §"Retention" already carries a measured growth figure,
+and it predates `call`, so **re-derive it on the migrated snapshot that spike uses**
+rather than scaling the old one: the multiplier depends on a project's mix of calls.
+
+### A production defect this milestone also fixes: the installer is silent about agents that cannot see it
+
+**Found in `~/Dividends` on 2026-09-27.** An `opus` subagent with persistent state files — exactly
+Zikaron's workload — reported that it could not call the memory tools. Everything Zikaron writes was
+correct: schema 2, service warm, 10 `surface_call` events proving the hook pushed, the MCP server
+exposing 12 tools against that scope, both `enabledMcpjsonServers` and `permissions.allow` present,
+and the session started 26 seconds *after* the install so it read the config. The store held **zero
+memories**.
+
+The cause was in a file the installer does not write. `.claude/agents/income-quant.md` carries an
+explicit `tools:` allowlist, authored before Zikaron existed, and **an explicit list overrides the
+project-wide inheritance the Claude Code target relies on.** §"The installer's two targets" documents
+all four artefacts and the two-key approval dance and says nothing about this case; it was never
+modelled. kiro has no equivalent gap because its entries go *into* an agent config and `--agent`
+makes the merge explicit.
+
+**The fix is to report, not to edit.** A user's allowlist is a deliberate grant — the one here
+excludes `Task` and every `mcp__*` — and an installer that widens it so its own tools are reachable
+is making a security-adjacent decision on the user's behalf, which is the same reasoning Zikaron
+applies in reverse when it keeps the consolidator's grant narrow. So: scan `.claude/agents/*.md` at
+install time, and for each agent whose frontmatter sets `tools:` without a grant of Zikaron's own
+server, print a line naming it — in the voice of the existing post-install notes, which already tell
+the user what to check when tools are absent. One line of install output replaces the hour this took
+to diagnose.
+
+**The predicate has to be exact, because a prefix test fails silently in the expensive direction.**
+The consolidator's server is `zikaron-consolidator` (`install/entries.py`), so `mcp__zikaron` is a
+prefix of `mcp__zikaron-consolidator__…` — and an agent granted *only* consolidator tools would pass a
+`startswith` check while still being unable to see a single memory verb. **An entry counts iff it is
+`mcp__{MCP_SERVER_NAME}` exactly, or begins `mcp__{MCP_SERVER_NAME}__`**, both derived from the
+constants the installer writes rather than typed as literals.
+
+**And the scan skips the one agent the installer writes itself.** `install/targets.py` ships
+`.claude/agents/{CONSOLIDATOR_AGENT_NAME}.md` with exactly the narrow grant D32 requires, so a scan
+that did not skip it would name Zikaron's own artefact as unable to see Zikaron — on every install,
+in the false-positive direction this paragraph calls one of the two that cost most. It is matched on
+the filename derived from that constant. **Every *other* agent holding only the consolidator's grant
+is still named**: that grant belongs to the consolidator alone. The scan runs after the installer's
+own writes, so a first install and a re-install report the same set.
+
+Fixtures prove each direction: `income-quant.md`'s own frontmatter (named), an agent listing only
+`mcp__zikaron-consolidator__…` (named), one listing `mcp__zikaron` (not named), the installer's own
+`consolidator_agent_markdown(...)` output (not named) — rendered through that function rather than
+hand-typed, per `CLAUDE.md` §Harness — and the inline comma-separated spelling of each.
+
+**The form the post-install line advises is already measured.**
+`research/claude-code-installer-probe.md` §7 established that a whole-server wildcard in subagent
+frontmatter grants that server's tools and excludes others, in the block form the installer ships;
+`install/entries.py` cites it as the reason the consolidator's own frontmatter is written that way,
+and `research/m30-docker-end-to-end.md` exercised it under a real subagent. The residual is only that
+it was measured for `zikaron-consolidator` rather than `zikaron` — the same mechanism, a different
+server name. So the line can say *add `mcp__zikaron`, the form the installer's own agent uses*.
+
+**Scope note**: detection only, on the Claude Code target, over the **project's** `.claude/agents/`.
+Nothing edits a user-authored agent, and `mcp__zikaron-consolidator` is never suggested — that grant
+belongs to the consolidator alone. **Two cases are out of scope and deliberately so**: an agent with
+no `tools:` list and
+`disallowedTools: mcp__zikaron` is equally blind and will not be named, and neither will a
+**user-level agent under `~/.claude/agents/`**, which takes the same frontmatter, is usable in any
+project, and sits outside a scan of the project's directory. Said here so the next person to diagnose
+either knows it was considered rather than missed.
+
+**`zikaron doctor` runs the same scan, and that is where it earns most of its keep.** The install
+sees the agents that exist on the day it runs; `income-quant.md` pre-dated its install, but the next
+blind agent will be authored a week *after* one, and an install-time-only check never sees it. Doctor
+already reports install health, so this is the same function behind a second caller rather than a
+second implementation. It **runs when `<project>/.claude/agents/` exists** — a directory condition,
+since `doctor` takes `--project` and no `--harness` — and reports **`REPORTED`, never `FAILED`**: an
+allowlist that excludes every `mcp__*` on purpose must not make `doctor` exit non-zero forever.
+**Two documents are normative and both are updated**: `design/harness.md` §"What the install reports
+rather than enforces" for the predicate, the consolidator skip and the `disallowedTools:` exclusion,
+and `design/distribution.md` §"The front door", whose ordered list of checks `doctor/checks.py`'s
+`run_all` binds itself to. Adding a check without that entry is the omission this milestone is
+already fixing one document over.
+
+**This is the first thing the installer reads rather than writes, and the parsing rule is load-bearing.**
+`install/assets.py` states that Zikaron emits frontmatter needing "no assumption about which YAML
+features the harness's own frontmatter parser supports", and the package carries no YAML dependency
+at all. Reading a third party's agent file inverts that, against files the harness accepts and a
+strict parser does not: an agent's prose body follows the frontmatter and is not YAML, so **only the
+block between the first `---` and the next `---` may be parsed**, never the file — **and only when the
+file opens with one.** A file that does not has no frontmatter at all, so it sets no `tools:` and
+inherits everything; parsing between two horizontal rules in its body would be reading prose as YAML.
+Claude Code accepts
+`tools:` as a block list and as a comma-separated inline string, so both forms have to resolve or the
+scan reports the wrong agents. **A YAML flow sequence — `tools: [Read, mcp__zikaron]` — is a third
+spelling**, and a scanner treating the inline value as comma-separated text yields `[Read` and
+`mcp__zikaron]`, matches neither, and names an agent that is fine. Strip enclosing brackets from the
+inline form. A mis-parse fails in the two directions that cost the most: naming an
+agent that is fine, or staying silent about the one that is broken — which is the diagnosis this
+scan exists to shorten.
+
+### What the seam does not reach, and which of the two is instrumented
+
+Two surfaces are not endpoints, and they are decided in opposite directions.
+
+**The indexer is instrumented, and it costs more than one `log_event` call.** A corpus build is the
+most expensive operation the product performs and nothing records that one happened. `scope.py`
+already opens `memory.db` directly — the one thing in `zikaron/knowledge/` that does — so there is no
+thin-client property in the way. What *is* in the way is that a build is not a client call, and
+`schema.md` is written throughout on the assumption that every event is one.
+
+- **`client_kind` gains `'indexer'`**, a second `CHECK` widening in the same migration. None of
+  `'hook'`, `'mcp'`, `'consolidator'` or `'cli'` is true of a spawned build, and filing it under one
+  of them would corrupt the linkage signals that read that column.
+- **The build mints its own `session_id` and `op_id`**, as the service does for a bootstrap envelope.
+  The alternative is a NULL `session_id`, which invariant 18 closes by saying nothing in v0 writes
+  one; a minted label keeps that true and keeps every column `NOT NULL` that already is.
+- **Every sentence asserting that an event comes from a client call stops being true**, and so does
+  the note that `'cli'` records no event — `call` puts every typed `zikaron knowledge` verb into the
+  log. That claim is in the DDL comment, in `core/events.py`'s `ClientKind` docstring, in
+  **`ClientKind.CLI`'s own member comment** — *"It records no event today"*, a separate sentence an
+  editor of the docstring will not see — and in the per-kind section's own preamble; all four are
+  rewritten with the CHECK, and the done-when names the further sentences in `architecture.md` and
+  `knowledge-index.md` that followed from it.
+
+**The event is `knowledge_build`**, keyed by the registry **`id`** rather than the name — `knowledge_rename`
+exists, and a cost history keyed by a renameable field breaks at the rename. It carries the outcome, the
+duration, `files_indexed`, and **both `full` and `rebuilt`** — the flag asked for and whether the encoder
+identity forced a whole-corpus reindex anyway, which happens at `full=false` and would otherwise file those
+minutes under "incremental". `files_indexed` is the count in the base's own `meta` — and `ScanCounters`
+resets per scan, so `meta` answers *what does this corpus look like now* while only the log can answer
+*what has building it cost over time*, which is the question a build event exists for. `schema.md` pins
+what each of the three work fields means, since each is ambiguous in the direction that flatters the
+history.
+It also carries **`spawned_by_op_id`**, the `op_id` of the verb that spawned it, **passed through the
+environment rather than the argv** and null when none was set. Without that edge nothing joins a build's
+cost to the requester, since the build mints a label of its own and only the spawning `call` row knows
+whether an agent or a person asked. The channel is forced: `detach.spawn` returns the argv the child ran so
+that what `knowledge-index.md` §8.4 prints *is* what ran, and a flag stripped from the printed form would
+break that identity — while an attribution token is not an input that changes what a build does.
+**`error_code` shares `call`'s vocabulary while the numeric codes stay at the boundary**: each
+`KnowledgeError` gains a `wire_name` string in `core/knowledge/errors.py` and no code, which is what that
+module's docstring already argues for and what keeps `dispatch_knowledge` *"the boundary that gives them
+codes"*. A test asserts each class's `wire_name` equals that of the `ErrorCode` the boundary maps it to, so
+one condition keeps one name mechanically. Moving a class → `ErrorCode` table into `core/` would make
+agreement unbreakable rather than checked, and was rejected: it falsifies the stated rationale in two module
+docstrings, and a design should not rewrite two arguments to save one test. `schema.md` §"What is
+instrumented" has the per-class rule — a `KnowledgeError`'s own `wire_name`, a `ZikaronError`'s
+`code.wire_name`, `build_failed` for the unnamed remainder — the disjointness test, and the
+`IndexerBusyError` case — raised as the call's own `knowledge_base_busy` by `remove` and `unlock`, on
+opposite readings of the pid, but a per-corpus outcome inside a *succeeding* `refresh`/`add` and so landing
+in no event at all, an accepted gap, stated.
+
+**`build()` binds the registry id itself** — `registry.ensure`, then `require`, outside the `try` that
+guards the rest — so a refusal reaching no id writes no row and everything raised after it is written
+under that id whatever its class; `schema.md` §"What is instrumented" has why that split is positional
+rather than by class, and why `ensure` is not optional. **And the build decides by version**: it
+attempts the row only if the store it opened is at 3 or above, read from the `schema_version`
+`OpenStore` carries, rather than writing one and catching the `CHECK`.
+
+**A payload spill stays silent — operator decision.** `mcp/spill.py` emits nothing and
+`zikaron/mcp/` imports no logger *by design*; telling the service would be a new RPC on the one path
+that exists to keep that client thin. What makes the silence affordable is that the failure it would
+report is already observable from the store: a payload the consolidator cannot be served leaves the
+group undispositioned, so it is re-served until `serve_count` reaches `max_group_serves` and the
+group becomes `deferred`. `spill_threshold` is therefore judged by that terminal state rather than by
+a spill event, and deferred groups are the query to run.
+
+**Both decisions go into `schema.md`'s boundary note**, the silent one with its reason and its proxy.
+A decision left unwritten is read as an oversight by the next person, which is the mistake this
+milestone exists to stop making.
+
+### The cost is a schema migration, and that is the whole shape of the work
+
+`event.kind` is a SQL `CHECK` over a closed set (`schema.md`'s DDL), written once per store and then
+resident on disk. SQLite cannot alter a constraint in place — `ALTER TABLE … DROP/ADD CONSTRAINT` and
+`ALTER COLUMN` are parse errors on 3.45.1 — so any new kind is the 12-step table rebuild, measured at
+**~530 ms** against a 25,836-event store, and a `schema_version` bump to **3**.
+`core/store/migration.py`'s `_widen_event_client_kind` is the precedent: M31 did exactly this to
+widen `client_kind`, in one transaction, and D37 fixes the posture — only the service migrates, and
+nothing migrates back.
+
+**So kinds are added once, together.** A milestone per event kind would pay the rebuild per kind and
+strand every store at a different version; the reason to enumerate the whole surface first is that
+the migration is the expensive part and it is amortised across everything added in it.
+
+**The published `0.1.0` already refuses schema 2, so it will refuse 3 identically** — no new class of
+breakage, and `~/Trading/LeibaTrader` is already past it. Say so in the release notes rather than
+discovering it again.
+
+### The call event's shape, and what it deliberately omits
+
+`call` carries `{method, ok, error_code, duration_ms}` with `names_memory=False`. What follows fixes
+every part of that, so none of it is left to the code.
+
+**It carries a duration, measured across the handler alone.** The seam is the cheapest place this
+project will ever have to record latency, and every budget here is a latency budget —
+`push._DEADLINE_SECONDS`, the health poll, M30's cold-start arithmetic — each of which needed a
+bespoke harness because the store could not answer it. Envelope resolution is excluded: it is paid by
+every call alike, and folding it in makes the figure less comparable without making it more true. The
+standing hazard is the one `CLAUDE.md` §"Measure before you assert" names, a duration quoted without
+the load it was measured under; the answer is that this field is a population to compare against a
+control, never a number to cite on its own.
+
+**It carries no argument values.** A `knowledge_search` query and a `memory_remember` gist are user
+prose, and `design/write-policy.md`'s secrets boundary exists because this store is plaintext on
+disk. Sizes and counts only — `search` already records `query_chars` rather than the query.
+
+**`error_code` is stored as the name, its reachable domain declared in `EVENT_SPECS` as strings, and
+its call site typed across both enums.** `ErrorCode` holds the domain refusals and `rpc.ProtocolErrorCode` the
+protocol ones; a handler that raises what neither anticipated is answered `INTERNAL_ERROR` from the
+second, which is a call that reached a handler and crashed and precisely what an access log is for.
+**The *reachable* domain is narrower than the type** — `ErrorCode.wire_name` plus `internal_error`
+alone, since the exits enumerated below decide every other protocol code before dispatch — and `schema.md` says
+so, because a query is written against what can occur rather than against what the signature admits.
+What follows is fixed here rather than in the code:
+
+- **The stored value is the snake_case name** — `bounds`, `internal_error` — not the wire integer.
+  `search.detail` already stores readable values, and a signal query written against `-32005` is a
+  number nobody can check. `ErrorCode` has `wire_name`; `ProtocolErrorCode` gains the same property.
+- **`EVENT_SPECS` keeps a real closed set, because `DetailField.values` holds strings rather than
+  enum members.** The layering rule blocks importing `ProtocolErrorCode` into `core/`, not naming the
+  one string a dispatched call can produce: the field declares every `ErrorCode.wire_name` —
+  importable there — plus the literal `internal_error`, and `nullable=True`. A test asserts that
+  literal equals `ProtocolErrorCode.INTERNAL_ERROR.wire_name`, which a test may do because it sits
+  above both layers. **One literal is not a restated enumeration.** The seam's converter stays typed
+  `ErrorCode | ProtocolErrorCode -> str` so `mypy --strict` refuses a bare string at the call site.
+  This field's runtime check is therefore as strong as every other detail field's, and `log_event`'s
+  promise of one holds without exception.
+- **And the drift guard has to learn how the table states that set, or no implementation of it can
+  pass the gate.** `test_detail_value_sets_match_the_design_table` binds every declared `values` to
+  what its table cell states and treats a silent cell as `()`, so the composed tuple above is red;
+  spelling every `ErrorCode` member plus a literal into the cell is the restated-enumeration defect
+  and then fails the enum-backed-sets guard. So `parse_payload`'s beside-the-group form gains a
+  **marked reference** — `` `error_code ∈ @ErrorCode.wire_name \| internal_error` `` — **marked
+  because a bare token in that form already means a literal**, as `architecture.md`'s error table has
+  written since before this milestone and `test_design_tables.py` pins; `@` appears in no `∈` span
+  this milestone did not write, so it collides with nothing pre-existing.
+  `parse_payload` returns it **unresolved**, and what resolves it imports nothing from the package:
+  every drift guard imports `design_tables.py`, so a resolver there importing the package would turn
+  one broken import into a collection failure in each of them. A package-free
+  `design_tables.resolve(fields, references)` raises `DesignTableError` on a name the mapping lacks, so
+  a typo fails closed; the mapping — the one thing that must import `ErrorCode` and
+  `BUILD_ONLY_WIRE_NAMES` — is built in `test_event_kinds.py` and passed in. The enum guard widens to
+  *an enum, or a tuple composed from one*. **Both tests move, and `FINDINGS.md`'s note on why
+  `test_event_kinds.py` is red names this as the second cause beside the `ClientKind` `CHECK`**,
+  because a builder meeting two causes under one explanation fixes one and stops.
+
+**It commits in its own transaction, after the handler returns**, and it cannot do otherwise: the
+seam sees a handler only once that handler has committed or rolled back. Invariant 10 therefore gains
+a stated clause for the access log, and `schema.md`'s own rejection of a one-per-call attempt event is
+rewritten rather than left standing beside this one.
+
+**The price of that placement is a divergence the store cannot rule out.** A mutation can commit
+while its call event does not, so the two logs may disagree, and the semantic kinds remain the
+authority on what happened to the store.
+
+**And "best-effort" has to be built, or this milestone reintroduces M17.** `core/store/ddl.py` puts
+`PRAGMA busy_timeout = 5000` on every connection, and `_compute_response_line` returns only after
+everything ahead of its `return`. An access-log write inheriting that timeout would put **five
+seconds** of a caller's latency behind a lock it has no stake in.
+
+**Be exact about where that wait lands, because it decides what any test can prove — and it differs
+by verb.** A **memory** verb already held the write lock for its own semantic event (`reads.surface`
+emits `surface_call` inside its own transaction), so a continuously-held lock fails the handler itself
+at `store_busy` with or without this milestone, and a test conditioned on that proves nothing. A
+**knowledge** verb may not: `knowledge_list`, `status`, `search`, `refresh`'s plan and `unlock` leave
+the registry unwritten, and `registry.ensure_table` **reads `sqlite_master` and issues nothing when the
+table is there** — so the first knowledge verb on a fresh store, which does create it, sits with the
+memory verbs for that one call.
+For those five the `call` row is **the call's first and only
+`memory.db` write** — which gives the isolation for free, with no seam and no stubbed handler.
+
+*This premise was written as `CREATE TABLE IF NOT EXISTS` against an existing table taking no write
+lock, which the milestone's own held-lock test falsified on the connection the service holds
+(`research/m33-registry-ensure-takes-the-write-lock.md`). The conclusion survives and the reason
+changed: those five verbs now write nothing rather than writing cheaply.*
+**`add`, `remove` and `rename` write the registry** inside `in_one_transaction` and sit with the
+memory verbs, so a test built on one of them proves nothing either.
+
+**Two properties carry it, and both are mechanical.** The response line is **encoded before the row
+is attempted**, so nothing the write does can reach the caller — which matters because the write
+happens after the handler has committed, and a propagating failure there would report a durable
+`memory_remember` as `internal_error` and earn a retry and a duplicate. And the row goes on a
+**private connection opened at `busy_timeout = 0`** rather than a toggle on the shared one, which
+would leave it at zero under whatever other handler's statement ran in that window. What is borrowed
+from `core/knowledge/counters.py` is its `is_contention` swallow, not its toggle — that caller owns
+its connection and this one would not. Losing an audit row is a measurement gap; corrupting a
+caller's answer is not.
+
+`schema.md` §"`call` is an access log" is normative for the rest: where the connection is opened and
+closed, that a `finalize`-closed connection stops the log rather than reopening it, and that it sets
+**`PRAGMA synchronous = NORMAL`** where the shared connection keeps `FULL` — so the row is a WAL
+append rather than an `fsync` on every response path, giving up only the last few access-log rows
+after a power loss, which "best-effort" already concedes. The costs that remain are a private
+connection competing for the write lock with the service's own writes and, since any foreign commit
+invalidates the shared connection's page cache, a per-call re-read inside the **next** handler
+(`schema.md` §"`call` is an access log"); the A/B reports the idle delta that every push pays and which
+side of the seam it sits on.
+
+### The classes of call the log does not cover
+
+The seam is `_METHODS` dispatch, and the exits below precede it in `_compute_response_line`. Each is
+excluded for its own reason, and the done-when's test drives calls rather than reading the table — so
+this list is complete as of that test's inputs rather than by construction.
+
+- **`health`.** The liveness probe, which a client's own start-if-absent sequence polls repeatedly
+  while waiting for the service to become ready. An access log recording it would be mostly that.
+- **An unparseable line.** `parse_request`'s three codes, or a line that is not UTF-8 — which answers
+  `PARSE_ERROR` before `parse_request` runs — all raised in `_handle_line` before `_dispatch_request`
+  is entered. Mechanically unloggable: there is no `RpcRequest` to attribute.
+- **A malformed envelope.** Mechanically unloggable one rung later: `_resolved_envelope` raised, so no
+  `session_id`, `client_kind` or `op_id` exists, and `log_event` requires a `CallParams` carrying
+  those among its fields. It carries `max_depth` too, which the seam has no value for — so the access
+  log takes a narrower type than `CallParams` rather than inventing a policy value it has no business
+  holding.
+- **An unknown method.** Loggable in principle, since a `ResolvedEnvelope` is in hand, but the name is
+  not in `_METHODS` — nothing was dispatched — and the wire already answers `METHOD_NOT_FOUND`. It
+  reports a client defect rather than anything about a Zikaron surface. (`method` carries no `values`
+  in `EVENT_SPECS`: `core/` cannot import `_METHODS`, and it is closed by construction at the one site
+  that writes it, this exit having already run.)
+
+**A consequence worth stating before somebody writes a query against it**: because the **second and
+fourth** exits take four of `ProtocolErrorCode`'s five members — `health` answers a *result* and no
+error at all, and a malformed envelope answers a `ZikaronError` whose code is a domain `ErrorCode` —
+**`internal_error` is the only one a `call` row can ever hold.** The converter's type stays the
+union, which is what makes `mypy` the check; the
+reachable domain is narrower and `schema.md` says so.
+
+### Two prose changes this milestone carries, and the test that admitted them
+
+**Both are facts the agent lacks, not instructions it is ignoring — that is the whole admission
+test.** On 2026-09-25 an agent cited three memories from headlines without fetching and, challenged,
+answered *"I quoted both from headlines without fetching them, which is exactly the thing the store's
+own instructions say not to do"*. It **quoted the rule it had just broken**. Adding a fourth copy of
+that instruction is the category `CLAUDE.md` measures as losing; what corrected it was a challenge.
+So: **prose earns its place where the agent does not know something, and does not where it knows and
+does not act.** The second case needs a boundary or a trigger, which is M32's unfinished business and
+not solvable by wording.
+
+Two additions pass that test. A third candidate does not and is named here so it is not re-proposed:
+nothing about the corpus reading as *grief* or *word salad* belongs in a tool description — that is
+169 records already written, and it is consolidation work.
+
+**Operator decision: `memory-reviewer` writes the final text for both, not this agent.** M32
+established it by comparison rather than preference — the shipped preamble and the author's own
+merge of it both kept the hedged, self-explaining register they were meant to escape, and Round 2's
+authored replacement was the one that did not. The drafts below are the *specification* of what each
+sentence must carry; they are not the wording to ship. Brief the reviewer with the gap, the evidence,
+and the constraint that this is information the agent lacks rather than an instruction to press
+harder, and take its prose.
+
+### A record may get shorter
+
+`zikaron_memory_amend`'s description, because that is where the decision is made. The gap is real and
+the agent diagnosed it itself: *"amendment here has been append-only… nothing ever gets shorter, so
+records grow monotonically into archives"* — `13a7549f` reached ~1,900 words holding three
+confirmations, a correction of a correction and a scope note, and a record that cannot be held in
+working memory is cited rather than read. `remember` bounds the gist and **nothing bounds `content`**;
+D16's never-lose posture makes cutting feel like deletion when splitting loses nothing.
+
+```
+Amending replaces the record; it is not an append. If a record has accumulated confirmations,
+corrections and scope notes until it is an archive, cut it back to the finding and its instruction
+and record the separable lessons as their own memories — nothing is lost, and a record too long to
+hold in working memory gets cited rather than read.
+```
+
+### The other: a uuid is not a citation
+
+**Operator decision, 2026-09-25: the citation rule lands here.** An agent cites memories by id in
+durable project documents, and on `~/Trading/LeibaTrader` **none of six ids cited in that project's
+`STATE.md`/`FINDINGS.md` is live** — two resolve to no record at all, four to superseded rows, two of
+those into records amended the same day (Q20). The defect is semantic rather than mechanical: **a
+uuid looks like a stable identifier and is not.** It is an internal handle that consolidation moves
+the claim away from, meaningful only inside the session that read it.
+
+**What exists already, and what is actually missing.** `design/write-policy.md` §"Why a record points
+at another by subject rather than by gist — or by uuid" **already rejects uuid citation**, on grounds
+that are not Q20's: a uuid is opaque to a human in a store meant to be auditable, a hallucinated one
+is undetectable where a hallucinated description is obviously wrong, and — the sentence Q20 has to be
+reconciled with — *"D16's never-`DELETE` rule makes a retired record still resolvable."*
+
+That reconciles cleanly, and the reconciliation is the finding. **A uuid that ever existed always
+resolves — to the row, never to the claim.** Consolidation moves the claim to another uuid and leaves
+the absorbed row fetchable but demoted, so the citation resolves to a husk (D16, D25). And two of the
+six ids measured on `~/Trading/LeibaTrader` resolve to *nothing*, which is that section's hallucination point
+now observed rather than predicted.
+
+**The agent-facing text is where the gap is.** `zikaron/mcp/primary.py` tells it *"Point at another
+record by its subject ("the record about the deploy rollback"), never by quoting its headline, which
+is rewritten on every amend"* — a **memory→memory** rule whose stated reason is gist rewriting, so an
+id written into a *document* reads as outside it. M33 adds two things: the agent-facing sentence in
+`zikaron_memory_remember`'s description — the uuid is a handle for this session's tool calls, not a
+reference anything durable may hold — and one line extending that section's rule from gists to
+documents.
+
+**Do not instead teach `memory_fetch` to accept the 8-character prefixes those documents use.** It
+would make the citations checkable and the practice permanent, and `design/retrieval.md` already
+argues a prefix is not a handle — which is why the block prints uuids whole.
+
+**Why it is admissible here despite the fence below.** M32's arm measures the **read** path and its
+digest covers the block's framing; this is a **write**-side rule in a tool description, so it moves
+no digest and no surfaced text. It is still a text change while an arm accumulates, and it is taken
+deliberately rather than because it looked harmless: a live memory (`b04a458f`) instructs re-checking
+those citations, cannot be executed against whole-uuid `fetch`, and costs a turn on every surfacing.
+
+### Done when
+
+**A test asserts that the set of methods in `server.py`'s `_METHODS` and the set the call log covers
+are the same set** — that is the property the whole design is for, and without it this is per-verb
+instrumentation wearing a seam's clothes. **It drives calls rather than reading the table**, and what
+it asserts is stated rather than implied:
+for every method in `_METHODS`, one well-formed call and one refused call each produce exactly one
+`call` row; every exit ahead of dispatch produces none. **A parameterless method has no domain
+refusal** — `knowledge_list` takes no arguments — so its refused arm is an injected driver failure,
+stated here so "every method" is not quietly weakened to "every method that has a refusal". That makes the
+exclusion list complete **as of that test's inputs**, not by construction — an exit added ahead of
+dispatch that fires on some other input, a size or rate limit say, is invisible to it, and claiming
+otherwise would be the overclaim this milestone exists to stop making.
+
+The `call` event's shape is in `schema.md`'s per-kind table and in `EVENT_SPECS` as **`CallDetail`**,
+with **`KnowledgeBuildDetail`** beside it — `log_event` takes an `EventDetail`, and a kind cannot be
+logged until its type exists — and `CallDetail`'s construction is where the
+`ErrorCode | ProtocolErrorCode -> str` converter lives, so "typed at the call site" has a site. **Its
+`error_code` field is `str | None` holding that converter's output and never an enum member**:
+`ErrorCode` is an `IntEnum` and `EventSpec.validate` tests `str(value)`, which for a member is
+`'-32005'` rather than `'bounds'` — so a member would be refused inside the guarded write and dropped,
+leaving an access log that holds no refusal at all. The `call` spec's `error_code` is declared in
+`EVENT_SPECS` with `values` holding every `ErrorCode.wire_name` plus the literal `internal_error` and
+`nullable=True`, that literal pinned to `ProtocolErrorCode.INTERNAL_ERROR.wire_name` by a test, and the
+seam's converter typed `ErrorCode | ProtocolErrorCode -> str`; the migration to schema 3 runs in one
+transaction; the 2→3 step is covered **hermetically** by `test_store_migration.py`'s synthetic store,
+and exercised once against a `VACUUM INTO` snapshot of `~/Trading/LeibaTrader` by a re-run of
+`spikes/m31_check_widening.py` extended to 3 — a spike, since the gate is hermetic and no test may
+open a store under the operator's home — with its `integrity_check` and timing recorded in
+`research/`; **`test_design_tables.py` gains two cases, driving `resolve` with a fake mapping** —
+a resolved `@`
+reference and an unknown one refused; the bare literal beside the group is already
+`test_a_set_stated_beside_the_group_is_read_too`. A fake mapping keeps the unknown-name case a
+hermetic literal rather than a typo in `schema.md`, which is that module's own rule: test a malformed
+input without putting a malformed document on disk; **`knowledge_build` is exercised as follows** —
+a schema-2 store attempts no write
+and raises nothing; a child refused inside `builds.prepare` or `scan.run` writes `ok=false`, that
+class's `wire_name` and a null `files_indexed`, while a refusal raised **before an id is bound**, with
+or without a connection, writes no row at all —
+that fixture runs on a store no knowledge verb has touched **and asserts the refusal is
+`UnknownKnowledgeBaseError`**, rendered `refused:` rather than `failed: no such table`, which is what
+makes it red when `registry.ensure` is missing ahead of `require`: the no-row half alone is satisfied
+by the crash too; two spawns from one service, the second passing no token, leave the
+second's `spawned_by_op_id` null and the service's own `os.environ` without the variable after both;
+a row attempted under a held lock lands once the lock releases, inside `BUSY_TIMEOUT_MS`; a row write
+raising a non-contention error after a completed scan leaves the printed report intact, the exit
+status 0 **and one line on stderr naming the failure**, so a silent swallow does not pass; its
+failure-path twin leaves a refused build's refusal as the printed outcome — the *original* exception
+re-raised rather than the row's, so `scope.execute` still renders `refused:` — writes **no** row at
+all, and prints that same one line on stderr; **a test imports every module under `zikaron/` but the
+`__main__` entry points**, with `walk_packages`' `onerror` set to raise, and then walks
+`KnowledgeError.__subclasses__()`
+*transitively* — that call returns direct subclasses alone and sees only what is imported — holding
+every concrete one's `wire_name` inside `knowledge_build.error_code`'s `values`; three `__main__`
+modules run the program at import and `walk_packages` swallows `ImportError` unless told not to, so a
+naive walk both crashes and hides what it missed; so a class
+the boundary does not map and the export forgot is red rather than a stderr line on the build that
+needed it; and every
+`KnowledgeError` the boundary maps carries its `ErrorCode`'s `wire_name`, with the build-only names
+disjoint from every `ErrorCode.wire_name`; **a build ending on `index_failed` — the embed stage,
+forced with a stub encoder — writes `ok=false`, `error_code='index_failed'` and a null
+`files_indexed`**, which is the case whose omission would have crashed a build inside the write that
+records its failure; `test_doctor.py` asserts the scan row's three states —
+absent when no `.claude/agents/` exists, `none` when it names nobody, the names otherwise, `REPORTED`
+in both present cases; `SUPPORTED_SCHEMA_VERSIONS` covers 1–3; invariant 10 carries its access-log
+clause and `schema.md`'s rejection of a one-per-call attempt event has been rewritten rather than
+left to contradict it; the indexer emits `knowledge_build` under a `client_kind` the same migration
+widens to admit it, with invariant 18, the DDL comments, **`core/events.py`'s `ClientKind`
+docstring** — which carries the same "every v0 event is emitted inside a client call" claim outside
+the DDL, **and misattributes the `CHECK` assertion to `test_ddl.py` when it is
+`test_event_kinds.py::test_client_kinds_match_the_event_table_check_constraint`, corrected in the same
+edit rather than left as a second stale sentence in a paragraph being fixed** — and **`ClientKind.CLI`'s
+member comment**, a separate sentence saying it records no event, all corrected rather than left
+standing; **a test sends `client.kind = "indexer"` and asserts `bounds`
+with a `limit` that does not list it**, since the wire's accepted set is the enum minus that member;
+and `dispatch_knowledge.py`'s `# noqa: ARG001` reasons narrowed
+to "records no *semantic* event" on the six handlers that keep them — **`knowledge_add` and
+`knowledge_refresh` lose the marker outright**, since `_spawn` now passes `envelope.op_id` to
+`detach.spawn` and the argument stops being unused; **`core/events.py`'s** docstring gains the clause
+that the vocabulary *imports* one layer's declared names rather than restating them, which is its own
+"beside the error contract" rule read from the other side; **`_compute_response_line`'s** loses
+"every branch can simply answer", which the three post-dispatch branches stop doing once they assign
+a line and share one write-then-return; **`core/knowledge/errors.py`'s
+and `dispatch_knowledge.py`'s module docstrings are re-read against the `wire_name` addition and left
+true**, which they are only because the numeric codes stay at the boundary — the first gains one
+clause saying what a `wire_name` *is* (the name the build log records, held equal by test to the code
+the boundary maps it to, and not itself a code), since a reader meeting
+`wire_name = "knowledge_base_busy"` under a docstring about having no wire shape will otherwise ask;
+**`doctor/checks.py`'s module docstring and `run_all`'s** lose their "one row reports rather than
+checks" count for *two rows report rather than check — the SQLite version, which has no correct value,
+and the agent scan, whose finding is a grant the user made on purpose*; **`detach.py`'s** gains the
+clause saying the shared constant is why the child may import the spawner, the reverse of the
+direction that module otherwise forbids; the three normative sentences
+that followed from those claims are corrected too — `architecture.md` §"What a rejected call does and
+does not change" and §"Service RPC surface", and `knowledge-index.md` §6.1's "indexing never touches
+`memory.db`"; the spill is named in `schema.md` as deliberately silent, with
+its reason and the deferred-group proxy that replaces it; the refusal rate of a bounded write and the
+per-method call volume are each answerable by query on a fresh store, with the queries in
+`experiments/`; §"Retention"'s growth figure is re-derived with `call` included, on the migrated
+snapshot that spike uses; **three tests isolate the access log's cost, one claim
+each** — (i) the access-log writer alone,
+attempted while a second connection holds the write lock, returns well inside `BUSY_TIMEOUT_MS` and
+writes no row, on `tests/test_knowledge_counters.py`'s fixture and its `BUSY_TIMEOUT_MS / 5_000`
+bound; (ii) a dispatched **`knowledge_list`** under that same held-lock fixture answers with the
+**byte-identical** line an unlogged call would return, inside the same bound, and leaves no `call` row
+— it needs no seam and no stub, because `knowledge_list` takes no write lock of its own and the row is
+the call's first `memory.db` write. **That holds on a store whose `knowledge_bases` table already
+exists**, so one knowledge verb runs before the lock is taken: `registry.ensure_table` reads
+`sqlite_master` and issues nothing when the table is there, and takes the write lock only on the one
+call that creates it — the opposite precondition to the no-id fixture above, and sharing
+one store between them gets one of the two wrong; (iii) the same byte-identical property when the write raises a
+non-contention error — a closed private connection, a raised `OSError`. **For a *memory* verb a
+held-lock test proves nothing**, since that handler's own event write fails first and answers
+`store_busy` with or without this milestone — as it would for `knowledge_add`, `remove` or `rename`,
+which write the registry. That is why (ii) names `knowledge_list` specifically rather than "a
+knowledge verb". The drop rate is a
+query over **distinct `op_id`s** — those with a semantic row and no `call` row, over those with a
+semantic row — since counting rows would let one dropped push weigh six times a dropped `remember`;
+bounded as §"`call` is an access log" requires; the
+added write's cost is measured against a control **idle and under a writer interleaving short
+transactions at a stated rate**, the idle delta being what every push pays, recorded in `research/`,
+and **against a bar preregistered before the run** on M26's precedent: an idle per-call delta at p50
+and p95 that a WAL append with no `fsync` should not exceed, in milliseconds for the machine it runs
+on; and under the writer, `memory_surface`'s p95 inside `push._DEADLINE_SECONDS` wherever the
+control's is, with N stated. ~~**A miss moves the write after `writer.drain()` — *inside* an activity
+bracket widened to cover the drain, or idle self-stop could fire between response and row — or reopens
+the private connection's pragmas**, so the number decides something rather than being written down.~~
+**Withdrawn 2026-09-28, operator decision: the p95 was missed and the cost is accepted as measured.**
+The clause was disproportionate to what it gated — a per-call delta of about 1 ms against a
+`push._DEADLINE_SECONDS` of 2,000 ms — and **a gate, once written into a done-when, is serviced by every
+review round that follows it**, which is what four of this milestone's eight rounds went on. Struck in
+place rather than deleted, because a reader meeting only the accepted outcome would re-propose the move.
+The bar itself stays as written and is written into the `research/` note **above the results, with its
+date**, since "preregistered" is only checkable if it is prior on the page;
+the Claude Code install **and `zikaron doctor`** both name any agent whose `tools:` allowlist omits
+`mcp__zikaron`, through one function, and edit none of them, with `design/harness.md` §"What the
+install reports rather than enforces" carrying the predicate and both exclusions and
+`design/distribution.md` §"The front door" carrying the new check in its ordered list, its directory
+condition and its `REPORTED` outcome; **both** prose additions are in place — the citation rule in
+`zikaron_memory_remember`'s
+description with `design/write-policy.md` saying the subject rule covers documents as well as gists,
+and the shortening rule in `zikaron_memory_amend`'s — each pinned by a phrase in
+`tests/test_mcp_tool_descriptions.py` so neither can be dropped silently; `./check.sh` and
+`./check-matrix.sh --parallel` are green.
+
+### Scope fence
+
+**Not** a change to D27's provenance fields, and **not** an actor or occasion column on a record.
+**Not** the reranker, the relevance floor, or anything about what push selects. **Not** a change to
+the injected block's framing: M32's arm accumulates against `d46f68677668`, and touching that text
+puts a new digest on the only post-change sample there is — which is why the citation rule above is
+scoped to a tool description and nothing else. **Not** repairing the six dead citations in another
+project's documents; that is work in that repository, and this milestone stops the next one being
+written. **Not** the harness transcript — Q16's external answer is Claude Code's and decays with
+`cleanupPeriodDays`; this milestone makes the *store* answer what the store can.
 
 ## Standing notes for whoever picks this up
 
