@@ -6,6 +6,7 @@ malformed-request rejections that belong to a boundary. The retrieval itself is 
 first.
 """
 
+import sqlite3
 from pathlib import Path
 
 import aiosqlite
@@ -203,6 +204,35 @@ async def test_a_driver_or_os_failure_becomes_store_unavailable(
     assert excinfo.value.code is ErrorCode.STORE_UNAVAILABLE
     assert excinfo.value.data["operation"] == "knowledge_list"
     assert str(failure) in str(excinfo.value.data["cause"])
+
+
+async def test_a_locked_store_becomes_store_busy_rather_than_store_unavailable(
+    tmp_path: Path,
+) -> None:
+    """Contention is the one answer here a caller can act on, so it does not collapse into the rest.
+
+    Wrapped on every knowledge verb, though they reach it differently: one that writes the registry
+    meets `SQLITE_BUSY_SNAPSHOT` at once, because `registry.ensure_table` opens the transaction with
+    a presence read and so holds a WAL snapshot before asking for the lock, while a read-only verb
+    reaches contention on the call that creates the table or through its own corpus database. Told
+    `store_unavailable` — which the design states as non-retryable — a caller would not retry a lock
+    it could have waited for.
+
+    `verb` carries the **wire** method name here rather than the bare operation every other raise
+    site passes, because `search` and `list` collide with the memory store's; `architecture.md`'s
+    `store_busy` row states that exception.
+
+    Driven with a real driver error carrying the result code, since `is_contention` reads that
+    rather than the message: a constructed exception with no code is not contention by definition.
+    """
+    locked = aiosqlite.OperationalError("database is locked")
+    locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    wrapped = dispatch_knowledge._naming_the_store("knowledge_add", _stub(locked))
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(ZikaronError) as excinfo:
+            await wrapped(ctx.store.connection, ctx, envelope(), {})
+    assert excinfo.value.code is ErrorCode.STORE_BUSY
+    assert excinfo.value.data["verb"] == "knowledge_add"
 
 
 async def test_the_unwrapped_handler_lets_the_driver_failure_escape(tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ from typing import Final
 
 from zikaron.doctor.checks import Finding, Outcome, run_all
 from zikaron.harness import detect
+from zikaron.service import paths
 
 #: This command has no `python -m` form, and a package needs a `__main__.py` to have one at all.
 #: `install` and `knowledge` keep theirs from before the umbrella; `init` has one because the
@@ -33,8 +34,8 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         "--project",
         type=Path,
         default=None,
-        help="the project whose socket path to check. The default is the harness's own project "
-        "directory where it names one, else the current directory.",
+        help="the project to check — its socket path, and its subagents' reach. The default is the "
+        "harness's own project directory where it names one, else the current directory.",
     )
     return parser
 
@@ -58,8 +59,16 @@ def main(argv: Sequence[str] | None = None, *, prog: str = _DEFAULT_PROG) -> int
     rather than a problem.
     """
     args = _parser(prog).parse_args(sys.argv[1:] if argv is None else argv)
-    store_dir = args.project or detect.current_spec().store_scope_dir(Path.cwd())
-    findings = run_all(store_dir=store_dir, environ=os.environ, platform=sys.platform)
+    project = args.project or detect.current_spec().store_scope_dir(Path.cwd())
+    # `--project` names a project, and the socket is hashed from the **store** directory inside it.
+    # The hash is a fixed width, so the length check answers the same either way — but the path it
+    # reports would name a socket nothing binds.
+    findings = run_all(
+        store_dir=paths.store_dir(project),
+        project=project,
+        environ=os.environ,
+        platform=sys.platform,
+    )
     for line in rendered(findings):
         print(line)
     return 1 if any(finding.outcome is Outcome.FAILED for finding in findings) else 0

@@ -72,7 +72,8 @@ went live when its second paragraph — the fetch-before-assert one — was adde
 `~/Trading/LeibaTrader` that is the service restart of `2026-09-20T09:40:06Z`.
 
 Replaced at M32, having achieved 0 voluntary reads out of 76 eligible pairs on
-`~/Trading/LeibaTrader` — too few to say anything (`FINDINGS.md` §"The read path is barely used").
+`~/Trading/LeibaTrader` — too few to say anything (`FINDINGS-archive.md` §"The read path is barely
+used").
 It has no closing tag, so it is recorded as header and preamble alone.
 
 ```
@@ -96,7 +97,7 @@ The last text before the fetch-before-assert paragraph. Its live-from date is th
 introduced it (`ef62658`, 2026-09-16), not a service restart: no `service.log` line ties it to a
 deployment on `~/Trading/LeibaTrader`, whose history begins 2026-08-18, so rows there before this
 text arrived carried a predecessor. The 2 voluntary reads out of 457 eligible pairs measured on that
-store (`FINDINGS.md` §"The read path is barely used") pool **every** row before
+store (`FINDINGS-archive.md` §"The read path is barely used") pool **every** row before
 `2026-09-20T09:40:06Z` — this text and its predecessors together. **The pre-cut arm is a period,
 not a text**: it is the control every later comparison is read against, and it is attributable to
 no single entry here. No closing tag, so header and preamble alone.

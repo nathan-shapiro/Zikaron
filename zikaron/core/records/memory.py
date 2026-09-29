@@ -25,6 +25,7 @@ from zikaron.core.errors import ErrorCode, RowState, ZikaronError
 from zikaron.core.events import (
     EVENT_SPECS,
     EventDetail,
+    EventOrigin,
     FetchDetail,
     NoReceiptDetail,
     RetireDetail,
@@ -44,22 +45,21 @@ class Tier(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class CallParams:
+class CallParams(EventOrigin):
     """Everything one mutating call holds constant across every rung it passes.
 
-    `session_id` and `client_kind` are the receipt scope (invariant 9); `op_id` correlates every
-    `event` row one RPC call emits (`schema.md`: "one RPC = one `op_id`"). `max_depth` is
-    `supersession_max_depth`, the cycle-walk cap every supersession-graph read or write in this
-    module needs. The four are not all *identity* fields — `max_depth` is a policy value, not a
-    fact about who is calling — but every mutating entry point genuinely needs all four together
-    and none of them changes partway through one call, so bundling them is the correct fix for
-    the `PLR0913` violation several functions here hit before this type existed, not a
+    `EventOrigin` supplies the three that identify the call — which are also the receipt scope
+    (invariant 9) — and this adds `max_depth`, `supersession_max_depth`: the cycle-walk cap every
+    supersession-graph read or write in this module needs. Every mutating entry point needs all four
+    together and none of them changes partway through one call, so bundling them is the correct fix
+    for the `PLR0913` violation several functions here hit before this type existed, not a
     suppression dressed up as a domain type.
+
+    **The split is where it is because `max_depth` is a policy value rather than a fact about who is
+    calling**, and `log_event` needs only the facts. A writer with no policy to apply — the access
+    log at the RPC seam, a spawned build — passes an `EventOrigin` and invents nothing.
     """
 
-    session_id: str
-    client_kind: str
-    op_id: str
     max_depth: int
 
 
@@ -220,12 +220,17 @@ async def require_existing(db: aiosqlite.Connection, uuid: str) -> Memory:
 async def log_event(
     db: aiosqlite.Connection,
     *,
-    ctx: CallParams,
+    ctx: EventOrigin,
     detail: EventDetail,
     memory_uuid: str | None,
 ) -> None:
-    """Insert one `event` row. Never committed here — invariant 10 requires it share the
-    caller's own transaction, so the caller's own `COMMIT` is what makes this durable.
+    """Insert one `event` row. Never committed here — the caller's own `COMMIT` is what makes this
+    durable, which invariant 10 requires of every semantic kind: the row shares the transaction of
+    the mutation it describes. The access log and the build log are the two writers that cannot, and
+    each owns a transaction of its own; `schema.md` §"`call` is an access log" is normative there.
+
+    `ctx` is an `EventOrigin` rather than a `CallParams`, so a writer with no supersession policy to
+    apply supplies the three identity fields and nothing else.
 
     The kind comes from `detail`, not from a separate argument, so a payload cannot be filed under
     the wrong kind. `detail`'s own type fixes its field names and their types at type-check time,

@@ -26,7 +26,7 @@ import yaml
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, TIMEOUT_MS
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT
-from zikaron.install import harness
+from zikaron.install import agent_scan, harness
 from zikaron.install.assets import (
     CLAUDE_CODE_SPAWN_INSTRUCTION,
     KIRO_SPAWN_INSTRUCTION,
@@ -35,6 +35,7 @@ from zikaron.install.assets import (
     skill_markdown,
 )
 from zikaron.install.entries import (
+    ALWAYS_LOAD_KEY,
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
     Commands,
@@ -47,7 +48,7 @@ from zikaron.install.entries import (
 )
 from zikaron.install.harness import InstallError
 from zikaron.install.main import main
-from zikaron.install.targets import KiroTarget
+from zikaron.install.targets import ClaudeCodeTarget, KiroTarget
 from zikaron.install.writer import Plan
 from zikaron.mcp.tool_names import ALL_TOOLS, CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
@@ -578,9 +579,22 @@ class TestClaudeCodeRefusals:
         error = capsys.readouterr().err
         assert "--force" in error
         assert MCP_SERVER_NAME in error
+        # Which ownership field disagrees, not only that one does: `command` says another
+        # interpreter, `args` says another mode, and the two call for different responses.
+        assert "command" in error, error
         assert not _claude_paths(project)["agent"].exists()
 
-    def test_force_replaces_a_conflicting_server_entry(self, tmp_path: Path) -> None:
+    def test_force_replaces_a_conflicting_server_entry(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """And says nothing about it: replacing another install's entry is what the flag is for.
+
+        The same decision that
+        `test_force_taking_over_another_install_does_not_advise_re_applying_an_edit` pins for hooks.
+        Without the `MCP_OWNERSHIP_FIELDS` filter on `overwritten`, a takeover announces
+        *"`command` differed and was set to this install's value"*, which `architecture.md`
+        §"The install contract" says does not happen.
+        """
         project = _project(tmp_path, dotdirs=(".claude",))
         mcp = _claude_paths(project)["mcp"]
         mcp.write_text(
@@ -590,8 +604,96 @@ class TestClaudeCodeRefusals:
             encoding="utf-8",
         )
         assert main(["--project", str(project), "--force"]) == 0
+        assert "differed and was set" not in capsys.readouterr().out
         servers = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]
         assert servers[MCP_SERVER_NAME]["command"] != "/other/venv/bin/zikaron-mcp"
+
+    def test_both_servers_are_exempted_from_deferred_tool_loading(self, tmp_path: Path) -> None:
+        """`alwaysLoad` on each, because a deferred tool's description arrives late or not at all.
+
+        Claude Code lists a deferred tool **by name alone**, its schema and description unloaded
+        until the agent loads that verb. The write-time rules M32 and M33 put in
+        `zikaron_memory_remember`'s description ride that channel, and they are only worth writing
+        if they are in context when the argument they govern is filled — so this key is what
+        delivers them. How an agent behaves while a description is still unloaded is not asserted
+        here: `design/harness.md` §"MCP tools may arrive deferred" says why that is unsettled.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        assert main(["--project", str(project)]) == 0
+        servers = json.loads(_claude_paths(project)["mcp"].read_text(encoding="utf-8"))[
+            "mcpServers"
+        ]
+        for name in (MCP_SERVER_NAME, CONSOLIDATOR_AGENT_NAME):
+            assert servers[name][ALWAYS_LOAD_KEY] is True, name
+
+    def test_a_key_the_user_added_to_our_own_entry_survives_a_reinstall(
+        self, tmp_path: Path
+    ) -> None:
+        """Ours over theirs, per key — the cost of comparing only ownership.
+
+        While any difference was refused, replacing the entry wholesale was safe: a user who had
+        added a key to Zikaron's own entry was *told*. Once a difference outside the ownership
+        fields counts as an upgrade, a wholesale replace deletes that key silently instead, which
+        trades a loud refusal for quiet data loss.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+        document = json.loads(mcp.read_text(encoding="utf-8"))
+        document["mcpServers"][MCP_SERVER_NAME]["env"] = {"THEIRS": "1"}
+        mcp.write_text(json.dumps(document), encoding="utf-8")
+
+        assert main(["--project", str(project)]) == 0
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert entry["env"] == {"THEIRS": "1"}
+        assert entry[ALWAYS_LOAD_KEY] is True
+
+    def test_force_replaces_the_whole_entry_rather_than_merging_into_it(
+        self, tmp_path: Path
+    ) -> None:
+        """`--force` exists to take over an entry another install owns, so it must not carry that
+        install's keys forward — the one case where replacing wholesale is the point."""
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        mcp.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        MCP_SERVER_NAME: {
+                            "command": "/other/venv/bin/zikaron-mcp",
+                            "env": {"THEIRS": "1"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert main(["--project", str(project), "--force"]) == 0
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert "env" not in entry
+
+    def test_an_install_predating_always_load_is_upgraded_rather_than_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """The entry this installer used to write, merged by the installer that adds a key to it.
+
+        **This is the path a real upgrade takes**, and comparing entries whole would fail it: the
+        existing entry is correct and ours differs only by `alwaysLoad`, so a whole-entry comparison
+        reports "another install owns it" and demands `--force` from everyone who installed before
+        the key existed. Ownership is the interpreter path and the mode, which are unchanged.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+        before = json.loads(mcp.read_text(encoding="utf-8"))
+        for entry in before["mcpServers"].values():
+            del entry[ALWAYS_LOAD_KEY]
+        mcp.write_text(json.dumps(before), encoding="utf-8")
+
+        assert main(["--project", str(project)]) == 0
+        servers = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]
+        for name in (MCP_SERVER_NAME, CONSOLIDATOR_AGENT_NAME):
+            assert servers[name][ALWAYS_LOAD_KEY] is True, name
 
     def test_an_unrelated_server_survives_the_merge(self, tmp_path: Path) -> None:
         project = _project(tmp_path, dotdirs=(".claude",))
@@ -603,6 +705,154 @@ class TestClaudeCodeRefusals:
         assert main(["--project", str(project)]) == 0
         servers = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]
         assert servers["theirs"] == {"command": "/usr/bin/their-server"}
+
+    def test_a_non_object_entry_under_our_own_name_is_refused_rather_than_merged_into(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`_ownership` projects a non-object to `{}`, which is the safe direction: unequal to ours,
+        so refused. The alternative — treating an unrecognisable entry as unowned and overwriting —
+        destroys whatever a user or another tool put there without ever saying so."""
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        mcp.write_text(json.dumps({"mcpServers": {MCP_SERVER_NAME: "garbage"}}), encoding="utf-8")
+
+        assert main(["--project", str(project)]) != 0
+        error = capsys.readouterr().err
+        assert MCP_SERVER_NAME in error
+        assert "not an object" in error, "the refusal says which field, or that there are none"
+        assert (
+            json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME] == "garbage"
+        )
+
+    def test_force_says_which_key_it_dropped_from_our_own_entry(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`--force` replaces the entry whole, so a key the user added to it goes — and the rule
+        that not refusing must not mean not saying has to hold on that path too, or the one flag
+        that discards something is the one that mentions nothing."""
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+        document = json.loads(mcp.read_text(encoding="utf-8"))
+        document["mcpServers"][MCP_SERVER_NAME]["env"] = {"THEIRS": "1"}
+        mcp.write_text(json.dumps(document), encoding="utf-8")
+        capsys.readouterr()
+
+        assert main(["--project", str(project), "--force"]) == 0
+        printed = capsys.readouterr().out
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert "env" not in entry, "--force replaces whole"
+        assert "dropping `env`" in printed, printed
+        assert "Check the .bak beside the file for it" in printed, printed
+
+    @pytest.mark.parametrize("key_added_before_the_backing_up_run", [True, False])
+    def test_the_force_note_points_at_the_backup_without_claiming_what_is_in_it(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        key_added_before_the_backing_up_run: bool,
+    ) -> None:
+        """The note reads the same on both histories, because only one of them can be asserted.
+
+        The first backup wins, so the `.bak` on disk was written by some earlier run — and nothing
+        orders the user's edit against it. Add the key before that run and the backup holds it; add
+        it after and the backup never saw it. The installer cannot tell which without reading a file
+        it does not own, and that file may also hold an older value of the same field or be
+        unreadable. *Look here* is right on every one of those, and is what the reader does next
+        regardless.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+
+        def add_key() -> None:
+            document = json.loads(mcp.read_text(encoding="utf-8"))
+            document["mcpServers"][MCP_SERVER_NAME]["env"] = {"THEIRS": "1"}
+            mcp.write_text(json.dumps(document), encoding="utf-8")
+
+        if key_added_before_the_backing_up_run:
+            add_key()
+        assert main(["--project", str(project)]) == 0, "this run takes the only backup"
+        if not key_added_before_the_backing_up_run:
+            add_key()
+        capsys.readouterr()
+
+        assert main(["--project", str(project), "--force"]) == 0
+        printed = capsys.readouterr().out
+        backup = mcp.with_suffix(".json.bak")
+        assert ("THEIRS" in backup.read_text(encoding="utf-8")) is (
+            key_added_before_the_backing_up_run
+        ), "the premise: the two histories really do differ in what the backup holds"
+        assert "Check the .bak beside the file for it" in printed, printed
+
+    def test_force_replaces_a_non_object_entry_whole(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The escape hatch from the refusal above, and it must not try to merge into a string.
+
+        It still says something. No field can be named, but an entry was there and is gone, and
+        `--force` also arrives for a symlink at a shipped path — a run on which nothing else has
+        mentioned this file.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        mcp.write_text(json.dumps({"mcpServers": {MCP_SERVER_NAME: "garbage"}}), encoding="utf-8")
+
+        assert main(["--project", str(project), "--force"]) == 0
+        assert "replaced an entry that was not an object" in capsys.readouterr().out
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert entry[ALWAYS_LOAD_KEY] is True
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_a_deliberate_always_load_false_is_overwritten_and_said_out_loud(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], force: bool
+    ) -> None:
+        """A user who set `alwaysLoad: false` wants deferral, and the merge reverses that.
+
+        Pinned as **reported**, not as preserved: this install's own key is one it writes, so the
+        reinstall wins — but silently reversing a deliberate choice is the failure, not the
+        overwrite. `alwaysLoad` is outside `MCP_OWNERSHIP_FIELDS`, so nothing refuses it either.
+
+        **Both paths, because `--force` is not a request to revert this.** The flag arrives for a
+        symlink at a shipped path or a clone-mate's entry, and the user who passes it for one of
+        those has not asked for their deferral setting back. A takeover's `command` and `--mode` are
+        the exception and stay unannounced: replacing those is what the flag is for.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+        document = json.loads(mcp.read_text(encoding="utf-8"))
+        document["mcpServers"][MCP_SERVER_NAME][ALWAYS_LOAD_KEY] = False
+        mcp.write_text(json.dumps(document), encoding="utf-8")
+        capsys.readouterr()
+
+        assert main(["--project", str(project), *(["--force"] if force else [])]) == 0
+        printed = capsys.readouterr().out
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert entry[ALWAYS_LOAD_KEY] is True
+        # The note's own wording, not the key name: the fragment preview prints the whole entry, so
+        # a bare `alwaysLoad` match is green whether or not anything was reported.
+        assert "differed and was set to this install's value" in printed, printed
+
+    def test_a_key_this_install_did_not_write_is_reported_as_kept(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`.mcp.json` is committed by design and this project pre-approves both servers, so an
+        `env` riding in on our own entry has execution consequence, and the user is told it
+        stayed."""
+        project = _project(tmp_path, dotdirs=(".claude",))
+        mcp = _claude_paths(project)["mcp"]
+        assert main(["--project", str(project)]) == 0
+        document = json.loads(mcp.read_text(encoding="utf-8"))
+        document["mcpServers"][MCP_SERVER_NAME]["env"] = {"THEIRS": "1"}
+        mcp.write_text(json.dumps(document), encoding="utf-8")
+        capsys.readouterr()
+
+        assert main(["--project", str(project)]) == 0
+        printed = capsys.readouterr().out
+        entry = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"][MCP_SERVER_NAME]
+        assert entry["env"] == {"THEIRS": "1"}, "kept, because this install does not write it"
+        assert "which this install did not write" in printed, printed
 
     def test_a_users_own_settings_survive_the_merge(self, tmp_path: Path) -> None:
         """The merge target belongs to the user. A key this install does not write is not even
@@ -789,10 +1039,13 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
         settings = self._settings_with(project, {"hooks": {"SessionStart": [stale]}})
 
         assert main(["--project", str(project)]) == 1
-        assert "SessionStart" in capsys.readouterr().err
+        error = capsys.readouterr().err
+        assert "SessionStart" in error
+        # The other install's command, so the reader can tell it from their own edit.
+        assert "/other/venv/bin/zikaron-hook" in error, error
         assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]["SessionStart"] == [stale]
 
-    def test_the_refusal_names_what_differs_not_only_where(
+    def test_our_own_hook_with_a_hand_edited_field_is_rewritten_and_reported(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -803,8 +1056,11 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
         Zikaron version change, and so unable to decide whether `--force` is the right answer. The
         settings refusal named only the trigger, which is the asymmetry this covers.
 
-        This fixture is the harder half — *our own* command with a changed `timeout`, which the
-        command comparison cannot distinguish and which the message must therefore describe.
+        This fixture is *our own* command with a changed `timeout`, which is **not** a refusal: the
+        command is the ownership signal, so this install owns the group and rewrites it. Refusing
+        here would have blocked every existing install's upgrade the day `HOOK_TIMEOUT_SECONDS`
+        moved, to protect a hand-edit — so the hand-edit is served by a note instead, the same
+        trade `.mcp.json` makes.
         """
         project = _project(tmp_path, dotdirs=(".claude",))
         settings = _claude_paths(project)["settings"]
@@ -822,10 +1078,12 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
             ),
             encoding="utf-8",
         )
-        assert main(["--project", str(project)]) == 1
-        error = capsys.readouterr().err
-        assert "SessionStart" in error
-        assert "the entry differs" in error
+        assert main(["--project", str(project)]) == 0
+        printed = capsys.readouterr().out
+        assert "SessionStart" in printed
+        assert "re-apply it" in printed, printed
+        groups = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+        assert "999" not in json.dumps(groups), "the hand-edited timeout was rewritten, not kept"
 
     def test_force_replaces_another_installs_hook_without_duplicating_it(
         self, tmp_path: Path
@@ -840,6 +1098,167 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
         groups = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
         assert groups != [stale]
         assert len(groups) == 1, "the stale group is replaced, not accompanied"
+
+    def test_a_users_own_hook_entry_inside_our_group_is_refused_rather_than_dropped(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        installed_commands: Commands,
+    ) -> None:
+        """Ownership is the command list being *equal* to ours, not containing our command.
+
+        A user who adds their own entry beside Zikaron's inside one group is therefore refused. That
+        is the answer rather than an oversight: this installer replaces a recognised group wholesale
+        and does not merge inside one, so rewriting would drop their entry and dropping it silently
+        is the one outcome nothing could recover.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        settings = _claude_paths(project)["settings"]
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        theirs = {"type": "command", "command": "/usr/bin/their-own-hook"}
+        shared = {
+            "hooks": [{"type": "command", "command": str(installed_commands.hook)}, theirs],
+        }
+        settings.write_text(json.dumps({"hooks": {"SessionStart": [shared]}}), encoding="utf-8")
+
+        assert main(["--project", str(project)]) == 1
+        assert "SessionStart" in capsys.readouterr().err
+        kept = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+        assert kept == [shared], "refused means nothing was written"
+
+    def test_force_still_says_a_hand_edited_group_of_ours_was_rewritten(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        installed_commands: Commands,
+    ) -> None:
+        """`--force` is not "discard my edits", so it does not silence the note about doing so.
+
+        The flag arrives for unrelated reasons — a symlink at a shipped path, a clone-mate's entry —
+        and the user who passes it for one of those may also have a hand-edited timeout somewhere.
+        The note is the only thing that tells them it went.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        settings = _claude_paths(project)["settings"]
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        hooked = str(installed_commands.hook)
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": hooked, "timeout": 999}]}
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert main(["--project", str(project), "--force"]) == 0
+        printed = capsys.readouterr().out
+        assert "re-apply it" in printed, printed
+        assert "999" not in settings.read_text(encoding="utf-8"), "the premise: it was rewritten"
+
+    def test_force_says_which_of_the_users_hooks_it_dropped_from_our_group(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        installed_commands: Commands,
+    ) -> None:
+        """The sibling of the `.mcp.json` key drop, on the path the refusal sends people to.
+
+        The refusal above tells a user with their own entry inside Zikaron's group to pass
+        `--force`; doing so replaces the group wholesale and their hook is gone. Saying which
+        command went is most of the remedy — the backup may hold the rest, since a `matcher` or
+        `timeout` they set on that entry goes unnamed.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        settings = _claude_paths(project)["settings"]
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        shared = {
+            "hooks": [
+                {"type": "command", "command": str(installed_commands.hook)},
+                {"type": "command", "command": "/usr/bin/their-own-hook"},
+            ],
+        }
+        settings.write_text(json.dumps({"hooks": {"SessionStart": [shared]}}), encoding="utf-8")
+
+        assert main(["--project", str(project), "--force"]) == 0
+        printed = capsys.readouterr().out
+        assert "/usr/bin/their-own-hook" in printed, printed
+        assert "SessionStart" in printed, printed
+        assert "Check the .bak beside the file for it" in printed, printed
+        assert "their-own-hook" not in settings.read_text(encoding="utf-8"), "the premise: it went"
+
+    @pytest.mark.parametrize(
+        ("theirs", "expected"),
+        [
+            pytest.param(
+                {"SessionStart": ["/usr/bin/a", "/usr/bin/b"]},
+                ("hook group on SessionStart", "Those commands were", "for them."),
+                id="two-in-one-group",
+            ),
+            pytest.param(
+                {"SessionStart": ["/usr/bin/a"], "UserPromptSubmit": ["/usr/bin/b"]},
+                ("hook groups on SessionStart", "; and on UserPromptSubmit", "Those commands were"),
+                id="one-in-each-of-two-groups",
+            ),
+        ],
+    )
+    def test_the_dropped_hook_note_agrees_in_number_with_what_it_dropped(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        installed_commands: Commands,
+        theirs: dict[str, list[str]],
+        expected: tuple[str, ...],
+    ) -> None:
+        """One command reads *"That command was … for it"*; several read *"Those … for them"*.
+
+        The singular case is pinned by the test above. These two are the shapes a single hardcoded
+        plural reads wrong — several commands in one group, where the two nouns disagree and either
+        count-base mutation shows; and one command in each of two, where the `; and` join appears
+        and the group noun must pluralise.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        settings = _claude_paths(project)["settings"]
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        groups = {
+            trigger: [
+                {
+                    "hooks": [
+                        {"type": "command", "command": str(installed_commands.hook)},
+                        *({"type": "command", "command": command} for command in commands),
+                    ]
+                }
+            ]
+            for trigger, commands in theirs.items()
+        }
+        settings.write_text(json.dumps({"hooks": groups}), encoding="utf-8")
+
+        assert main(["--project", str(project), "--force"]) == 0
+        printed = capsys.readouterr().out
+        for phrase in expected:
+            assert phrase in printed, printed
+
+    def test_force_taking_over_another_install_does_not_advise_re_applying_an_edit(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`--force` skips the ownership refusal, so the note beside it has to re-check ownership.
+
+        Otherwise the one path that *does* take over another install's hook is the one that tells
+        the user they hand-edited it — advice about an edit that never happened, on the flag whose
+        whole purpose is the takeover.
+        """
+        project = _project(tmp_path, dotdirs=(".claude",))
+        stale = {
+            "hooks": [{"type": "command", "command": "/other/venv/bin/zikaron-hook", "timeout": 10}]
+        }
+        self._settings_with(project, {"hooks": {"SessionStart": [stale]}})
+
+        assert main(["--project", str(project), "--force"]) == 0
+        assert "re-apply it" not in capsys.readouterr().out
 
     def test_re_running_an_identical_install_does_not_accumulate_groups(
         self, tmp_path: Path
@@ -1354,3 +1773,61 @@ class TestAgainstTheRealClaudeBinary:
         project = _project(tmp_path, dotdirs=(".claude",))
         assert main(["--project", str(project)]) == 0
         assert _claude_paths(project)["mcp"].is_file()
+
+
+class TestTheNoteAboutBlindSubagents:
+    """The install reports a subagent whose own `tools:` list cannot reach Zikaron, and edits none.
+
+    `design/harness.md` §"What the install reports rather than enforces": a user's allowlist is a
+    deliberate grant, and widening it so our own tools become reachable is a decision that is not
+    ours. `zikaron doctor` runs the same function, which is what makes the check outlive an install.
+    """
+
+    @staticmethod
+    def _plan(project: Path) -> Plan:
+        return Plan(
+            project=project,
+            commands=_FIXTURE_COMMANDS,
+            model="a-model",
+            hook_format=HookFormat.OBJECT,
+            force=False,
+            trust_tools=True,
+        )
+
+    def test_nothing_is_said_when_every_agent_can_reach_the_server(self, tmp_path: Path) -> None:
+        """Conditioned on there being any, like the grant notes beside it: an unconditional line
+        says nothing on almost every install and trains its reader to skip the one that matters."""
+        directory = tmp_path / ".claude" / "agents"
+        directory.mkdir(parents=True)
+        (directory / "sound.md").write_text(
+            f"---\ntools:\n  - mcp__{MCP_SERVER_NAME}\n---\n\nprose\n", encoding="utf-8"
+        )
+        notes = ClaudeCodeTarget().notes(self._plan(tmp_path))
+        assert not any("overrides" in note for note in notes)
+
+    def test_a_blind_agent_is_named_and_told_which_grant_to_add(self, tmp_path: Path) -> None:
+        """One line of install output replaces the hour this took to diagnose."""
+        directory = tmp_path / ".claude" / "agents"
+        directory.mkdir(parents=True)
+        (directory / "income-quant.md").write_text(
+            "---\ntools:\n  - Read\n  - Write\n---\n\nprose\n", encoding="utf-8"
+        )
+        (note,) = [
+            note for note in ClaudeCodeTarget().notes(self._plan(tmp_path)) if "overrides" in note
+        ]
+        assert "income-quant.md" in note
+        assert agent_scan.GRANT in note
+        # Never suggested: that grant belongs to the consolidator alone.
+        assert f"mcp__{CONSOLIDATOR_AGENT_NAME}" not in note
+
+    def test_the_agent_file_is_left_exactly_as_it_was(self, tmp_path: Path) -> None:
+        """Detection only. The scan is the first thing this installer reads rather than writes, and
+        a version that repaired what it found would be making a security-adjacent decision for the
+        user — the same reasoning Zikaron applies in reverse to the consolidator's own grant."""
+        directory = tmp_path / ".claude" / "agents"
+        directory.mkdir(parents=True)
+        authored = "---\ntools:\n  - Read\n---\n\nprose\n"
+        path = directory / "income-quant.md"
+        path.write_text(authored, encoding="utf-8")
+        ClaudeCodeTarget().notes(self._plan(tmp_path))
+        assert path.read_text(encoding="utf-8") == authored

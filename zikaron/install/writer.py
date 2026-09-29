@@ -11,8 +11,11 @@ owns.
 - **Refuse rather than overwrite; keep rather than clobber.** A shipped file whose bytes are already
   what this install ships is kept and reported; one that differs is backed up and refreshed, which
   is what makes a re-run after an *upgrade* correct rather than merely safe. A Zikaron entry in a
-  file the user owns that differs from what this install would write is a *refusal*, because that
-  means another install owns it.
+  file the user owns whose **ownership** differs from what this install would write is a *refusal*,
+  because that means another install owns it — the whole entry under kiro; under Claude Code the
+  interpreter path and the mode for a `.mcp.json` entry, and the command list for a settings hook
+  group, where a difference outside those is an upgrade that is merged and reported
+  (`design/architecture.md` §"The install contract", the harness delta).
 - **A merge is backed up first, and the first backup wins.** `<config>.bak` is written only when
   nothing is there — not even a dangling symlink — because overwriting it on every run would replace
   the pristine original with the copy the first install had already modified.

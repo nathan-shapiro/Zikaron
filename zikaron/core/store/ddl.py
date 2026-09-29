@@ -12,13 +12,45 @@ surfacing as a table that silently does not match its own specification.
 
 from typing import Final
 
+#: How long a statement on one of this store's ordinary connections waits for the write lock before
+#: giving up. Named rather than left inside the pragma string below because it is a bound a test can
+#: assert against: a write that is supposed to *decline* to wait has to be shown returning in a
+#: fraction of it, not merely faster than it.
+BUSY_TIMEOUT_MS: Final = 5000
+
 #: The three pragmas `schema.md`'s DDL block opens with, applied to every connection this store
 #: opens — creation and every later open alike, since a connection that skipped them would not
 #: see concurrent readers correctly or retry under contention as the design requires.
 PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode = WAL",
-    "PRAGMA busy_timeout = 5000",
+    f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}",
     "PRAGMA foreign_keys = ON",
+)
+
+#: The access log's own connection, which writes nothing but `event` rows on a caller's response
+#: path. Three of these differ from `PRAGMAS` above, each because the value that is right for a
+#: handler is wrong for a write no caller is waiting on the outcome of:
+#:
+#: - **`busy_timeout` at zero**, because a whole `BUSY_TIMEOUT_MS` of a caller's latency behind a
+#:   lock it has no stake in is worse than a dropped audit row. Set once, at open, rather than
+#:   toggled on the shared connection, which would leave it at zero for whatever other handler's
+#:   statement ran in that window.
+#: - **`synchronous = NORMAL`**, so a row is a WAL append rather than an `fsync` on every
+#:   dispatched RPC's response path. What it gives up is the last few rows after a power loss,
+#:   which "best-effort" already concedes.
+#: - **`wal_autocheckpoint` at zero**, for the same reason one rung out: a commit crossing the
+#:   default page threshold would run the checkpoint — database-file `fsync` included — on that
+#:   same response path. The store's own connection keeps the default, so the WAL is checkpointed at
+#:   whichever of its commits finds the WAL past that threshold, or at the store's close; this
+#:   connection simply never pays for it.
+#:
+#: `test_ddl.py` holds the rest equal to `PRAGMAS`, so the difference stays these three.
+ACCESS_LOG_PRAGMAS: Final[tuple[str, ...]] = (
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA busy_timeout = 0",
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA wal_autocheckpoint = 0",
 )
 
 _MEMORY: Final = """
@@ -83,12 +115,13 @@ _EVENT_BODY: Final = """(
   id          INTEGER PRIMARY KEY,
   at          TEXT NOT NULL,
   session_id  TEXT,
-  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli')),
+  client_kind TEXT NOT NULL CHECK (client_kind IN ('hook', 'mcp', 'consolidator', 'cli',
+                                                   'indexer')),
   op_id       TEXT NOT NULL,
   kind        TEXT NOT NULL CHECK (kind IN (
                 'surface_call', 'surface', 'search', 'fetch', 'remember', 'amend', 'retire',
                 'merge', 'promote', 'discard', 'dedup_offered', 'version_conflict',
-                'no_receipt', 'group_served', 'consolidate_run'
+                'no_receipt', 'group_served', 'consolidate_run', 'call', 'knowledge_build'
               )),
   memory_uuid TEXT,
   detail      TEXT

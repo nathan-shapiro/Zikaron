@@ -20,18 +20,33 @@ level down.** A wire payload states things like *which path*, *which key*, *whic
 one of those from `str(error)` puts a whole sentence where a client expects a value, and then the
 message cannot be reworded after all — it has become the contract. So the refusal carries both: the
 sentence for whoever prints it, and the value for whoever has to name it.
+
+**A `wire_name` is a name, not a code, and that distinction is what lets these classes hold one.**
+It is the string `event.detail.error_code` records for a build that ended on this refusal
+(`schema.md` §"What is instrumented, what is not, and why"), so that one condition keeps one name
+wherever it surfaces: a test holds each mapped class's `wire_name` equal to the `wire_name` of the
+`ErrorCode` the boundary maps it to, and the classes that boundary maps to nothing carry names of
+their own, exported as `BUILD_ONLY_WIRE_NAMES`. No numeric code arrives here with it — the equality
+is checked from above, where both layers are visible, rather than declared in a layer that cannot
+see the wire.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Final
 
 if TYPE_CHECKING:
     from zikaron.core.knowledge.lock import LockHolder
 
 
 class KnowledgeError(Exception):
-    """A knowledge-base operation could not proceed, with a message written for its caller."""
+    """A knowledge-base operation could not proceed, with a message written for its caller.
+
+    `wire_name` is annotated and not set: this class is a base to catch, never one to raise, and a
+    default here would let a subclass inherit a name meaning nothing about its own condition.
+    """
+
+    wire_name: ClassVar[str]
 
 
 class DuplicateNameError(KnowledgeError):
@@ -42,9 +57,13 @@ class DuplicateNameError(KnowledgeError):
     it. Renaming, which touches no file, is the cheap operation.
     """
 
+    wire_name: ClassVar[str] = "knowledge_base_exists"
+
 
 class UnknownKnowledgeBaseError(KnowledgeError):
     """No knowledge base is registered under that name."""
+
+    wire_name: ClassVar[str] = "knowledge_base_unknown"
 
 
 class InvalidNameError(KnowledgeError):
@@ -60,6 +79,8 @@ class InvalidNameError(KnowledgeError):
     that caller matches this against the names it was given and reports the parameter it arrived
     under.
     """
+
+    wire_name: ClassVar[str] = "bounds"
 
     def __init__(self, message: str, *, value: str) -> None:
         super().__init__(message)
@@ -79,6 +100,8 @@ class InvalidRootError(KnowledgeError):
     no home directory this machine knows; that one is reported as supplied, since expansion is
     where it stopped.
     """
+
+    wire_name: ClassVar[str] = "bounds"
 
     def __init__(self, message: str, *, path: Path) -> None:
         super().__init__(message)
@@ -104,6 +127,8 @@ class InvalidSettingError(KnowledgeError):
     rather than restated — which is what keeps a corpus created through a tool reproducible by
     writing a configuration file.
     """
+
+    wire_name: ClassVar[str] = "bounds"
 
     def __init__(self, message: str, *, bounds: SettingBounds) -> None:
         super().__init__(message)
@@ -132,6 +157,8 @@ class IndexerBusyError(KnowledgeError):
     reads as a value.
     """
 
+    wire_name: ClassVar[str] = "knowledge_base_busy"
+
     def __init__(self, message: str, *, holder: "LockHolder") -> None:
         super().__init__(message)
         self.holder = holder
@@ -146,6 +173,8 @@ class DanglingKnowledgeBaseError(KnowledgeError):
     it again, which loses nothing, since a knowledge base in this state has never indexed anything.
     """
 
+    wire_name: ClassVar[str] = "knowledge_base_dangling"
+
 
 class RegistryUnavailableError(KnowledgeError):
     """The store that holds the list of knowledge bases could not be read.
@@ -154,7 +183,13 @@ class RegistryUnavailableError(KnowledgeError):
     otherwise be indistinguishable from: the registry lives in the memory store, so a store that
     will not open makes every corpus undiscoverable while leaving each one's own database intact.
     A caller told the list is empty would conclude the corpora are gone.
+
+    Its `wire_name` is declared and unreachable: this refuses before a connection exists, so no
+    build ever holds a registry id to key a row by. Declared anyway, because the alternative is a
+    class this module holds that the recorded vocabulary silently omits.
     """
+
+    wire_name: ClassVar[str] = "registry_unavailable"
 
 
 class CorpusRootMissingError(KnowledgeError):
@@ -164,3 +199,17 @@ class CorpusRootMissingError(KnowledgeError):
     deleted* — which would destroy the whole index on the strength of an unmounted drive or a
     renamed parent. The index is kept as it is, ready for the root's return.
     """
+
+    wire_name: ClassVar[str] = "corpus_root_missing"
+
+
+#: The `wire_name`s of the classes above that no wire path maps to an `ErrorCode` — reachable only
+#: inside a build, and so the names `event.detail.error_code`'s value set must carry beyond the
+#: codes. Exported here rather than composed with the codes, which would put `ErrorCode` in this
+#: module; `core/events.py` does the composing. A test holds these disjoint from every
+#: `ErrorCode.wire_name`, since a shared vocabulary is only useful if two conditions cannot collide
+#: on one string.
+BUILD_ONLY_WIRE_NAMES: Final[tuple[str, ...]] = (
+    RegistryUnavailableError.wire_name,
+    CorpusRootMissingError.wire_name,
+)

@@ -45,12 +45,19 @@ class OpenStore:
     `project` is the directory the store was derived *from*, kept because a command that starts a
     build has to tell the child which project to act on, and the child takes a project rather than
     a store. Passing the resolved value is what stops the two processes resolving differently.
+
+    `schema_version` is what the store recorded and `Store.open` validated. A build carries it
+    because it may meet a store this build never migrated — a direct run does not migrate (D37) —
+    and a row it tries to write into a narrower `CHECK` would fail. Deciding from the version rather
+    than by catching the constraint is what keeps *an ordinary state for a direct run* from being
+    printed as a failure on every foreground build against an unmigrated store.
     """
 
     project: Path
     directory: Path
     connection: aiosqlite.Connection
     config: EffectiveConfig
+    schema_version: int
 
 
 def project_scope(project: Path | None) -> Path:
@@ -100,7 +107,11 @@ async def open_store(project: Path | None) -> AsyncIterator[OpenStore]:
         ) from error
     async with store:
         yield OpenStore(
-            project=scope, directory=directory, connection=store.connection, config=config
+            project=scope,
+            directory=directory,
+            connection=store.connection,
+            config=config,
+            schema_version=store.meta.schema_version,
         )
 
 

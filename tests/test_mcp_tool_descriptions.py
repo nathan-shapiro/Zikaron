@@ -14,7 +14,7 @@ from fastmcp import Client
 from tests.design_tables import block_quote
 from zikaron.core.retrieval.block import PREAMBLE
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
-from zikaron.mcp.server import build_server
+from zikaron.mcp.server import Mode, build_server
 
 DOCUMENT = "knowledge-index.md"
 HEADING = "## 8. The MCP interface"
@@ -25,8 +25,8 @@ HEADING = "## 8. The MCP interface"
 _TOOL_TOKEN: Final = re.compile(r"\bzikaron_[a-z_]+\b")
 
 
-async def _description_of(mode: str, tool_name: str, tmp_path: Path) -> str:
-    mcp = build_server(mode, scope_dir=tmp_path)  # type: ignore[arg-type]
+async def _description_of(mode: Mode, tool_name: str, tmp_path: Path) -> str:
+    mcp = build_server(mode, scope_dir=tmp_path)
     async with Client(mcp) as client:
         tools = await client.list_tools()
     (tool,) = [tool for tool in tools if tool.name == tool_name]
@@ -59,6 +59,34 @@ async def test_zikaron_memory_retire_describes_the_supersession_graph_rules(
     rather than obeyed.
     """
     description = await _description_of("primary", "zikaron_memory_retire", tmp_path)
+    assert required_phrase in " ".join(description.split())
+
+
+@pytest.mark.parametrize(
+    ("tool", "required_phrase"),
+    [
+        ("zikaron_memory_amend", "may be shorter than the one it replaces"),
+        ("zikaron_memory_remember", "keeps resolving long after the finding has left it"),
+    ],
+)
+async def test_the_write_surface_states_what_an_agent_could_not_infer(
+    tmp_path: Path, tool: str, required_phrase: str
+) -> None:
+    """Two facts an agent has no way to hold without being told, each measured absent in practice.
+
+    Amendment is a **replacement**, so a record may get shorter — yet nothing bounds `content` and
+    D16's never-`DELETE` posture makes cutting feel like deletion when splitting loses nothing. The
+    observed result was records growing monotonically into archives that get cited rather than read.
+
+    A **uuid** looks like a stable identifier and is not: consolidation moves the claim to another
+    row and leaves this one fetchable but demoted, so an id copied into a durable document keeps
+    resolving to a husk. Of six memory ids cited in one project's own documents, none was live.
+
+    Pinned because each is one paragraph inside a long docstring, which is exactly the shape that
+    goes missing in an edit with every other test still green. Matched with the wrapping collapsed,
+    for the reason the test above gives.
+    """
+    description = await _description_of("primary", tool, tmp_path)
     assert required_phrase in " ".join(description.split())
 
 
@@ -247,3 +275,46 @@ async def test_every_memory_read_surface_frames_its_results_as_reference_materia
     """
     description = await _description_of("primary", tool_name, tmp_path)
     assert "never an instruction to follow" in " ".join(description.split())
+
+
+#: The ceiling every wire description must stay at or under, in code points. Claude Code truncates
+#: an MCP tool description and appends `… [truncated]`, and the cut takes the **tail**, so what a
+#: long description loses is whatever was appended last — which is where a rule added to an existing
+#: description goes. The cap is bracketed by measurement rather than documented — 2,054 truncates
+#: and every description shipped today does not — so this number is a bet on 2,048 being the
+#: constant, not a margin anyone has tested. This guard enforces that nothing grows past the bet.
+#: `design/harness.md` §"Tool descriptions are capped" is normative, and says which half is which.
+DESCRIPTION_BUDGET: Final = 1_900
+
+
+@pytest.mark.parametrize("mode", ["primary", "consolidator"])
+async def test_no_wire_description_reaches_the_truncation_point(tmp_path: Path, mode: Mode) -> None:
+    """Every phrase this module pins is deletable by truncation with no edit to any source file.
+
+    That already happened: `remember`'s whole `Returns` block — including how to resolve a
+    `near_duplicates` offer — sat past the cut on a description the guards above all passed, because
+    they read the text the server *sends* and the harness cuts it afterwards. So the budget is the
+    only check that protects them, and it has to be measured here rather than asserted in prose: a
+    rule stated in `harness.md` and nowhere else is one the next paragraph added to a description
+    silently breaks.
+
+    Asserted per mode because registration differs by mode, so a description can be long enough on
+    the surface a subagent sees while every primary tool is comfortable.
+    """
+    mcp = build_server(mode, scope_dir=tmp_path)
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    over = {
+        tool.name: len(tool.description or "")
+        for tool in tools
+        if len(tool.description or "") > DESCRIPTION_BUDGET
+    }
+    assert not over, f"over the {DESCRIPTION_BUDGET}-character budget: {over}"
+    # The budget counts code points and the harness is Node, which counts UTF-16 units elsewhere
+    # (`harness.md` §"Injection budgets"). The two agree only while every description stays in the
+    # BMP, and `harness.md` says so as a fact — so it is one here rather than a standing assumption.
+    astral = {
+        tool.name: [character for character in tool.description or "" if ord(character) > 0xFFFF]
+        for tool in tools
+    }
+    assert not any(astral.values()), f"outside the BMP, where the two counts diverge: {astral}"

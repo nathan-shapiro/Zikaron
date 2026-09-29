@@ -8,9 +8,11 @@ Zikaron unrunnable. Each of those arrives, unprompted, as something a user canno
 an MCP server that starts and dies. A probe run on request turns each into a sentence naming what to
 change.
 
-**One row reports rather than checks.** The linked SQLite version is the axis no seam can absorb —
-3.45.1 against 3.53.1 between two builds on one machine — and there is no correct value to compare
-against, so stating it is the whole contribution.
+**Two rows report rather than check, for two different reasons.** The linked SQLite version is the
+axis no seam can absorb — 3.45.1 against 3.53.1 between two builds on one machine — and there is no
+correct value to compare against, so stating it is the whole contribution. The subagent scan has a
+correct value and still cannot fail: what it finds is a grant the user made on purpose, and an
+allowlist excluding every `mcp__*` deliberately must not make this command exit non-zero forever.
 
 **Probed with `sqlite3` directly rather than through the store.** These questions are about the
 interpreter, and routing them through `aiosqlite` would make a failure of the probe
@@ -28,6 +30,7 @@ from zikaron.core.errors import ZikaronError
 from zikaron.core.indexing.acquisition import verify
 from zikaron.core.indexing.model_cache import resolved_model_cache_dir, snapshot_dir
 from zikaron.core.indexing.model_pin import PINNED_ARTIFACTS, PinnedArtifact
+from zikaron.install import agent_scan
 from zikaron.service import paths, security
 from zikaron.service.asyncio_compat import interpreter_version
 
@@ -198,6 +201,37 @@ def check_socket_path(*, store_dir: Path, environ: Mapping[str, str], platform: 
     return _passed(name, f"{socket} fits {paths.sun_path_size(platform)} bytes")
 
 
+def report_blind_subagents(*, project: Path) -> Finding | None:
+    """Which of this project's Claude Code subagents cannot reach Zikaron's own server.
+
+    **Where this earns its keep is here rather than at install time.** The install sees the agents
+    that exist on the day it runs; the next blind agent is written a week *after* one, and an
+    install-time-only check never sees it.
+
+    **`REPORTED`, never `FAILED`** — see this module's docstring. The advice therefore travels in
+    `detail`, since a `REPORTED` finding carries no `remedy`.
+
+    Returns:
+        The row, or **`None` when there is no `.claude/agents/` to scan** — a directory condition
+        rather than a detected harness, since this command takes `--project` and no `--harness`. An
+        absent row says *this was not checked*, which is a different answer from `none`.
+    """
+    blind = agent_scan.blind_agents(project)
+    if blind is None:
+        return None
+    return Finding(
+        name="subagents reaching zikaron",
+        outcome=Outcome.REPORTED,
+        detail=(
+            f"{', '.join(blind)} set their own `tools:` list, which overrides the project-wide "
+            f"`.mcp.json` registration, so Zikaron's verbs are absent from them; add "
+            f"`{agent_scan.GRANT}` to the list of any that should have them"
+            if blind
+            else f"none: every agent under {agent_scan.agents_directory(project)} can reach them"
+        ),
+    )
+
+
 def report_sqlite_version() -> Finding:
     """The linked SQLite beside the interpreter that linked it. Never a failure."""
     return Finding(
@@ -207,14 +241,22 @@ def report_sqlite_version() -> Finding:
     )
 
 
-def run_all(*, store_dir: Path, environ: Mapping[str, str], platform: str) -> Sequence[Finding]:
-    """Every check and the one report, in the order `distribution.md` states them."""
+def run_all(
+    *, store_dir: Path, project: Path, environ: Mapping[str, str], platform: str
+) -> Sequence[Finding]:
+    """Every check and every report, in the order `distribution.md` states them.
+
+    The subagent row is dropped when there was no directory to scan, which is the one row whose
+    presence is conditional — `distribution.md` §"The front door" is normative for that too.
+    """
     cache_dir = resolved_model_cache_dir()
+    subagents = report_blind_subagents(project=project)
     return (
         check_extension_loading(),
         check_fts5(),
         check_sqlite_vec(),
         *(check_model_cache(pin, cache_dir=cache_dir) for pin in PINNED_ARTIFACTS.values()),
         check_socket_path(store_dir=store_dir, environ=environ, platform=platform),
+        *((subagents,) if subagents is not None else ()),
         report_sqlite_version(),
     )

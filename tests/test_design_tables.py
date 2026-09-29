@@ -12,6 +12,7 @@ import pytest
 
 from tests.design_tables import (
     DesignTableError,
+    Reference,
     literal,
     number,
     parse_block_quote,
@@ -22,6 +23,7 @@ from tests.design_tables import (
     parse_section,
     parse_tables,
     parse_toml,
+    resolve,
     section_lines,
     table_with_columns,
     tables,
@@ -205,6 +207,43 @@ def test_a_set_stated_beside_the_group_is_read_too() -> None:
 def test_a_set_stated_for_a_field_outside_the_group_is_an_error() -> None:
     with pytest.raises(DesignTableError, match="constrained but not in the payload"):
         parse_payload("`{uuid}` with `state \u2208 live | retired`")
+
+
+def test_a_marked_reference_beside_the_group_is_returned_unresolved() -> None:
+    """The parser reads the marker and stops there, because expanding it needs the package.
+
+    A bare token in this form already means a literal, as the `reason` case above shows, so the
+    marker is what distinguishes a *name* from a member: a reference read without one would change
+    what every existing use of the form means.
+    """
+    fields = parse_payload("`{code}` with `code \u2208 @Codes.name | literal`")
+    assert fields[0].values == (Reference("Codes.name"), "literal")
+
+
+def test_a_reference_resolves_in_the_position_the_design_wrote_it() -> None:
+    """Spliced, not appended: a set the design names is as ordered as one it lists."""
+    fields = parse_payload("`{code}` with `code \u2208 @Codes.name | last`")
+    (resolved,) = resolve(fields, {"Codes.name": ("first", "second")})
+    assert resolved.values == ("first", "second", "last")
+
+
+def test_a_reference_the_mapping_does_not_hold_is_refused() -> None:
+    """Fails closed rather than surviving as a literal that merely compares unequal.
+
+    Driven with a fake mapping rather than a malformed document, which is this module's own rule: an
+    unknown name is a hermetic input, and putting one into `design/` to test the refusal would leave
+    a broken reference on disk.
+    """
+    fields = parse_payload("`{code}` with `code \u2208 @Nowhere.name`")
+    with pytest.raises(DesignTableError, match="which is not one of"):
+        resolve(fields, {"Codes.name": ("first",)})
+
+
+def test_a_reference_inside_the_payload_group_is_refused() -> None:
+    """There is no reader for a multi-valued alternative inside the group, so one there is a mistake
+    about where the set belongs rather than a literal that happens to start with punctuation."""
+    with pytest.raises(DesignTableError, match="names a set inside the payload group"):
+        parse_payload("{code: @Codes.name}")
 
 
 def test_a_cell_with_no_payload_group_is_an_error() -> None:

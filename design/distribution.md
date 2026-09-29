@@ -161,7 +161,7 @@ installed distribution's version through `importlib.metadata`, and where there i
 a source tree nobody installed — it says so rather than raising, because the flag exists precisely
 for someone establishing what they are running. `doctor` deliberately does not repeat it — it could,
 by the same one-line call, and the choice is that a version belongs on the cheapest command rather
-than behind five checks that resolve a socket path and load an extension.
+than behind a run that resolves a socket path and loads an extension.
 
 **`zikaron-hook` and `zikaron-mcp` are deliberately not folded in.** Their absolute paths are written
 into harness configuration at install time — `architecture.md` §"The install contract" is normative —
@@ -181,11 +181,21 @@ to its reader — and `zikaron/knowledge/indexer/` likewise has none — it is s
 
 **`doctor` exists because the interpreter decision supports two acquisition paths**, and the host one
 can be built in ways that make Zikaron unrunnable. It names each failure **by remedy rather than by
-symptom**. Five checks and one report, in order: `enable_load_extension` present; FTS5 available;
+symptom**. The checks and the reports, in order: `enable_load_extension` present; FTS5 available;
 `sqlite-vec` loading a real `vec0` table — a bare import establishes neither; the model cache present
 at the pinned revision and hash-verified; the socket path fitting this platform's `sun_path`, which
-is the second channel M29 owed for a refusal a user would otherwise meet only as a dead MCP server.
-The report is the linked SQLite version beside the interpreter that linked it, and it **cannot
+is the second channel M29 owed for a refusal a user would otherwise meet only as a dead MCP server;
+and **subagents whose `tools:` allowlist cannot reach Zikaron's server**, the same scan the Claude
+Code install runs through the same function (`harness.md` §"What the install reports rather than
+enforces"). That last **runs when `<project>/.claude/agents/` exists** — a condition on the directory
+rather than on a detected harness, since `doctor` takes `--project` and no `--harness` — and its
+outcome is **`REPORTED`, never `FAILED`**: a user's allowlist is a deliberate grant, and an agent that
+excludes every `mcp__*` on purpose must not make `doctor` exit non-zero forever, which is the status
+a script reads. **The row is present whenever that directory exists** — naming the agents, or saying
+`none` — **and absent only when there was no directory to scan**, because *nothing was named* and
+*this was not checked* are different answers and an absent row is the second. The advice travels in
+`detail`, since a `REPORTED` finding carries no `remedy`.
+The other report is the linked SQLite version beside the interpreter that linked it, and it **cannot
 fail** — that is the axis no seam absorbs, 3.45.1 against 3.53.1 between two builds on one machine,
 with no correct value to compare against.
 
@@ -344,6 +354,24 @@ longer matches what is installed.
 
 `0.1.0` is the first version with this scheme; everything before it was `0.0.0`, which was never a
 statement about anything.
+
+**A `meta.schema_version` bump is a minor bump too, on its own, whether or not an artefact moves with
+it** (operator, 2026-09-29). A release that cannot open a store an earlier one wrote is at least as
+visible to an upgrading user as a changed config shape — `0.1.0` declares `SUPPORTED_SCHEMA_VERSION = 1`
+and refuses every store this build has touched — and a patch bump would tell that reader nothing needs
+refreshing. So the rule has two triggers and the artefact one is not the only way in: D37 governs a
+binary meeting a store, and this governs the number that warns them apart.
+
+**The tree says `0.3.0.dev0`, and that is arithmetic rather than a choice.** `MIGRATIONS` carries two
+steps that have never been released — `to_version=2` at M31 and `to_version=3` at M33 — so two minors
+have accrued since `0.1.0` shipped at schema 1. `.mcp.json` gaining `alwaysLoad` falls inside the
+second of them rather than adding a third: a release is one bump however many of the triggers it fires.
+
+**That the minor now equals the schema version is a coincidence of this history, not an invariant, and
+must not be relied on.** It holds because the two started aligned and every bump since has been
+unreleased. The first release carrying an artefact-shape change with no schema move breaks it, and
+that release is still correct — the number's job is to say *something needs refreshing*, not to encode
+which store version this build speaks. `store.CURRENT_SCHEMA_VERSION` is where that is written.
 
 **Upgrading does not replace a running service, and since M31 that is visible.** A service is
 started by whichever build first needed one and keeps answering until `idle_timeout` passes with no

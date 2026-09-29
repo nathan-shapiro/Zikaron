@@ -35,6 +35,28 @@ of accuracy or cost. It is a **classifier with tunable, per-question confidence 
 choice "questions" per call rather than a persistent rule set (relevant to "how much work to add a
 rule" — trivial per call, but there is no standing rule registry to point at).
 
+## "Cannot hallucinate" is a claim about the output space, not about correctness
+
+Added 2026-09-25, operator observation. The launch was carried for about a week by the claim that Jev
+**cannot hallucinate**, with *hallucinate* defined as *invent a non-existent answer*. For a
+classifier choosing among pre-declared labels that is true by construction and says nothing: a model
+that cannot emit a label outside its set can still assign the wrong one inside it, with a confidence
+attached. The failure does not disappear, it relocates — from *invented an answer* to *confidently
+assigned the wrong one*, which is harder to catch because a typed output with a probability reads as
+measured rather than guessed.
+
+The operator's probe is that failure, not the one the claim rules out. Asked the probability of a
+fair die showing each of 1–6 — the one calibration test whose ground truth is analytic — Jev did not
+return a uniform distribution. It invented no seventh face; it was wrong about the six. So the claim
+excluded an impossible failure while the product had the possible one: miscalibration, which is what
+RLCD is named for. Recorded in `FINDINGS-archive.md` §"The strongest M32 candidate", which is where
+the decision to rule Jev out on this and on deployment shape lives.
+
+**Keep the general form, because it will recur**: constraining the output space removes a failure's
+*shape*, not its *substance*, and "cannot hallucinate" and "is usually right" are unrelated claims.
+Anyone proposing a classifier as the judge in the evaluator candidate (`FINDINGS-archive.md` §"The
+strongest M32 candidate") will meet this argument in some form.
+
 ## Identity and maturity
 
 - **Jev is TypeSafe AI's flagship model**, described by the vendor as the first "System One model"

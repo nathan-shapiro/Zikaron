@@ -240,13 +240,26 @@ exactly what would be written without writing anything, pass `--print-only`; it 
 absent harness binary or an unvalidated model, and says so — but it still has to know *which*
 harness, so pass `--harness` alongside it exactly as a real install would.
 
+**Re-run the installer after you upgrade the package.** Upgrading replaces the code, not what an
+earlier version wrote into your project, and a release can change a merged entry — `alwaysLoad` is
+one such change. **Under Claude Code** re-running upgrades those entries in place and needs no
+`--force`; it refuses only where another Zikaron install owns something, or where you have added a
+hook of your own inside Zikaron's group (both below), which is what `--force` exists for.
+**Under kiro** any changed Zikaron entry is refused instead, so a release that moves one needs
+`--force` to adopt it; the paragraph on merging below says why the two differ.
+
 Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
 the MCP config too:
 
 ```bash
 echo '.zikaron/' >> .gitignore
-echo '.mcp.json' >> .gitignore     # Claude Code only; see below
+echo '.mcp.json*' >> .gitignore    # Claude Code only; see below
 ```
+
+**The `*` covers `.mcp.json.bak`**, the copy the installer takes of `.mcp.json` before the first
+merge that finds none there (the backup rule is below). It sits at the repository root and holds the
+file as it then stood — the same absolute paths, and whatever the entry held at the time, an `env`
+included — and it is where `--force` sends you to look for a key it dropped.
 
 **`.mcp.json` is the awkward one.** Claude Code intends that file to be committed and shared — that
 is what "project-scoped" means — but the entries Zikaron writes into it name absolute paths inside
@@ -254,8 +267,9 @@ is what "project-scoped" means — but the entries Zikaron writes into it name a
 This is the same objection that keeps the hook entries out of the checked-in `settings.json`; the
 difference is that `settings.local.json` exists as an untracked sibling and `.mcp.json` has no
 equivalent. With no per-project, machine-local MCP scope to move it to, the choice is yours: ignore
-the file, or accept that each clone re-runs the installer. Re-running is safe — a differing Zikaron
-entry is refused loudly rather than merged over.
+the file, or accept that each clone re-runs the installer. Re-running is safe — an entry naming a
+*different* virtualenv is exactly what the installer refuses loudly rather than merging over, which
+is the clone-mate case.
 
 The installer does not edit `.gitignore` for you; appending to it is not a decision an installer
 should make silently. But it matters and is easy to forget: without it the memory database and its
@@ -278,7 +292,7 @@ and under **Claude Code**:
 | `.claude/agents/zikaron-consolidator.md` | the consolidation subagent, as frontmatter plus its prompt |
 | `.claude/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
 | `.claude/settings.local.json` | three hooks — session start, per-message, and per-subagent — plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
-| `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs |
+| `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
 
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
@@ -288,8 +302,25 @@ spawn, which kiro achieves by firing its ordinary hooks for subagent sessions in
 It backs up any file it merges into (`<file>.bak`, and the first backup wins), and **refreshes a
 shipped file whose contents are not what this version ships** — after backing it up, and saying so.
 That is what makes upgrading work, and the cost is that a hand-edit to a shipped file is reverted on
-the next install rather than kept. Under kiro it also validates the consolidator's model id, because
-an unknown model would otherwise be silently replaced by the harness's default.
+the next install rather than kept. **Under Claude Code the same holds inside a file it *merges*
+into**: a Zikaron hook entry whose command is this install's but whose `timeout` or matcher you
+changed is rewritten, and the install names the trigger so you can re-apply it. Otherwise a new
+default timeout could never reach an existing install. What refuses is an entry naming a *different*
+Zikaron install — or a Zikaron hook group you have added your own second entry to, since the
+installer replaces a group wholesale rather than merging inside one, so refusing is the only way not
+to drop your entry silently. `--force` overrides that, and then says which command of your own it
+dropped.
+
+`.mcp.json` is merged **per key**: a key you added to Zikaron's own entry is kept and named in the
+output, a value this install writes — `alwaysLoad` in particular — is reset to this install's and
+named too, and only a different `command` or `--mode` refuses. `--force` is the exception: it
+replaces the entry whole, says which of your keys that dropped, and points you at the `.bak` beside
+the file. It does not say whether the backup has them, because it cannot know — the first backup
+wins, so the `.bak` on disk may have been written before or after you added the key.
+
+Under kiro any difference in a Zikaron entry still refuses, for hooks as well as servers, and it also
+validates the consolidator's model id, because an unknown model would otherwise be silently replaced
+by the harness's default.
 
 `@zikaron` has to be in `tools` or Zikaron's tools are simply absent: the `mcpServers` entry
 *configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
@@ -361,6 +392,14 @@ consolidator's: a subagent has nobody to answer a permission prompt, so an unapp
 there does not ask, it fails at the moment consolidation needs it. The file read above is the
 exception — that one prompts.
 
+**A subagent that sets its own `tools:` list cannot see Zikaron at all.** Registering a server in
+`.mcp.json` makes it available project-wide, but an agent whose frontmatter carries an explicit
+`tools:` allowlist gets exactly that list — the registration does not add to it. So a correct
+install, a running service and a subagent doing the work can still produce zero memories, with
+nothing anywhere saying why. The install names any such agent it finds and tells you to add
+`mcp__zikaron` to its `tools:`, and `zikaron doctor` reports the same. Your allowlist is a
+deliberate grant, so neither one edits it for you.
+
 **Your own agent can see the four consolidation verbs**, and that is not a misconfiguration. A server
 has to be registered for the whole session before any subagent can reach it, so registering the
 consolidator's server exposes it to you too. Under kiro the two tool sets are separated mechanically;
@@ -380,7 +419,7 @@ global and unregisters the tool, after which the consolidator itself refuses to 
 | `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused |
+| `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a `.mcp.json` entry is replaced **whole**, so a key you added to Zikaron's own entry goes, and a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
 rewrites a config in whichever format it read, so mixing them in one file has no defined meaning.
@@ -412,9 +451,9 @@ one machine and there is no correct value to compare against, so stating it is t
 
 **`zikaron --version` names the version you installed**, which is the first thing to put in a bug
 report; `doctor` reports on the machine and leaves the version to this. A PyPI install reports a
-release. A `git+` install or a source checkout reports a `.dev` version — `0.1.1.dev0` means "after
-`0.1.0`, not released" — so it never impersonates a release, but it does span every commit until the
-next bump, and a bug report from one needs the commit as well.
+release. A `git+` install or a source checkout reports a `.dev` version — `0.3.0.dev0` means "working
+toward `0.3.0`, not released" — so it never impersonates a release, but it does span every commit
+until the next bump, and a bug report from one needs the commit as well.
 
 Then start a session with the agent you installed into. On start you should see nothing unusual — the
 write policy goes into the model's context, not to your terminal. Then, from the project directory:
@@ -667,13 +706,14 @@ symptoms it cannot see.
 | nothing searchable works at all | `zikaron doctor` — extension loading, FTS5 and `sqlite-vec` are the three that fail this way, and all three are properties of the interpreter rather than of your project |
 | the MCP server starts and immediately dies | `zikaron doctor` — an over-long `$XDG_RUNTIME_DIR` makes the socket path exceed what the platform allows, and this is the only channel that says so |
 | no memories are being injected | `.zikaron/hook.log`, then `pgrep -af zikaron.service.main` |
-| the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval |
+| the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval — then check whether that agent's own frontmatter sets `tools:`, which overrides the project-wide registration entirely (below) |
 | every Zikaron tool call asks permission | kiro: add `@zikaron` to the agent's `allowedTools`. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
 | a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
+| Zikaron's tools are listed but arrive name-only, or the agent's first calls are refused for argument shape | Claude Code: an install predating `alwaysLoad`; re-run the installer. The entry upgrades in place and needs no `--force` |
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |
 

@@ -3,6 +3,7 @@
 import pytest
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.events import REQUEST_CLIENT_KINDS, ClientKind
 from zikaron.service.envelope import ClientEnvelope, label_source, parse_envelope, resolve
 
 
@@ -32,8 +33,15 @@ def test_parses_a_supplied_op_id() -> None:
     assert envelope.op_id == "caller-supplied-1"
 
 
-@pytest.mark.parametrize("kind", ["hook", "mcp", "consolidator"])
-def test_accepts_every_known_client_kind(kind: str) -> None:
+@pytest.mark.parametrize("kind", sorted(REQUEST_CLIENT_KINDS))
+def test_accepts_every_known_client_kind(kind: ClientKind) -> None:
+    """Parametrized over the set the boundary reads, so the name stays true as members are added.
+
+    A hand-written list of kinds is what made this test silently cover three of them once `cli`
+    landed, and the same list would have gone on passing when `indexer` arrived — the one member no
+    request may carry, which `test_rejects_the_indexer_kind_and_does_not_advertise_it` pins from the
+    other side.
+    """
     assert parse_envelope(_raw(kind=kind)).kind == kind
 
 
@@ -63,6 +71,26 @@ def test_rejects_an_unknown_kind() -> None:
     with pytest.raises(ZikaronError) as excinfo:
         parse_envelope(_raw(kind="primary-agent"))
     assert excinfo.value.data["field"] == "client.kind"
+
+
+def test_rejects_the_indexer_kind_and_does_not_advertise_it() -> None:
+    """The store's `CHECK` admits one member more than the wire does, and this is that gap.
+
+    `client_kind = 'indexer'` exists for a spawned build, which is no client call at all. Deriving
+    the accepted set from `ClientKind` would accept it here and file a client's writes under the
+    kind reserved for a build — excluded from the drop-rate query, ignored by linkage, advertised in
+    this very payload's `limit` as a value to send. So the `limit` is asserted too: a refusal that
+    names the value it just refused is an invitation to retry with it.
+    """
+    with pytest.raises(ZikaronError) as excinfo:
+        parse_envelope(_raw(kind=ClientKind.INDEXER.value))
+    assert excinfo.value.code is ErrorCode.BOUNDS
+    assert excinfo.value.data["field"] == "client.kind"
+    offered = excinfo.value.data["limit"]
+    assert isinstance(offered, list)
+    assert ClientKind.INDEXER.value not in offered
+    # The four a client may send are still offered, so this is a narrowing rather than a break.
+    assert sorted(str(kind) for kind in REQUEST_CLIENT_KINDS) == offered
 
 
 def test_rejects_a_missing_pid() -> None:

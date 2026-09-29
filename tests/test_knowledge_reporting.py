@@ -507,9 +507,9 @@ def test_the_diagnostic_field_count_is_what_the_prose_about_it_says() -> None:
     enumeration* lists eighteen. A number explaining why a surface is shaped the way it is,
     disagreeing by two with the dataclass that shapes it.
 
-    Pinned against the dataclass rather than by a third copy of the literal. `primary.py`'s
-    "roughly twenty fields per knowledge base" is deliberately **not** covered: that is a whole
-    `status` entry — 5 summary plus 18 diagnostic — and is hedged.
+    Pinned against the dataclass rather than by a third copy of the literal. A *whole* `status`
+    entry is a different number — the summary fields plus these — and no shipped prose states it,
+    so nothing here covers one.
     """
     declared = len(dataclasses.fields(reporting.Details))
     spelled = {18: "eighteen", 20: "twenty"}.get(declared, str(declared))

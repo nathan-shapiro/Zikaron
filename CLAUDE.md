@@ -131,6 +131,29 @@ first one's log. Check with `pgrep -af '[c]heck.*\.sh'` **in a command of its ow
 same command as the gate and it matches that command instead. Every project has a `check.sh`, so a
 hit is only yours if `readlink /proc/<pid>/cwd` is this repository.
 
+**The bracket is not a `pgrep` idiom — it is what any `pgrep`/`pkill` needs when the pattern occurs
+in the command running it.** The shell's own command line is a process like any other, so
+`pkill -f 'bin/pytest'` kills the wrapper executing it and reports `exit 144`, which reads as the
+kill having gone wrong rather than as having hit itself. Write `'[b]in/pytest'` on every such call,
+not only the gate check.
+**And the bracket protects the pattern, not the command** — `pgrep -af '[c]heck\.sh' || echo
+"check.sh: gone"` matches itself on the *echo*, because what `-f` searches is the whole command line
+and the fallback message put the literal back. Both halves failed here within two minutes. So the
+rule is about the command, not the argument: **no literal you are hunting may appear anywhere in the
+line that hunts it**, message strings included. Split it (`'[b]in/pyt''est'`) or say something that
+does not contain it.
+
+**Waiting for a gate you have already invalidated is waste; kill it instead — and kill its child.**
+A verdict computed over a tree that has since moved describes nothing, so editing during a run means
+that run is spent whatever it reports. `kill`ing `check.sh` leaves its `pytest` **running**, because
+the parent's death does not reach it: that orphan still holds the coverage file and the caches the
+rule above is about, so a "fresh" run started after a partial kill is the two-gates case with one of
+them unattended. Kill the `pytest` too, confirm with the bracketed `pgrep`, and only then start
+again. **And kill the runner, not the run**: a `py-runner` whose command dies restarts it, observed
+twice in a row, so killing the process is a loop you lose — `TaskStop` on the agent first, then the
+orphan. Check too whether the restart has already given you a valid run on the settled tree, which is
+cheaper than starting another.
+
 **CI is not a third thing to run.** `.github/workflows/check.yml` asserts the ***matrix's*** claim — every supported version
 green on one tree — against a commit rather than a working tree, by running `check.sh` once per
 version rather than by running `check-matrix.sh` at all. So it is the same claim with the tree
@@ -285,7 +308,7 @@ format .`, not adjusting the code by hand to satisfy it.
   hides the claim it replaced cannot be checked against the evidence that replaced it. Do not strip
   that table under this rule. Everywhere else the cost is measured rather than stylistic: prose that
   exists to explain earlier prose is where this corpus's audit rounds found most of their defects
-  (`FINDINGS.md` §"The audit loop"), so every struck sentence is both a paragraph each later reader
+  (`FINDINGS-archive.md` §"The audit loop"), so every struck sentence is both a paragraph each later reader
   must rule out and a fresh surface for the next one to be wrong about.
 - **Edit *authored* files with `Read` and `Edit`/`Write`, never with find-replace scripts.** Do not
   edit them through `sed`, `python` string-replacement, heredoc rewrites, or any other script that

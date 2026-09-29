@@ -4,16 +4,21 @@ The section states a kind's detail shape in its own row, except for the two stop
 value sets it gives in a second table. Both are read here, so neither can drift alone.
 """
 
+import importlib
+import pkgutil
 import re
 
 import pytest
 
+import zikaron
 from tests.design_tables import (
+    ParsedField,
     literal,
     parse_fenced_code,
     parse_field_values,
     parse_name_lists,
     parse_payload,
+    resolve,
     section_lines,
     sql_statements,
     table_with_columns,
@@ -22,10 +27,14 @@ from zikaron.core.consolidation import runs
 from zikaron.core.consolidation.runs import RunStatus
 from zikaron.core.errors import ErrorCode
 from zikaron.core.events import (
+    BUILD_FAILED_WIRE_NAME,
     EVENT_SPECS,
+    INTERNAL_ERROR_WIRE_NAME,
+    REQUEST_CLIENT_KINDS,
     AmendDetail,
     ArmTermination,
     AuthoredSize,
+    CallDetail,
     ClientKind,
     ConsolidateRunDetail,
     DedupOfferedDetail,
@@ -38,6 +47,7 @@ from zikaron.core.events import (
     FetchDetail,
     GroupRef,
     GroupServedDetail,
+    KnowledgeBuildDetail,
     MergeDetail,
     MergeRole,
     NoReceiptDetail,
@@ -54,6 +64,8 @@ from zikaron.core.events import (
     SurfaceDetail,
     VersionConflictDetail,
 )
+from zikaron.core.knowledge.errors import BUILD_ONLY_WIRE_NAMES, KnowledgeError
+from zikaron.service.rpc import ProtocolErrorCode
 
 DOCUMENT = "schema.md"
 HEADING = "## The `event` log, per kind"
@@ -61,6 +73,20 @@ KIND_COLUMNS = ("`kind`", "Cardinality", "`memory_uuid`", "`detail`")
 STOP_REASON_COLUMNS = ("Field", "Values", "Meaning")
 NULLABLE_COLUMN = "`detail` fields that may be null"
 NULLABLE_COLUMNS = ("`kind`", NULLABLE_COLUMN, "Why")
+
+#: What a `@`-marked reference in the design resolves to. The one thing in this file that has to
+#: import what the design names, passed into `design_tables.resolve` so that module stays free of
+#: the package — every drift guard imports it, so a broken import there fails them all at
+#: collection. A reference the design writes and this mapping lacks is refused, not ignored.
+REFERENCES = {
+    "ErrorCode.wire_name": tuple(code.wire_name for code in ErrorCode),
+    "BUILD_ONLY_WIRE_NAMES": BUILD_ONLY_WIRE_NAMES,
+}
+
+
+def stated_fields(cell: str) -> tuple[ParsedField, ...]:
+    """One `detail` cell's fields with every named set expanded to its members."""
+    return resolve(parse_payload(cell), REFERENCES)
 
 
 @pytest.fixture(scope="module")
@@ -119,7 +145,7 @@ def test_detail_value_sets_match_the_design_table(
     for row in design_rows:
         kind = EventKind(literal(row["`kind`"]))
         declared = {field.name: field for field in EVENT_SPECS[kind].detail_fields}
-        for stated in parse_payload(row["`detail`"]):
+        for stated in stated_fields(row["`detail`"]):
             if stated.name in design_stop_reasons:
                 assert not stated.values, f"{kind.value}.{stated.name} stated in two places"
                 expected = design_stop_reasons[stated.name]
@@ -180,13 +206,22 @@ def test_the_stop_reason_table_covers_exactly_the_two_arms(
 def test_the_closed_sets_are_enums_carrying_exactly_the_designs_values(
     design_rows: list[dict[str, str]],
 ) -> None:
-    """Every closed detail set is an enum, so no later writer can spell one of its members."""
+    """Every closed detail set is an enum, or a tuple composed from one, so no later writer can
+    spell one of its members.
+
+    The two `error_code` sets are the composed case, and they are composed rather than enum-backed
+    because their reachable domain spans layers: `ProtocolErrorCode` lives in `service/`, which
+    `core/` cannot import, and the build-only names are declared where the classes that raise them
+    are. Each is checked here against the same composition its `DetailField` performs, so a
+    reference the design names and the code does not compose still reddens.
+    """
     stated = {
         f"{literal(row['`kind`'])}.{field.name}": field.values
         for row in design_rows
-        for field in parse_payload(row["`detail`"])
+        for field in stated_fields(row["`detail`"])
         if field.values
     }
+    codes = tuple(code.wire_name for code in ErrorCode)
     assert stated == {
         "surface.demotion": tuple(Demotion),
         "merge.role": tuple(MergeRole),
@@ -194,6 +229,12 @@ def test_the_closed_sets_are_enums_carrying_exactly_the_designs_values(
         "promote.form": tuple(PromoteForm),
         "group_served.role": tuple(ServeRole),
         "consolidate_run.phase": tuple(RunPhase),
+        "call.error_code": (*codes, INTERNAL_ERROR_WIRE_NAME),
+        "knowledge_build.error_code": (
+            *codes,
+            *BUILD_ONLY_WIRE_NAMES,
+            BUILD_FAILED_WIRE_NAME,
+        ),
     }
 
 
@@ -373,6 +414,22 @@ def test_every_typed_detail_matches_its_kinds_declared_fields() -> None:
         EventKind.CONSOLIDATE_RUN: ConsolidateRunDetail(
             run_id="r1", phase=RunPhase.PLANNED, n_groups=2, n_members=5, n_deferred=0
         ),
+        EventKind.CALL: CallDetail(
+            method="memory_remember",
+            ok=False,
+            error_code=ErrorCode.BOUNDS.wire_name,
+            duration_ms=1.5,
+        ),
+        EventKind.KNOWLEDGE_BUILD: KnowledgeBuildDetail(
+            knowledge_base_id="6a0f0b6e-1f5f-4a17-9f4a-7c5a1b2c3d4e",
+            spawned_by_op_id="op1",
+            full=False,
+            rebuilt=True,
+            ok=True,
+            error_code=None,
+            duration_ms=90_000.0,
+            files_indexed=42,
+        ),
     }
     for kind, detail in built.items():
         assert detail.kind is kind
@@ -476,3 +533,90 @@ def test_every_terminal_run_status_has_a_phase_to_record_it() -> None:
     assert {phase.value for phase in runs._CLOSING_PHASE.values()} <= {
         phase.value for phase in RunPhase
     }
+
+
+def test_the_one_protocol_code_a_call_row_can_hold_is_spelled_as_that_enum_spells_it() -> None:
+    """`core/` cannot import `ProtocolErrorCode`, so it names the one reachable member as a literal.
+
+    That literal is the whole of the exemption, and this is what keeps it honest: a test sits above
+    both layers, so it may hold the two equal where neither module may reach the other. Every other
+    member of that enum is decided by an exit ahead of dispatch and can reach no `call` row —
+    §"`call` is an access log"'s exit table is where that is argued, and the seam's own tests drive
+    it.
+    """
+    assert ProtocolErrorCode.INTERNAL_ERROR.wire_name == INTERNAL_ERROR_WIRE_NAME
+
+
+def test_the_build_only_names_collide_with_no_wire_code() -> None:
+    """One shared vocabulary is only useful if two conditions cannot arrive under one string."""
+    codes = {code.wire_name for code in ErrorCode}
+    assert set(BUILD_ONLY_WIRE_NAMES).isdisjoint(codes)
+    assert BUILD_FAILED_WIRE_NAME not in codes
+    assert BUILD_FAILED_WIRE_NAME not in BUILD_ONLY_WIRE_NAMES
+
+
+def _import_every_shipped_module() -> None:
+    """Import every module under `zikaron/` except the `__main__` entry points.
+
+    `__subclasses__()` sees only what has been imported, so a subclass declared beside the code that
+    raises it and imported by nothing is invisible to the walk below — which would leave the
+    completeness check green over exactly the class it exists to catch.
+
+    Two details are load-bearing. The entry points are excluded because three of them call
+    `sys.exit(main())` at import and would run the program under pytest's own argv. And `onerror`
+    raises, because `walk_packages` swallows `ImportError` by default: without it the walk stays
+    green over every package it could not load, and says nothing about what it missed.
+    """
+
+    def _raise(name: str) -> None:
+        raise AssertionError(f"could not import {name}")
+
+    for module in pkgutil.walk_packages(zikaron.__path__, f"{zikaron.__name__}.", onerror=_raise):
+        if module.name.rpartition(".")[2] != "__main__":
+            importlib.import_module(module.name)
+
+
+def _concrete_knowledge_errors() -> set[type[KnowledgeError]]:
+    """Every `KnowledgeError` subclass, transitively.
+
+    `__subclasses__()` returns *direct* subclasses alone. The hierarchy is flat today, so a
+    non-transitive walk would pass — and would then hide the children of the first intermediate base
+    anybody adds.
+    """
+    found: set[type[KnowledgeError]] = set()
+    pending = list(KnowledgeError.__subclasses__())
+    while pending:
+        subclass = pending.pop()
+        if subclass in found:
+            continue
+        found.add(subclass)
+        pending.extend(subclass.__subclasses__())
+    return found
+
+
+def test_every_knowledge_error_has_a_name_a_build_may_record() -> None:
+    """A class the boundary does not map and the export forgot would be red here, not on a build.
+
+    Without this the export is a hand-maintained list: such a class records a name outside the
+    declared `values`, `EventSpec.validate` raises *inside* the write that exists to record a
+    failure, the line goes to stderr, and the build's own failure goes unrecorded — on precisely the
+    builds that failed.
+    """
+    _import_every_shipped_module()
+    declared = {field.name: field for field in EVENT_SPECS[EventKind.KNOWLEDGE_BUILD].detail_fields}
+    recordable = set(declared["error_code"].values)
+    subclasses = _concrete_knowledge_errors()
+    assert subclasses, "no KnowledgeError subclasses were found, so this guard checks nothing"
+    for subclass in subclasses:
+        assert subclass.wire_name in recordable, subclass.__qualname__
+
+
+def test_the_indexer_kind_is_in_the_store_but_not_on_the_wire() -> None:
+    """The `CHECK` admits one member more than any request may carry, and this is that gap.
+
+    Deriving the accepted set from `ClientKind` is what would close it wrongly: a client sending
+    `indexer` would be accepted and its writes filed under the kind reserved for a spawned build —
+    excluded from the drop-rate query, ignored by linkage, and advertised in a `bounds` payload as a
+    value to send.
+    """
+    assert set(ClientKind) - {ClientKind.INDEXER} == REQUEST_CLIENT_KINDS

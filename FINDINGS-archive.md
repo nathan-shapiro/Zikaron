@@ -3250,6 +3250,21 @@ Plan:
 
 
 ## References
+- **Deferred tool loading, the description cap, and what the installer may refuse** —
+  `reviews/always-load-review.md`. Carries why `alwaysLoad` is written per server rather than
+  `ENABLE_TOOL_SEARCH` per project; why the consolidator keeps a key measurement shows is idle; the
+  arithmetic that made `DESCRIPTION_BUDGET` a bet on 2,048 rather than a tested margin; and the
+  ownership predicate replacing equality on both Claude Code artefacts, with the reason a `--force`
+  note may point at the backup but never say what is in it — three separate attempts to assert that
+  are recorded there with what each got wrong. The rejected alternatives are stated with their
+  reasons: reading the backup to decide the wording, and merging per key inside a hook group.
+- **M33's instrumentation design, reviewed to convergence** — `reviews/m33-instrumentation-review.md`.
+  Carries why the access log's write is best-effort on a private connection rather than the shared one,
+  why the response line is encoded before the row is attempted, the `@` reference form the per-kind
+  table needed before `EVENT_SPECS` could declare a composed set at all, the wire refusing
+  `client_kind='indexer'`, and the `IntEnum` trap that would have left the access log holding no
+  refusal. The rejected alternatives are stated with their reasons: a class→`ErrorCode` table in
+  `core/`, an exemption by field name in the drift guard, and a test seam in the service.
 - **The prose Zikaron injects, authored and then checked as built** —
   `reviews/injected-prose-review.md`. Five rounds across M32: a critique of the shipped text against
   the measured read rate, then the replacement text written outright, then three rounds verifying
@@ -4754,6 +4769,7 @@ complete) and question 12 (consolidation merging, the largest single live entry 
 | 11 | nothing bounds a gist's length in bytes | CLOSED in M14 by a **character** bound, its unit then measured in M16 by astral bisection |
 | 13 | two write-policy scope rules disagree | RESOLVED and shipped 2026-08-16 — a general fact enters as the decision it forced here |
 | 15 | records cross-reference each other by gist prose | RESOLVED and shipped 2026-08-16 — point at a record by its subject, never by quoting its gist |
+| 18 | a rejected write leaves no event, and neither does a payload spill | CLOSED 2026-09-28 at M33 — the write by a `call` event at the service seam, the spill by a decision that D30's signals do not owe it |
 
 ---
 
@@ -4922,6 +4938,32 @@ complete) and question 12 (consolidation merging, the largest single live entry 
    construction*, with nothing needing to be told to the consolidator at all.
    Whether a real relation field is wanted is a separate and larger question that D27
    deliberately closed once.
+
+---
+
+**Later closures are appended below with their own dates**, rather than opening a section per
+question — the heading above says when the first batch moved, not when every entry here closed.
+
+18. **A rejected write leaves no event, so the gist bound's cost cannot be measured.**
+    `EventKind` instruments fifteen kinds, including `version_conflict`, `no_receipt` and
+    `dedup_offered` — every other way a write is turned away. A `BOUNDS` refusal happens before
+    anything is written, so a session that made three `remember` calls recorded `remember: 1`.
+    Measured once: two of three calls lost to the 64-token gist limit (71, then 67, then 58).
+    **The payload spill is the same gap and costs more.** M18 fired in production for the first time
+    on 2026-09-24 and left nothing behind: `mcp/spill.py` emits no event, `zikaron/mcp/` imports no
+    logger by design, and the file is swept when the next group is requested — so whether
+    `spill_threshold = 27000` is right is unanswerable after the fact
+    (`research/leibatrader-consolidation-2026-09-24.md`). **What would close both**: an event for a
+    turned-away write and for a spill, or a decision that D30's signals do not owe them.
+    **CLOSED 2026-09-28 at M33, on both branches of that disjunction — which is why it closes
+    although only half of it is instrumented.** The turned-away write becomes a `call` event at the
+    service seam: a `BOUNDS` refusal records the method and the error code, so a session issuing
+    three `remember` calls records three. The spill stays silent by operator decision, on the
+    ground that the failure it would report is already visible from the store — an undeliverable
+    payload leaves its group undispositioned until `serve_count` reaches `max_group_serves` and the
+    group becomes `deferred`, so `spill_threshold` is judged by deferred groups rather than by a
+    spill count. `design/schema.md` §"What is instrumented, what is not, and why" is normative, and
+    a reader tempted to add the spill event should change that paragraph rather than the code.
 
 
 ## Closed priority items and the Amazon Q source traces (moved out of FINDINGS 2026-09-20)
@@ -6313,3 +6355,446 @@ with `cli` accepted and a bogus value still refused. **M31 takes the 12-step** �
 per store, and the fast route bypasses every validation SQLite has. Re-derive with
 `.venv/bin/python spikes/m31_check_widening.py`.
 
+
+## M30–M33 as shipped, the M32 candidate survey, and the read-path baseline (moved out of FINDINGS 2026-09-28)
+
+Moved when `FINDINGS.md` was cut back to actionable material. Each block records what was believed
+when it was written; "this file" inside one means `FINDINGS.md`, and none is re-pointed.
+
+### The release
+
+**`zikaron` 0.1.0 is on PyPI** — published 2026-09-24 from `release.yml`, sdist and wheel,
+`requires-python >=3.12`, MIT. **Trusted publishing is exercised rather than assumed**: no token
+exists in this repository or its secrets, the `release` environment carries no protection rules, and
+`invalid-publisher` did not occur. `README.md`'s `uv tool install --managed-python zikaron` and D36
+now resolve. `research/m30-operator-setup.md` holds the setup procedure.
+
+**`pypa/gh-action-pypi-publish` is pinned `@v1.14.2`, never a sha** — it is a Docker action.
+`release.yml`'s comment and `test_no_action_is_pinned_to_a_moving_branch` are normative. Cutting a
+release: `design/distribution.md` §3 and `research/m30-operator-setup.md`.
+
+**No lock file is tracked**, and `design/coding-standards.md` §6 says why and forbids adding one
+back without a reader.
+
+**Dependabot is live** (`.github/dependabot.yml`): actions weekly and grouped, pip monthly and
+ungrouped.
+
+**The publication guard's exemption for the pins is a single-file allowlist**, decided at M30 as
+that guard's docstring asked. A per-line marker would sit on every digest line and on each new one,
+and one pasted onto a line that is genuinely a secret would be indistinguishable from one pasted
+onto a digest. The exemption is narrowed by a positive check — every hex run in
+`core/indexing/model_pin.py` must be a value that module declares — so it is not a standing hole.
+
+**Operator decisions 2026-09-23.** Releases go out by **PyPI trusted publishing** from a
+release-triggered workflow, never an API token in a secret. **Coverage is published to Codecov**,
+because the only honest alternatives are a live service or no badge at all: a percentage typed into
+`README.md` is the stale-number class this corpus has a standing rule to delete. **A badge that
+carries a measured value must derive it rather than state it** — that is what governs the next one
+somebody wants to add. **A badge that merely names a tool need not**: the `ruff` and `mypy` ones are
+static claims that nothing asserts, kept deliberately (operator decision) on the grounds that not
+every claim earns a guard.
+
+**The pinned artefact's digests are checked when bytes arrive from the network, never on a warm
+start — operator decision 2026-09-23, taken on a measurement.** Hashing the five files costs
+**331–396 ms under load**, not the 185 ms an unloaded in-process timing shows, because the walk is
+CPU-bound; that pushed the cold-start sequence past `push._DEADLINE_SECONDS` and reintroduced M17's
+defect, at **0–1 of 5 runs inside the budget against 5/5 without it**, 1/5 clean pushes through the
+shipped hook. Moving the check to the acquisition paths restores parity — 5/5 against the pre-M30
+control at `load1` 10.86 and 11.88. **What this gives up is startup detection of corruption that
+happens *after* acquisition**; `zikaron doctor` is the channel for it. A failed acquisition discards
+the snapshot, or the next warm start would trust bytes already proven wrong.
+`research/m30-verify-cost.md`; rationale in `design/distribution.md` §"Model acquisition".
+
+**The cold-start budget is re-measured with `experiments/m17_cold_start_ab.py` and
+`experiments/m17_hook_outcome.sh` under generated load**, against the no-pin control rather than a
+constant — the baseline moves with load. Commands in `research/m30-verify-cost.md` §"Re-deriving
+this".
+
+**The artefact Zikaron fetches is `qdrant/bge-small-en-v1.5-onnx-q`, its head is
+`52398278842ec682c6f32300af41344b1c0b0bb2`, and it is licensed `apache-2.0` — not the `mit` of the
+`BAAI/bge-small-en-v1.5` weights it is derived from.** Read from the Hub API rather than from our
+own note. Re-derive both facts, and the file list the digest set must cover, with:
+`.venv/bin/python -c "from huggingface_hub import HfApi;i=HfApi().model_info('qdrant/bge-small-en-v1.5-onnx-q');print(i.sha,i.cardData['license'],sorted(s.rfilename for s in i.siblings))"`
+
+**The name stays `zikaron` — operator decision 2026-09-23, taken knowing that `zikkaron` is held on
+PyPI by a near-identical product**: one keystroke away, actively maintained, and by its own
+description a biologically-inspired persistent memory engine for Claude Code on SQLite. The grounds
+are that the markets differ enough that a user reaching for one will not land on the other. Do not
+re-open this from the collision alone. `zikaron` itself is unregistered — both `/simple/` and the
+JSON API answer 404 — but a 404 cannot distinguish never-registered from deleted-and-unreserved, so
+the name is only *proven* free by an upload, which is the operator's act.
+`research/m30-name-and-licence.md`.
+
+**A derived path that cannot be used is refused as the existing `BAD_CONFIG`/`runtime_dir`
+`ZikaronError` — no bespoke type, and no new `hook.log` kind.** `service/security.py` and
+`hook/push.py` already had both halves; rationale in `design/build-plan.md` §M29's withdrawal.
+
+
+### The install path is proven end to end, on a machine that had never seen the project
+
+**Two runs, both 2026-09-24, both in `ubuntu:26.04` — one per harness.**
+
+**The Claude Code run**; the record and the commands to re-derive it are in
+`research/m30-docker-end-to-end.md`. Four things were exercised for real there for the first time:
+**`sqlite-vec` loading on a uv-managed interpreter on a foreign OS**; the `/tmp` socket fallback,
+since a container has no `$XDG_RUNTIME_DIR`; **D32's tool withholding and push suppression under a
+real Claude Code subagent** rather than a stub; and both branches of the model-cache check in one
+container.
+
+**What that run did not cover.** Push and pull: no `UserPromptSubmit` gist block was captured and no
+search was called — both have run for real many times under kiro on `~/Trading/LeibaTrader`, and what has
+never happened is a real Claude Code session doing either on another machine, or any *automated* run.
+macOS arm64, since the container is amd64 Linux, so the platform where `enable_load_extension` is
+reported off stays CI's alone.
+
+**The kiro run completed D34's second half, so both harnesses are now installed on a foreign
+machine** — `research/kiro-container-run.md` is the record. What it established, none of it previously true:
+kiro installs from a *global* agent config with the project elsewhere; the harness creates the store
+with no `zikaron init`; **`agentSpawn` really does deliver hook output to the model**, which D18
+rests on entirely and nothing had checked; 12 MCP tools, matching D32; consolidation end to end,
+promoted `in_place` v1→v2 with a second run planning zero groups; and D15's dedup firing in
+production. It also ran memory *behaviour* under a real workload, which the Claude Code run
+deliberately did not.
+
+**Two defects only the real binary could find.** `kiro-cli agent create` writes
+`"toolsSettings": null`, and every shape guard in `install/writer.py` read `key in document` — so
+the installer refused the harness's own default output, which `kiro-cli chat` runs happily.
+`_is_unset` now treats absent and `null` alike; a wrong *type* is still refused. And **`kiro-cli
+agent validate` prints `Error:` while exiting 0**, so a relay that checks the status relays nothing
+— ours reads stderr and was observed working.
+
+### `main` carries user-facing fixes that `0.1.0` does not
+
+Found by installing the published artefact and by driving the real kiro binary, all fixed on `main`
+and none of them in the release: **`zikaron --version`** now exists (it was `unknown command`, exit
+2); the **no-store refusal names what actually creates a store**, now `zikaron init`;
+**`README.md` names `--harness`** in the install command and says where `uv` comes from; and the
+installer **no longer refuses the agent config `kiro-cli agent create` writes**, which rejected
+`"toolsSettings": null` as malformed.
+
+**The gap is now large enough to matter to a user.** `0.1.0` has no `init`, so on that release
+`zikaron knowledge` still opens the store directly and still creates one wherever it is typed —
+the defect M31 exists to remove. Whether that justifies a release is the operator's call;
+`design/distribution.md` §3 decides patch versus minor on the artefact-shape rule.
+
+### M31 landed — the knowledge CLI is a thin client, and the schema can move
+
+**Merged as `d0d44a6`.** `design/distribution.md` §"The front door" is normative for `zikaron init`
+and the storeless refusal; D31 and D37 in `design/overview.md` carry the rest, and
+`FINDINGS-archive.md` §"M31 as built" holds the decisions as they were taken.
+
+**Every store this build opens is migrated to schema 2, and the published `0.1.0` refuses it.**
+That release declares `SUPPORTED_SCHEMA_VERSION = 1`. `~/Trading/LeibaTrader` is already at 2 —
+26,300 events, `integrity_check ok` — so it can no longer be opened by an installed `0.1.0`, only
+by `main` or a `git+` install. Nothing warns about this on the way in; the store is migrated by
+whichever service starts first.
+
+**SQLite cannot alter a constraint in place, and the two routes differ sharply in cost.**
+`ALTER TABLE ... DROP/ADD CONSTRAINT` and `ALTER COLUMN` are parse errors on 3.45.1. Against
+`~/Trading/LeibaTrader` (25,836 events at the time) on a `VACUUM INTO` snapshot: the 12-step rebuild
+**~530 ms**, a `PRAGMA writable_schema` rewrite **~2 ms**, both `integrity_check ok`. **The 12-step
+was taken** — the saving is once per store and the fast route bypasses every validation SQLite has.
+Re-derive: `.venv/bin/python spikes/m31_check_widening.py`.
+
+**Neither supported harness exports a project directory to a shell.** `CLAUDE_PROJECT_DIR` reaches
+the hook and `zikaron-mcp`, not the terminal an agent or a person types in, and kiro names none at
+all (`spec.KIRO.project_dir_variable is None`). So D17's **fallback** rung is what every typed
+command resolves through, which is why a command typed outside the project addresses a different
+one. Measured, with its limits, in `research/claude-project-dir-reaches-hooks-not-shells.md`.
+
+**`pyproject.toml` carries `0.1.1.dev0`, and a release number is only set in the commit that gets
+tagged** — operator decision 2026-09-24. A `.dev` suffix between releases is what stops an
+unreleased tree reporting a version that reads as a release; `release.yml`'s tag check refuses to
+build while the suffix is there, so it cannot survive a release by accident.
+`design/distribution.md` §3 is normative, including the artefact-shape rule that decides patch
+versus minor when the number is finally set.
+
+### The strongest M32 candidate, and why
+
+**An evaluator with teeth, in the harness loop.** Three ways to make an agent follow a rule, with
+evidence from 2026-09-24 on all three: stating it once (`CLAUDE.md`, the write policy) loses to
+evidence presented continuously; stating it every turn (the push block) has the right delivery but
+its own preamble disowns it as a directive; **evaluating behaviour and reacting** (`check.sh`, the
+reviewer) is the only category that held anything. Operator's prior art: define behavioural rules,
+have a cheap local model watch the tool stream and refuse a call that breaks one.
+
+**Both harnesses already expose the hook.** `preToolUse` carries `tool_name` and `tool_input`, and
+**exit code 2 blocks the tool with stderr returned to the model as the reason**
+(`research/kiro-cli-hooks-and-introspect.md`); Claude Code has the equivalent, and `harness/spec.py`
+already carries trigger names as data.
+
+**It does not touch D2**, which forbids an extra LLM on *Zikaron's write path*; this sits in the
+harness loop. It also answers the trigger problem the write policy cannot — *a debugging session
+ended with no `memory_remember`* is observable from outside even where the policy cannot name the
+moment — and removes the reason operators route rules through the store (Q14). **Risks**: a false
+block stops work outright, it adds latency to every tool call, and it would be a fourth place
+behavioural rules live. Full argument and the day's evidence:
+`research/leibatrader-consolidation-2026-09-24.md`.
+
+**Jev is identified, and it is hosted-only — `research/jev.md`.** TypeSafe AI's "System One" model,
+in early access from 2026-09-23, a day before the operator named it: a classifier answering
+pre-declared typed questions (boolean / choice / rubric) with calibrated probabilities and no free
+text. The shape suits a graded nudge-or-block, and a rule is a plain-language question sent per
+call, so adding one costs nothing. But there are no weights and no self-host, so nothing for
+`design/distribution.md`'s pin-and-digest machinery to hold — and **`tool_input` carries file
+contents, paths and commands, so every judgement egresses the work.** That is the durable objection,
+and nothing in this project had considered it. Measured independently at **p50 379–422 ms, p95
+484–542 ms** (n=60, one residential network); the vendor claims 70–500 ms and a LangChain post
+claims 7 ms, conflicting by ~50× and not relied on. **And the calibration claim does not survive an
+operator probe** (2026-09-24): asked the probability of a die showing each of 1–6, it does not return
+a uniform distribution — the one calibration test whose ground truth is analytic, where any
+deviation is pure error. Calibration is this product's differentiating claim, and thresholding a
+nudge against a block is only meaningful if the probabilities carry a scale. **So the shape is not a
+reason to revisit Jev even if the deployment story changes.**
+
+**Latency is not the objection, and the "tens of milliseconds" budget it was judged against does
+not exist.** Nothing here has ever measured a hook at that scale: `hook/connect.py` allows 300 ms to
+connect and 1.2 s to poll, `hook/push.py` 2.0 s, and M17 measured `surface` answering in
+809–1348 ms (`research/m17-cold-start-ab.md`). ~400 ms is an ordinary per-call cost on this
+codebase's own scale. A *synchronous* judge would still lose on frequency rather than magnitude —
+push pays once per user message where a `preToolUse` judge pays per tool call — but **that argument
+holds only for the blocking shape.**
+
+**The operator's prior art (AWS, 2026-09-24) is neither blocking nor a rule-violation classifier: an
+LLM following the transcript to catch degrading output quality — "fighting slop with slop" — with
+nudges injected on a delay.** Async dissolves both objections above, since nothing waits on the
+judge and a wrong nudge is noise rather than a work stoppage, and it buys what a synchronous hook
+structurally cannot: judgement over a **window** rather than one call, which is the only form in
+which the write policy's trigger problem (*a session ended with no `memory_remember`*) is
+expressible at all. What it cannot do is prevent, since the command has already run when the nudge
+lands. **So these are disjoint rule classes, not competing designs** — deterministic synchronous
+predicates for what must not happen, an async watcher for what is only visible in hindsight. Most of
+`CLAUDE.md`'s own prohibitions are the first kind — never commit to `main`, never discard
+uncommitted work, never start a gate while one runs, never set a release version — needing no model
+and testable in `check.sh`; Invariant Guardrails is the local custom-policy option found, a
+rule-engine DSL over tool-call traces, while everything else surveyed judges a fixed harm taxonomy
+and is the wrong shape. **Slop is in neither class**: it has no matchable form and the interesting
+signal is *relative* to the session's own earlier output, so it is the residual a predicate cannot
+reach. This project has already measured that residual — §"The audit loop" below, at roughly one new
+defect per one-and-a-half fixes, all of it prose.
+
+**Fanning the transcript out to a second async LLM is established, with distinct consumers**:
+mem0 and AgentCore derive memories from it, and harmlessness judging uses it as a training signal.
+Both are offline and tolerate noise, so neither is evidence for steering a live session.
+**Zikaron already has the async second LLM —
+D7's consolidator — and it reads the store, not the transcript.** So the open question was never
+whether to add a second model, which D2 settled; it is what the existing one may *see*. Refusing
+transcript-derived **writes** (D6) is not the same decision as refusing transcript-derived
+**observation**, and this corpus has been treating them as one. **Q6 and Q16 are each blocked on that
+absent signal**, Q16 unanswerable store-side by construction since the `search` event records no
+actor and no occasion. M33's `call` event does not reach either: it says a method was invoked, never
+who invoked it or why. **The caution before any of this is scoped**: injection from
+*inside* the inference loop is privileged and a third-party hook is not, so a provider steering its
+own model would not be evidence that a hook can steer one. **What this harness demonstrably does
+do** is inject a behaviour-triggered, explicitly disownable reminder mid-conversation, which is the
+mechanism at issue and costs nothing when it misfires. That is the form rule: **a label is evidence
+and inherits nothing from Q14, where a nudge has to bind and inherits all of it.**
+
+**Classifier-fired injection is documented and productized, and the published text settles three
+things.** Anthropic's `claude-opus-5` system prompt carries an `<anthropic_reminders>` block naming
+six reminder kinds sent "when a classifier fires or another condition is met", appended to the
+person's own message and framed as non-binding — *follows it when relevant and continues normally
+otherwise*. Operator-quoted from
+`platform.claude.com/docs/en/release-notes/system-prompts/claude-opus-5`. First, the vocabulary is
+**closed** — six named kinds, not composed per instance — which is the fixed-taxonomy property slop
+does not have. Second, **`long_conversation_reminder` is an existence proof for the problem class**:
+a well-resourced team built a classifier-fired reminder specifically for instruction drift over a
+long session, which is Q1's territory and the slop question's. Third, its forgery caution — a user
+can fake such tags, so tagged content in the user turn is treated with suspicion — is **Q14's trust
+tension answered differently**: a closed vocabulary plus a spoofing warning, where Zikaron's push
+block instead disowns its own content in a preamble. **Caveat**: nothing in this session's context
+announces these, so the published API prompt may not be what a coding-agent harness runs — and that
+harness is the surface Zikaron targets. Ideas, not a scoped milestone.
+
+### The read path is barely used, and that makes the gist the payload
+
+**Measured on `~/Trading/LeibaTrader` — this was the owed read-path baseline.** Of `(session, uuid)`
+pairs surfaced and read before the session's next write **or its end**, the share is **2/467 =
+0.43%** on push before the fetch-before-assert paragraph reached that store
+(2026-09-20T09:40:06Z), **0/77** after, and **3/16** under M32's framing. Pull is **7/161 = 4.35%**.
+A further 170 pairs are excluded where the session went on to amend or retire that record, since D26
+compels the fetch whatever the agent wanted it for. Re-derive with
+`.venv/bin/python experiments/read_path_baseline.py`.
+
+**Three things those rates are not.** Not a compliance rate: push has no relevance floor (below), so
+the ceiling under perfect compliance is far under 100%. Not comparable across arms as they stand —
+**the window is `next write` where a write follows and `session end` where none does**, and the M32
+arm is mostly the second, wider kind, so 3/16 against 0.43% overstates the gap by an unknown amount.
+And **0/77 was never evidence the old instruction failed**: at the pre-cut rate the expected count in
+77 is 0.33.
+
+**The window runs to the session's end, and requiring a write was a deviation from the spec.**
+`design/retrieval.md` §"Push output format" specifies *"before their session's next write — `remember`,
+`amend` or `retire` — **or its end**"*. An earlier version of the script required a write and dropped
+every pair without one, which made a session that read three records and then correctly wrote
+nothing invisible — and biased the population toward sessions that had something worth recording,
+i.e. that had hit a surprise, which is the occasion the write policy names for searching. `merge` is
+also not one of the three kinds; it is the consolidator's.
+
+**Every historical row is bucketed by a timestamp guess, which is what M32's digest ends.** Nothing
+in the log said which preamble a push carried, so the split above dates a *deployment* rather than a
+render, and it cannot see a text change nobody wrote down. `surface_call.detail.preamble_digest` now
+names the framing on every new row, and `research/injected-prose-log.md` maps a digest to its bytes.
+**The pre-digest era spans framings that log does not record**, so no rate before the digest is
+attributable to any one text.
+
+**The designed loop was observed twice, and the shape is the evidence rather than the rate.** One
+session on `~/Trading/LeibaTrader`, 2026-09-25, under M32's framing. A push surfaced five headlines
+and **4 s later** the agent fetched three of them in one call, skipping two; an earlier push in the
+same session surfaced five and it fetched three of those, 56 s later, again one call, again skipping
+two; a third push it ignored entirely. That is push → judge relevance from the headline →
+batch-fetch the subset → skip the rest, which is what the framing asks for and what 0/77 never did.
+**Selectivity, batching and latency are each specific predictions of the text**, which a novelty or
+prompt-selection effect does not explain, where a higher rate would be. Against that: one session,
+one restarted agent, prompts the operator chose, not blind, and the window asymmetry above. Six of
+seven fetches were push-triggered; the seventh was an id the agent held from outside the session
+(Q20).
+
+**A recalled finding was used as a conditions check rather than a veto, which is the product claim.**
+`~/.claude/projects/-home-nathan-Trading-LeibaTrader/1da41d86-*.jsonl`, 22:08 on 2026-09-25 — read
+the transcript, the store records no conclusions. The operator proposed retrying an approach tried
+before. The agent did not answer with the past failure; it named what differs now, and then:
+*"On the COMBINED arm that demotion fired on just 2 of 22 days, because the key was rarely unboosted.
+Here it should bite far more often… but that's a prediction, so the share count and the unboosted-rate
+are the first things to read rather than the P&L."* That is `zikaron_memory_search`'s description
+executed — *"a hit is historical evidence rather than a veto: it tells you what to re-check, not
+which option to drop"* — and it is the behaviour `design/retrieval.md` records the old path failing
+at: answers *"confident, thinner than the record behind them"*. It bears on **Q19**: if reading the
+record defuses the reflexive veto, that question improves without a word of the store changing.
+**Strongest kind of evidence here, among the weakest instances**: one session, not blind, and
+readable only in a harness transcript that decays with `cleanupPeriodDays`.
+
+**A challenge produced a retraction, and the agent then diagnosed the cause and proposed the repair.**
+Same session, 18:28–18:37 on 2026-09-25; the transcript is the only record, since no event stores a
+conclusion. The agent cited three memories **from headlines without fetching**; the operator said
+they sounded like *"grief"* and were possibly not relevant; the agent answered *"Fair, and checkable
+— I quoted both from headlines without fetching them, which is exactly the thing the store's own
+instructions say not to do"*, fetched, and **retracted two of its three citations** — one *"stretched
+to cover something it never measured"*, and a third turning out to argue **for** the operator's
+direction rather than against it. That is Q6's failure caught in the act rather than after, and the
+catch cites the block's own instruction.
+
+**Unprompted, it then named the structural cause**: *"amendment here has been append-only… nothing
+ever gets shorter, so records grow monotonically into archives"* — `13a7549f` at ~1,900 words holding
+three confirmations, a correction of a correction and a scope note — adding *"I made it worse
+today"*, and proposed cutting each record to its instruction. The operator's *"you need to manage
+those memories"* came after that and authorised it; the 12 writes at 18:33–18:37 followed.
+
+**So D11's gap is real but narrower than it looked.** The trigger was a challenge to a claim, not a
+memory failing in use, and nothing in the policy names it. What the episode settles is that
+decomposition works when asked for — three amends plus two new records is Q12's damage run backwards.
+
+**The test for whether prose can fix a behaviour: does the agent not know, or know and not act?**
+Settled 2026-09-25 on the cleanest available evidence — the agent *quoted the instruction it had just
+broken*. Where it does not know, a sentence works and is cheap; where it knows and does not act, four
+copies of the instruction have now failed and the answer is a boundary or a trigger, not wording.
+**Both of M33's prose additions are the first kind** (`design/build-plan.md` §M33), and a third
+candidate is refused as the second: nothing about the corpus reading as *grief* or *word salad*
+belongs in a tool description, because that is 169 records already written and it is consolidation
+work.
+
+**Injected prose is drafted by `memory-reviewer`, not by this agent — operator decision 2026-09-25,
+on a comparison rather than a preference.** At M32 the shipped preamble and this agent's own merge of
+it both kept the hedged, self-explaining register they existed to escape; the reviewer's authored
+replacement was the one that did not. So for any text a model reads — tool descriptions, the block,
+the spawn policy — specify what the sentence must carry and have `memory-reviewer` write it. A draft
+written here is the specification, never the wording to ship.
+
+**Append-only amendment is a distinct defect from Q12's merging, and is not yet a question here.**
+Q12 is about *combining* findings at write time; this is *accretion* at amend time — each session
+appends "A SECOND CONFIRMATION", "CORRECTED 2026-09-24" to the same record until it is an archive
+nobody reads, at which point it is cited rather than read. `030b2787`, `f371d6fd` and `771acc8c` were
+all in that shape. Nothing in the write policy or `amend`'s description says a record may get
+*shorter*, and D16's soft-delete makes splitting feel lossy when it is not.
+
+**A recall report named a tool the events say was not called.** That session reported *"Searched:
+zikaron_memory_search (via the injected headlines, then fetched …)"* and made **zero** `search`
+calls — it read push's block and fetched. The substance was right and the attribution was not, which
+is a limit on Q16: an agent's own account of its recall is not a substitute for the event log, and it
+errs in the direction that flatters the system.
+
+**The consequence is a design one, not a discipline one.** D13 makes the gist a triage device that
+points at a record the agent then reads — but on this evidence the record is almost never read, so
+**the gist is not an abstract of the memory, it is the memory.** That reframes rather than answers.
+**The 64-token gist bound is a *payload* limit, not a triage limit**, so a write lost to it loses the
+whole finding and not merely its label — which is what makes M33's instrumentation of those refusals
+worth its migration. **Q12**'s merge damage is total rather than asymmetric, since push showing gists
+only is nearly the whole read path; and **Q19**'s corpus negativity is not a tone problem in a
+summary but the substance of what the agent receives.
+
+**87% of pushes surface nothing new, which reframes every rate above.** Measured on
+`~/Trading/LeibaTrader`, 2026-09-26: of 4,251 pushes, **3,686 surfaced no uuid that session had not
+already been shown**, mean **0.22** new uuids per push. Two corrections had to land first, both
+operator-identified: a fetch must be attributed to a uuid **that push surfaced** rather than counted
+anywhere in the window, and **47% of naive in-window fetches (36 of 76) were of uuids the session had
+already written** — verification after a store, or an operator-directed correction. With both
+applied the attributed push→fetch rate is **40/4,251 = 0.94%** overall, and **7/565 = 1.2%** counting
+only pushes that carried something new. Re-derive with a variant of
+`experiments/read_path_baseline.py`; the pair-based rates in that script answer a different question
+and are not comparable to these.
+
+**Which makes skimming rational and inverts the salience argument.** If 87% of blocks contain nothing
+the agent lacks, learning to skim them is correct behaviour, not a defect — the channel is
+low-information and the agent has identified it. **An earlier reading of this data as "a step then a
+flat rate, therefore Q1's framing window rather than habituation" is withdrawn**: it counted
+unattributed fetches, and the shape was an artifact of the write-verification cluster. The corrected
+buckets are 7 events over 215 early pushes and cannot separate habituation from Q1 from the absence
+of a relevance floor.
+
+**Rotating preambles was proposed for this and is argued against by it — operator idea, 2026-09-26.**
+Randomly choosing among several semantically identical preambles so the instruction is not tuned out.
+The mechanism is real and the objection is that it raises *salience* where the measured problem is
+*signal*: it spends attention on the 87% of turns with nothing to gain. It also splits M32's arm
+across variants unless the digest names the set and a second field names the variant. Untested
+either way; it would now have to beat a flat baseline rather than reverse a decline.
+
+**Not re-showing is the obvious fix and is unsafe as stated.** Two operator objections, both
+decisive. Attention decays within a context even without compaction, so load-bearing content benefits
+from repetition. And **the store cannot observe compaction**: the session id survives it, so a uuid
+shown at turn 40 may be gone by turn 400 with no event saying so — precisely where suppression would
+fire hardest. Evidence that agents do return late: of 22 counted reads, two came **4.4 and 11 hours**
+after the first surfacing. **What survives both is degrading the re-show rather than suppressing it**
+— full gist on first surfacing, bare id and a short tag after — which keeps the pointer, drops most
+of the cost, and leaves the one judgement we cannot make to the agent, which can see its own context.
+This changes what push emits, so it sits outside M32's fence with `surface_min_score`.
+
+**Habituation is structural, not a prose defect.** Nothing floors push on relevance — the dense arm
+returns top-K on any query, so *"ok, go ahead"* surfaces five gists whenever five rows are live, and
+a block that is mostly noise trains skimming whatever it says. `surface.detail.fused_score` is
+already recorded on every row, so *fetch rate conditional on rank-1 score* is one query, and it is
+where a `surface_min_score` key would sit.
+
+**And the binding mechanism is not prose either.** The only rule in this system with a measured
+grip is D26's read receipt, which binds because `amend` **refuses** without it. No equivalent
+refusal exists at the moment a claim is written into a message, and no tool is called there at all
+— which is what makes this class invisible from inside, and why a `preToolUse` gate cannot reach it.
+
+### The audit loop, and what it established
+
+Thirty rounds plus a parallel batch, run on operator instruction after the M28 commit. **The
+per-round write-ups have been deleted rather than archived**; findings are in `reviews/`, fixes are
+in the tree. What is worth carrying:
+
+- **The software was not the problem.** Thirty rounds produced roughly four behavioural changes to
+  the package. Everything else was prose.
+- **The prose was, and the loop fed it.** Each pass's explanatory commentary supplied the next
+  pass's findings, at roughly one new defect per one-and-a-half fixes. `CLAUDE.md` and
+  `design/coding-standards.md` §5 were changed 2026-09-22 to stop it at the source: the code is the
+  product, and a repair is never annotated.
+- **Coverage claims were overstated.** Round 28 enumerated 1,225 absolute-bearing sentences,
+  checked 249, and was written up as having closed the class. **No round may report a class closed
+  without stating enumerated-vs-checked.** Any "closed" recorded before round 27 is unverified.
+- **A closure decays the moment the surface is edited again**, including by the round that closed
+  it. An enumeration is valid only against the tree it ran on.
+- **A fact the reader could derive is one this corpus has never kept true.** Every count and
+  enumeration restated away from the constant that determines it came back stale; every one deleted
+  outright stayed dead — *"one of ten verbs"* beside the enum that lists them adds nothing a reader
+  needs and is wrong the day an eleventh lands. **This is not a general case for deleting.** Prose
+  with readers is a graph, and removing a claim at one of its sites strands them or replaces it with
+  a pointer that can dangle. The rule is `design/coding-standards.md` §5 — *do not restate a fact
+  the reader can get from the code, a constant, or a test name*, and *state a number, a count or an
+  enumeration in one place only* — applied when the sentence is written, not by a later pass.
+
+**Findings from those audits are in `reviews/`, and the working tree is the authority on which are
+still outstanding.** `git diff HEAD` is how to tell; a list here is a second copy of state that
+moves every time one is applied.

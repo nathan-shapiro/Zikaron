@@ -11,6 +11,13 @@ layer emits into the same log — records, indexing, retrieval and consolidation
 defined here, and putting the enum in whichever layer happened to need it first would make the
 other three import across the domain to reach it. The layers consume these definitions; none of
 them restates a value.
+
+Read from the other side, that same rule is why a closed set here may be **composed from another
+layer's declarations** rather than spelled out: `error_code`'s reachable domain is every
+`ErrorCode.wire_name` plus the build-only names `core/knowledge/errors.py` exports, imported and
+combined here. Composing is not restating — the names still have exactly one declaration each, and
+this module is where they meet because it is the only one both the log's writers and its readers
+already depend on.
 """
 
 from collections.abc import Mapping
@@ -18,6 +25,9 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import ClassVar, Final, Self
+
+from zikaron.core.errors import ErrorCode
+from zikaron.core.knowledge.errors import BUILD_ONLY_WIRE_NAMES
 
 
 class EventKind(StrEnum):
@@ -38,6 +48,13 @@ class EventKind(StrEnum):
     NO_RECEIPT = "no_receipt"
     GROUP_SERVED = "group_served"
     CONSOLIDATE_RUN = "consolidate_run"
+    #: The access log. Every kind above is semantic — *this memory was amended* — where this one
+    #: says only what was asked of the store, including what was asked and refused. Exempt from
+    #: invariant 10: the seam sees a handler only once it has committed, so this row commits after
+    #: it, in its own transaction, and is best-effort.
+    CALL = "call"
+    #: The one kind no client emits: a spawned build has no envelope and mints its own label.
+    KNOWLEDGE_BUILD = "knowledge_build"
 
 
 class Demotion(StrEnum):
@@ -48,30 +65,49 @@ class Demotion(StrEnum):
 
 
 class ClientKind(StrEnum):
-    """Which client made the call, as `event.client_kind` and `read_receipt.client_kind` record it.
+    """Who emitted the event, as `event.client_kind` and `read_receipt.client_kind` record it.
 
-    Deliberately no `service` member: every v0 event is emitted inside a client call, which is also
-    what lets invariant 18 hold. The value is load-bearing on both tables rather than decorative. On
-    `event` it is what makes cross-client session linkage observable — a push comes from `hook`, a
-    write from `mcp` — now that every client of one kiro session shares a `session_id`. On
-    `read_receipt` it is part of the primary key, so a receipt minted by a consolidation serve does
-    not license the primary agent to amend a row it never fetched.
+    Deliberately no `service` member: the service emits every event it writes inside a client call,
+    which is what lets invariant 18 speak of the envelope at all. The value is load-bearing on both
+    tables rather than decorative. On `event` it is what makes cross-client session linkage
+    observable — a push comes from `hook`, a write from `mcp` — now that every client of one kiro
+    session shares a `session_id`. On `read_receipt` it is part of the primary key, so a receipt
+    minted by a consolidation serve does not license the primary agent to amend a row it never
+    fetched.
+
+    **`INDEXER` is the one member no request may carry**, which is why `REQUEST_CLIENT_KINDS` below
+    is a separate set: a build is not a client call and the wire must not let a client file its
+    writes under the kind reserved for one.
 
     **`event.client_kind` states these same values as a `CHECK`, and the two are separate
     artifacts.** A store's schema is written once and then lives on disk, so adding a member here
     does not reach a store that already exists: that is a migration, and
-    `zikaron.core.store.migration` is where one is written. `test_ddl.py` asserts the `CHECK`
-    lists exactly this enum, so a member added without one reddens the gate rather than failing at
-    the first insert.
+    `zikaron.core.store.migration` is where one is written.
+    `test_event_kinds.py::test_client_kinds_match_the_event_table_check_constraint` asserts the
+    `CHECK` lists exactly this enum, so a member added without one reddens the gate rather than
+    failing at the first insert.
     """
 
     HOOK = "hook"
     MCP = "mcp"
     CONSOLIDATOR = "consolidator"
-    #: The `zikaron knowledge` CLI, which speaks to the service like any other client. It records no
-    #: event today — no knowledge method does — and is a member anyway, because the alternative is a
+    #: The `zikaron knowledge` CLI, which speaks to the service like any other client. Its calls
+    #: reach the access log like every other client's; it is a member because the alternative is a
     #: client whose envelope names a kind it is not.
     CLI = "cli"
+    #: A spawned corpus build, which is no client call at all: it opens the store directly, so it
+    #: has no envelope to take a label from and mints its own `session_id` and `op_id` (invariant
+    #: 18). None of the four above is true of it, and filing it under one would corrupt the linkage
+    #: signals that read this column.
+    INDEXER = "indexer"
+
+
+#: The kinds a *request* envelope may carry: every `ClientKind` but `INDEXER`, which names a writer
+#: that reaches the store without one. Declared here beside the enum and read by `parse_envelope`,
+#: so the `CHECK` admits one value more than any client may send — rather than derived from the enum
+#: at the boundary, which would let a client's writes be filed as a build's: excluded from the
+#: drop-rate query, ignored by linkage, and advertised in a `bounds` payload as a value to send.
+REQUEST_CLIENT_KINDS: Final[frozenset[ClientKind]] = frozenset(ClientKind) - {ClientKind.INDEXER}
 
 
 class MergeRole(StrEnum):
@@ -140,6 +176,25 @@ class StopReason(StrEnum):
     DEPTH_REACHED = "depth_reached"
     INDEX_EXHAUSTED = "index_exhausted"
     PROBE_CAP_HIT = "probe_cap_hit"
+
+
+@dataclass(frozen=True, slots=True)
+class EventOrigin:
+    """The three columns every `event` row carries: who emitted it, under what unit of work.
+
+    `session_id` and `client_kind` say who, `op_id` correlates every row one unit of work emits —
+    one RPC call for a client, one build for the indexer. All three are `NOT NULL` on `event`, so a
+    writer that cannot supply them cannot write a row at all: that is why a malformed envelope is
+    mechanically unloggable, and why a spawned build mints a label rather than writing a null one.
+
+    Separate from `CallParams`, which extends it with the policy value a *mutating* call also needs,
+    because the two writers that emit a row outside such a call — the access log at the RPC seam and
+    the indexer's build log — have no business holding one and would have to invent a value for it.
+    """
+
+    session_id: str
+    client_kind: str
+    op_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +283,40 @@ _LEXICAL_DEPTH = DetailField("lexical_depth_reached", nullable=True)
 _LEXICAL_STOP = DetailField(
     "lexical_stop_reason",
     values=(StopReason.DEPTH_REACHED, StopReason.INDEX_EXHAUSTED),
+    nullable=True,
+)
+
+#: The one protocol code a dispatched call can end on. Every other member of
+#: `service.rpc.ProtocolErrorCode` is decided by an exit *ahead* of dispatch, so no `call` row can
+#: hold it. Spelled as a literal because that enum lives in `service/`, which `coding-standards.md`
+#: §1 puts out of `core/`'s reach; a test above both layers holds it equal to
+#: `ProtocolErrorCode.INTERNAL_ERROR.wire_name`, so the two cannot drift.
+INTERNAL_ERROR_WIRE_NAME: Final = "internal_error"
+
+#: What a build records for a failure no layer named — a driver error, an `OSError`. Deliberately
+#: not `INTERNAL_ERROR_WIRE_NAME`: that names a wire code, and a build answers no wire.
+BUILD_FAILED_WIRE_NAME: Final = "build_failed"
+
+#: `duration_ms` is stated in milliseconds on both kinds that carry one, and both are measured with
+#: `time.perf_counter`, which answers in seconds. Declared beside the field rather than at each of
+#: the two writers, so the unit is stated once by whoever owns what the field means.
+MS_PER_SECOND: Final = 1000.0
+
+_CODE_WIRE_NAMES: Final[tuple[str, ...]] = tuple(code.wire_name for code in ErrorCode)
+
+#: `call`'s reachable refusals: every domain code, plus the one protocol code a dispatched handler
+#: can produce. `values` holds strings rather than enum members, which is what lets a set span two
+#: layers' declarations while `log_event`'s membership check stays as strong as every other field's.
+_CALL_ERROR_CODE = DetailField(
+    "error_code", values=(*_CODE_WIRE_NAMES, INTERNAL_ERROR_WIRE_NAME), nullable=True
+)
+
+#: A build's, which overlaps `call`'s rather than containing or being contained by it: the domain
+#: codes are shared, `internal_error` is `call`'s alone, and the build-only names plus
+#: `build_failed` are the build's.
+_BUILD_ERROR_CODE = DetailField(
+    "error_code",
+    values=(*_CODE_WIRE_NAMES, *BUILD_ONLY_WIRE_NAMES, BUILD_FAILED_WIRE_NAME),
     nullable=True,
 )
 
@@ -391,6 +480,31 @@ EVENT_SPECS: Final[Mapping[EventKind, EventSpec]] = MappingProxyType(
                 DetailField("n_groups"),
                 DetailField("n_members"),
                 DetailField("n_deferred"),
+            ),
+        ),
+        EventKind.CALL: EventSpec(
+            names_memory=False,
+            detail_fields=(
+                # `method` declares no set: `core/` cannot import the service's dispatch table, and
+                # the field is closed by construction at its only write site, which runs after the
+                # unknown-method exit has already answered.
+                DetailField("method"),
+                DetailField("ok"),
+                _CALL_ERROR_CODE,
+                DetailField("duration_ms"),
+            ),
+        ),
+        EventKind.KNOWLEDGE_BUILD: EventSpec(
+            names_memory=False,
+            detail_fields=(
+                DetailField("knowledge_base_id"),
+                DetailField("spawned_by_op_id", nullable=True),
+                DetailField("full"),
+                DetailField("rebuilt", nullable=True),
+                DetailField("ok"),
+                _BUILD_ERROR_CODE,
+                DetailField("duration_ms"),
+                DetailField("files_indexed", nullable=True),
             ),
         ),
     }
@@ -758,3 +872,71 @@ class ConsolidateRunDetail(EventDetail):
     n_groups: int
     n_members: int
     n_deferred: int
+
+
+@dataclass(frozen=True, slots=True)
+class CallDetail(EventDetail):
+    """`call` — at most one per dispatched RPC, succeeded or refused.
+
+    `error_code` is `str | None` and never an enum member. `ErrorCode` is an `IntEnum`, so
+    `EventSpec.validate`'s `str(value)` would read `'-32005'` where the contract says `'bounds'`;
+    a member would be refused inside the guarded write and the row dropped, leaving an access log
+    holding no refusal at all. Whoever raises one converts it, in a converter typed over both error
+    enums so `mypy --strict` refuses a bare string at the call site.
+
+    `duration_ms` covers the handler alone and not envelope resolution, which every call pays alike;
+    a float, because an integer reads 0 for the cheapest verbs and makes them indistinguishable from
+    an unmeasured call. It is a population to compare against a control, never a figure to quote on
+    its own.
+
+    **No argument values, ever.** A query and a gist are user prose, and this store is plaintext on
+    disk (`write-policy.md`'s secrets boundary); sizes and counts only.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.CALL
+
+    method: str
+    ok: bool
+    error_code: str | None
+    duration_ms: float
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeBuildDetail(EventDetail):
+    """`knowledge_build` — at most one per corpus build, whatever outcome its own code reaches.
+
+    Keyed by the registry **`id`**, never the name: `knowledge_rename` exists, and a cost history
+    keyed by a renameable field breaks at the rename. Carried as the uuid's string form, which is
+    what `knowledge_bases.id` stores and what a JSON `detail` can hold.
+
+    **The three work fields are each ambiguous unless read as stated here.** `full` is the flag the
+    build was *asked* for; an identity change reindexes the whole corpus at `full=false`, so
+    `rebuilt` is a separate field rather than derivable — a history grouped by `full` alone files
+    those minutes under "incremental". `files_indexed` is the corpus the scan leaves behind and not
+    what this build wrote, so a no-change rescan reports what the full build before it did.
+
+    `rebuilt` and `files_indexed` are null **iff** the build failed: both are read off the result
+    `scan.run` returns only on completion, so a build refused before the scan and one that died
+    inside it alike have no corpus to count and no settled answer to whether it rebuilt. `0` means a
+    completed scan indexed nothing, which is why neither defaults.
+
+    `duration_ms` spans the whole build **including the model load**, because that is the elapsed
+    cost somebody paid and the load is not constant across a cold and a warm cache.
+
+    `spawned_by_op_id` is the `op_id` of the verb that spawned this build, null when none was set —
+    which a re-run of a printed `foreground_command` never has, since the token travels in the
+    environment rather than the argv. Without the edge nothing joins a build's cost to its
+    requester, since the build mints a label of its own and only the spawning `call` row knows
+    whether an agent or a person asked.
+    """
+
+    kind: ClassVar[EventKind] = EventKind.KNOWLEDGE_BUILD
+
+    knowledge_base_id: str
+    spawned_by_op_id: str | None
+    full: bool
+    rebuilt: bool | None
+    ok: bool
+    error_code: str | None
+    duration_ms: float
+    files_indexed: int | None
