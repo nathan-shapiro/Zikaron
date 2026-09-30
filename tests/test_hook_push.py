@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from zikaron.core.errors import ErrorCode
+from zikaron.core.store import ddl
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
 from zikaron.hook import connect, push, tripwire
 from zikaron.service import paths
@@ -26,10 +28,18 @@ class _FakeSurfaceService:
     exercise `push.run`'s actual socket path end to end without a real `zikaron-service`."""
 
     def __init__(
-        self, sock_path: Path, *, store_db_path: Path, respond_with: dict[str, object]
+        self,
+        sock_path: Path,
+        *,
+        store_db_path: Path,
+        respond_with: dict[str, object],
+        never_answers: str | None = None,
     ) -> None:
         self._store_db_path = store_db_path
         self._respond_with = respond_with
+        #: A method this server reads and then never answers — a live loop behind a handler that
+        #: hangs, for `memory_surface`; a listener that accepts and never answers, for `health`.
+        self._never_answers = never_answers
         #: Every request this server parsed, in arrival order. Retained rather than discarded so a
         #: test can assert what the *client* actually sent — the envelope in particular, which is
         #: otherwise invisible to every assertion here and so could carry the wrong session label
@@ -74,6 +84,9 @@ class _FakeSurfaceService:
     def _answer(self, connection: socket.socket, request: dict[str, object]) -> None:
         self.requests.append(request)
         method = request.get("method")
+        if method == self._never_answers:
+            self._stop.wait()
+            return
         response: dict[str, object]
         if method == "health":
             response = {
@@ -98,7 +111,7 @@ class _FakeSurfaceService:
 @pytest.fixture
 def fake_service(
     tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> Callable[[dict[str, object]], _FakeSurfaceService]:
+) -> Callable[..., _FakeSurfaceService]:
     """A fake service bound at exactly the socket path `push.run` will itself resolve for
     `scope_dir=tmp_path`, so `push.run` connects to it as though it were the real thing — patches
     `connect.resolve_sock_path` rather than the environment, since the real derivation involves a
@@ -108,9 +121,14 @@ def fake_service(
     store_dir.mkdir()
     store_db_path = store_dir / "memory.db"
 
-    def _make(respond_with: dict[str, object]) -> _FakeSurfaceService:
+    def _make(
+        respond_with: dict[str, object], never_answers: str | None = None
+    ) -> _FakeSurfaceService:
         service = _FakeSurfaceService(
-            sock_path, store_db_path=store_db_path, respond_with=respond_with
+            sock_path,
+            store_db_path=store_db_path,
+            respond_with=respond_with,
+            never_answers=never_answers,
         )
         monkeypatch.setattr(connect, "resolve_sock_path", lambda _store_dir: sock_path)
         return service
@@ -535,3 +553,116 @@ def test_the_internal_deadline_expiring_after_a_slow_connect_degrades_without_ev
         assert "deadline_exceeded" in hook_log
     finally:
         service.close()
+
+
+def test_the_hook_sends_the_deadline_it_enforces_as_a_wall_clock_instant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+) -> None:
+    """Computed from the same instant the hook's own deadline starts at, so the two cannot drift:
+    asserted as the value sent for a known clock, not as a claim that two readings agree."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    service = fake_service({"result": {"text": ""}})
+    try:
+        monkeypatch.setattr(time, "time", lambda: 1_800_000_000.25)
+        push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        (sent,) = [one for one in service.requests if one.get("method") == "memory_surface"]
+        params = sent["params"]
+        assert isinstance(params, dict)
+        assert params["deadline_at_ms"] == int((1_800_000_000.25 + push._DEADLINE_SECONDS) * 1000)
+    finally:
+        service.close()
+
+
+def test_a_push_sent_and_never_answered_is_logged_unanswered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+) -> None:
+    """The service received it and could not answer in time — a handler that hangs behind a live
+    loop — which is a different fact from a service nobody could reach, and gets its own word."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 0.5)
+    service = fake_service({"result": {"text": ""}}, never_answers="memory_surface")
+    try:
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output is not None
+        hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
+        assert "unanswered" in hook_log
+        assert "transport" not in hook_log
+    finally:
+        service.close()
+
+
+def test_a_listener_that_never_answers_health_is_still_a_transport_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+) -> None:
+    """A timeout inside `connect_once` is a blocked event loop's signature — the socket accepts and
+    nothing answers — and the push was never sent, so it is not `unanswered`. That word is scoped to
+    the `surface` call alone."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    service = fake_service({"result": {"text": ""}}, never_answers="health")
+    try:
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output is not None
+        hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
+        assert "transport" in hook_log
+        assert "unanswered" not in hook_log
+    finally:
+        service.close()
+
+
+def test_a_deadline_passed_answer_is_logged_with_its_code_and_relayed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+) -> None:
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    service = fake_service(
+        {
+            "error": {
+                "code": -32026,
+                "message": "the caller's deadline passed",
+                "data": {"verb": "memory_surface"},
+            }
+        }
+    )
+    try:
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output is not None
+        assert "operator" in output
+        hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
+        assert "deadline_passed" in hook_log
+        assert "-32026" in hook_log
+    finally:
+        service.close()
+
+
+def test_every_rejection_kind_is_its_codes_own_wire_name() -> None:
+    """The hook is stdlib-only and repeats the codes as literals, so a misspelled entry would log a
+    kind no query matches, and an omitted one `rejected_-32026`, with every other test green.
+
+    The codes a `memory_surface` can be answered with, other than the protocol's own: contention,
+    the three store-level open failures, and lateness. An identity mismatch is caught earlier, in
+    `connect_once`, and never reaches this map.
+    """
+    assert {code: ErrorCode(code).wire_name for code in push._REJECTION_KINDS} == (
+        push._REJECTION_KINDS
+    )
+    assert set(push._REJECTION_KINDS) == {
+        ErrorCode.STORE_BUSY,
+        ErrorCode.REINDEXING,
+        ErrorCode.BAD_CONFIG,
+        ErrorCode.SCHEMA_INCOMPATIBLE,
+        ErrorCode.DEADLINE_PASSED,
+    }
+
+
+def test_the_hooks_own_deadline_is_always_a_valid_deadline_at_ms() -> None:
+    """`deadline_at_ms` more than the budget ahead is `bounds`. Raising the hook's deadline, or
+    lowering the budget, would otherwise make the service refuse every push while every other test
+    stayed green."""
+    assert push._DEADLINE_SECONDS * 1000 <= ddl.BUSY_TIMEOUT_MS

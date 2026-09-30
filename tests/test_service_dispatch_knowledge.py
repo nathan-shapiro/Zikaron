@@ -212,11 +212,9 @@ async def test_a_locked_store_becomes_store_busy_rather_than_store_unavailable(
     """Contention is the one answer here a caller can act on, so it does not collapse into the rest.
 
     Wrapped on every knowledge verb, though they reach it differently: one that writes the registry
-    meets `SQLITE_BUSY_SNAPSHOT` at once, because `registry.ensure_table` opens the transaction with
-    a presence read and so holds a WAL snapshot before asking for the lock, while a read-only verb
-    reaches contention on the call that creates the table or through its own corpus database. Told
-    `store_unavailable` — which the design states as non-retryable — a caller would not retry a lock
-    it could have waited for.
+    meets it as a `BEGIN IMMEDIATE` that waited out its budget, and a read through its own corpus
+    database. Told `store_unavailable` — which the design states as non-retryable — a caller would
+    not retry a lock it could have waited for.
 
     `verb` carries the **wire** method name here rather than the bare operation every other raise
     site passes, because `search` and `list` collide with the memory store's; `architecture.md`'s
@@ -265,8 +263,8 @@ def test_every_method_in_the_table_is_wrapped() -> None:
     assert set(bare) == set(dispatch_knowledge.KNOWLEDGE_METHODS)
     unwrapped = [
         name
-        for name, handler in dispatch_knowledge.KNOWLEDGE_METHODS.items()
-        if handler is bare[name]
+        for name, method in dispatch_knowledge.KNOWLEDGE_METHODS.items()
+        if method.handler is bare[name]
     ]
     assert unwrapped == []
 
@@ -285,7 +283,7 @@ async def test_a_store_that_cannot_be_written_reaches_the_caller_as_store_unavai
         root = write_tree(tmp_path / "docs", {"a.md": b"x\n"})
         await ctx.store.connection.execute("PRAGMA query_only = ON")
         with pytest.raises(ZikaronError) as excinfo:
-            await dispatch_knowledge.KNOWLEDGE_METHODS["knowledge_add"](
+            await dispatch_knowledge.KNOWLEDGE_METHODS["knowledge_add"].handler(
                 ctx.store.connection,
                 ctx,
                 envelope(),

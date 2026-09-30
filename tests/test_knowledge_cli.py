@@ -153,7 +153,7 @@ class _InProcessClient(client.KnowledgeClient):
     async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         async with context_over(self.project / ".zikaron", self.project) as ctx:
             try:
-                result = await dispatch_knowledge.KNOWLEDGE_METHODS[method](
+                result = await dispatch_knowledge.KNOWLEDGE_METHODS[method].handler(
                     ctx.store.connection, ctx, envelope(kind="cli"), params
                 )
             except ZikaronError as error:

@@ -264,7 +264,6 @@ async def rename(
     """
 
     async def _work(connection: aiosqlite.Connection) -> KnowledgeBase:
-        await registry.ensure_table(connection)
         return await registry.rename(connection, name=name, new_name=new_name)
 
     renamed = await in_one_transaction(db, _work, failure=propagate)
@@ -272,13 +271,14 @@ async def rename(
     return observed.status
 
 
-async def refresh(
+async def refresh(  # noqa: PLR0913 — `on_completion` is the recorder's, not a build setting.
     store_dir: Path,
     db: aiosqlite.Connection,
     config: EffectiveConfig,
     *,
     name: str,
     build: BuildSettings,
+    on_completion: scan.Completion | None = None,
 ) -> Refreshed:
     """Build one corpus's index, and report what the build did and where it left the corpus.
 
@@ -297,6 +297,7 @@ async def refresh(
             reindex everything rather than only what changed. Supplied by the caller rather than
             loaded here, because loading a model is the expensive part of starting a build and a
             caller building several corpora loads it once.
+        on_completion: told how the scan ended while it still holds the corpus's lock (`scan.run`).
 
     Raises:
         InvalidNameError: `name` is empty or blank.
@@ -311,7 +312,7 @@ async def refresh(
     """
     registered = await builds.prepare(store_dir, db, config, name=name)
     async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
-        result = await scan.run(opened, build)
+        result = await scan.run(opened, build, on_completion=on_completion)
     observed = await reporting.observe(store_dir, registered, config)
     return Refreshed(knowledge_base=registered, result=result, status=observed.status)
 
@@ -337,8 +338,7 @@ async def unlock(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> loc
         IndexerBusyError: a process on this host answers to the recorded pid — which is not proof
             it is the indexer, and `lock.force_release` says so and names the manual exit.
     """
-    await registry.ensure(db)
-    registered = await registry.require(db, name)
+    registered = await registry.lookup(db, name)
     async with _open_registered(store_dir, registered) as opened:
 
         async def _work(connection: aiosqlite.Connection) -> lock.LockHolder | None:
@@ -379,8 +379,7 @@ async def remove(
         UnknownKnowledgeBaseError: nothing is registered under `name`.
         IndexerBusyError: a build that cannot be shown to be dead holds this corpus's lock.
     """
-    await registry.ensure(db)
-    registered = await registry.require(db, name)
+    registered = await registry.lookup(db, name)
     observed = await reporting.observe(store_dir, registered, config)
     if observed.blocker is not None:
         raise IndexerBusyError(

@@ -37,20 +37,25 @@ since it speaks for the service rather than for either store, and it carries no 
 
 import os
 from dataclasses import dataclass
+from typing import Final
 
 import aiosqlite
 
+from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import Rewrite
 from zikaron.core.retrieval.reads import ReadCall
 from zikaron.core.retrieval.reads import search as core_search
 from zikaron.core.retrieval.reads import surface as core_surface
+from zikaron.core.store import ddl
+from zikaron.core.store.deadline import Deadline, now_ms
+from zikaron.core.store.pool import lease_deadline
 from zikaron.core.write import tools as write_tools
 from zikaron.core.write.tools import Conflict, WriteCall
 from zikaron.service.context import ServiceContext
 from zikaron.service.envelope import ResolvedEnvelope
+from zikaron.service.methods import Access, Method
 from zikaron.service.params import (
-    Handler,
     call_params,
     optional_str,
     require_bool,
@@ -130,12 +135,54 @@ def _write_call(ctx: ServiceContext, envelope: ResolvedEnvelope) -> WriteCall:
     )
 
 
-def _read_call(ctx: ServiceContext, envelope: ResolvedEnvelope) -> ReadCall:
+def _read_call(
+    db: aiosqlite.Connection, ctx: ServiceContext, envelope: ResolvedEnvelope
+) -> ReadCall:
     return ReadCall(
         ctx=call_params(envelope, max_depth=ctx.supersession_max_depth),
         settings=ctx.retrieval,
         encoder=ctx.encoder,
+        deadline=lease_deadline(db),
     )
+
+
+#: How far ahead of a push's own deadline the service stops trying to answer it. It covers the path
+#: from the check before `COMMIT` to the hook's `recv` returning — the `COMMIT` and its WAL `fsync`,
+#: the worker-to-loop handoff, the `call` row attempt, encoding, the socket and the hook's wake —
+#: because a commit that lands inside the deadline and whose answer arrives after it is a push
+#: recorded as shown that nobody saw. Set above the largest such path
+#: `experiments/m35_commit_path_margin.py` measured under the host's working load, rather than at a
+#: percentile of it; `research/m35-implementation-evidence.md` has the distribution.
+DEADLINE_MARGIN_MS: Final = 20
+
+
+def surface_deadline(params: dict[str, object]) -> Deadline:
+    """`memory_surface`'s wait budget: its caller's `deadline_at_ms` less the margin, if sent.
+
+    `deadline_at_ms` is the caller's own deadline as an absolute wall-clock instant in milliseconds
+    since the epoch, so a request read late by a busy loop is not given a fresh budget. Validated
+    whole here, before any connection is obtained, because it bounds that wait. A deadline already
+    past is not malformed; the request answers `deadline_passed`.
+
+    Raises:
+        ZikaronError: `BOUNDS` if `deadline_at_ms` is not an integer, or is more than
+            `ddl.BUSY_TIMEOUT_MS` ahead.
+    """
+    value = params.get("deadline_at_ms")
+    if value is None:
+        return Deadline.budget()
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ZikaronError(
+            ErrorCode.BOUNDS, field="deadline_at_ms", limit="an integer or absent", actual=value
+        )
+    if value - now_ms() > ddl.BUSY_TIMEOUT_MS:
+        raise ZikaronError(
+            ErrorCode.BOUNDS,
+            field="deadline_at_ms",
+            limit=f"no more than {ddl.BUSY_TIMEOUT_MS} ms from now",
+            actual=value,
+        )
+    return Deadline.from_caller(value, margin_ms=DEADLINE_MARGIN_MS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +301,7 @@ async def search(
     hits = await core_search(
         db,
         text=require_str(params, "query"),
-        call=_read_call(ctx, envelope),
+        call=_read_call(db, ctx, envelope),
         limit=require_int(params, "limit", default=5),
         include_retired=require_bool(params, "include_retired", default=False),
     )
@@ -277,11 +324,14 @@ async def surface(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> SurfaceResult:
-    """`memory_surface(prompt, limit?) -> {text}` — the push path's ready-to-print block."""
+    """`memory_surface(prompt, limit?, deadline_at_ms?) -> {text}` — the push path's block.
+
+    `deadline_at_ms` is read by the dispatcher, through `surface_deadline`, before this runs.
+    """
     text = await core_surface(
         db,
         prompt=require_str(params, "prompt"),
-        call=_read_call(ctx, envelope),
+        call=_read_call(db, ctx, envelope),
         limit=require_int(params, "limit", default=5),
     )
     return SurfaceResult(text=text)
@@ -323,11 +373,11 @@ async def fetch(
 #: contributes the other five and `dispatch_knowledge.py` the knowledge ones; `server.py`
 #: merges all **three** tables and adds `health` separately, since
 #: `health` takes no envelope and so does not fit this table's own shape.
-PRIMARY_METHODS: dict[str, Handler] = {
-    "memory_remember": remember,
-    "memory_amend": amend,
-    "memory_retire": retire,
-    "memory_search": search,
-    "memory_surface": surface,
-    "memory_fetch": fetch,
+PRIMARY_METHODS: dict[str, Method] = {
+    "memory_remember": Method(remember, Access.WRITE),
+    "memory_amend": Method(amend, Access.WRITE),
+    "memory_retire": Method(retire, Access.WRITE),
+    "memory_search": Method(search, Access.READ),
+    "memory_surface": Method(surface, Access.READ, deadline=surface_deadline),
+    "memory_fetch": Method(fetch, Access.WRITE),
 }

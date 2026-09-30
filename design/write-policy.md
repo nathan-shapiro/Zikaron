@@ -520,13 +520,16 @@ callers that have not been written.
 same direction:
 
 1. Sessions are counted from a `surface_call` event, which exists even when a push returns nothing — but a
-   session whose every push failed emits no `surface_call` event at all, because the hook never reaches the
-   service on a failure and therefore never emits the event the service would have written. This holds
-   uniformly across every failure kind — transport, `bad_config`, `reindexing`, contention, identity — because
-   the hook's response to all of them is now identical: one line to its own `hook.log` plus a model-facing
-   relay on stdout, never a read (`architecture.md` §"Degraded modes"). So the rate is conditional on the
-   service having been reachable **and healthy**. Making the hook write would mean handing it a writable
-   store handle, which is a worse trade than a stated caveat.
+   session whose every push failed emits no `surface_call` event at all, because the event commits only with
+   a block the service answered. A transport or identity failure never reaches the service; on `bad_config`,
+   `reindexing` or contention it refuses before anything commits; and on `deadline_passed` it rolls back
+   deliberately, because a `surface` row means *this session was shown this memory* and a push answered past
+   the hook's own deadline was shown to nobody (`architecture.md` §"A push the agent never saw is never
+   recorded as shown"). The hook's response to all of them is identical: one line to its own `hook.log` plus
+   a model-facing relay on stdout, never a read (`architecture.md` §"Degraded modes"). So the rate is
+   conditional on the service having been reachable, **healthy, and answering within the hook's
+   deadline**. Making the hook write would mean handing it a writable store handle, which is a worse trade
+   than a stated caveat.
 2. Pushes come from `zikaron-hook` and writes come from `zikaron-mcp`, so **two of these six signals are
    cross-process joins** and only work when both clients resolved the same session label. Since 2026-08-01 they
    do so *by construction under kiro* — both read the same `KIRO_SESSION_ID` out of their own environment

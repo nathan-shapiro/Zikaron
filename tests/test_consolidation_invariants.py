@@ -19,7 +19,12 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from tests.consolidation_fixtures import CONSOLIDATOR_PID, consolidator, detail_of
+from tests.consolidation_fixtures import (
+    CONSOLIDATOR_PID,
+    Consolidator,
+    consolidator,
+    detail_of,
+)
 from zikaron.core.consolidation import groups, planning, rowstate, serving, verbs
 from zikaron.core.consolidation.groups import Disposition, GroupStatus
 from zikaron.core.consolidation.payload import (
@@ -56,8 +61,10 @@ class _Admits:
     target: bool
 
 
-async def _serve(c: object, *, op_id: str = "op1") -> ServedGroup:
-    served = await serving.next_group(c.harness.store.connection, call=c.call(op_id=op_id))  # type: ignore[attr-defined]
+async def _serve(c: Consolidator, *, op_id: str = "op1") -> ServedGroup:
+    served = await serving.next_group(
+        c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id=op_id)
+    )
     assert isinstance(served, ServedGroup)
     return served
 
@@ -190,7 +197,11 @@ async def test_invariant_15_one_effectively_active_run_per_store(tmp_path: Path)
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         for index in range(3):
-            await planning.plan_groups(c.harness.store.connection, call=c.call(op_id=f"p{index}"))
+            await planning.plan_groups(
+                c.harness.store.connection,
+                pool=c.harness.store.pool,
+                call=c.call(op_id=f"p{index}"),
+            )
             active = [status for _, _, _, status in await c.runs() if status is RunStatus.ACTIVE]
             assert len(active) == 1
 
@@ -238,10 +249,14 @@ async def test_invariant_16_no_committed_group_is_open_with_zero_undispositioned
     async with consolidator(tmp_path) as c:
         first = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.harness.retire(first)
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2")),
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+            ),
             ServedGroup,
         )
         rows = await c.harness.store.connection.execute_fetchall(
@@ -270,7 +285,10 @@ async def test_invariant_17_every_group_transition_the_table_names_is_reachable(
         second = await _serve(c, op_id="s2")
         assert second.serve_count == 2
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id="s3")), RunDone
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s3")
+            ),
+            RunDone,
         )
         assert (await c.groups())[0][5] is GroupStatus.DEFERRED
 
@@ -278,11 +296,16 @@ async def test_invariant_17_every_group_transition_the_table_names_is_reachable(
     async with consolidator(tmp_path / "second") as c:
         # pending -> complete: never delivered, serve_count stays 0, no group_served event.
         alone = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.harness.retire(alone)
         await c.clear_events()
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2")), RunDone
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+            ),
+            RunDone,
         )
         group = (await c.groups())[0]
         assert (group[5], group[6]) == (GroupStatus.COMPLETE, 0)
@@ -304,15 +327,25 @@ async def test_invariant_17_every_run_transition_the_table_names_is_reachable(
     stranger = CONSOLIDATOR_PID + 1
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        abandoned = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="p1"))
-        expired = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="p2"))
+        abandoned = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="p1")
+        )
+        expired = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="p2")
+        )
         await c.lapse_lease(expired.run_id)
-        stolen = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="p3"))
+        stolen = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="p3")
+        )
         completed = await planning.plan_groups(
-            c.harness.store.connection, call=c.call(op_id="p4", pid=stranger)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="p4", pid=stranger),
         )
         served = await serving.next_group(
-            c.harness.store.connection, call=c.call(op_id="s1", pid=stranger)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="s1", pid=stranger),
         )
         assert isinstance(served, ServedGroup)
         await verbs.discard(

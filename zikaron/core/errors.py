@@ -60,6 +60,7 @@ class ErrorCode(IntEnum):
     BAD_CONFIG = -32023
     SCHEMA_INCOMPATIBLE = -32024
     STORE_UNAVAILABLE = -32025
+    DEADLINE_PASSED = -32026
     STORE_IDENTITY = -32030
     KNOWLEDGE_BASE_UNKNOWN = -32040
     KNOWLEDGE_BASE_EXISTS = -32041
@@ -260,7 +261,7 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             (PayloadField("group_id"), PayloadField("serve_count")),
         ),
         ErrorCode.STORE_BUSY: ErrorSpec(
-            # Not "past the busy timeout": an exhausted `busy_timeout` is the common case, but a WAL
+            # Not "past the busy timeout": an exhausted wait budget is the common case, but a WAL
             # reader whose snapshot goes stale before it writes is refused immediately without the
             # busy handler running at all, and both are the same retryable answer to the caller.
             "the store was locked; the call did not proceed and may be retried",
@@ -301,6 +302,12 @@ ERROR_SPECS: Final[Mapping[ErrorCode, ErrorSpec]] = MappingProxyType(
             # on what terms.
             (PayloadField("operation"), PayloadField("cause")),
             disposition=Disposition.FAILED,
+        ),
+        ErrorCode.DEADLINE_PASSED: ErrorSpec(
+            # Refused rather than failed: the store is fine, and the request was declined on its
+            # own terms. Terminal for this request, since the caller that set the deadline has gone.
+            "the caller's deadline passed; the call did not proceed and nothing was recorded",
+            (PayloadField("verb"),),
         ),
         ErrorCode.STORE_IDENTITY: ErrorSpec(
             "that service belongs to a different store",

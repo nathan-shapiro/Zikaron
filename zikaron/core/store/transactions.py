@@ -1,4 +1,4 @@
-"""How a transaction ends, in one place, for every layer that opens one.
+"""How a transaction begins and ends, in one place, for every layer that opens one.
 
 `schema.md` invariant 2 makes "exactly one SQLite transaction" a property of every logical
 mutation, and `retrieval.md` makes it a property of a read too, because a probe and the
@@ -13,6 +13,13 @@ This sits in `store/` because everything here is a property of SQLite rather tha
 indexing or retrieval: which result codes mean *locked*, and what has to be true of a connection
 when a caller lets go of it.
 
+**It is also the only `BEGIN` a service connection sees** (`architecture.md` §"The service's
+connections"), and a test holds every other module to that: it takes the connection's lock for the
+transaction's span, opens `IMMEDIATE` or deferred by the connection's holder, and bounds the wait
+for both the connection's lock and SQLite's write lock by one deadline — the second by polling
+`BEGIN IMMEDIATE` itself on a serving connection, since SQLite's own wait overruns its timeout on
+some builds.
+
 **What varies between callers is only how a driver-level failure is named**, so that is the one
 parameter: a function from the driver's exception to the wire error it should become, or to `None`
 for a failure that has no Zikaron code and should propagate as itself. `architecture.md` §Errors
@@ -21,6 +28,7 @@ while a read names contention and propagates the rest, since `index_failed`'s co
 index maintenance and a rolled-back write.
 """
 
+import asyncio
 import contextlib
 import sqlite3
 from collections.abc import Awaitable, Callable
@@ -29,6 +37,8 @@ from typing import Final, NoReturn
 import aiosqlite
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.store.deadline import Deadline
+from zikaron.core.store.holders import holder_of
 
 #: One caller's work inside an already-open transaction.
 type Work[T] = Callable[[aiosqlite.Connection], Awaitable[T]]
@@ -144,13 +154,52 @@ async def finalize(
         try:
             await db.rollback()
         except aiosqlite.Error:
+            # Marked before the close, which is suppressed: a later statement on a closed handle
+            # raises `ValueError`, which no failure map reads, so the mark is what the next
+            # transaction on this handle is refused by.
+            holder_of(db).closed = True
             with contextlib.suppress(Exception):
                 await db.close()
         _raise_mapped(caught, failure)
 
 
+#: The first pause between two refused `BEGIN IMMEDIATE`s, and the longest: doubling from one to
+#: the other, near SQLite's own schedule, so a lock freed mid-pause is taken at most this late.
+_FIRST_POLL_SECONDS: Final = 0.001
+_LONGEST_POLL_SECONDS: Final = 0.025
+
+
+async def _begin_immediate_by_polling(db: aiosqlite.Connection, deadline: Deadline) -> None:
+    """`BEGIN IMMEDIATE`, retried while another connection holds the write lock, until `deadline`.
+
+    On a handle at `busy_timeout = 0` each attempt is refused at once, so the whole wait is here and
+    ends at `deadline` to within one attempt, whatever the platform's own sleep does. A refusal that
+    is not contention propagates at once.
+
+    Raises:
+        aiosqlite.Error: the last attempt's refusal, once `deadline` is reached, or any refusal
+            that is not contention.
+    """
+    pause = _FIRST_POLL_SECONDS
+    while True:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+        except aiosqlite.Error as refused:
+            if not is_contention(refused) or deadline.passed():
+                raise
+        else:
+            return
+        await asyncio.sleep(min(pause, deadline.remaining()))
+        pause = min(pause * 2, _LONGEST_POLL_SECONDS)
+
+
 async def in_one_transaction[T](
-    db: aiosqlite.Connection, work: Work[T], *, failure: FailureMap
+    db: aiosqlite.Connection,
+    work: Work[T],
+    *,
+    failure: FailureMap,
+    immediate: bool | None = None,
+    deadline: Deadline | None = None,
 ) -> T:
     """Run `work` inside one transaction, then commit or roll back per invariant 10.
 
@@ -162,20 +211,42 @@ async def in_one_transaction[T](
 
     A `ZikaronError` raised by `work` passes through untouched, so a rejection keeps its own code —
     and, for invariant 10's two carve-out codes, its committed audit trail.
+
+    **The transaction holds its connection's lock for its whole span** (`holders`), so no two
+    transactions nest on one handle whoever issues them. `immediate` absent takes the handle's own
+    mode. `deadline` absent is the service's budget from now, and it is **one** budget for the lock
+    wait and SQLite's together: on a handle that `polls_for_lock`, an `IMMEDIATE` transaction's
+    `BEGIN` is retried until the write lock is free or the deadline is reached, so a writer queued
+    behind another writer cannot wait the budget twice.
+
+    Raises:
+        TransactionRefused: before any statement ran — the lock wait reached `deadline`
+            (`LockWaitExpired`), or the handle is closed (`WriterClosedError`).
+        NestedTransactionError: the calling task already holds this handle's lock.
     """
+    holder = holder_of(db)
+    wait = Deadline.budget() if deadline is None else deadline
+    await holder.acquire(wait)
     try:
-        await db.execute("BEGIN")
-    except aiosqlite.Error as caught:
-        _raise_mapped(caught, failure)
-    error: BaseException | None = None
-    try:
-        result = await work(db)
-    except aiosqlite.Error as caught:
-        error = caught
-        _raise_mapped(caught, failure)
-    except BaseException as caught:
-        error = caught
-        raise
+        opens_immediate = holder.immediate if immediate is None else immediate
+        try:
+            if opens_immediate and holder.polls_for_lock:
+                await _begin_immediate_by_polling(db, wait)
+            else:
+                await db.execute("BEGIN IMMEDIATE" if opens_immediate else "BEGIN")
+        except aiosqlite.Error as caught:
+            _raise_mapped(caught, failure)
+        error: BaseException | None = None
+        try:
+            result = await work(db)
+        except aiosqlite.Error as caught:
+            error = caught
+            _raise_mapped(caught, failure)
+        except BaseException as caught:
+            error = caught
+            raise
+        finally:
+            await finalize(db, error, failure=failure)
     finally:
-        await finalize(db, error, failure=failure)
+        holder.release()
     return result

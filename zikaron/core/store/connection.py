@@ -125,6 +125,11 @@ async def open_connection(
     reproduced self-inflicted deadlock rather than a style concern. `aiosqlite` closes that
     structurally by running the connection on its own thread.
 
+    **Opened in autocommit** (`isolation_level=None`): every transaction is an explicit `BEGIN`,
+    issued by the transaction primitive. Under `sqlite3`'s legacy default, a DML statement run with
+    no transaction open would open one implicitly that nothing commits, and the next `BEGIN` on that
+    connection would then fail as nested — on the service's writer, for every later request.
+
     A failure loading the extension or applying a pragma closes the connection before
     propagating: `aiosqlite.connect` succeeding is not this function succeeding, and a caller
     that only wraps its *own* work in `try`/`except` would otherwise be handed nothing to close
@@ -174,9 +179,11 @@ async def open_connection(
         OSError: `db_path` could not be `stat`ed once the connection was established.
     """
     if existing_only:
-        connector = aiosqlite.connect(f"file:{quote(str(db_path))}?mode=rw", uri=True)
+        connector = aiosqlite.connect(
+            f"file:{quote(str(db_path))}?mode=rw", uri=True, isolation_level=None
+        )
     else:
-        connector = aiosqlite.connect(db_path)
+        connector = aiosqlite.connect(db_path, isolation_level=None)
     try:
         db = await connector
     except aiosqlite.Error as error:

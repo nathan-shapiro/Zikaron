@@ -207,7 +207,7 @@ gain.
   function of the prose, the tokenizer and two config values, and the one error it raises is `bounds`, which
   is rung 1 of both validation ladders and so precedes existence, version and receipt anyway. Embedding is
   outside for a different reason: a cold fastembed call is ~780 ms (D22), and holding SQLite's single write
-  lock across it would make every concurrent writer's `busy_timeout` a function of model-load time. Nothing
+  lock across it would make every concurrent writer's wait for the lock a function of model-load time. Nothing
   is staged before `BEGIN`, so a failure before it loses nothing.
 - **`memory_fts` is resynced with the explicit `'delete'` command carrying the *pre-write* values, not with
   `DELETE FROM memory_fts WHERE rowid = ?`.** Both forms work in isolation; only one composes with the

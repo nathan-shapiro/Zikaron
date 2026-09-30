@@ -4538,6 +4538,936 @@ arm accumulates against its digest. **Not** a change to promote-in-place's mecha
 its description tells the caller. **Not** the embedder:
 `granite-embedding-30m-english` is evaluated separately (operator decision 2026-09-29).
 
+## M35 — One connection shared by every request, a plan that holds the writer, and a wedge nobody can see into
+
+Normative after this milestone:
+- `design/architecture.md`:
+  - §"Lifecycle": the service's connections, and what a signal writes. §"Idle self-stop"'s sentence
+    naming the signals left at their default disposition changes.
+  - The list of clean-stop reasons (`reason=idle`, `reason=store_replaced`, `reason=encoder_failed`),
+    under §"Validation: unknown keys per file, ranges on the effective config", gains
+    `reason=sigterm` and `reason=sigint` (item 4).
+  - §"Consolidation lifecycle": planning, including the row ceiling `_PLANNING_TIMEOUT_SECONDS`
+    implies.
+  - §"Errors": `store_busy`, and the new `deadline_passed` row (item 7).
+  - §"Validation precedence — fixed, because the order is observable": `memory_surface`'s
+    `deadline_at_ms` is validated whole by the dispatcher, before the lease and ahead of the rest of
+    the parameter rung (item 7).
+  - §"Service RPC surface": `memory_surface`'s optional `deadline_at_ms` (item 7).
+  - §"Degraded modes — the hook must never block a user message, and it never reads the store
+    itself": the hook sends `deadline_at_ms`, and its list of failure kinds gains `deadline_passed`
+    (the service's refusal) and `unanswered` (a push sent and not answered by the deadline).
+    `deadline_exceeded`, which the section today names only as *"the internal deadline"*, is spelled
+    out as the pre-send case (item 7).
+- `design/retrieval.md` §"One read is one transaction, and the instrumentation is inside it": it
+  gains the one server-side retry of item 2 and its `IMMEDIATE` mode, the read's single wait budget
+  with `surface`'s taken from its caller's deadline (item 7), and the connection a read runs on. Its
+  cost bullet names the committed case "by another process" only; it now names the held lock too,
+  and the in-process writer.
+- `design/schema.md` §"Additive tables and the version gate" and §"`call` is an access log, and every
+  other kind is a semantic one", and `design/knowledge-index.md` §"3.1a The registry lives in
+  `memory.db`": when the registry table is created (item 2). The access-log section's bullet on its
+  own connection changes too. Its stated reason — a toggle on the shared connection would leak to
+  other handlers' statements — becomes: the row would otherwise queue behind the writer's lock on the
+  response path. A toggle under that lock is safe, and item 1 relies on it. Its sentence on
+  checkpoints changes too — *"the shared connection keeps the default, so the WAL is checkpointed at
+  whichever of its commits …"* — because after M35 those commits are the writer's and every pool
+  connection's, a read's `IMMEDIATE` retry included. So does its sentence that a store held
+  continuously by another writer fails a memory verb's handler *"at `store_busy`"*: a `surface`
+  carrying a deadline fails at `deadline_passed` (item 7).
+- `design/schema.md`'s DDL comment on `surface_call`, *"push path fired; EXISTS EVEN AT ZERO
+  RESULTS"*: the first clause becomes *"push answered within its deadline"*. The DDL guard strips
+  comments, so the change does not touch it. The code's own statement of the rule is the
+  `surface_call` payload class's docstring in `core/events.py`, *"exactly one per push, including
+  when nothing was returned"*, which is on the rewrite list in §"Done when".
+- `design/schema.md`, for item 7: the per-kind event table's `surface_call` row; §"`call` is an access
+  log, and every other kind is a semantic one"'s sentence *"Every push writes `surface_call`"*; and
+  §"Linked sessions — what makes a cross-client signal computable"'s paragraph *"Honest limit on the
+  session denominator"*. Item 7 gives the replacement wording for each.
+- `design/schema.md` §"The `event` log, per kind", for item 7: *"The hook's degraded path emits no
+  events at all on any failure, because it never reaches the service"* is no longer true of a
+  `deadline_passed` push, which reaches the service and commits no semantic event by design. For
+  item 2, the `call` row's *"`duration_ms` covers the handler alone"* becomes: it spans the lease
+  wait and the `deadline_at_ms` parse too.
+- `design/schema.md` §"Migration posture", for items 1 and 6: its account of the build row written
+  as a fresh transaction so a stale snapshot cannot refuse it becomes moot under `IMMEDIATE`, and the
+  row's position changes with item 6.
+- `design/schema.md` §"When the version moves", for item 2: the registry table is created
+  idempotently at the first *write* that needs it, not at first use.
+- `design/write-policy.md` §"3. How we find out which way it errs", its first honest limit, for
+  item 7. It restates the same denominator paragraph as normative text in the document that defines
+  the signals, so it is the copy that matters most. Its uniformity claim — every failed push emits
+  no `surface_call` because the hook never reaches the service — gains `deadline_passed` as the one
+  failure the service *does* see and still records no `surface_call` for. Its closing condition
+  gains *"and answering within the hook's deadline"*.
+- `design/schema.md` §"What is instrumented, what is not, and why", for item 6. Its account of where
+  `knowledge_build` is written — inside `build()`, and on success after the report and after the
+  `try`/`except` — becomes: for every outcome reached after the lock was taken, the row is written
+  by `scan.run`'s completion callback before the lock's release, on `Exception` only, its whole
+  body guarded, once per build by a latch. `build()`'s own two sites write only when the callback
+  never ran — a refusal before the lock — and are no-ops otherwise. The paragraph on what the old
+  placement protected and how its mutation was caught goes with it. *"No row write is ever the
+  reason a build reports failure"* stays true. The same section's paragraph on `build()` resolving
+  the registry row changes too. It names `unlock` among the callers of `ensure`, and gives *no such
+  table* as the reason `ensure` is not optional. After item 2, the indexer's `ensure` is the one
+  creation site outside `knowledge_add`, and a registry read on a store without the table answers
+  from `ensure_table`'s presence read, not from a driver error.
+- `design/knowledge-index.md` §"9. CLI surface (parity, not the primary path)": its `refresh --wait`
+  paragraph becomes *"returns once the build's lock is gone — and, since the row is attempted before
+  the release, once its `knowledge_build` row has landed or been dropped as best-effort; the indexer
+  process may still be exiting"*. Its sentence on a build that fails after detaching says the row
+  now names the failure's wire name (item 6).
+
+The evidence is `spikes/m34_service_staleness_probe.py`, `spikes/m35_busy_snapshot_probe.py`,
+`spikes/m35_read_upgrade_probe.py` and `reviews/m35-brief-perturbation.md`.
+
+### What is wrong
+
+**Every request runs on one `aiosqlite` connection, and nothing serializes their transactions.**
+`server.py` hands every handler `ctx.store.connection`. Two clients' requests interleave on it, so
+while one request holds a transaction another's `BEGIN` fails *cannot start a transaction within a
+transaction* and is answered `internal_error`. Normally the window is milliseconds. **A consolidation
+plan widens it to the whole plan**: `plan_within_transaction` inserts the run row before
+`grouping.plan` computes, so the write lock is held for the whole computation — 12.2 s for a 284-row
+journal — and five of eight concurrent searches failed during one
+(`spikes/m34_service_staleness_probe.py`). A failed rollback in `transactions.finalize` closes the
+connection, after which every later request fails.
+
+**Every write is a deferred transaction that reads before it writes**, so a commit from **another
+connection** between the read and the write refuses it at once with `SQLITE_BUSY_SNAPSHOT`, which
+`busy_timeout` never retries (`spikes/m35_busy_snapshot_probe.py`). That other connection can be the
+detached indexer's build row, a second service, or an operator's shell. It is the CI failure of
+`test_rename_and_remove_reach_a_real_service` (run 36657562917). **An in-process lock cannot fix this
+class**, because the other writer is not in this process. `memory_fetch` and `memory_retire` open raw
+`BEGIN`s with no failure map, so the same contention reaches them as `internal_error` rather than the
+retryable `store_busy` the error table promises.
+
+**Two builds that start together get the wrong refusal.** The corpus lock is acquired in a deferred
+transaction, so both read *no holder*, and the loser answers the driver's `database is locked`
+instead of `IndexerBusyError`. The outcome is right and the refusal is wrong; `scan.py`'s own note
+says only an `IMMEDIATE` variant was missing.
+
+**A push the agent never saw is recorded as shown.** The push hook abandons a `surface` at 2 s; the
+service cannot see that and commits its `surface` rows anyway, and those rows are the denominator of
+D30's repair signal. The pool this milestone adds would widen it, because a read's retry waits.
+
+**A wedged service leaves no evidence.** The LeibaTrader service on 2026-09-29 answered a `remember`
+and then nothing for eleven minutes: no event, no log line, and — since a `SIGTERM` exit writes
+nothing where an idle one writes `reason=idle` — a kill and a wedge read alike. Its cause is unknown,
+and the shared connection is the likeliest candidate, not a demonstrated one.
+
+### What ships
+
+**1. Transactions on one connection are serialized, and a write claims SQLite's write lock at
+`BEGIN`.** The transaction primitive (`transactions.in_one_transaction`) takes a per-connection
+`asyncio.Lock` for the transaction's whole span, so no two transactions ever nest on a connection,
+whoever issues them. **It gains two arguments, `immediate` and `deadline`.** Absent, the mode is
+the connection's and the deadline is entry plus `ddl.BUSY_TIMEOUT_MS`. A read passes the deadline
+its lease started with, and `surface` passes `deadline_at_ms` less the margin. **Which mode a
+transaction uses follows from its connection**, and the two exceptions below pass it explicitly:
+- **Every transaction on the writer, and every one the indexer opens against `memory.db`, is `BEGIN
+  IMMEDIATE`**, so contention from any process waits for the write lock within the budget rather
+  than failing on a stale snapshot.
+- **A transaction on a pool connection is deferred.** That covers a read's first attempt, events
+  included, and item 3's planning snapshot. The one exception is a read's retry, which opens
+  `IMMEDIATE` for the reasons item 2 gives.
+- **Every other connection keeps its deferred `BEGIN`**: the access log's, and the corpus databases'.
+  The one exception is item 5's lock acquisition after it has seen no holder.
+
+Item 2's classification decides which connection a method gets.
+
+**After M35 the only `BEGIN` issued on a service connection is the primitive's.**
+- `memory_fetch`'s and `memory_retire`'s raw `BEGIN`s (`records/memory.py`) move onto it, which gives
+  them its failure map and rollback ladder.
+- The raw wrappers with no production caller, `create` and `amend` in the same module, are deleted
+  or moved onto it.
+- A drift-guard test fails on any `BEGIN` issued in `zikaron/` outside `transactions.py`, `store.py`
+  and `migration.py` — through `execute`, `executescript` or an f-string alike. The last two run
+  before the socket exists.
+
+**Every statement a handler issues on the writer goes through the primitive**, reads included.
+Between two handlers' transactions the writer is shared. A statement issued outside the primitive,
+while another task's `BEGIN IMMEDIATE` is open on the same handle, runs *inside* that transaction
+and reads its uncommitted rows: one connection has one transaction state, whatever the driver's
+isolation mode. Three knowledge-write sites do this today:
+- `knowledge_add`'s `builds.plan` after `lifecycle.add`'s transaction;
+- `lifecycle.remove`'s `ensure` and `require` before its own;
+- `_what_would_be_destroyed` reaching `reporting.status`.
+
+Each moves into a primitive transaction on the writer, and `ensure` leaves `builds.plan`.
+- **Being on the writer, these are `IMMEDIATE` though they only read.** On a serialized writer an
+  `IMMEDIATE` read costs nothing, and the rule then needs no judgement per site.
+- **The transaction covers the registry statements only** — `require`, `list_all`. `observe`,
+  `_orphans` and every corpus open stay outside it, on the writer and the pool alike. So
+  `builds.plan` and `reporting.status` read the registry in one transaction and do the corpus work
+  after it. Otherwise the writer's lock, or a pool connection's read snapshot, would be held across
+  N corpus opens, which is the long hold item 2's closing rule on waits exists to prevent.
+
+The rule is stated and the known sites are fixed; it is not made structural. A wrapper that refuses an
+unlocked `execute` would change the type every core function takes, for a class the review walk
+found in exactly these places.
+
+**The lock is taken at the transaction, not the handler**, so the embedding a write prepares before
+its `BEGIN` holds nothing.
+
+**Each service connection is held by one object that owns its lock, the task holding the lock, and
+a closed mark.** The writer and every pool connection are held this way.
+- **The primitive finds a connection's holder in a module-level registry keyed by the connection**, a
+  `WeakKeyDictionary` or an attribute set on the handle, created on first use. So no signature
+  moves: the access log and the corpus-database sites call the primitive with a bare handle, as
+  today, and get a holder whose lock is never contended.
+- When `finalize` closes a handle after a failed rollback, the primitive sets the mark. It has to be
+  set, because `finalize` suppresses that close silently and a later `BEGIN` on the handle raises
+  `ValueError`, not a driver error.
+- **The pre-statement check of the mark runs on every holder**, and raises `WriterClosedError` on
+  any closed handle. It is named for its commonest case, the writer's queued requests (below), and
+  the dispatch sites answer it `store_busy` wherever it arises, a read's included. On the access log
+  it lands in the same `except Exception` branch its comments name for `ValueError`, with the same
+  outcome, a dropped row; those comments move to the new name.
+- The pool and the writer's reopen consult the mark, through the same registry, before a
+  connection is handed out.
+
+**Every transaction on the writer has one wait budget, `ddl.BUSY_TIMEOUT_MS`, for the connection lock
+and the write lock together.** That is the constant, not a connection's pragma, which is zero on every
+serving connection once the store is open, as it always was on the access log's.
+The primitive takes a deadline at entry and waits for the connection lock on what is left of it.
+~~On the writer, it then sets `PRAGMA busy_timeout` to the remainder before `BEGIN IMMEDIATE`, as
+`counters.py` already does per statement on a corpus connection; that is safe because the writer's
+transactions are serialized behind the lock. **The pragma is set on exactly two holders: the
+writer, and a pool connection under lease for a read's retry (item 2).** It is never set on a
+holder created for a bare handle, whose pragma stays what it was opened with.~~ **Withdrawn on
+measurement, and the withdrawal is load-bearing**: with the SQLite uv's managed Python ships,
+SQLite's busy handler overran the pragma by 0.6 to 1 s at `BEGIN IMMEDIATE` on macOS
+(`research/m35-implementation-evidence.md` §"SQLite's own wait on macOS"), so no value of the pragma
+bounds the wait. The store's serving connections — the writer, every pool connection, a reopened
+writer — run at `busy_timeout = 0` once the store is open (`ddl.SERVING_PRAGMA`), and the primitive
+retries a refused `BEGIN IMMEDIATE` itself, pausing 1 ms doubling to 25 ms, until the deadline
+(`architecture.md` §"The service's connections"). A holder created for a bare handle is left to
+SQLite's own wait. The primitive computes the lock-wait deadline on every holder, but only the
+writer's lock is ever contended; a leased pool connection is exclusive, and polls only on a read's
+retry.
+- Without the single budget, the two waits compound. A writer queued behind another writer that is
+  itself polling for the write lock would wait 5 s for the lock and 5 s more polling for the write
+  lock.
+  `mcp/connection.py`'s 10 s `REQUEST_TIMEOUT_SECONDS` was derived from one transaction under one
+  `busy_timeout`, and it never retries once a byte is sent. So that writer would be reported as
+  `AmbiguousMutationError` instead of a retryable `store_busy`.
+- An unbounded lock wait would be worse: every writer queued behind one stuck transaction, which is
+  a wedge by construction.
+- A holder created on first use for a bare handle — the access log, the indexer's corpus
+  connections — keeps SQLite's own wait, and its lock is never contended, so its deadline never
+  binds. The indexer's own `memory.db` handle is different: it is a `Store`'s writer, and polls for
+  the write lock within `ddl.BUSY_TIMEOUT_MS` like the service's.
+- The access log's transaction stays deferred; with its `busy_timeout` at 0 the outcome is the same
+  either way, a row dropped at once. So the `call` row never waits on the response path, the wait
+  `schema.md` calls the M17 defect and `tests/test_access_log.py`'s no-wait bound guards against.
+
+A read's budget is item 2's.
+
+**A task that already holds a connection's lock and asks for it again fails at once** with an
+internal error, rather than waiting on itself for the whole budget and answering a retryable
+`store_busy` for what is a programming error. The primitive records the owning task to tell the two
+apart. Today that case fails immediately as a nested `BEGIN`, and it must keep failing loudly.
+
+**A connection the primitive has closed is never handed out again.** Today one failed rollback leaves
+every later request failing on a dead connection.
+- A pool connection closed that way is dropped and replaced.
+- The writer is reopened with a connection-level reopen that `Store` gains for this: the store's
+  pragmas, `existing_only`. It is not `Store.open`, because the schema was validated and migrated at
+  startup.
+- `opened_inode` stays the startup baseline. **Every connection the service opens after startup** — a
+  lazy pool open, a replacement, the writer's reopen — compares the inode `open_connection` returns
+  with it. On a mismatch — or a file gone, which `existing_only` refuses — the connection is closed
+  and the request answers by its family's existing rule. A knowledge verb answers `store_unavailable`
+  `{operation, cause}`, as for any driver or OS failure today. A memory or consolidator verb answers
+  `internal_error`, the memory verbs' rule for anything not contention, with one `service.log` line
+  naming the inode drift. So no verb gains a wire code. The inode-drift poll then stops the service
+  inside its interval. Without the check, a store replaced at its path would answer reads from one
+  file and take writes into another until the poll fired.
+- `Store._db` loses `Final`. **The writer's reopen runs under the store's own lock, once per
+  closure.** A dispatch that finds the mark set awaits the reopen already in progress rather than
+  starting one; otherwise two writes dispatched into the gap would each reopen, and one connection
+  would be abandoned with a live worker thread.
+- **Requests already queued on the writer's lock when it closed answer `store_busy`.** Having
+  acquired the lock, the primitive finds the handle's closed mark before any statement runs. Nothing
+  ran, so `store_busy` — retryable, and true — is the honest answer, not `internal_error`. Requests
+  dispatched after the reopen succeed.
+  - **How it is minted.** The primitive raises a dedicated `WriterClosedError`, which is not an
+    `aiosqlite.Error`. It cannot fake a driver error for the failure maps: `is_contention`'s
+    contract excludes an exception carrying no result code by definition, and that sentence stays
+    true.
+  - **The primitive's own refusals share one base type**, none of them an `aiosqlite.Error`:
+    `WriterClosedError`, and `LockWaitExpired` for a connection-lock wait that reaches its deadline.
+    `LockWaitExpired` records whether the caller's deadline was the bound that cut the wait. The
+    pool's lease wait raises the same on expiry, so the planning path needs no map of its own.
+    Without this, a lock wait expires as `asyncio.TimeoutError`, which no failure map takes, and
+    `_run_handler` answers `internal_error`.
+  - The two dispatch sites that already hold the method name — `server.py`'s handler call and
+    `dispatch_knowledge.py`'s wrapper — catch that base and answer `store_busy` with the method as
+    its `verb`. **The one exception is a `LockWaitExpired` whose wait the caller's deadline bounded:
+    it answers `deadline_passed`.**
+    - For a `surface` carrying `deadline_at_ms`, the lease wait is bounded by that deadline alone,
+      so its expiry answers with check point 1's code, issued at the lease wait before check point
+      1 is reached.
+    - It is decided by which bound cut the wait, never by re-reading the clock. The event loop
+      fires a timer up to one tick of its clock's resolution early, so an expiry can land just
+      before the instant a clock comparison would demand, and a second reading would then answer
+      `store_busy`.
+    - A `WriterClosedError` on such a request stays `store_busy`: a closed handle is not lateness.
+
+**`next_group` waits for the model before it takes the writer.** It embeds inside its transaction
+(`serving.py`, by necessity), so under `IMMEDIATE` it holds SQLite's write lock across that embed.
+That costs milliseconds warm. Cold, while the model is still loading, it would cost seconds, with
+every other writer meeting its budget meanwhile. So `next_group` waits for the encoder to finish
+loading, off the event loop, before its first transaction, which is step 1 of item 3. Both steps
+that serve and embed — step 1 when a run exists, step 3 otherwise — come after the wait, so the lock
+only ever spans a warm embed.
+- **The wait is the deferred encoder's `failure()`**, which blocks until the load ends and has no
+  side effect. `artifact()` also blocks, but its own docstring forbids combining it with
+  `declare_dim`, which the service's encoder uses.
+- `next_group` needs nothing from the return value: a failed load raises at the embed regardless.
+
+**2. The service keeps one writer connection and a small pool of read connections.**
+
+**Each method is classified once, beside its handler in the method table, as a read or a write.** A
+method is a write if it can write `memory.db` other than the event rows it emits about itself,
+whatever its name suggests.
+- **Writes:** `memory_remember`, `memory_amend`, `memory_retire`, `memory_fetch` (it mints receipts),
+  the five consolidator methods (`memory_plan_groups`, `memory_next_group`, `memory_apply_merge`,
+  `memory_apply_promote`, `memory_apply_discard`), and `knowledge_add`, `knowledge_rename` and
+  `knowledge_remove`.
+- **Reads:** `memory_search`, `memory_surface`, `knowledge_search`, `knowledge_list`,
+  `knowledge_status`, `knowledge_refresh` (it reads the registry and spawns an indexer) and
+  `knowledge_unlock` (it writes only the corpus's own database).
+- A test holds the table equal to this set, so a new method cannot arrive unclassified.
+
+**A read's first attempt never waits at its upgrade.** SQLite runs the busy handler for a write-lock
+request only from a connection with no transaction open. A `search` or `surface` has read before its
+event insert, so an upgrade that meets a *held* write lock is refused at once with primary
+`SQLITE_BUSY`, and one that meets a *commit* since its snapshot is refused at once with
+`SQLITE_BUSY_SNAPSHOT`. Measured by `spikes/m35_read_upgrade_probe.py`: a deferred reader is refused
+in 0.0 s, and `BEGIN IMMEDIATE` commits at 2.03 s behind a 2 s hold. Writes wait because `BEGIN
+IMMEDIATE` asks from no transaction; the two are not one case.
+
+**A read keeps `retrieval.md`'s shape for its first attempt and gains one retry.** `retrieval.md`
+makes a read one transaction including its events, and accepts a `store_busy` on the upgrade rather
+than serializing every read behind every writer. That trade stands for the first attempt. What
+changes is how often it is paid:
+- Before M35, an in-process write could neither stale an in-process read nor hold a lock against
+  it, because the two shared one connection and collided as a nested `BEGIN` instead.
+- After it, every `remember`, `amend`, `fetch` or consolidator transaction opens a window in which a
+  `search` or `surface` reaching its event insert is refused at once. If the writer still holds the
+  lock, the refusal is primary `SQLITE_BUSY`; if it committed since the snapshot, it is
+  `SQLITE_BUSY_SNAPSHOT`.
+- **So a `memory_search` or `memory_surface` transaction refused for contention, by either code, is
+  retried once, from `BEGIN IMMEDIATE`**, on its pool connection. They are the reads whose
+  transaction writes.
+- **The retry opens `IMMEDIATE`** because a deferred retry would meet a held lock exactly as the
+  first attempt did, and a writer's transaction — the plan fallback, a `next_group` serve, an
+  `apply_merge` — routinely outlasts a read pass. Opened `IMMEDIATE`, the retry waits for the writer,
+  within the read's budget below, and can then be neither staled nor refused at once.
+- **The cost is serializing retried reads behind the writer, and behind each other.** `retrieval.md`
+  declines that for every read and accepts it here for a retry. A retry holds SQLite's write lock for
+  its whole pass. While it does, every other read's first attempt is refused at once and retries
+  behind it. So under a writer, concurrent reads serialize, bounded by the pool's size times one read
+  pass. Warm, that is well inside the budget, and nothing starves past it.
+- **No cycle is possible**, by the rule on waits at the end of this item.
+- **The trigger is `transactions.is_contention`**: no attempt has waited, so the two codes need no
+  telling apart. The retry sits around `in_one_transaction` in `reads.search` and `reads.surface`.
+- **The retry is idempotent.** The refused attempt rolled back, events included. A refused retry
+  answers `store_busy` as today, unless the request's deadline has passed (item 7).
+- On the push path an unretried refusal is a skipped injection, and M35 is what creates the new
+  traffic, so M35 owns the retry.
+
+**A read, like a writer's transaction, has one wait budget per request.** It covers the lease wait
+and the retry's wait together. The deadline travels with the leased handle (`pool.lease_deadline`),
+and the retry's `BEGIN IMMEDIATE` polls for the write lock only until it; a pool connection's own
+`busy_timeout` is 0 and nothing sets or restores it. A returned connection whose closed mark is set
+is dropped. Without this, a lease wait and a retry wait would compound exactly as a writer's two
+waits would.
+- **For `memory_search` and every knowledge read, the budget is `ddl.BUSY_TIMEOUT_MS`.**
+- **For `memory_surface`, it ends at the caller's deadline less the margin** (item 7), which
+  validation already keeps within `ddl.BUSY_TIMEOUT_MS` of now.
+
+**Which connection a request gets.** A read leases a pool connection for its handler's span, and a
+write uses the writer, whose transactions item 1 serializes.
+- **The handler signature does not change.** The dispatcher chooses which connection to pass, and
+  only the planning path reaches the pool through the context. **The dispatcher obtains the writer
+  through an awaitable accessor that `Store` gains with the reopen**, so a dispatch that finds the
+  closed mark set can await the reopen in progress. The synchronous `connection` property remains
+  for callers that run before the socket exists.
+- **The lease covers the handler, not only its transaction**, because the knowledge reads run
+  several transactions with autocommit reads and corpus opens between them.
+- **The lease wait, and for `surface` the `deadline_at_ms` parse, sit inside `_run_handler`'s
+  timer, so the access log's `duration_ms` spans them as well as the handler.** It is what the
+  caller waited for, and a `store_busy` whose `duration_ms` is about one budget is what tells lease
+  exhaustion from a slow handler. `schema.md`'s `call` row, which says `duration_ms` *"covers the
+  handler alone"*, and `_Dispatched`'s docstring change to say so.
+- The cost is that a read embedding its query before its transaction pins a lease while it embeds.
+  Across a cold model load, every read that arrives pins one and waits on the same load. **The
+  pool's size is a constant chosen to cover that case**: the concurrent clients of one store — the
+  hook, the MCP servers, a consolidator, a CLI — each with a request in flight. Its reason is stated
+  beside it, and it is not a configuration key.
+- The census is one session's. A second session's reads during the same cold load degrade to the
+  bounded wait, which is acceptable.
+- A read that still finds the pool exhausted waits for a lease within its budget, and answers
+  `store_busy` past it. For `surface` the lease wait ends at the deadline less the margin, and its
+  expiry answers `deadline_passed`, as check point 1 of item 7 does, decided by the bound that cut
+  it (item 1). `deadline_at_ms` is validated
+  by the dispatcher before the lease (item 7), so the lease wait is bounded only by a value the
+  validation ladder has accepted. **The planning path's lease is bounded the same way**, within
+  `ddl.BUSY_TIMEOUT_MS`, since a `memory_plan_groups` or `next_group`
+  queued forever would plan and commit after its client had given up.
+- **Pool connections open lazily**, on first demand up to the constant. Opening them eagerly would
+  add N × (connect + `sqlite-vec` load + pragmas) to the bind latency the hook's deadline is budgeted
+  against (§"The model loads behind the socket"). The cost moves to the first read that finds no
+  idle connection, and it is measured once.
+- Every pool connection gets the store's pragmas and loads `sqlite-vec`. The pool closes with the
+  service and on a failed startup.
+
+**The knowledge registry table is created only by a write.** That means the first `knowledge_add`,
+or the indexer, always under `IMMEDIATE`.
+- **`ensure_table` splits.** Its presence read (`sqlite_master`) stays on every path, and its
+  `CREATE` runs only in `knowledge_add` and the indexer, each on its writer. A registry read on a
+  store without the table answers empty from that presence read, never from the driver's *no such
+  table*. A bare `require` would otherwise answer `store_unavailable` through the knowledge wrapper,
+  not the empty registry promised below.
+- On a store without the table, a read answers as if the registry were empty. `list`, `search` and
+  an unnamed `refresh` find none. `status name=…`, `unlock` and a named `refresh` answer
+  `knowledge_base_unknown`.
+- `rename` and `remove` are writes, but on a store without the table they have nothing to act on.
+  They answer `knowledge_base_unknown` without creating it.
+- So no read path ever writes DDL. A presence read followed by a `CREATE` on a pool connection is the
+  CI failure's shape on the read path.
+- A knowledge read's `call` row is then its only `memory.db` write on every store, and
+  `schema.md`'s access-log section says so without its current precondition.
+
+**No request holding the writer's lock waits on a pool lease, and no request waits for the writer
+while holding a read snapshot open.**
+- `memory_plan_groups` leases, plans, and releases its snapshot before it takes the writer.
+- `next_group` releases the writer before it leases, at step 2 of item 3.
+- A read's `IMMEDIATE` retry does wait for the writer while holding a lease, but it holds no
+  snapshot while it waits: its `BEGIN IMMEDIATE` has not yet begun a transaction.
+- Waits therefore only ever point from the pool to the writer, never back. That is what makes
+  deadlock impossible, and it keeps a long-held snapshot from starving WAL checkpoints.
+
+**3. Planning is computed from a read snapshot, and written in a short transaction that re-checks
+it.**
+
+**The plan.** `grouping.plan` runs in a read transaction on a pool connection and holds no write
+lock. That transaction also records a fingerprint of the plan's input: the `(rowid, version)` of
+**every active row, journal and long-term**. The plan reads both tiers — the journal as candidates,
+the long-term tier as anchors — so a journal-only fingerprint would miss an anchor retired, merged
+into or newly promoted while the plan ran.
+
+**The write.** Closing a lapsed run, creating the run, inserting the groups and members, and the
+events all run in one `IMMEDIATE` transaction. It first re-derives the fingerprint.
+- **If it moved, the transaction plans inside itself, as today**, rather than planning again from a
+  new snapshot. That is the smallest bound that still makes the check mean something, and it
+  always terminates.
+- The worst case is therefore two plans in one call. The journal that fits inside
+  `_PLANNING_TIMEOUT_SECONDS` halves: from roughly 7,000 rows to roughly 3,500, against the measured
+  12.2 s for 284. The comment on `_PLANNING_TIMEOUT_SECONDS` in `mcp/consolidator.py`, which
+  derives the 7,000, is restated to match.
+- The fallback holds the writer for a whole plan, as today, and only when a write landed during the
+  plan.
+- `version_seen` is recorded from the snapshot, which serve-time re-validation already checks.
+- The run test ("effectively active") and takeover are decided inside the write transaction, as
+  now, so two consolidators planning at once still end with one run.
+
+**`next_group`'s inline replan keeps `architecture.md`'s rule that an implicit replan and the serve
+after it are one atomic step.** It becomes:
+1. A writer transaction asks whether an effectively-active run exists. If one does, it serves as
+   today, embed included. It is short only when it finds none.
+2. If none does, it releases the writer and plans on a pool snapshot.
+3. One `IMMEDIATE` transaction re-checks the run, re-checks the fingerprint, and writes the plan
+   **and** serves.
+
+Step 3's run re-check has three outcomes:
+- **No effectively-active run** — none, or a lapsed one the write closes as today → write the plan
+  and serve.
+- **The caller's own run** — a concurrent `next_group` from the same `(session_id, pid)`, which the
+  one shared MCP process per Claude Code session makes ordinary, wrote first → discard the computed
+  plan and serve from that run, as `serving._run_for` does today.
+- **A stranger's run** → `Busy`, never replanned, since `next_group` never takes over.
+
+**4. The wedge can be seen into.**
+- **`SIGUSR1` dumps every thread's stack into `service.log`** through `faulthandler.register`, which
+  works when the event loop itself is blocked.
+- **`SIGUSR2` dumps every asyncio task's stack and the in-flight requests into `service.log`**,
+  through a loop signal handler. Each in-flight request is listed with its method, session id and
+  age. This is the case the first dump cannot see: a loop that is idle while a coroutine awaits
+  forever.
+- **A request that outlives the idle poll's interval is logged at `INFO`**, by the poll that already
+  wakes every 30 s (`lifecycle.idle_self_stop`). It is logged on each poll while it stays in flight,
+  so the end of the log names the wedge however long it lasts. The line gives the method, session
+  id and age, from the same in-flight registry `SIGUSR2` reads. An entry opens at `begin_request`
+  with the method and gains the session id when the envelope resolves. A request wedged before
+  that is logged as `session=unresolved`. So a wedge in which a coroutine awaits forever names
+  itself in `service.log` with nobody at the terminal, which is how the 2026-09-29 one was found:
+  after the fact. It costs nothing in steady state. A `memory_plan_groups` or `memory_next_group`
+  entry is expected to exceed the interval on a large journal, up to `_PLANNING_TIMEOUT_SECONDS`;
+  its method field is what tells that from a wedge. **The limit is the same as the stop line's**:
+  the poll runs on the loop, so a *blocked* loop logs no line either, and only `SIGUSR1` sees that
+  case.
+- **A signal exit logs `stopping: reason=sigterm`** (or `sigint`), beside `reason=idle`. That
+  separates a kill from a wedge in one direction only. A service that logged it was not wedged, but
+  a wedged loop never runs the handler, so a wedge followed by `SIGKILL` still logs nothing but the
+  line above.
+
+**Both new handlers are installed alongside the `SIGTERM`/`SIGINT` pair, before `serve()`, and
+removed on the same path out.** Both signals default to *terminate*, and a slow start is exactly
+when an operator would send one. The `faulthandler` dump goes to the `FileHandler`'s own stream:
+raw text, no timestamp or `pid=` prefix, since it bypasses `logging`. That is said where the log
+format is described.
+
+These replace the per-request start line this agent proposed (operator agreed 2026-09-29): together
+they name the requests a hang is inside, and they cost no line per request.
+
+**5. A corpus lock acquisition that sees no holder opens `BEGIN IMMEDIATE`, so two builds that start
+together get the right refusal.** `scan.py`'s acquisition reads the lock row and writes it in one
+deferred transaction. So two builds spawned inside one model-load window both read *no holder*, and
+the loser gets the driver's `database is locked` instead of `IndexerBusyError`. `scan.py`'s own
+note says the only obstacle was the lack of an `IMMEDIATE` variant of the primitive, and item 1
+creates it.
+- **Today's fast path stays.** The acquisition first reads the holder outside any transaction and
+  refuses at once on a live holder, with no wait.
+- **Only when it sees *no holder* does it open `BEGIN IMMEDIATE`**, re-read the holder inside, and
+  take the lock. The second of two simultaneous builds then waits for the first's short acquisition
+  to commit, reads the holder, and refuses `IndexerBusyError` as documented.
+- `IMMEDIATE` on every acquisition would be worse. A build arriving during the winner's index phase
+  would wait out that phase's current transaction instead of refusing at once, and past the corpus
+  connection's 5 s `busy_timeout` it would answer the very `database is locked` this item removes.
+- The cost is one extra `SELECT`. A wait is added only in a microsecond window: between the fast
+  read and the `BEGIN IMMEDIATE`, the winner can commit its acquisition and open its walk
+  transaction, and the loser then waits behind that one transaction before refusing.
+- **The test** is the one `scan.py`'s note names: hold one acquisition's transaction open, for less
+  than the corpus `busy_timeout`, while the other attempts its own, and assert `IndexerBusyError`.
+  It is shown red under the deferred `BEGIN`.
+- A second build arriving during the winner's index phase still refuses at once, and is tested.
+- This is the one corpus-database transaction that changes mode.
+
+**6. Exactly one `knowledge_build` row per build, visible when `refresh --wait` returns.** Today both
+rows — `log.succeeded` and `log.failed` in `knowledge/indexer/main.py` — are written after
+`scan.run`'s own `finally` has released the corpus lock that `--wait` watches.
+- **The mechanism**: `scan.run` takes a completion callback and, **once it holds the lock**, invokes
+  it before `_release`, on the success path and on failure by `Exception`. An acquisition that
+  refuses, item 5's `IndexerBusyError` included, never took the lock, so the callback does not fire,
+  and `main.build`'s own site writes that row. **It never runs for `CancelledError` or
+  `KeyboardInterrupt`**: those release the lock and write no row. `schema.md` §"What is instrumented,
+  what is not, and why" requires it: such a build must not wait out the write-lock budget to record
+  its own death. So the callback cannot sit beside `_release` in its `finally`. It is a callback because
+  `core/knowledge` cannot import `knowledge/indexer/build_log`. The indexer passes one that writes
+  the row.
+- **`BuildLog` writes at most once.** One latch is shared by the callback and `main.build`'s two
+  existing call sites, which become no-ops once it has fired. Without it, every success and every
+  post-lock failure is recorded twice. `experiments/m33_call_log_queries.py` sums `duration_ms` per
+  corpus, so every build would appear to cost double.
+- **The latch is set when the callback runs, not when a row commits.** So a row that is dropped on
+  contention, or fails to build, is not attempted again after the release. That is best-effort, as
+  today; retrying after the release would reopen exactly the ordering this item removes.
+- **A failure after the release is reported by the exit status, not the row.** It can come from the
+  corpus handle's close, or from `reporting.observe`'s reads inside its own open. It reaches
+  `main.build`'s catch after the callback has latched, so the build exits 1 over the `ok=true` row
+  its scan earned. Accepted: the row describes the scan, which committed, and `--wait`'s reader is
+  told the index is built, which it is.
+- **The callback never raises.** Its whole body, payload construction included, sits inside the
+  row write's guard. `main.build` placed `succeeded` after its `try` for exactly this reason: a
+  failure building the payload inside the `try` would write `ok=false` for a completed build. The
+  callback now runs inside `scan.run`'s `try`, so the guard must be whole.
+- **What this buys is narrower than "no indexer is running".** The process still outlives the
+  release by its report and its store close; what becomes true is that its row has landed. Waiting
+  on the holder's pid instead would race, since a build that finishes between two polls is never
+  seen and its pid is never known.
+- **Refusals raised before the lock is taken** (`IndexerBusyError`, `CorpusRootMissingError`, a
+  dangling corpus) keep writing their row with no lock held, unchanged.
+- **The cost**: the row is best-effort on a 5 s wait for `memory.db`'s write lock, so the corpus
+  lock is now held up to 5 s longer while the service's writer is busy, and `--wait` sees the lock
+  for that long.
+
+**7. A push the agent never saw is never recorded as shown.** A `surface` row means *"this session
+was shown this memory"*, and it is the denominator of D30's repair signal (`schema.md` §"D30's six
+signals, as queries"). But the push hook abandons its request at 2 s (`hook/push.py`,
+`_DEADLINE_SECONDS`), and the service, which cannot see the hook's clock, finishes and commits
+anyway. That happens on a cold model load or a slow embed today. After item 2 it could also happen
+on a `surface` retry waiting for the writer. Either way the rows count a block nobody read.
+- **`memory_surface` gains an optional `deadline_at_ms` parameter: the caller's own deadline as an
+  absolute wall-clock instant**, in milliseconds since the Unix epoch. The hook always sends it,
+  computed from the same deadline it enforces. The hook reads `time.time()` at the same instant as
+  its monotonic `started_at` and sends `int((wall_started + _DEADLINE_SECONDS) * 1000)`, while its
+  own socket timeout stays monotonic.
+  - It is absolute rather than a remaining duration because a duration is measured from when the
+    service *reads* the request. A busy loop reads late, and a wedge that clears finds every push it
+    missed still in its socket buffers; each would start a fresh budget and commit as shown.
+  - Both ends are one machine, so they share one realtime clock. NTP slew is microseconds per
+    second. A clock step is the one failure: rare, self-limiting, and stated.
+  - `time.monotonic()` is not used, because its reference point is undefined across processes,
+    whatever Linux and macOS happen to do.
+  - Absent, there is no deadline, and the budget is `ddl.BUSY_TIMEOUT_MS` as for `search`.
+  - Validation: `deadline_at_ms` is validated whole — an integer, no more than
+    `ddl.BUSY_TIMEOUT_MS` in the future, or `bounds` — by the dispatcher before the lease, because
+    it bounds the lease wait. It runs inside `_run_handler`'s accounting, so its `bounds` writes a
+    `call` row as the handler's does; outside it, it would be a new exit with no row, which
+    `schema.md`'s access-log section does not allow for. The rest of `surface`'s parameter rung runs
+    in the handler after the lease. Both answer `bounds`, so the order is observable only in
+    `data.field`, and §"Validation precedence" states it. The hook satisfies the bound by
+    construction, because its 2 s deadline is below the 5 s budget, and a guard test pins the
+    inequality (see the properties). `bounds` is checked before any deadline check, so a request
+    both malformed and late answers `bounds`. A deadline already in the past is not malformed: it
+    answers `deadline_passed`.
+- **Past `deadline_at_ms` less a small margin, a `surface` answers `deadline_passed` at the check
+  points below, and they are the rule.** A non-contention failure past the deadline — `index_failed`,
+  an `internal_error` — keeps its own code, so a defect is never masked as lateness; like every
+  failure, it commits nothing. The service checks at:
+  1. before any work;
+  2. after the query's embed, before `BEGIN` — so a push whose embed outlasted its deadline, on a
+     cold load, spends no read pass that point 4 would only roll back;
+  3. after a refused first attempt, before deciding to retry;
+  4. inside the transaction immediately before `COMMIT`.
+
+  The retry's `BEGIN IMMEDIATE` polls no later than the deadline less the margin, not to the whole
+  deadline. **A contention refusal from the
+  retry answers `deadline_passed` whenever the request carries a deadline.**
+  - The retry opens from no transaction, so its only contention refusal is that wait giving up:
+    `SQLITE_BUSY_SNAPSHOT` cannot occur under `IMMEDIATE`, and a retry holding the write lock meets
+    no contention inside its pass. The wait was cut at the deadline, so its refusal is lateness.
+  - That is decided by which bound cut the wait, never by a second reading of the clock: the
+    refusal is the deadline's own, so the mapping is fixed when the deadline is.
+  - Check point 3 does keep a clock read. The race there is benign: deciding to retry with a
+    remainder near zero opens a retry that is refused at once, or, with the lock free, runs a pass
+    that check point 4 rolls back. Either way it answers `deadline_passed` by the rule above.
+
+  Past the deadline, the service rolls back — the `surface_call` and `surface` rows alike — and
+  answers the new refusal.
+- **The margin covers the whole path from the service's decision to the hook's `recv` returning, on
+  the commit path.** That path runs from the pre-`COMMIT` check passing, through `COMMIT` itself —
+  a WAL `fsync`, since the store's connections set no `synchronous` and WAL's default is `FULL` —
+  the worker-to-loop handoff, the `call` row attempt on the response path, encoding, the socket, and
+  the hook's wake.
+  - The commit path sets the constant because losing the race there records a push as shown that
+    nobody saw, which is the promise this item makes. The refusal path is shorter and covered by the
+    same constant; losing it only turns `deadline_passed` into `unanswered` in `hook.log`.
+  - It is a named constant with its reason stated beside it. It is set once from the distribution
+    of the commit path over N pushes, measured under the load the host actually carries, with both
+    ends stamping `time.time()` since they share a clock, at a stated high percentile. It is not set
+    from socket transit on an idle host.
+- **The hook's changes.**
+  - It sends `deadline_at_ms`.
+  - Its map from wire code to `hook.log` kind (`push._REJECTION_KINDS`) gains the new code. If the
+    answer arrives inside the margin, it is a push failure like the others: one `hook.log` line and
+    the relay instruction, as §"Degraded modes" already prescribes for `store_busy`. That section's
+    list gains `deadline_passed`. `push.py`'s comment that counts the wire codes a `surface` can
+    receive is rewritten without a count.
+  - **A timeout after the send is logged under a new kind, `unanswered`**: sent, and no answer by
+    the deadline. Today `push.py`'s catch-all logs it as `transport`, indistinguishable from an
+    unreachable service. It gets its own word rather than `deadline_exceeded`, because `hook.log`
+    records no phase and `deadline_exceeded` already means the pre-send case, where connecting
+    consumed the whole budget (`push.py`'s `remaining <= 0` branch). One word for both would count a
+    push the service never received together with one it received and could not answer in time.
+  - **That catch sits around `rpc.surface_once` alone, not around `run()`'s whole `try`.** A
+    `TimeoutError` from `connect_once` stays `transport`. That is `health()` on a listener that
+    accepts and never answers, which `connect.py`'s warm branch re-raises bare: **a blocked event
+    loop's** signature.
+  - **A handler stuck behind a live loop is different, and where it shows depends on what it
+    holds.** The service answers `health()` before any handler runs, so every such push passes
+    `connect_once` and sends.
+    - **A push whose own handler hangs** — an embed that never returns, a statement that never
+      returns on its lease — times out in `surface_once`: `unanswered`.
+    - **A wedge that holds the writer answers every later push at deadline − margin**, from the
+      retry's own refusal: `deadline_passed` when that answer wins the margin race, `unanswered`
+      when it loses. Its `call` row drops under the held lock either way.
+    - **One that has pinned every lease is answered at its lease wait, with check point 1's code**,
+      once the pool is exhausted, and its `call` row lands, since SQLite's write lock is free. So
+      `deadline_passed` *with* `call` rows behind it is an exhausted pool, and *without* is a held
+      writer: the one thing that tells the two apart in the store.
+    - So **a run of `deadline_passed` and `unanswered` in `hook.log`, with no `call` rows behind
+      it, is the post-M35 signature of the wedge this milestone was opened for**, and
+      `service.log`'s long-request line (item 4) names the request holding it.
+    - Before M35 every kind logged `transport`, since today's catch-all also takes a timeout after
+      the send. So the 2026-09-29 wedge's `transport` lines do not say which kind it was.
+- **What remains is a race stated, not a gap left.** A commit that lands just inside the margin
+  whose response is then slower than the margin is still counted. The stated percentile is what
+  bounds how often; a higher one costs push budget the hook has already partly spent connecting.
+- **Every design sentence that states the old rule changes.** The normative-after list at the top
+  names each site, in `schema.md` and `write-policy.md`. The replacement wording for the central
+  ones:
+  - The per-kind table's `surface_call` row: *"exactly one per `surface` call, always"* becomes
+    *exactly one per `surface` call answered within its deadline*.
+  - §"`call` is an access log, and every other kind is a semantic one": *"Every push writes
+    `surface_call`"* becomes every push answered in time.
+  - §"Linked sessions — what makes a cross-client signal computable", in its paragraph *"Honest limit
+    on the session denominator"*: a push now reaches the service and emits no `surface_call` by
+    design, and its closing condition gains *"and answering within the hook's deadline"*. That is
+    the paragraph D30's zero-write signal is read through.
+- **How often it happens, and where each part of it is counted:**
+  - `hook.log`'s `deadline_passed` lines: every refusal that reached the hook before it gave up, its
+    writer-wait share included, since the hook receives the answer whether or not the `call` row
+    landed. This is the complete count of *delivered* refusals. A refusal answered after the hook had
+    gone — a slow pass reaching check point 4 late — shows in `hook.log` as `unanswered` instead.
+    A run of them across consecutive pushes is a wedge, not lateness: with no `call` rows behind
+    it, a held writer; with them, an exhausted pool (see the hook bullets above).
+  - The access log's `deadline_passed` among `memory_surface` calls: the refusals the service issued
+    whose row landed. **This is a different population from the line above, and neither bounds the
+    other.** A check-point-3 refusal answered under the held lock reaches the hook and drops its
+    row. A check-point-2 refusal on a cold load lands its row and reaches a hook that has already
+    gone, so it is `unanswered` in `hook.log`.
+  - **What D30's denominator loses is the pushes the agent did not see**: `hook.log`'s
+    `deadline_passed` plus `unanswered`, less the margin race.
+  - `hook.log`'s `unanswered` lines: pushes sent and abandoned at the deadline with no answer — a
+    slow embed, a writer wait the service did not refuse in time, or a handler that never answers
+    behind a live loop.
+  - `hook.log`'s `deadline_exceeded` lines stay what they are today: pushes abandoned before the
+    send, because connecting consumed the budget. The service never received them.
+- **The error table gains one code**, in the store-condition range beside `store_busy`. It records
+  the wire name, the data (`{verb}`), disposition `refused` (the store is fine; the request was
+  declined on its own terms), and that it is terminal for that request, not retried, because the
+  caller has already gone.
+
+### Invariants and properties to cover
+
+- **No two transactions nest on a connection**, whatever interleaving the clients produce. A test
+  holds one request's write transaction open **briefly** — well inside every budget, `surface`'s
+  included, or it is testing the bounded wait instead — and issues concurrent reads and writes. The
+  test asserts outcomes, not retries: all of them succeed, and none answers `internal_error`, which
+  is what a nested `BEGIN` answers today. Which reads retry depends on timing: those reaching their
+  event insert during the hold do, and those dispatched after the commit do not.
+- **A same-task nested transaction fails at once**, not after the budget, and not as
+  `store_busy`.
+- **The only `BEGIN` on a service connection is the primitive's**, held by the drift guard of item 1.
+- **The method table's classification equals the set in item 2.**
+- **Another connection's write cannot refuse a write verb**, for every write verb. The fixture
+  starts a write on a second connection while the verb's transaction is open. Under `IMMEDIATE`
+  that write must wait, the verb must commit, and the second write must land after it. Under the
+  old deferred `BEGIN` the same fixture refuses the verb, which is how the test is shown to test
+  something: `spikes/m35_busy_snapshot_probe.py` turned into a test over the real verbs.
+- **A plan holds no write lock while it computes**: during the snapshot phase, `remember`, `search`
+  and a knowledge write all succeed. The fallback window that a moved fingerprint opens is the
+  accepted pre-M35 cost, paid only when a memory row moved. A `search` arriving in it is refused on
+  its first attempt and waits in its `IMMEDIATE` retry, which answers `store_busy` if the fallback
+  outlasts its budget. The staleness probe re-run, which drives no writes, shows **no failed
+  search**, where it showed five of eight.
+- **Re-validation is asserted on its outcome, not its mechanism.** A journal row `remember`ed between
+  the snapshot and the write transaction is among the run's members. A long-term anchor retired in
+  the same window is no group's anchor.
+- **`next_group` finding the caller's own run** at step 3 discards its plan and serves from that run.
+- **`next_group` against a stranger's run** created between its snapshot and its write answers
+  `Busy`, and serves nothing.
+- **A read's upgrade meeting a held write lock is refused within milliseconds on its first
+  attempt.** A second connection holds `BEGIN IMMEDIATE` across a `search` with the retry disabled,
+  and the elapsed time is far below `BUSY_TIMEOUT_MS`.
+- **With the retry**, the read succeeds once a hold shorter than its budget ends, and answers
+  `store_busy` when the hold outlasts it. A read staled by a commit succeeds on its retry. The retry
+  runs at most once.
+- **A read's total wait, lease plus retry, is bounded by its budget.** The budget is patched before
+  the store opens, as the writer's test does; a serving connection's pragma is 0 whatever it opened
+  with, so the patched constant is the whole wait. The pinned leases return at about half the
+  budget, and the writer's hold outlasts one and a half. The read answers `store_busy` at about one
+  budget from its dispatch. Reverted, it answers at about one and a half, because the retry then
+  polls a whole budget of its own. A pool that stayed
+  exhausted throughout would answer at one budget in both arms and test nothing.
+- **A `surface` past its deadline commits nothing, and answers `deadline_passed`.** Each scenario
+  asserts that the store gains no `surface_call` and no `surface` row:
+  - **A writer's hold that outlasts the deadline.** The first attempt is refused, and the retry
+    waits only until the deadline less the margin, then answers `deadline_passed`. With the
+    precedence reverted, the same call answers `store_busy` and still commits nothing, which is what
+    tells the precedence from the rollback. No `call` row is asserted here, since the writer still
+    holds its lock when the row is attempted.
+  - **An encoder stub that sleeps past the deadline, with no writer.** It covers the older cause.
+    Here the access log's `call` row carrying `deadline_passed` is asserted, because it lands. With
+    both the post-embed and the pre-`COMMIT` checks reverted, the same call commits both kinds of
+    row. Each check alone is shown to suffice by reverting the other.
+  - **A pool whose every lease is pinned** — `search`es blocked in an encoder stub, one per pool
+    connection — with a `surface` whose deadline is shorter than the leases' return. It answers
+    `deadline_passed`, and its `call` row lands with that code, since the write lock is free. With
+    the dispatcher's deadline exception reverted, the same call answers `store_busy`.
+- **`deadline_at_ms` at its edges.**
+  - A `surface` given an ample deadline behaves as today.
+  - One given none uses the `search` budget and, at an exhausted pool, answers `store_busy`: the
+    flag `LockWaitExpired` records is set by the deadline's presence, not by the method.
+  - A deadline already past on arrival answers `deadline_passed` before any work: the encoder stub
+    records no call. With check point 1 reverted, it records one and the answer is unchanged.
+  - A deadline more than the budget ahead answers `bounds`, and the access log records a `call` row
+    for it.
+- **The hook sends `deadline_at_ms`, computed from the same deadline it enforces**, so the two cannot
+  drift apart. The test patches `time.time` and asserts the sent value, rather than asserting that
+  the two are "the same". A timeout after the send — the fake service answers `health` and never
+  answers `surface` — is logged `unanswered`, not `transport`. A `TimeoutError` raised inside
+  `connect_once` — the fake service accepts and never answers `health` — is still logged
+  `transport`; with the catch widened to the whole `try`, it logs `unanswered`. The pre-send branch
+  still logs `deadline_exceeded`, as its existing test asserts.
+- **A `deadline_passed` answer is logged in `hook.log` as `deadline_passed`, with its code, and
+  prints the relay instruction**, through the fake-service fixture the other codes use. A guard test
+  holds every key of `push._REJECTION_KINDS` to an `ErrorCode` whose `wire_name` equals its mapped
+  kind. The hook is stdlib-only and repeats the codes as literals, so without the guard an omitted
+  entry would log `rejected_-32026` and every test would stay green.
+- **`push._DEADLINE_SECONDS × 1000 ≤ ddl.BUSY_TIMEOUT_MS`**, asserted by a guard test that imports
+  both, so the hook's own deadline is always a valid `deadline_at_ms`. Without it, raising one
+  constant or lowering the other would make the service answer `bounds` to every push while every
+  other test stayed green.
+- **Contention on `fetch` and `retire` answers `store_busy`**, never `internal_error`.
+- **A writer's total wait, connection lock plus write lock, is bounded by one `BUSY_TIMEOUT_MS`.** The test
+  asserts the ratio to the budget, not an absolute, on a budget of about 500 ms patched before the
+  store opens, with an external connection holding `BEGIN IMMEDIATE` for about 2.4 budgets and two
+  writers dispatched together. The second answers `store_busy` at about one budget from its
+  dispatch, whichever side of the budget refuses it: the connection lock (`LockWaitExpired`) or the
+  poll for the write lock (`BEGIN IMMEDIATE` with nothing left). With the budget reverted, it
+  answers at about two.
+- **A connection closed by a failed rollback is replaced**: the next request dispatched succeeds.
+  Two writes dispatched concurrently into the gap both succeed, over one reopened writer, with no
+  leaked worker thread. A write already queued on the lock when the handle closed answers
+  `store_busy` with its method as the `verb`, and ran nothing.
+- **`next_group` holds no write lock while the model loads.** The fixture holds an active run of the
+  caller's own with a servable group, so step 1 serves and embeds; on an empty store `next_group`
+  embeds nothing and the reverted arm would pass. An encoder stub's load takes longer than the
+  write budget. `next_group` is dispatched, then a `memory_fetch` while the load is still running.
+  The probe is `fetch` because it writes without embedding, so it does not wait on the load itself;
+  a `remember` would, and would pass either way. The `fetch` succeeds. With the wait
+  reverted, it answers `store_busy` after one budget, with the load still running.
+- **Two builds acquiring one corpus's lock together**: the loser answers `IndexerBusyError`, the test
+  item 5 names. A build arriving during the winner's index phase refuses at once, with no wait.
+- **A connection opened after startup onto a replaced or absent file** is closed, and the request
+  answers by its family: `store_unavailable` for a knowledge verb, `internal_error` for a memory or
+  consolidator verb, with a log line naming the drift. Each family is tested.
+- **A knowledge read on a store without the registry table** answers as an empty registry and
+  leaves the table absent.
+- **Exactly one `knowledge_build` row per build.** When the lock was taken, it is committed before
+  the lock's release; for a refusal, it is committed after that refusal. The count is tested on
+  every path:
+  - success, a post-lock failure, and a pre-lock refusal;
+  - a failure injected into the callback's payload construction, which leaves the build's exit
+    status unchanged, writes no `ok=false` row, and leaves at most one row — never a second attempt
+    after the release;
+  - a build cancelled mid-scan, which leaves no row and no lock;
+  - a failure injected after `scan.run` returns, which leaves one `ok=true` row and exit status 1.
+- **A knowledge write's registry reads on the writer run inside a transaction of their own**, see
+  nothing of another handler's uncommitted transaction, and open no corpus database inside it.
+- **Pool connections are all closed at shutdown and at a failed startup** — the autouse leak check
+  in `tests/conftest.py` already fails a test that leaves a worker thread alive.
+- **Each diagnostic writes what it promises.** The two dumps and the signal stop line are asserted
+  by reading `service.log` from a real service process. The long-request line is asserted
+  in-process, with `IDLE_POLL_INTERVAL_SECONDS` patched down as `test_service_lifecycle.py` does,
+  since a real process would wait out a 30 s poll. The test uses an in-flight entry older than the
+  interval and asserts the method, `session=unresolved` before the envelope resolves, and one line
+  per poll while the request stays in flight.
+- `schema.md` invariants 2 and 10 are unchanged and still hold: a mutation stays one transaction,
+  and its events commit inside it. Invariant 2 is worded over *"every logical mutation"*. A
+  `next_group` that now spans up to three transactions still mutates in exactly one — its
+  `IMMEDIATE` step; the first step and the snapshot mutate nothing. The docstrings and
+  `architecture.md` §Planning, which say *"one transaction"* per verb, are rewritten to say that.
+
+### The perturbation table, walked before the first review round
+
+The table has three axes. **Where a request is interrupted**: before `BEGIN`; between its read and
+its write; mid-commit; while waiting for the lock; while holding a pool lease. **Who else writes**: a
+request in this process on the writer, a read upgrading on a pool connection, the access log's own
+connection, the indexer process, a second service, an operator's shell. **Which connection is
+involved**: the writer, a pool connection, the access log's. The walk is written down in
+`reviews/m35-brief-perturbation.md`, and each cell that forced a requirement above is marked there.
+The implementation walks it again against the code. The access log keeps its own connection, with
+`busy_timeout` at zero, and stays best-effort under invariant 10's exemption.
+
+### Done when
+
+Every numbered item above is in the tree, and the design sections named at the top state them.
+
+**The CI failure this milestone was scoped to fix cannot recur:**
+`test_rename_and_remove_reach_a_real_service` (run 36657562917) passes by construction, not by luck.
+The busy-snapshot regression test is shown red against the old deferred `BEGIN` before it counts.
+
+The staleness and busy-snapshot probes re-run; the read-upgrade probe is a one-off measurement with
+nothing to re-run:
+- The staleness probe fails no search.
+- The busy-snapshot fixture is a test.
+- The staleness probe gains a phase that drives `next_group` and `apply_merge` against concurrent
+  `search` and `surface`. That is the traffic item 2's retry exists for, which a plan alone no longer
+  produces.
+
+Every property above has a test, each mutation-verified by reverting the fix it guards.
+
+Every comment and docstring that describes the pre-M35 mechanism is rewritten or removed. Among
+them:
+- `build_log.py`'s fresh-transaction rationale.
+- `dispatch_knowledge.py`'s `SQLITE_BUSY_SNAPSHOT` note.
+- `server.py`'s concurrency note.
+- `mcp/connection.py`'s derivation of `REQUEST_TIMEOUT_SECONDS`, whose premise item 1's single budget
+  keeps true, now for a stated reason.
+- `registry.ensure_table`'s and `registry.ensure`'s docstrings, which say every knowledge verb or
+  read creates the table.
+- `main.build`'s rationale for where `succeeded` sits, which item 6 makes moot.
+- `scan.py`'s and `lock.py`'s notes that closing the two-builds race *"would mean a `BEGIN IMMEDIATE`
+  variant"*, which item 5 now does.
+- The comment on `ddl.ACCESS_LOG_PRAGMAS` and `AccessLog`'s class docstring, whose reason for a
+  private connection changes with `schema.md`'s; and `access_log.py`'s comments naming `ValueError`
+  for a closed handle, which becomes `WriterClosedError`.
+- `_Dispatched`'s docstring in `server.py`, which says `duration_ms` covers the handler alone
+  (item 2).
+- The `surface_call` payload class's docstring in `core/events.py`, *"exactly one per push"*, which
+  item 7 narrows to pushes answered in time.
+- `push.py`'s two comments that put *"a timeout mid-request"* under `transport` — the catch-all's
+  and `_classify_failure`'s, the second adding that `architecture.md` draws no distinction — which
+  item 7's `unanswered` falsifies.
+
+The grep for each claim, not this list, decides completeness.
+
+**`README.md` tells an operator what they can now do and read**:
+- §"Files and logs" says what `service.log` carries: the two dumps, the long-request line and the
+  stop reasons.
+- §"When something is wrong" gains a row for a service that stops answering. It says to look for the
+  long-request line, then `kill -USR2 <pid>` for the in-flight requests and tasks, or `kill -USR1
+  <pid>` for thread stacks if the loop itself is blocked. A planning method under five minutes is a
+  plan, not a wedge. It also says how each kind of wedge reads in `hook.log`:
+  - a blocked loop logs `transport` on every push, though the socket connects;
+  - a wedge holding the writer logs `deadline_passed` — or `unanswered`, when the answer lost the
+    margin race — on every push, with no `call` rows behind them; the same run *with* `call` rows is
+    an exhausted pool;
+  - a push whose own handler hangs logs `unanswered`.
+
+  In every case the long-request line in `service.log` names the request. One wedge looks healthy
+  in `hook.log`: pushes succeed while every write answers `store_busy` at about one budget. That is a
+  wedge holding the writer's lock with no transaction open, and the long-request line names it too.
+- Its `refresh --wait` paragraph says what `--wait` now guarantees.
+
+`./check.sh` is green.
+
+**No latency bar.** The host is busy for days (operator, 2026-09-29), and no decision here turns on
+a millisecond figure. Each property above is pass or fail. These are measured once, reported
+against a control run on the same machine at the same load, and decide nothing:
+- the service's warm `search` time;
+- the pool's footprint;
+- the `store_busy` refusal rate on `memory_search` and `memory_surface` during the new probe phase,
+  with and without the retry, **counted from the responses the probe receives**, per method and per
+  attempt. The access log cannot supply it. A read refused at a held lock returns while the writer
+  still holds the lock, so its `call` row, on a connection with `busy_timeout` 0, is dropped at
+  once; only the stale-snapshot share lands. The log-derived rate, from
+  `experiments/m33_call_log_queries.py`'s refusal-by-code query, is reported beside it as the access
+  log's undercount. Each arm runs on its own copy of the store, over rows with `id` greater than the
+  phase's first. The per-attempt counts also bound the convoy item 2 names: they show how many
+  reads needed their retry, which includes any that queued behind another read's retry rather than
+  the writer. The probe cannot see which held the lock, so it reports the count, not the cause.
+
+### Scope fence
+
+**Not** a change to any verb's result shape, to any event's payload, or to the DDL. What changes is
+which refusal some calls answer, each named where it is decided:
+- `fetch` and `retire` under contention, and any request the primitive finds on a closed handle,
+  answer `store_busy` (item 1).
+- Knowledge reads on a store without the registry table answer as an empty registry (item 2).
+- The losing build answers `IndexerBusyError` (item 5).
+- `memory_surface` gains one optional parameter and one wire code, and `surface_call`'s cardinality
+  rule narrows to calls answered in time (item 7). This is the only new wire code.
+- `call.duration_ms` spans the lease wait, and for `surface` the `deadline_at_ms` parse, as well as
+  the handler (item 2). No shape changes, but the latency population
+  `experiments/m33_call_log_queries.py` reads moves.
+
+**Not** the access log's connection or its best-effort terms. **Not** a fix for the wedge beyond
+making the next one diagnosable; if the dumps name a cause, that is the next milestone's. **Not**
+the installer: its whole-entry compares, the file-reasons count and the `doctor` check are M36
+(`FINDINGS.md` §"Current state"). **Not** retrieval quality: the embedder spike closed that side for
+now (`research/granite-embedder-spike.md`).
+
+**Not** `BUSY_TIMEOUT_MS`: it is the budget for every request here except `surface`, and raising it
+is the first thing a red test invites, but it stays 5 s.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

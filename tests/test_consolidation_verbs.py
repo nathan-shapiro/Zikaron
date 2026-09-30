@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.consolidation_fixtures import AGENT_SESSION, consolidator, detail_of
+from tests.consolidation_fixtures import AGENT_SESSION, Consolidator, consolidator, detail_of
 from zikaron.core.consolidation import serving, verbs
 from zikaron.core.consolidation.groups import Disposition, GroupStatus
 from zikaron.core.consolidation.payload import (
@@ -40,8 +40,10 @@ def _named(record: object) -> NamedRow:
     return NamedRow(uuid=record.uuid, expected_version=record.expected_version)  # type: ignore[attr-defined]
 
 
-async def _serve_one(c: object, *, op_id: str = "op1") -> ServedGroup:
-    served = await serving.next_group(c.harness.store.connection, call=c.call(op_id=op_id))  # type: ignore[attr-defined]
+async def _serve_one(c: Consolidator, *, op_id: str = "op1") -> ServedGroup:
+    served = await serving.next_group(
+        c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id=op_id)
+    )
     assert isinstance(served, ServedGroup)
     return served
 
@@ -664,7 +666,9 @@ async def test_a_deferred_group_is_refused_by_a_write_verb(tmp_path: Path) -> No
         # The second call defers the first group and serves the second, which is what keeps the run
         # active — rung 2 checks the run first, so a deferred group in a *finished* run answers
         # `group_expired` instead.
-        await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2"))
+        await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+        )
         with pytest.raises(ZikaronError) as raised:
             await verbs.discard(
                 c.harness.store.connection,

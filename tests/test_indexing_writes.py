@@ -9,6 +9,7 @@ which makes the expected bytes predictable. `test_indexing_integration.py` runs 
 against the real model, which is what the `integration` marker is for.
 """
 
+import asyncio
 import json
 import math
 import sqlite3
@@ -21,6 +22,7 @@ from typing import Any, Final, cast
 import aiosqlite
 import pytest
 
+from tests.contention_fixtures import external_writer
 from tests.fake_encoder import FakeEncoder, vector_for
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.errors import ErrorCode, IndexStage, RowState, ZikaronError
@@ -32,6 +34,7 @@ from zikaron.core.indexing.vectors import IndexIdentity
 from zikaron.core.indexing.writes import IndexedCall, IndexingContext
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import CallParams, Rewrite
+from zikaron.core.store import ddl
 from zikaron.core.store.store import Store
 
 _MAX_DEPTH: Final = 32
@@ -487,21 +490,21 @@ async def test_a_store_level_failure_inside_the_transaction_is_index_failed_at_i
 
 
 async def test_a_locked_store_is_store_busy_naming_the_verb_not_a_terminal_index_failure(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`store_busy` is the one error the design tells a caller it may retry, so contention must not
     be collapsed into `index_failed` — a retryable answer reported as a terminal one costs the
     caller the retry. The result code is read off the exception rather than its message text.
 
     A second connection holds a write transaction while this one tries to open its own, with the
-    waiting connection's `busy_timeout` lowered so the test does not sit out the real five seconds.
+    wait budget lowered so the test does not sit out the real five seconds.
     """
     encoder = FakeEncoder()
+    monkeypatch.setattr(ddl, "BUSY_TIMEOUT_MS", 50)
     async with (
         await _open_store(tmp_path, encoder) as store,
         aiosqlite.connect(store.path) as holder,
     ):
-        await store.connection.execute("PRAGMA busy_timeout = 50")
         await holder.execute("BEGIN IMMEDIATE")
         await holder.execute(
             "INSERT INTO meta (key, value) VALUES ('probe', 'holding the write lock')"
@@ -629,47 +632,46 @@ async def test_an_extended_busy_result_is_still_contention_rather_than_a_termina
         assert raised.value.data == {"verb": "remember"}
 
 
-async def test_a_real_stale_snapshot_during_an_amend_is_reported_as_contention(
+async def test_a_commit_elsewhere_during_an_amend_waits_for_it_rather_than_refusing_it(
     tmp_path: Path,
 ) -> None:
-    """The same case without injection, and deterministic rather than raced: the amend's own
-    transaction reads the row, a second connection commits, and the amend's first write then cannot
-    promote its stale snapshot. Ordered by construction — the second connection's commit is driven
-    from inside the amend — so there is no timing window to be flaky about."""
+    """The same case without injection: the amend's own transaction reads the row, and a second
+    connection tries to commit before the amend's first write. On a store's writer the amend opened
+    `BEGIN IMMEDIATE`, so it already holds the write lock: the other commit waits, the amend
+    commits, and the other lands after — where a deferred `BEGIN` would have let the commit through
+    and refused the amend at once on its stale snapshot. The other writer runs on its own thread,
+    as it would in its own process, since waiting for it inline would wait on the amend itself."""
     encoder = FakeEncoder()
-    async with (
-        await _open_store(tmp_path, encoder) as store,
-        aiosqlite.connect(store.path) as other,
-    ):
+    async with await _open_store(tmp_path, encoder) as store:
         call = _call(store, tmp_path, encoder)
         written = await writes.remember(
             store.connection, rewrite=Rewrite(gist=_GIST, content=_CONTENT), call=call
         )
         original_resync = lexical_module.resync
+        landed: list[asyncio.Future[int]] = []
 
-        async def commit_elsewhere_first(
-            db: aiosqlite.Connection, **kwargs: lexical_module.Document | int
-        ) -> None:
-            await other.execute("BEGIN IMMEDIATE")
-            await other.execute("INSERT INTO meta (key, value) VALUES ('probe', 'other writer')")
-            await other.commit()
-            await original_resync(db, **kwargs)  # type: ignore[arg-type]
+        with external_writer(store.path) as other:
 
-        with (
-            unittest.mock.patch.object(lexical_module, "resync", new=commit_elsewhere_first),
-            pytest.raises(ZikaronError) as raised,
-        ):
-            await writes.amend(
-                store.connection,
-                uuid=written.memory.uuid,
-                version=1,
-                rewrite=Rewrite(gist=_GIST, content="rewritten under a stale snapshot"),
-                call=call,
-            )
-        assert raised.value.code is ErrorCode.STORE_BUSY
-        assert raised.value.data == {"verb": "amend"}
-        assert not store.connection.in_transaction
-        assert (await _row(store, written.memory.uuid))[:3] == (_GIST, _CONTENT, 1)
+            async def commit_elsewhere_first(
+                db: aiosqlite.Connection, **kwargs: lexical_module.Document | int
+            ) -> None:
+                commit = asyncio.ensure_future(asyncio.to_thread(other.commit_a_write))
+                await asyncio.wait([commit], timeout=0.3)
+                assert not commit.done(), "the other commit landed inside the amend"
+                landed.append(commit)
+                await original_resync(db, **kwargs)  # type: ignore[arg-type]
+
+            with unittest.mock.patch.object(lexical_module, "resync", new=commit_elsewhere_first):
+                amended = await writes.amend(
+                    store.connection,
+                    uuid=written.memory.uuid,
+                    version=1,
+                    rewrite=Rewrite(gist=_GIST, content="rewritten while another writer waited"),
+                    call=call,
+                )
+            await asyncio.gather(*landed)
+        assert amended.memory.version == 2
+        assert landed
 
 
 async def test_a_failure_opening_the_transaction_is_mapped_rather_than_escaping_raw(
@@ -685,7 +687,7 @@ async def test_a_failure_opening_the_transaction_is_mapped_rather_than_escaping_
         async def refuse_begin(
             sql: str, parameters: Iterable[object] | None = None
         ) -> aiosqlite.Cursor:
-            if sql == "BEGIN":
+            if sql.startswith("BEGIN"):
                 raise aiosqlite.OperationalError("cannot start a transaction within a transaction")
             return await original(sql) if parameters is None else await original(sql, parameters)
 

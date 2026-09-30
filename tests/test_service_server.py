@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -23,6 +24,8 @@ from zikaron.core.events import ClientKind
 from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
 from zikaron.service import asyncio_compat, rpc, server
 from zikaron.service.context import ServiceContext
+from zikaron.service.methods import Access, Method
+from zikaron.service.params import Handler
 
 
 def _line(method: str, params: dict[str, object], request_id: int = 1) -> bytes:
@@ -411,7 +414,7 @@ async def test_an_unhandled_handler_exception_still_echoes_the_resolved_label(
     9's error-envelope fix — the call site passes `session_id=envelope.session_id` exactly like
     the other two — but "correct by inspection" is not the same claim as "guarded by a test," and
     a future edit to this specific call site could silently drop the keyword with nothing here to
-    catch it. `_METHODS` is monkeypatched at the one entry `remember` resolves to, rather than
+    catch it. `METHODS` is monkeypatched at the one entry `remember` resolves to, rather than
     forcing a real `core` function to raise, since the point is to exercise this server-level
     fallback specifically, independent of which real handler happened to be involved."""
     async with open_context(tmp_path) as ctx:
@@ -421,7 +424,11 @@ async def test_an_unhandled_handler_exception_still_echoes_the_resolved_label(
         ) -> object:
             raise RuntimeError("a genuine bug in a handler, deliberately, for this test")
 
-        monkeypatch.setitem(server._METHODS, "memory_remember", _handler_raises_unexpectedly)
+        monkeypatch.setitem(
+            cast("dict[str, Method]", server.METHODS),
+            "memory_remember",
+            Method(cast("Handler", _handler_raises_unexpectedly), Access.WRITE),
+        )
 
         parsed = await _response_json(
             ctx, _line("memory_remember", {"gist": "g", "content": "c", "client": _client("s1")})

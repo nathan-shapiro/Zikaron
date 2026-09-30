@@ -21,9 +21,10 @@ import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
-from zikaron.core.store import ddl, meta, migration, permissions
+from zikaron.core.store import ddl, holders, meta, migration, permissions
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import Embedder
+from zikaron.core.store.pool import ReadPool
 
 #: What a store created by this build records. Declared here rather than derived from
 #: `migration.MIGRATIONS`, and asserted against it in `test_store.py`: one declaration checked from
@@ -107,6 +108,15 @@ async def _read_meta_table(db: aiosqlite.Connection) -> dict[str, str]:
     except aiosqlite.Error:
         return {}
     return {str(key): str(value) for key, value in rows}
+
+
+class StoreReplacedError(OSError):
+    """`memory.db` is no longer the file this process opened, or is gone.
+
+    An `OSError`, because it is a fact about the filesystem: a knowledge verb names it
+    `store_unavailable` as it does any other, and a memory verb answers `internal_error`, logging
+    this message, which names the drift.
+    """
 
 
 def _store_not_created(db_path: Path) -> ZikaronError:
@@ -210,7 +220,8 @@ def _physical_width_disagrees(recorded_dim: int, physical_width: int) -> Zikaron
 
 
 class Store:
-    """An open connection to one Zikaron store, plus the `meta` it was opened with.
+    """One open Zikaron store: its writer connection, its read pool, and the `meta` it was opened
+    with.
 
     Construct only through `create` or `open`, never directly: both classmethods run the
     validation their path requires before a `Store` exists to hand back, so holding one is
@@ -232,23 +243,78 @@ class Store:
         current_meta: meta.StoreMeta,
         opened_inode: int,
     ) -> None:
-        self._db: Final = db
+        self._db = db
         self.path: Final = db_path
         self.meta: Final = current_meta
         self.opened_inode: Final = opened_inode
+        self.pool: Final = ReadPool(self._open_checked)
+        self._reopening: Final = asyncio.Lock()
+        holders.hold(db, immediate=True)
 
     @property
     def connection(self) -> aiosqlite.Connection:
-        """The underlying `aiosqlite` connection, for a caller that needs to run its own SQL.
+        """The writer as it stands, for a caller that runs before any request can close it.
 
         Exposed rather than wrapped with per-statement methods: this module owns schema creation
-        and the open path, and no record behaviour lives here for a method to wrap.
+        and the open path, and no record behaviour lives here for a method to wrap. A caller that
+        dispatches requests uses `writer`, which replaces a writer a failed rollback closed.
         """
         return self._db
 
+    async def writer(self) -> aiosqlite.Connection:
+        """The writer connection, reopened first if a failed rollback closed it.
+
+        Every transaction on the writer opens `IMMEDIATE`. The reopen runs once per closure: a
+        caller arriving while one is in progress waits for it rather than opening a second
+        connection, which would be abandoned with a live worker thread.
+
+        Raises:
+            StoreReplacedError: the reopen found `memory.db` replaced or gone.
+            aiosqlite.Error: the reopen's extension load or a pragma failed.
+        """
+        if not holders.holder_of(self._db).closed:
+            return self._db
+        async with self._reopening:
+            if holders.holder_of(self._db).closed:
+                reopened = await self._open_checked()
+                holders.hold(reopened, immediate=True)
+                self._db = reopened
+        return self._db
+
+    async def _open_checked(self) -> aiosqlite.Connection:
+        """A new connection onto this store's file, refused if the file is not the one opened.
+
+        Every connection opened after the store's own open comes through here — a read-pool
+        connection and the writer's reopen — so none can read from one file while the writer
+        writes another. The schema was validated and migrated at the store's open, so this opens
+        with the pragmas alone, the serving one included.
+
+        Raises:
+            StoreReplacedError: `memory.db` is gone, or its inode is not `opened_inode`.
+            aiosqlite.Error: the extension load or a pragma failed.
+        """
+        db, inode = await open_connection(
+            self.path,
+            pragmas=(*ddl.PRAGMAS, ddl.SERVING_PRAGMA),
+            existing_only=True,
+            connect_failure=lambda error: StoreReplacedError(
+                f"{self.path} is gone since the service opened it: {error}"
+            ),
+        )
+        if inode != self.opened_inode:
+            await db.close()
+            raise StoreReplacedError(
+                f"{self.path} was replaced since the service opened it: inode {self.opened_inode} "
+                f"then, {inode} now"
+            )
+        return db
+
     async def close(self) -> None:
-        """Close the underlying connection. Safe to call once; not idempotent."""
-        await self._db.close()
+        """Close the read pool and the writer. Safe to call once; not idempotent."""
+        try:
+            await self.pool.close()
+        finally:
+            await self._db.close()
 
     async def __aenter__(self) -> Self:
         return self
@@ -315,6 +381,7 @@ class Store:
                 defaults = await cls._create_tables_and_meta(
                     db, embed_dim, embed_model, chunk_max_tokens
                 )
+                await db.execute(ddl.SERVING_PRAGMA)
             except BaseException:
                 await db.close()
                 raise
@@ -404,6 +471,7 @@ class Store:
         )
         try:
             current_meta = await cls._validate_on_open(db, config, migrate=migrate)
+            await db.execute(ddl.SERVING_PRAGMA)
         except BaseException:
             await db.close()
             raise

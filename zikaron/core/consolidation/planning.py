@@ -1,7 +1,8 @@
 """`plan_groups`: write one run's whole partition, and close whatever run preceded it.
 
-`architecture.md` §"Consolidation lifecycle" §Planning is normative. Four things happen here, in
-this order, and the order is what enforces invariant 15:
+`architecture.md` §"Consolidation lifecycle" §Planning is normative. The plan is computed first,
+on a read snapshot that holds no write lock (`snapshot`); then one transaction on the writer writes
+it, and four things happen in that transaction, in this order, which is what enforces invariant 15:
 
 1. **Close any pre-existing `active` run**, with the status two tests imply — `expired` if the lease
    has passed, else `abandoned` for its own owner and `taken_over` for anybody else. This function
@@ -12,8 +13,9 @@ this order, and the order is what enforces invariant 15:
    stranger.
 2. **Create the new run**, owned by `(session_id, pid)` with a fresh lease. It is only after step 1
    that this can be done without there being two effectively-active runs for an instant.
-3. **Plan and persist the groups.** Membership is frozen here. Planning is a pure function of the
-   store plus the effective config, so a run is reproducible from its inputs.
+3. **Persist the groups** — the snapshot's plan if its input has not moved, else a plan computed
+   again in this transaction. Membership is frozen here. Planning is a pure function of the store
+   plus the effective config, so a run is reproducible from its inputs.
 4. **Emit `planned`**, and — when the journal was empty — close the run `complete` immediately,
 since a run with no groups has nothing left to serve.
 
@@ -22,6 +24,8 @@ because undispositioned members stay `tier='journal' AND active=1`: nothing was 
 being abandoned, so nothing needs carrying forward. That is D29's never-lose guard doing its work —
 the store's own state is the record of what happened, and no cooperation from the model is required.
 """
+
+from dataclasses import dataclass
 
 import aiosqlite
 
@@ -32,6 +36,8 @@ from zikaron.core.consolidation.runs import Run, RunStatus
 from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.events import RunPhase
 from zikaron.core.store import transactions
+from zikaron.core.store.deadline import Deadline
+from zikaron.core.store.pool import ReadPool
 
 
 def _closing_status(previous: Run, *, call: ConsolidationCall, at: str) -> RunStatus:
@@ -64,19 +70,70 @@ async def _close_previous(
     return previous
 
 
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """A plan computed from a read snapshot, and the fingerprint of the input it was computed from.
+
+    The fingerprint is the `(rowid, version)` of every active row, journal and long-term: the plan
+    reads both tiers — the journal as candidates, the long-term tier as anchors — so a journal-only
+    fingerprint would miss an anchor retired, merged into or promoted while the plan ran.
+    """
+
+    fingerprint: tuple[tuple[int, int], ...]
+    planned: tuple[grouping.PlannedGroup, ...]
+
+
+async def _fingerprint(db: aiosqlite.Connection) -> tuple[tuple[int, int], ...]:
+    rows = await db.execute_fetchall(
+        "SELECT rowid, version FROM memory WHERE active = 1 ORDER BY rowid"
+    )
+    return tuple((int(rowid), int(version)) for rowid, version in rows)
+
+
+async def snapshot(pool: ReadPool, *, call: ConsolidationCall) -> Snapshot:
+    """Plan from a read snapshot on a leased pool connection, holding no write lock.
+
+    The lease is taken within the service's budget, and released before the caller takes the
+    writer: nothing that holds the writer waits on a lease.
+
+    Raises:
+        LockWaitExpired: no pool connection came free within the budget.
+        ZikaronError: `INDEX_FAILED` at the `index_write` stage for a driver failure — the plan
+            belongs to a write, and a read snapshot meets no contention.
+    """
+
+    async def work(connection: aiosqlite.Connection) -> Snapshot:
+        return Snapshot(
+            fingerprint=await _fingerprint(connection),
+            planned=await grouping.plan(connection, call=call),
+        )
+
+    async with pool.lease(Deadline.budget()) as connection:
+        return await transactions.in_one_transaction(
+            connection, work, failure=_failure_map("plan_groups")
+        )
+
+
 async def plan_within_transaction(
-    db: aiosqlite.Connection, *, call: ConsolidationCall, at: str
+    db: aiosqlite.Connection, *, call: ConsolidationCall, at: str, planned_from: Snapshot
 ) -> Run:
-    """`plan_groups`' work, assuming the caller already holds an open transaction.
+    """`plan_groups`' write, assuming the caller already holds an open `IMMEDIATE` transaction.
 
     Neither commits nor rolls back, so `next_group` can call this inside its own serve transaction —
     which it must, because an implicit replan and the serve that follows it have to be one atomic
     step or a second caller could serve from a run this one is still writing.
 
+    **The snapshot's plan is written only if its input has not moved.** The fingerprint is
+    re-derived first; if a memory row changed while the plan ran, the plan is computed again here,
+    inside this transaction, rather than from a fresh snapshot — the smallest bound that still makes
+    the check mean something, and one that always terminates. So a call plans at most twice, and
+    holds the writer for a whole plan only when a write landed during the first.
+
     Args:
         at: the single instant this transaction is about — the closing lease comparison, the new
             run's `started_at`, and the lease derived from it. Passed in rather than read here so a
             serve that replans implicitly stamps the replan and the delivery identically.
+        planned_from: the plan computed from a read snapshot, and that snapshot's fingerprint.
 
     Returns:
         The new run, `active` unless the journal was empty, in which case it is already `complete`
@@ -84,6 +141,7 @@ async def plan_within_transaction(
         current status re-read it; the serve loop instead asks the group table what is servable,
         which is the same question asked of the authoritative side.
     """
+    unmoved = await _fingerprint(db) == planned_from.fingerprint
     await _close_previous(db, call=call, at=at)
     run = await runs.create(
         db,
@@ -91,7 +149,7 @@ async def plan_within_transaction(
         started_at=at,
         lease_seconds=call.settings.run_lease_seconds,
     )
-    planned = await grouping.plan(db, call=call)
+    planned = planned_from.planned if unmoved else await grouping.plan(db, call=call)
     for group in planned:
         group_id = groups.new_group_id()
         await groups.insert(
@@ -129,9 +187,9 @@ async def plan_within_transaction(
     return run
 
 
-async def plan_groups(db: aiosqlite.Connection, *, call: ConsolidationCall) -> Run:
-    """Plan a fresh consolidation run over the whole journal, in one transaction — taking over if
-    held.
+async def plan_groups(db: aiosqlite.Connection, *, call: ConsolidationCall, pool: ReadPool) -> Run:
+    """Plan a fresh consolidation run over the whole journal from a read snapshot, and write it in
+    one transaction — taking over if held.
 
     The service RPC, and it is the **one** entry point that may displace a live worker. Whoever
     calls it wins: an unexpired run of another owner is closed `taken_over`, its own unexpired run
@@ -160,7 +218,11 @@ async def plan_groups(db: aiosqlite.Connection, *, call: ConsolidationCall) -> R
     stay `tier='journal' AND active=1` and are replanned.
 
     `next_group` does not come through here: it calls `plan_within_transaction` inside its own serve
-    transaction, having already established that no effectively-active run exists.
+    transaction, having established in that transaction that no effectively-active run exists.
+
+    **The plan is computed on `pool`, and only its write takes the writer** (`snapshot`,
+    `plan_within_transaction`). The run test and the takeover are decided in the write transaction,
+    so two consolidators planning at once still end with one run.
 
     Returns:
         The new run, `active` unless the journal was empty.
@@ -170,10 +232,14 @@ async def plan_groups(db: aiosqlite.Connection, *, call: ConsolidationCall) -> R
             `INDEX_FAILED` at the `index_write` stage for any other driver failure — the plan is a
             write, so `architecture.md` §Errors gives it a write's two codes and nothing is left
             behind in either case.
+        TransactionRefused: no pool connection, or the writer's lock, came free within the budget.
     """
+    planned_from = await snapshot(pool, call=call)
 
     async def work(connection: aiosqlite.Connection) -> Run:
-        return await plan_within_transaction(connection, call=call, at=runs.now())
+        return await plan_within_transaction(
+            connection, call=call, at=runs.now(), planned_from=planned_from
+        )
 
     return await transactions.in_one_transaction(db, work, failure=_failure_map("plan_groups"))
 

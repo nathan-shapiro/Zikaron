@@ -71,28 +71,27 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
     **The corpus is resolved here, before `prepare`, and the rule for which failures get a row is
     positional rather than by class.** `prepare` returns the corpus only on success and none of the
     refusals it raises carries an `id`, so a catch site has nothing to key a row by unless this
-    function already holds one. `registry.require` therefore runs **outside** the `try`: nothing
+    function already holds one. `registry.lookup` therefore runs **outside** the `try`: nothing
     raised before it returns writes a row, and everything raised after it is written under the id it
-    bound, whatever its class. So `require`'s own two refusals write none, while the same
+    bound, whatever its class. So `lookup`'s own two refusals write none, while the same
     `UnknownKnowledgeBaseError` raised later — by the refresh's own resolution, after a `remove`
     landed between the reads — *is* written, because by then an id is in hand. A rule by class could
     not express that difference.
 
-    `registry.ensure` ahead of it is not optional: store creation makes no registry table, and until
-    this function existed `prepare` was the first thing to create it — so a bare `require` would put
-    its `SELECT` ahead of any creation and fail with *no such table* on any store no knowledge verb
-    has touched.
+    `registry.ensure` ahead of it creates the registry table if no `knowledge_add` has: this is one
+    of the two writers that may, so a store no knowledge verb has touched still resolves the name
+    rather than failing with *no such table*.
 
-    **On the success path the row is attempted after the report and after the `try`/`except`, and
-    what that protects is narrower than it looks.** `build_log` guards the statement itself, so a
-    driver failure writing the row is already swallowed wherever the call sits. What placement
-    decides is the **rest** of `succeeded`, which is unguarded: inside the `try`, a failure building
-    that payload would enter the failure catch, write a *second* row saying `ok=false` for a build
-    that **completed**, and re-raise — status 1 and a false failure row over a built corpus.
+    **Exactly one row per build, written before the corpus lock is released wherever the lock was
+    taken**, so `refresh --wait`, which watches the lock, returns after the row has landed or been
+    dropped. `scan.run` calls `BuildLog.settle` for every outcome reached with the lock held; the
+    failure catch here writes only for a refusal before it, and is a no-op otherwise. A failure
+    after the release — the corpus handle's close, the report's own reads — exits 1 over the
+    `ok=true` row the scan earned: the row describes the scan, which committed.
 
     `except Exception` and deliberately not `BaseException`: a `KeyboardInterrupt` or a
-    `CancelledError` must not be made to wait out `busy_timeout` on a lock so that its own death can
-    be recorded. Such a build writes no row.
+    `CancelledError` must not be made to wait out a lock so that its own death can be recorded.
+    Such a build writes no row.
 
     Args:
         store: the open store to build against — its directory, its connection, its effective
@@ -104,7 +103,7 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
     started = time.perf_counter()
     db = store.connection
     await registry.ensure(db)
-    registered = await registry.require(db, name)
+    registered = await registry.lookup(db, name)
     log = build_log.BuildLog.opened(
         db,
         knowledge_base_id=registered.id,
@@ -120,12 +119,12 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
             store.config,
             name=name,
             build=await build_settings(store.config, full=full),
+            on_completion=log.settle,
         )
     except Exception as error:
         await log.failed(error)
         raise
     _print_report(refreshed)
-    await log.succeeded(refreshed.result)
     return 0
 
 

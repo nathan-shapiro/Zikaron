@@ -5,34 +5,40 @@ except `health()` runs the resolution preamble (`envelope.py`) before dispatch, 
 success or error — echoes the resolved `client.session_id` in its response, per
 `architecture.md`: "a client that bootstraps into a failing first call still learns its label."
 
-**Concurrency note.** Handling one connection's requests sequentially — reading, dispatching and
-replying to one line before reading the next — is a property of this server's per-connection loop,
-not of the store: `aiosqlite` already runs every blocking SQLite call off the event loop
-(`coding-standards.md` §6), so two *different* connections' requests interleave freely, and two
-writers genuinely contend through `busy_timeout` rather than through anything this server adds. A
-non-negative `in_flight` counter is what `lifecycle.py`'s idle self-stop depends on, and it is
-correct precisely because `ActivityTracker.begin_request`/`end_request` bracket the *whole*
-dispatch, including the case where dispatch raises.
+**Concurrency note.** One client connection's requests are handled in order; different connections'
+requests interleave. What keeps them apart in the store is the connection each gets: a read leases
+a pool connection of its own, and a write runs on the one writer, whose transactions the transaction
+primitive serializes (`architecture.md` §Lifecycle). `ActivityTracker.begin_request`/`end_request`
+bracket the *whole* dispatch, including the case where dispatch raises, which is what keeps the
+in-flight registry that idle self-stop and the wedge diagnostics read exact.
 """
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
+
+import aiosqlite
 
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.events import MS_PER_SECOND
+from zikaron.core.store.deadline import Deadline
+from zikaron.core.store.holders import LockWaitExpired, TransactionRefused
+from zikaron.core.store.store import StoreReplacedError
 from zikaron.service import dispatch, rpc
 from zikaron.service.asyncio_compat import attached_connection_count, unix_server_kwargs
-from zikaron.service.context import ServiceContext
+from zikaron.service.context import InFlightRequest, ServiceContext
 from zikaron.service.dispatch_consolidation import CONSOLIDATOR_METHODS
 from zikaron.service.dispatch_knowledge import KNOWLEDGE_METHODS
 from zikaron.service.envelope import ResolvedEnvelope, parse_envelope, resolve
-from zikaron.service.params import Handler, event_origin
+from zikaron.service.methods import Access, Method
+from zikaron.service.params import event_origin
 from zikaron.service.rpc import ProtocolErrorCode, RequestParseError, RpcRequest
+from zikaron.service.serialize import RpcResult
 
-_METHODS: Mapping[str, Handler] = {
+METHODS: Mapping[str, Method] = {
     **dispatch.PRIMARY_METHODS,
     **CONSOLIDATOR_METHODS,
     **KNOWLEDGE_METHODS,
@@ -96,15 +102,17 @@ async def _dispatch_request(ctx: ServiceContext, request: RpcRequest) -> str | N
     start-if-absent sequence does while waiting for the service to become ready, and idle
     self-stop must not be able to fire while that is happening.
     """
-    ctx.activity.begin_request()
+    in_flight = ctx.activity.begin_request(request.method)
     try:
-        line = await _compute_response_line(ctx, request)
+        line = await _compute_response_line(ctx, request, in_flight)
     finally:
-        ctx.activity.end_request()
+        ctx.activity.end_request(in_flight)
     return line if request.has_id else None
 
 
-async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> str:
+async def _compute_response_line(
+    ctx: ServiceContext, request: RpcRequest, in_flight: InFlightRequest
+) -> str:
     """`_dispatch_request`'s actual work, always returning a line — the notification suppression
     and activity bracketing are both the caller's job.
 
@@ -135,8 +143,9 @@ async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> st
             request.request_id, int(error.code), error.message, dict(error.data)
         )
 
-    handler = _METHODS.get(request.method)
-    if handler is None:
+    in_flight.session_id = envelope.session_id
+    method = METHODS.get(request.method)
+    if method is None:
         return rpc.encode_error(
             request.request_id,
             ProtocolErrorCode.METHOD_NOT_FOUND,
@@ -144,7 +153,7 @@ async def _compute_response_line(ctx: ServiceContext, request: RpcRequest) -> st
             session_id=envelope.session_id,
         )
 
-    dispatched = await _run_handler(ctx, request, envelope, handler)
+    dispatched = await _run_handler(ctx, request, envelope, method)
     await ctx.access_log.record(
         origin=event_origin(envelope),
         method=request.method,
@@ -159,9 +168,10 @@ class _Dispatched:
     """What one dispatched handler produced: the line to answer, and what to record about it.
 
     `refused` is `None` for a result and the code otherwise, typed over both error enums so the
-    access log's own converter has something no bare string satisfies. `duration_ms` covers the
-    handler alone: envelope resolution is paid by every call alike, and folding it in would make the
-    figure less comparable without making it more true.
+    access log's own converter has something no bare string satisfies. `duration_ms` covers what the
+    caller waited on that differs between calls: reading the request's own deadline, the wait for
+    its connection, and the handler — so a `store_busy` lasting about one budget is told from a slow
+    handler by its figure. Envelope resolution is paid by every call alike and is left out.
     """
 
     line: str
@@ -169,8 +179,53 @@ class _Dispatched:
     duration_ms: float
 
 
+@contextlib.asynccontextmanager
+async def _connection(
+    ctx: ServiceContext, access: Access, deadline: Deadline
+) -> AsyncIterator[aiosqlite.Connection]:
+    """The connection a method's handler runs on: a leased read connection, or the writer.
+
+    `deadline` is a read's alone: it bounds the lease and is carried on it for the read's retry, so
+    a read's budget runs from here and its embed spends it. A write's transactions each take the
+    budget afresh at their own `BEGIN`, after any embed, so the writer is handed out without one.
+    """
+    if access is Access.READ:
+        async with ctx.store.pool.lease(deadline) as db:
+            yield db
+    else:
+        yield await ctx.store.writer()
+
+
+def _refusal(method: str, refused: TransactionRefused) -> ZikaronError:
+    """What a refusal made before any statement ran answers, with the method as its `verb`.
+
+    A wait its caller's own deadline cut is lateness; every other refusal here — a wait the
+    service's budget cut, a closed handle — is contention, and retryable.
+    """
+    if isinstance(refused, LockWaitExpired) and refused.set_by_caller:
+        return ZikaronError(ErrorCode.DEADLINE_PASSED, verb=method)
+    return ZikaronError(ErrorCode.STORE_BUSY, verb=method)
+
+
+async def _invoke(
+    ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, method: Method
+) -> RpcResult:
+    """Read the request's deadline, obtain its connection, and run its handler on it."""
+    deadline = method.deadline(request.params)
+    try:
+        async with _connection(ctx, method.access, deadline) as db:
+            return await method.handler(db, ctx, envelope, request.params)
+    except TransactionRefused as refused:
+        raise _refusal(request.method, refused) from refused
+    except StoreReplacedError as error:
+        named = method.store_failure(request.method, error)
+        if named is None:
+            raise
+        raise named from error
+
+
 async def _run_handler(
-    ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, handler: Handler
+    ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, method: Method
 ) -> _Dispatched:
     """One handler, all the way to the line that answers it and the figures the access log records.
 
@@ -184,7 +239,7 @@ async def _run_handler(
     """
     started = time.perf_counter()
     try:
-        result = await handler(ctx.store.connection, ctx, envelope, request.params)
+        result = await _invoke(ctx, request, envelope, method)
     except ZikaronError as error:
         elapsed = time.perf_counter() - started
         line = rpc.encode_error(

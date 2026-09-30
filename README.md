@@ -526,10 +526,11 @@ of a rebuild forced by a changed embedding model, which empties the corpus befor
 answers nothing until it finishes. `status` says how far it has got.
 
 In a script or a CI step, use `zikaron knowledge refresh --wait`: it reports progress and returns
-only once no indexer is running against those corpora — including one an earlier `add` started, which
-it waits for rather than stepping past — exiting non-zero if any build left its corpus unusable.
-Without it the step can finish while an indexer is still running, and whatever kills the step kills
-the build too.
+once every build against those corpora has let go of its corpus — including one an earlier `add`
+started, which it waits for rather than stepping past — exiting non-zero if any build left its corpus
+unusable. By then each build's record of what it cost has been written to `memory.db`, or dropped if
+the store stayed locked; the indexer process itself may still be exiting. Without `--wait` the step
+can finish while an indexer is still running, and whatever kills the step kills the build too.
 
 **Nothing updates an index on its own.** There is no watcher and no schedule: a corpus drifts from
 its files until somebody refreshes it. A search says so when it can — a result whose file has
@@ -650,7 +651,8 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   knowledge/         one database per knowledge base, named by a generated id.
                      Absent until you create one
   config.toml        your per-project overrides, if you wrote any
-  service.log        the background service: startup, resolved config, errors
+  service.log        the background service: startup, resolved config, errors, why it stopped,
+                     any request running longer than 30 s, and the stack dumps below
   hook.log           one line per hook failure, write-policy-override note, or session/environment
                      mismatch. Absent means none happened. Not every line is a failure: an override
                      that is used but exceeds the injection budget is printed anyway and logged
@@ -675,6 +677,15 @@ record prose verbatim and named by the same store hash; it is deleted when the c
 its next group — or, if that process is killed first, by the next one that starts. It is the one
 copy of memory text that lives outside `.zikaron/`, which is why the erasure procedure under
 [Secrets](#secrets) removes it by hand. Nothing spills under kiro.
+
+**What `service.log` tells you about a service that stopped, or stopped answering.** A clean stop
+writes one `stopping: reason=…` line: `idle`, `store_replaced`, `encoder_failed`, or `sigterm` /
+`sigint` when it was asked to stop. A request still running after the 30 s idle poll is logged as
+`long request: method=… session=… age=…` on every poll until it ends — `session=unresolved` if it
+never got that far. Two signals write a dump without stopping the service: `kill -USR2 <pid>` writes
+the requests in flight and every asyncio task's stack, and `kill -USR1 <pid>` writes every thread's
+stack, which is the one that still works when the service's event loop itself is stuck. The second is
+raw text, without the timestamp and `pid=` every other line carries.
 
 Two notes on reading the rest. `memory.db` can look implausibly small while `memory.db-wal` is large —
 that is normal for a database held open by the service, since recent writes live in the log until a
@@ -713,6 +724,7 @@ symptoms it cannot see.
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
+| the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af zikaron.service.main` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
 | Zikaron's tools are listed but arrive name-only, or the agent's first calls are refused for argument shape | Claude Code: an install predating `alwaysLoad`; re-run the installer. The entry upgrades in place and needs no `--force` |
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |

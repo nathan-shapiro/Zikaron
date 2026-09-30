@@ -17,7 +17,8 @@ from tests.consolidation_fixtures import (
     consolidator,
     detail_of,
 )
-from zikaron.core.consolidation import grouping, planning, runs, serving, verbs
+from zikaron.core.consolidation import groups as consolidation_groups
+from zikaron.core.consolidation import planning, runs, serving, verbs
 from zikaron.core.consolidation.context import RunOwner
 from zikaron.core.consolidation.groups import GroupStatus
 from zikaron.core.consolidation.payload import Busy, GroupRecord, NamedRow, ServedGroup
@@ -96,7 +97,9 @@ async def test_planning_writes_a_run_its_groups_and_their_members(tmp_path: Path
     async with consolidator(tmp_path) as c:
         first = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         second = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0)
-        run = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        run = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert await c.runs() == [
             (run.run_id, CONSOLIDATOR_SESSION, CONSOLIDATOR_PID, RunStatus.ACTIVE)
         ]
@@ -116,7 +119,9 @@ async def test_planning_emits_one_planned_event_with_the_runs_own_counts(tmp_pat
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0)
         await c.clear_events()
-        run = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        run = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert detail_of(await c.events(), "consolidate_run") == [
             {
                 "run_id": run.run_id,
@@ -133,7 +138,9 @@ async def test_an_empty_journal_plans_a_run_that_is_immediately_complete(tmp_pat
     `complete`. Both events are emitted, in order, so the run's whole life is in the log."""
     async with consolidator(tmp_path) as c:
         await c.clear_events()
-        run = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        run = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert await c.runs() == [
             (run.run_id, CONSOLIDATOR_SESSION, CONSOLIDATOR_PID, RunStatus.COMPLETE)
         ]
@@ -148,8 +155,12 @@ async def test_replanning_closes_an_unexpired_run_as_abandoned(tmp_path: Path) -
     which is what collapses two overlapping rules into one test."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await planning.plan_groups(c.harness.store.connection, call=c.call())
-        second = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="op2"))
+        first = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
+        second = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
         assert statuses[first.run_id] is RunStatus.ABANDONED
         assert statuses[second.run_id] is RunStatus.ACTIVE
@@ -160,9 +171,13 @@ async def test_replanning_closes_a_lapsed_run_as_expired(tmp_path: Path) -> None
     written, since every reader derives expiry rather than storing it."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        first = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.lapse_lease(first.run_id)
-        second = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="op2"))
+        second = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
         assert statuses[first.run_id] is RunStatus.EXPIRED
         assert statuses[second.run_id] is RunStatus.ACTIVE
@@ -175,10 +190,14 @@ async def test_the_closing_event_describes_the_run_being_closed_not_the_one_bein
     the counts had to be pinned to "the run the transition is about"."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        first = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0)
         await c.clear_events()
-        second = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="op2"))
+        second = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         details = detail_of(await c.events(), "consolidate_run")
         assert [(one["run_id"], one["phase"], one["n_members"]) for one in details] == [
             (first.run_id, "abandoned", 1),
@@ -208,10 +227,14 @@ async def test_an_explicit_plan_takes_over_a_live_run_held_by_another_worker(
     """
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        held = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        held = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.clear_events()
         taker = c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1)
-        fresh = await planning.plan_groups(c.harness.store.connection, call=taker)
+        fresh = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=taker
+        )
         assert fresh.run_id != held.run_id
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
         assert statuses[held.run_id] is RunStatus.TAKEN_OVER
@@ -247,13 +270,17 @@ async def test_a_displaced_worker_can_commit_nothing_and_is_told_to_stop(tmp_pat
     stranger = CONSOLIDATOR_PID + 1
     async with consolidator(tmp_path) as c:
         member = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call(op_id="s1"))
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s1")
+        )
         assert isinstance(served, ServedGroup)
         old_lease = await c.expires_at(served.run_id)
         old_receipts = await c.receipts()
 
         fresh = await planning.plan_groups(
-            c.harness.store.connection, call=c.call(op_id="op2", pid=stranger)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="op2", pid=stranger),
         )
         await c.clear_events()
         with pytest.raises(ZikaronError) as raised:
@@ -272,12 +299,16 @@ async def test_a_displaced_worker_can_commit_nothing_and_is_told_to_stop(tmp_pat
         assert await c.receipts() == old_receipts
         assert await c.events() == []
 
-        stopped = await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2"))
+        stopped = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+        )
         assert isinstance(stopped, Busy)
         assert stopped.holder_pid == stranger
 
         taken = await serving.next_group(
-            c.harness.store.connection, call=c.call(op_id="s3", pid=stranger)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="s3", pid=stranger),
         )
         assert isinstance(taken, ServedGroup)
         assert taken.run_id == fresh.run_id
@@ -320,26 +351,32 @@ async def test_a_failed_replan_does_not_displace_the_incumbent(tmp_path: Path) -
     live worker displaced with nothing installed in its place: the store held by nobody, and the
     victim stopped for no reason at all.
 
-    Injected after the close, in `grouping.plan`, which is the first thing that can fail once the
-    incumbent is already closed. Every trace of the attempt must be gone — the incumbent still
-    `active` at its original lease with its original groups, no second run row, and no `taken_over`
-    event.
+    Injected after the close, in the first group's insert, which is the first write that can fail
+    once the incumbent is already closed — the plan itself is computed before the write
+    transaction opens. Every trace of the attempt must be gone — the incumbent still `active` at its
+    original lease with its original groups, no second run row, and no `taken_over` event.
     """
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        incumbent = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        incumbent = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         before_runs = await c.runs()
         before_groups = await c.groups()
         before_lease = await c.expires_at(incumbent.run_id)
         await c.clear_events()
         with (
             unittest.mock.patch.object(
-                grouping, "plan", side_effect=aiosqlite.OperationalError("disk full")
+                consolidation_groups,
+                "insert",
+                side_effect=aiosqlite.OperationalError("disk full"),
             ),
             pytest.raises(ZikaronError) as raised,
         ):
             await planning.plan_groups(
-                c.harness.store.connection, call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1)
+                c.harness.store.connection,
+                pool=c.harness.store.pool,
+                call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1),
             )
         assert raised.value.code is ErrorCode.INDEX_FAILED
         assert await c.runs() == before_runs
@@ -358,9 +395,13 @@ async def test_next_group_still_refuses_a_live_run_it_does_not_own(tmp_path: Pat
     per process. The two are separate paths and only this one is under test here."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        held = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        held = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         outcome = await serving.next_group(
-            c.harness.store.connection, call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1),
         )
         assert isinstance(outcome, Busy)
         assert [status for _, _, _, status in await c.runs()] == [RunStatus.ACTIVE]
@@ -372,10 +413,14 @@ async def test_an_explicit_plan_replaces_a_lapsed_run_for_any_caller(tmp_path: P
     caller."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        lapsed = await planning.plan_groups(c.harness.store.connection, call=c.call())
+        lapsed = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.lapse_lease(lapsed.run_id)
         stranger = await planning.plan_groups(
-            c.harness.store.connection, call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1),
         )
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
         assert statuses[lapsed.run_id] is RunStatus.EXPIRED
@@ -388,8 +433,12 @@ async def test_the_owner_replanning_its_own_run_is_abandoned_not_taken_over(tmp_
     discarded nothing it wanted, while a displaced one lost work in progress."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await planning.plan_groups(c.harness.store.connection, call=c.call())
-        second = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="op2"))
+        first = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
+        second = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
         assert statuses[first.run_id] is RunStatus.ABANDONED
         assert statuses[second.run_id] is RunStatus.ACTIVE
@@ -402,7 +451,11 @@ async def test_exactly_one_run_is_active_after_repeated_planning(tmp_path: Path)
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         for index in range(4):
-            await planning.plan_groups(c.harness.store.connection, call=c.call(op_id=f"op{index}"))
+            await planning.plan_groups(
+                c.harness.store.connection,
+                pool=c.harness.store.pool,
+                call=c.call(op_id=f"op{index}"),
+            )
         assert [status for _, _, _, status in await c.runs()].count(RunStatus.ACTIVE) == 1
 
 
@@ -413,7 +466,9 @@ async def test_two_active_runs_are_refused_rather_than_resolved(tmp_path: Path) 
     consolidators mutated one journal."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.insert_second_active_run()
         with pytest.raises(ValueError, match="invariant 15"):
             await runs.stored_active(c.harness.store.connection)
@@ -429,8 +484,12 @@ async def test_replanning_loses_no_journal_row(tmp_path: Path) -> None:
             await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0),
             await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0),
         }
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
-        second = await planning.plan_groups(c.harness.store.connection, call=c.call(op_id="op2"))
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
+        second = await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         replanned = {
             member[0]
             for group_id, *_ in await c.groups()
@@ -452,7 +511,9 @@ async def test_a_group_records_its_anchor_and_shard_identity(tmp_path: Path) -> 
             await c.write(
                 gist=f"{_A[0]} {index}", content=f"{_A[1]} {index}", minute=index + 2, degrees=5.0
             )
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         groups = await c.groups()
         assert [(one[1], one[3], one[4]) for one in groups] == [(anchor, 1, 2), (anchor, 2, 2)]
         assert len({one[2] for one in groups}) == 1
@@ -468,7 +529,9 @@ async def test_the_shards_of_one_subgroup_are_complete_and_consistent(tmp_path: 
             await c.write(
                 gist=f"{_A[0]} {index}", content=f"{_A[1]} {index}", minute=index + 2, degrees=5.0
             )
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         by_key: dict[str, list[tuple[int, int]]] = {}
         for _, _, order_key, shard_index, shard_count, _, _ in await c.groups():
             by_key.setdefault(order_key, []).append((shard_index, shard_count))

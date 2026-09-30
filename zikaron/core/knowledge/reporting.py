@@ -407,8 +407,7 @@ async def _orphans(store_dir: Path, registered: Sequence[KnowledgeBase]) -> tupl
 
 async def list_bases(store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig) -> Listing:
     """Every registered corpus with its state, plus every database no registry row points at."""
-    await registry.ensure(db)
-    registered = await registry.list_all(db)
+    registered = await registry.lookup_all(db)
     reports = [(await observe(store_dir, base, config)).status for base in registered]
     return Listing(knowledge_bases=tuple(reports), orphans=await _orphans(store_dir, registered))
 
@@ -430,7 +429,6 @@ async def status(
     """
     if name is None:
         return await list_bases(store_dir, db, config)
-    await registry.ensure(db)
-    registered = await registry.require(db, name)
+    registered = await registry.lookup(db, name)
     observed = await observe(store_dir, registered, config)
     return Listing(knowledge_bases=(observed.status,), orphans=())

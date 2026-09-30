@@ -15,6 +15,7 @@ import signal
 import sys
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,16 +25,33 @@ from zikaron.core.config.resolution import (
     resolve,
 )
 from zikaron.core.store import permissions
-from zikaron.service import lifecycle, log, security
+from zikaron.service import diagnostics, lifecycle, log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.paths import service_log_path
 from zikaron.service.server import RunningServer, ShutdownTimeoutError, serve
 
 
+@dataclass(slots=True)
+class _SignalStop:
+    """The stop a signal asked for, and which signal it was, for the stop line to name."""
+
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    received: signal.Signals | None = None
+
+    def request(self, received: signal.Signals) -> None:
+        self.received = received
+        self.event.set()
+
+    @property
+    def reason(self) -> str:
+        """`sigterm` or `sigint`, the form `service.log`'s stop line names a signal exit by."""
+        return "signal" if self.received is None else self.received.name.lower()
+
+
 @asynccontextmanager
-async def _stop_on_sigterm_or_sigint(stop: asyncio.Event) -> AsyncIterator[None]:
-    """Install `SIGTERM`/`SIGINT` handlers that set `stop`, and remove them again on the way out
-    — whatever the way out is.
+async def _stop_on_sigterm_or_sigint(stop: _SignalStop) -> AsyncIterator[None]:
+    """Install `SIGTERM`/`SIGINT` handlers that request `stop`, and remove them again on the way
+    out — whatever the way out is.
 
     Extracted from `run()` itself specifically to give the removal half of this a home:
     `loop.add_signal_handler` calls with no matching `remove_signal_handler` on any path used to
@@ -50,7 +68,7 @@ async def _stop_on_sigterm_or_sigint(stop: asyncio.Event) -> AsyncIterator[None]
     installed: list[signal.Signals] = []
     try:
         for one_signal in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(one_signal, stop.set)
+            loop.add_signal_handler(one_signal, stop.request, one_signal)
             installed.append(one_signal)
         yield
     finally:
@@ -215,6 +233,12 @@ async def run(sock_path: Path, store_dir: Path) -> None:
             exception rather than binding a socket for a store it could not open.
     """
     log.configure_service_log(service_log_path(_ensure_store_dir_exists(store_dir)))
+    with diagnostics.thread_dump_on_signal():
+        await _open_and_serve(sock_path, store_dir)
+
+
+async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
+    """`run`'s work once `service.log` is open and the thread dump is armed: open, serve, stop."""
     ctx = await _assemble_or_log_and_raise(store_dir)
     # `ctx.store.opened_inode` — not a fresh `ctx.store.path.stat()` here — because a version
     # that re-`stat`ed the path at this point was measured wrong: `ServiceContext.assemble` opens
@@ -227,7 +251,7 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     # authorized gap this deliberately accepts rather than a materially larger VFS-level fix).
     original_store_inode = ctx.store.opened_inode
 
-    stop = asyncio.Event()
+    stop = _SignalStop()
     try:
         # **The handlers go on before the socket exists, and that ordering is the whole of what
         # makes a stale socket file impossible for either signal this process handles.** `serve()`
@@ -244,8 +268,12 @@ async def run(sock_path: Path, store_dir: Path) -> None:
         # start-if-absent's vet-and-unlink is for.
         # There is no observable event *after* installation that a caller could wait for instead:
         # `asyncio.start_unix_server` accepts connections from the moment it returns, so even a
-        # successful health call proves only that the listener is up.
-        async with _stop_on_sigterm_or_sigint(stop):
+        # successful health call proves only that the listener is up. The task dump goes on with
+        # them, since its signal defaults to *terminate* too.
+        async with (
+            _stop_on_sigterm_or_sigint(stop),
+            diagnostics.task_dump_on_signal(ctx.activity),
+        ):
             security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
             server = await serve(ctx, str(sock_path))
             try:
@@ -257,7 +285,7 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                         ctx, server, sock_path, original_store_inode=original_store_inode
                     )
                     tasks.extend(self_stopping)
-                    signal_wait = asyncio.create_task(stop.wait())
+                    signal_wait = asyncio.create_task(stop.event.wait())
                     tasks.append(signal_wait)
                     done, _pending = await asyncio.wait(
                         set(tasks), return_when=asyncio.FIRST_COMPLETED
@@ -267,7 +295,13 @@ async def run(sock_path: Path, store_dir: Path) -> None:
                         # Both self-stopping tasks unlink before closing the server, to close the
                         # connect-during-exit race window — see their own docstrings. A signal
                         # exit has no such window to close early, so this path owns the
-                        # unlink instead.
+                        # unlink instead, and the stop line, written first for the same reason
+                        # theirs is.
+                        log.log_self_stop(
+                            reason=stop.reason,
+                            store_dir=ctx.store.path.parent,
+                            idle_seconds=ctx.activity.idle_for(),
+                        )
                         sock_path.unlink(missing_ok=True)
                         await server.shut_down()
                 finally:

@@ -358,21 +358,15 @@ async def create_within_transaction(
     return await require_existing(db, new_uuid)
 
 
-#: The two codes invariant 10's rejection carve-out applies to are `store.transactions`'s to name,
-#: because the same rule governs every layer that owns a transaction. Every `ZikaronError` this
-#: module raises outside that pair (`NOT_FOUND`, `INACTIVE_ROW`, `BAD_SUPERSESSION`) has written
-#: nothing at the point it raises, so it rolls back the ordinary way.
+def _failure_map(verb: str) -> transactions.FailureMap:
+    """Name contention `store_busy` and propagate everything else, per `architecture.md` §Errors.
 
-
-async def commit_or_roll_back(db: aiosqlite.Connection, error: BaseException | None) -> None:
-    """Commit on success or on a carve-out rejection; roll back on anything else.
-
-    Re-exported from `store.transactions`, which owns the rule, so that this module's own wrappers
-    and the composing callers reading them see one name. See that function for why only a
-    transaction-*owning* caller may call it, and why the neutral `_<verb>_within_transaction` cores
-    below — including their rejection helpers — never touch the transaction on any path.
+    These verbs maintain no index, so they have no `index_failed` to report; a driver failure that
+    is not contention reaches the dispatcher as itself and is answered `internal_error`.
     """
-    await transactions.commit_or_roll_back(db, error)
+    return lambda error: (
+        ZikaronError(ErrorCode.STORE_BUSY, verb=verb) if transactions.is_contention(error) else None
+    )
 
 
 async def create(db: aiosqlite.Connection, *, gist: str, content: str, session_id: str) -> Memory:
@@ -395,20 +389,15 @@ async def create(db: aiosqlite.Connection, *, gist: str, content: str, session_i
     Opens and commits its own transaction — invariant 2's "exactly one SQLite transaction" for a
     mutation with no rejection path to also commit. Call `create_within_transaction` directly
     instead if composing this into a wider transaction a caller already owns; calling this function
-    from inside one would raise `OperationalError`, since SQLite refuses a nested `BEGIN`.
+    from inside one fails, since a connection runs one transaction at a time.
     """
-    await db.execute("BEGIN")
-    error: BaseException | None = None
-    try:
-        created = await create_within_transaction(
-            db, gist=gist, content=content, session_id=session_id
+
+    async def work(connection: aiosqlite.Connection) -> Memory:
+        return await create_within_transaction(
+            connection, gist=gist, content=content, session_id=session_id
         )
-    except BaseException as caught:
-        error = caught
-        raise
-    finally:
-        await commit_or_roll_back(db, error)
-    return created
+
+    return await transactions.in_one_transaction(db, work, failure=_failure_map("create"))
 
 
 async def fetch_within_transaction(
@@ -477,21 +466,16 @@ async def fetch(
     Returns:
         `(records, missing)` — `records` in the order `uuids` first named each distinct uuid,
         and `missing` the subset of distinct uuids that named no row.
+
+    Raises:
+        ZikaronError: `STORE_BUSY` if the store stayed locked past the transaction's budget, which
+            the caller may retry.
     """
-    await db.execute("BEGIN")
-    error: BaseException | None = None
-    try:
-        result = await fetch_within_transaction(db, uuids=uuids, ctx=ctx)
-    except BaseException as caught:
-        # Every statement inside `fetch_within_transaction` is a SELECT/upsert/insert with no
-        # CHECK constraint a well-formed call can trip — this guards against a driver-level
-        # failure (disk I/O, a killed connection) rather than a business-logic rejection, so no
-        # fixture in this test module can trigger it without faking the connection itself.
-        error = caught
-        raise
-    finally:
-        await commit_or_roll_back(db, error)
-    return result
+
+    async def work(connection: aiosqlite.Connection) -> tuple[list[FetchedMemory], list[str]]:
+        return await fetch_within_transaction(connection, uuids=uuids, ctx=ctx)
+
+    return await transactions.in_one_transaction(db, work, failure=_failure_map("fetch"))
 
 
 async def record_version_conflict(
@@ -515,8 +499,8 @@ async def record_version_conflict(
     even have (the consolidator has no `fetch` at all).
 
     Does **not** commit. Whether the audit trail this writes survives is the transaction-owning
-    caller's decision, through `commit_or_roll_back`, which inspects the raised error's code — see
-    that function for why a neutral core may never make it.
+    caller's decision, through `transactions.commit_or_roll_back`, which inspects the raised
+    error's code — see that function for why a neutral core may never make it.
     """
     await receipts.mint(
         db,
@@ -589,10 +573,10 @@ async def _reject_version_conflict(
     authorization ladder, and this function has no way to see that from where it sits —
     so it never commits, unconditionally, rather than trying to reason about what came before it.
     The transaction-*owning* wrapper (`create`/`fetch`/`amend`/`retire`) is the only place that
-    decides commit-vs-rollback at all, via `commit_or_roll_back`, which inspects the caught
-    error's *code* (this rejection's `VERSION_CONFLICT`, or `NO_READ_RECEIPT` from
-    `_reject_no_receipt`) and commits only for those two — see `commit_or_roll_back`'s own
-    docstring.
+    decides commit-vs-rollback at all, through the transaction primitive's
+    `transactions.commit_or_roll_back`, which inspects the caught error's *code* (this rejection's
+    `VERSION_CONFLICT`, or `NO_READ_RECEIPT` from `_reject_no_receipt`) and commits only for those
+    two — see that function's own docstring.
     """
     record = await record_version_conflict(
         db, current=current, ctx=ctx, verb=verb, presented_version=presented_version
@@ -824,8 +808,8 @@ async def amend_within_transaction(
     docstring for the general reason, and `_reject_version_conflict`/`_reject_no_receipt`'s own
     docstrings for why even their rejection paths raise without touching the transaction.
     Invariant 10's rejection carve-out (the audit event, and for a conflict the receipt, survive
-    even though the domain mutation does not) is honored by whichever wrapper calls this — via
-    `commit_or_roll_back` — not by this function.
+    even though the domain mutation does not) is honored by whichever wrapper calls this — through
+    the transaction primitive's `transactions.commit_or_roll_back` — not by this function.
 
     Returns:
         `(before, after)` — the row as authorization found it and as this call left it. Both,
@@ -857,10 +841,10 @@ async def amend(
 
     A `version_conflict` or `no_read_receipt` rejection commits its own receipt and event
     (invariant 10's carve-out for a rejected call) — see `_reject_version_conflict` and
-    `_reject_no_receipt`, and `commit_or_roll_back`, which is what actually decides that here,
-    in this wrapper rather than in the neutral core. A `not_found` or `inactive_row` rejection
-    has written nothing yet at the point it raises, so it rolls back cleanly with nothing to
-    preserve.
+    `_reject_no_receipt`, and `transactions.commit_or_roll_back`, which is what actually decides
+    that here, in this wrapper's transaction rather than in the neutral core. A `not_found` or
+    `inactive_row` rejection has written nothing yet at the point it raises, so it rolls back
+    cleanly with nothing to preserve.
 
     Opens and commits its own transaction. Call `amend_within_transaction` directly instead if
     composing this into a wider transaction a caller already owns — see `create`'s docstring for
@@ -872,18 +856,14 @@ async def amend(
             raising); `NO_READ_RECEIPT` if the caller holds no matching receipt (logs the event
             before raising); `INACTIVE_ROW` if the row is already `active=0`.
     """
-    await db.execute("BEGIN")
-    error: BaseException | None = None
-    try:
+
+    async def work(connection: aiosqlite.Connection) -> Memory:
         _, amended = await amend_within_transaction(
-            db, uuid=uuid, version=version, rewrite=rewrite, ctx=ctx
+            connection, uuid=uuid, version=version, rewrite=rewrite, ctx=ctx
         )
-    except BaseException as caught:
-        error = caught
-        raise
-    finally:
-        await commit_or_roll_back(db, error)
-    return amended
+        return amended
+
+    return await transactions.in_one_transaction(db, work, failure=_failure_map("amend"))
 
 
 async def retire_within_transaction(
@@ -950,17 +930,13 @@ async def retire(
             receipt is checked for `uuid`, per the ladder's existence rung preceding its version
             and receipt rungs; `INACTIVE_ROW` if the row is already `active=0`;
             `BAD_SUPERSESSION` (from `supersession.validate_new_edge`) if `superseded_by` names
-            an illegal edge.
+            an illegal edge; `STORE_BUSY` if the store stayed locked past the transaction's
+            budget, which the caller may retry.
     """
-    await db.execute("BEGIN")
-    error: BaseException | None = None
-    try:
-        retired = await retire_within_transaction(
-            db, uuid=uuid, version=version, superseded_by=superseded_by, ctx=ctx
+
+    async def work(connection: aiosqlite.Connection) -> Memory:
+        return await retire_within_transaction(
+            connection, uuid=uuid, version=version, superseded_by=superseded_by, ctx=ctx
         )
-    except BaseException as caught:
-        error = caught
-        raise
-    finally:
-        await commit_or_roll_back(db, error)
-    return retired
+
+    return await transactions.in_one_transaction(db, work, failure=_failure_map("retire"))

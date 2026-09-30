@@ -871,8 +871,9 @@ async def test_wal_and_busy_timeout_pragmas_are_active_on_create(tmp_path: Path)
     async with await Store.create(store_dir, config, _default_embedder()) as store:
         (journal_mode,) = await store.connection.execute_fetchall("PRAGMA journal_mode")
         assert journal_mode[0].lower() == "wal"
+        # Zero once the store is open: the transaction primitive waits for the write lock itself.
         (busy_timeout,) = await store.connection.execute_fetchall("PRAGMA busy_timeout")
-        assert busy_timeout[0] == 5000
+        assert busy_timeout[0] == 0
         (foreign_keys,) = await store.connection.execute_fetchall("PRAGMA foreign_keys")
         assert foreign_keys[0] == 1
 
@@ -885,6 +886,8 @@ async def test_wal_and_busy_timeout_pragmas_are_active_on_open(tmp_path: Path) -
     async with await Store.open(store_dir, config) as reopened:
         (journal_mode,) = await reopened.connection.execute_fetchall("PRAGMA journal_mode")
         assert journal_mode[0].lower() == "wal"
+        (busy_timeout,) = await reopened.connection.execute_fetchall("PRAGMA busy_timeout")
+        assert busy_timeout[0] == 0
 
 
 async def test_sqlite_vec_extension_is_loaded(tmp_path: Path) -> None:

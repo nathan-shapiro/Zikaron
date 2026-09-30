@@ -316,12 +316,12 @@ class KnowledgeDatabase:
         """Run every `CREATE` statement plus the `meta` seed, in one transaction.
 
         Statement by statement through `in_one_transaction`, which issues an explicit `BEGIN`, and
-        never as an `executescript`. Both halves matter and both are measured: `sqlite3`'s legacy
-        transaction control opens an implicit transaction only before DML, so a `CREATE` issued
-        with none open runs in autocommit and a later rollback does not undo it; and
-        `executescript` commits any open transaction before running, which dissolves the atomicity
-        outright. A half-created knowledge base that survived a failure would be indistinguishable
-        from a complete one on every later open.
+        never as an `executescript`. Both halves matter and both are measured: the connection is in
+        autocommit (`open_connection`), so a `CREATE` issued with no transaction open commits at
+        once and a later rollback does not undo it; and `executescript` commits any open
+        transaction before running, which dissolves the atomicity outright. A half-created
+        knowledge base that survived a failure would be indistinguishable from a complete one on
+        every later open.
 
         `statements` is passed rather than read from the module so the rollback can be exercised
         directly, with the database left in place to be inspected — it cannot be checked through

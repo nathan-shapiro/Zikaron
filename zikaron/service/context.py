@@ -10,14 +10,14 @@ the process.
 
 **What this module is not.** It holds no socket and dispatches no method — `server.py` and
 `dispatch.py` own those. This is purely "what does the service need open and resolved before it
-can answer anything", plus the two facts `dispatch.py`'s idle-tracking needs to update on every
-request: `last_activity` and `in_flight`.
+can answer anything", plus the activity the dispatcher updates on every request: when the store was
+last touched, and which requests are in flight — what idle self-stop and the wedge diagnostics read.
 """
 
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
@@ -30,32 +30,64 @@ from zikaron.core.store.store import Store
 from zikaron.service.access_log import AccessLog
 
 
+@dataclass(eq=False, slots=True)
+class InFlightRequest:
+    """One request the service is answering: what it is, whose it is, and since when.
+
+    The session id is unknown until the envelope resolves, and a request wedged before that is
+    reported as `unresolved`.
+    """
+
+    method: str
+    started: float
+    session_id: str | None = None
+
+    def age(self) -> float:
+        """Seconds since the request began."""
+        return time.monotonic() - self.started
+
+    def describe(self) -> str:
+        """`method=… session=… age=…s`, the form `service.log` reports a request in."""
+        session = "unresolved" if self.session_id is None else self.session_id
+        return f"method={self.method} session={session} age={self.age():.1f}s"
+
+
 @dataclass(slots=True)
 class ActivityTracker:
-    """The two mutable facts idle self-stop needs: when the store was last touched, and by how
-    many requests right now.
+    """When the store was last touched, and which requests are in flight right now.
 
-    A separate small type rather than two loose attributes on `ServiceContext`, so `lifecycle.py`
-    can be handed exactly this and nothing else — it has no business seeing the store or the
-    encoder, only whether it may stop.
+    A separate small type rather than loose attributes on `ServiceContext`, so `lifecycle.py` can
+    be handed exactly this and nothing else — it has no business seeing the store or the encoder,
+    only whether it may stop and what it is waiting on.
     """
 
     last_activity: float
-    in_flight: int = 0
+    _requests: set[InFlightRequest] = field(default_factory=set)
 
-    def begin_request(self) -> None:
-        """Mark one request as started: increments `in_flight` and refreshes the activity clock."""
-        self.in_flight += 1
+    @property
+    def in_flight(self) -> int:
+        """How many requests are being answered right now."""
+        return len(self._requests)
+
+    def requests(self) -> tuple[InFlightRequest, ...]:
+        """Every request in flight, oldest first."""
+        return tuple(sorted(self._requests, key=lambda request: request.started))
+
+    def begin_request(self, method: str) -> InFlightRequest:
+        """Register one request as started, and refresh the activity clock."""
         self.last_activity = time.monotonic()
+        request = InFlightRequest(method=method, started=self.last_activity)
+        self._requests.add(request)
+        return request
 
-    def end_request(self) -> None:
-        """Mark one request as finished: decrements `in_flight` and refreshes the activity clock.
+    def end_request(self, request: InFlightRequest) -> None:
+        """Remove one request from the registry, and refresh the activity clock.
 
         Refreshed on completion as well as on start — `architecture.md`: "`last_activity` is
         refreshed when each request completes" — so a long-running call keeps the deadline from
         the moment it actually finishes, not from the moment it began.
         """
-        self.in_flight -= 1
+        self._requests.discard(request)
         self.last_activity = time.monotonic()
 
     def idle_for(self) -> float:

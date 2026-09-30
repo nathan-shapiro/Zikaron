@@ -88,7 +88,7 @@ async def _add(
 
 
 async def _call(ctx: ServiceContext, method: str, params: dict[str, object]) -> dict[str, object]:
-    handler = dispatch_knowledge.KNOWLEDGE_METHODS[method]
+    handler = dispatch_knowledge.KNOWLEDGE_METHODS[method].handler
     result = await handler(ctx.store.connection, ctx, envelope(), params)
     payload = result.as_json()
     assert isinstance(payload, dict)

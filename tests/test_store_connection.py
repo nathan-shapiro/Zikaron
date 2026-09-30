@@ -20,6 +20,21 @@ from zikaron.core.store.connection import open_connection
 from zikaron.core.store.ddl import PRAGMAS
 
 
+async def test_a_statement_outside_a_transaction_opens_none(tmp_path: Path) -> None:
+    """Every transaction is the primitive's explicit `BEGIN`. A DML statement run with none open
+    must commit at once rather than open one implicitly, which nothing would commit and which would
+    fail the next `BEGIN` on that connection as nested."""
+    db, _inode = await open_connection(tmp_path / "probe.db", pragmas=PRAGMAS)
+    try:
+        await db.execute("CREATE TABLE probe (x INTEGER)")
+        await db.execute("INSERT INTO probe (x) VALUES (1)")
+        assert not db.in_transaction
+        await db.execute("BEGIN IMMEDIATE")
+        await db.rollback()
+    finally:
+        await db.close()
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_a_failed_connect_leaves_no_thread_behind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -50,8 +65,8 @@ def test_a_failed_connect_leaves_no_thread_behind(
     connectors: list[aiosqlite.Connection] = []
     real_connect = aiosqlite.connect
 
-    def _recording(database: str | Path, *, uri: bool = False) -> aiosqlite.Connection:
-        connector = real_connect(database, uri=uri)
+    def _recording(database: str | Path, **options: object) -> aiosqlite.Connection:
+        connector = real_connect(database, **options)  # type: ignore[arg-type]
         connectors.append(connector)
         return connector
 

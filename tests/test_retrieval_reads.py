@@ -39,6 +39,7 @@ from zikaron.core.records.memory import Tier
 from zikaron.core.retrieval import block, reads
 from zikaron.core.retrieval.ranking import PoolRow, RankedMemory
 from zikaron.core.retrieval.retrieve import retrieve as real_retrieve
+from zikaron.core.store.deadline import Deadline
 
 _TERM: Final = "PGHOST"
 _PROMPT: Final = "why do the integration tests need PGHOST"
@@ -492,38 +493,40 @@ async def test_two_identical_calls_produce_byte_identical_output(tmp_path: Path)
         assert first != ""
 
 
-async def test_a_stale_snapshot_when_the_event_is_written_is_retryable_contention(
+async def test_a_read_staled_by_a_commit_elsewhere_succeeds_on_its_one_retry(
     tmp_path: Path,
 ) -> None:
     """One read is one transaction, so writing the instrumentation is a WAL snapshot upgrade — and a
-    write committed elsewhere mid-call refuses it. `architecture.md` §Errors already defines
-    `store_busy` to cover exactly that stale-snapshot case, and the caller may retry.
+    write committed elsewhere mid-call refuses it at once, without the busy handler running. The
+    read retries once, from `BEGIN IMMEDIATE`, which cannot be staled, and answers.
 
     Provoked for real and ordered by construction rather than raced: the other connection's commit
-    is driven from inside the call, after the arms have taken their snapshot and before the event
-    insert.
+    is driven from inside the first attempt, after the arms have taken their snapshot and before
+    the event insert. On a read-pool connection, which is where a read runs.
     """
     async with fx.harness(tmp_path) as harness:
         await harness.write(gist=f"{_TERM} matters", content="in CI only")
+        attempts = 0
         async with aiosqlite.connect(harness.store.path) as other:
 
             async def commit_elsewhere_first(*args: object, **kwargs: object) -> object:
+                nonlocal attempts
+                attempts += 1
                 retrieved = await real_retrieve(*args, **kwargs)  # type: ignore[arg-type]
-                await other.execute("BEGIN IMMEDIATE")
-                await other.execute(
-                    "INSERT INTO meta (key, value) VALUES ('probe', 'other writer')"
-                )
-                await other.commit()
+                if attempts == 1:
+                    await other.execute("BEGIN IMMEDIATE")
+                    await other.execute(
+                        "INSERT INTO meta (key, value) VALUES ('probe', 'other writer')"
+                    )
+                    await other.commit()
                 return retrieved
 
             with pytest.MonkeyPatch.context() as patch:
                 patch.setattr(reads, "retrieve", commit_elsewhere_first)
-                with pytest.raises(ZikaronError) as raised:
-                    await reads.surface(
-                        harness.store.connection, prompt=_PROMPT, call=harness.read_call()
-                    )
-            assert raised.value.code is ErrorCode.STORE_BUSY
-            assert raised.value.data == {"verb": "surface"}
+                async with harness.store.pool.lease(Deadline.budget()) as reader:
+                    text = await reads.surface(reader, prompt=_PROMPT, call=harness.read_call())
+        assert text
+        assert attempts == 2
 
 
 async def test_a_driver_failure_that_is_not_contention_has_no_zikaron_code(

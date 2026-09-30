@@ -14,9 +14,10 @@ measurement gap, corrupting a caller's answer is not — applied to both writers
 
 **This writer waits where the access log refuses to, and the asymmetry is the point.** `call`
 declines to wait because a caller is holding a response; a build has no latency budget — it has just
-spent minutes — and this row is the only record of those minutes. So the write takes its
-connection's ordinary `busy_timeout` and swallows contention only after it: the row is dropped by
-continuous contention for that whole budget, not by the service happening to be mid-write.
+spent minutes — and this row is the only record of those minutes. So the write polls for the write
+lock for the primitive's whole budget, `ddl.BUSY_TIMEOUT_MS`, and swallows contention only after
+it: the row is dropped by continuous contention for that whole budget, not by the service happening
+to be mid-write.
 """
 
 import sys
@@ -64,13 +65,20 @@ def _wire_name(error: BaseException) -> str:
     return BUILD_FAILED_WIRE_NAME
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class BuildLog:
     """One build's own event row, written on the connection the build already holds.
 
     Constructed only once a registry `id` is in hand, which is what makes `knowledge_base_id`
     non-null and mean what it says: a refusal reaching no id has no corpus whose cost it is, and a
     row keyed by nothing joins to nothing.
+
+    **At most one row per build.** `settle` is `scan.run`'s completion callback, and writes the row
+    while the corpus lock is held; `failed` is the build's own site, which writes only when `settle`
+    never ran — a refusal before the lock. A build that completes has always settled, since a
+    refresh that returns has run its scan. The latch is set when a row is *attempted*, not when one
+    commits, so a row dropped on contention is not attempted again after the lock's release — the
+    ordering this exists for.
     """
 
     _connection: aiosqlite.Connection
@@ -79,6 +87,7 @@ class BuildLog:
     _full: bool
     _schema_version: int
     _started: float
+    _attempted: bool = False
 
     @classmethod
     def opened(
@@ -110,49 +119,60 @@ class BuildLog:
             _started=started,
         )
 
-    async def succeeded(self, result: ScanResult) -> None:
-        """Record a build that completed, from the scan it left behind.
+    async def settle(self, outcome: ScanResult | Exception) -> None:
+        """Record how a scan that held the lock ended. Never raises.
 
-        **No failure of the row *write* reaches the caller**, which is not the same as never
-        raising: the payload is built here, outside `_write`'s guard. `main.build` places this call
-        after its own `try`/`except` for exactly that reason — inside it, a failure here would be
-        recorded as a *failed build* that in fact completed.
+        `scan.run` calls this inside its own `try`, before the release, so the guard is whole —
+        the payload's construction included. A failure building a success payload must not reach
+        the scan's failure path, which would record a completed build as failed.
         """
-        await self._write(
-            KnowledgeBuildDetail(
-                knowledge_base_id=str(self._knowledge_base_id),
-                spawned_by_op_id=detach.spawned_by_op_id(),
-                full=self._full,
-                rebuilt=result.rebuilt_identity is not None,
-                ok=True,
-                error_code=None,
-                duration_ms=self._elapsed_ms(),
-                files_indexed=result.counters.files_indexed,
-            )
-        )
+        self._attempted = True
+        try:
+            if isinstance(outcome, ScanResult):
+                await self._write(self._completed(outcome))
+            else:
+                await self._write(self._failed(outcome))
+        except Exception as error:
+            _report(f"could not record this build: {error}")
 
     async def failed(self, error: BaseException) -> None:
-        """Record a build that did not complete. No failure of the row write reaches the caller.
+        """Record a build that did not complete, unless `settle` already attempted this build's row.
 
-        Called from inside the catch that exists to record somebody else's failure, so the guard is
-        `_write`'s and the caller re-raises the **original** exception rather than this row's.
-
-        `rebuilt` and `files_indexed` are null rather than zero: both are read off the result
-        `scan.run` returns only on completion, so a build refused before the scan and one that died
-        inside it alike have no corpus to count and no settled answer to whether it rebuilt. `0`
-        means a completed scan indexed nothing, which is why neither defaults.
+        No failure of the row write reaches the caller, which is inside the catch that exists to
+        record somebody else's failure and re-raises the **original** exception rather than this
+        row's.
         """
-        await self._write(
-            KnowledgeBuildDetail(
-                knowledge_base_id=str(self._knowledge_base_id),
-                spawned_by_op_id=detach.spawned_by_op_id(),
-                full=self._full,
-                rebuilt=None,
-                ok=False,
-                error_code=_wire_name(error),
-                duration_ms=self._elapsed_ms(),
-                files_indexed=None,
-            )
+        if self._attempted:
+            return
+        self._attempted = True
+        await self._write(self._failed(error))
+
+    def _completed(self, result: ScanResult) -> KnowledgeBuildDetail:
+        return KnowledgeBuildDetail(
+            knowledge_base_id=str(self._knowledge_base_id),
+            spawned_by_op_id=detach.spawned_by_op_id(),
+            full=self._full,
+            rebuilt=result.rebuilt_identity is not None,
+            ok=True,
+            error_code=None,
+            duration_ms=self._elapsed_ms(),
+            files_indexed=result.counters.files_indexed,
+        )
+
+    def _failed(self, error: BaseException) -> KnowledgeBuildDetail:
+        """`rebuilt` and `files_indexed` are null rather than zero: both are read off a completed
+        scan's result, so a build refused before the scan and one that died inside it alike have no
+        corpus to count and no settled answer to whether it rebuilt. `0` means a completed scan
+        indexed nothing, which is why neither defaults."""
+        return KnowledgeBuildDetail(
+            knowledge_base_id=str(self._knowledge_base_id),
+            spawned_by_op_id=detach.spawned_by_op_id(),
+            full=self._full,
+            rebuilt=None,
+            ok=False,
+            error_code=_wire_name(error),
+            duration_ms=self._elapsed_ms(),
+            files_indexed=None,
         )
 
     def _elapsed_ms(self) -> float:
@@ -161,9 +181,8 @@ class BuildLog:
     async def _write(self, detail: KnowledgeBuildDetail) -> None:
         """Attempt the row, reporting a failure to stderr rather than raising it.
 
-        A **fresh** `in_one_transaction` with no read left open on this connection: a stale WAL
-        snapshot turns the attempt into an immediate `SQLITE_BUSY_SNAPSHOT`, which `is_contention`
-        swallows, leaving no trace of why.
+        On the store's writer, so the transaction is `IMMEDIATE` and waits the connection's budget
+        for the write lock rather than failing on a snapshot another process's commit left stale.
         """
         if self._schema_version < FIRST_SCHEMA_VERSION:
             return

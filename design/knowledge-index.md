@@ -111,9 +111,9 @@ Rationale for the file-per-KB split, in order of weight:
 1. **Write isolation.** A multi-minute index run does its indexing entirely in the corpus's own file,
    so the memory path's latency is structurally unaffected (§6.1 explains why this matters more than
    it looks). **It touches `memory.db` twice and only at the ends**: the registry read that resolves
-   the corpus, and one `knowledge_build` row at the finish, which waits its connection's ordinary
-   `busy_timeout` and is dropped rather than allowed to hold anything up (`schema.md` §"What is
-   instrumented"). Neither is the minutes of writing this bullet is about.
+   the corpus, and one `knowledge_build` row at the finish, which waits the transaction primitive's
+   whole budget for the write lock and is dropped rather than allowed to hold anything up
+   (`schema.md` §"What is instrumented"). Neither is the minutes of writing this bullet is about.
 2. **Corruption blast radius** is one corpus, and the repair is a reindex.
 3. **Deletion drops a file rather than cascading a `DELETE`** over chunks, FTS and vector rows — the
    kind of multi-table operation that leaves orphans when interrupted. It is no longer a *single*
@@ -136,10 +136,14 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
 )
 ```
 
-**`IF NOT EXISTS` is load-bearing rather than defensive.** The table is created by the registry's own open,
-once per store, for every store alike — including one created before it existed — and that single
-idempotent creation site is what lets `meta.schema_version` stay at 1 (`schema.md`
-§"Additive tables and the version gate", which carries the rule and the measurement behind it).
+**`IF NOT EXISTS` is load-bearing rather than defensive.** The table is created by the first write that needs
+it — the first `knowledge_add`, or the indexer — once per store, for every store alike, including one created
+before it existed; that single idempotent creation statement is what let the table arrive without moving
+`meta.schema_version` (`schema.md` §"Additive tables and the version gate", which carries the rule and the
+measurement behind it). **No read creates it**: on a store without the table a read answers as an empty
+registry — `list`, `search` and an unnamed `refresh` find nothing, and a name answers
+`knowledge_base_unknown` — and `rename` and `remove`, which have nothing to act on, answer the same without
+creating it.
 
 **Authority is split deliberately.** The registry owns `name` and `description` — the two fields a
 caller needs in order to *choose* a corpus without opening it (§1.2, §8.3). Each KB's own `meta` owns
@@ -303,10 +307,13 @@ again**: the drop a rebuild begins with clears it in the same transaction that e
 vouched for (§8.4), so its absence reads as *no completed build's corpus is stored* rather than as
 *no build has ever run* — the two being the same statement about what is there.
 
-**Two of the memory store's three pragmas, not three.** WAL and `busy_timeout` carry the same meaning
-here that they do there — §3.1a requires WAL, and `busy_timeout` is what makes a reader wait out the
-indexer rather than fail. `foreign_keys` is **not** applied because this schema declares none, and
-switching it on would state a guarantee the section below spends its length denying.
+**Two of the memory store's three pragmas, not three.** WAL means here what it does there, and §3.1a
+requires it. `busy_timeout` is what makes a reader wait out the indexer rather than fail, and it stays
+at its opened 5 s on every corpus connection — §12's counter write drops it to zero for its own
+statement and restores it — unlike the memory store's serving connections, which drop to zero once
+open while the transaction primitive polls for the write lock (`architecture.md` §"The service's
+connections"). `foreign_keys` is **not** applied because this schema declares none, and switching it
+on would state a guarantee the section below spends its length denying.
 
 **The pragma set is therefore a per-database parameter of whatever opens a connection, and this is
 worth stating because the obvious implementation gets it wrong.** A shared opener that applies "the"
@@ -1048,6 +1055,16 @@ scheduler in v0 (§10). Either way it is **detached**: it outlives the invoking 
 `meta` carrying `lock_pid`, `lock_host` and `lock_started_at` (§3.2). A lock whose pid is not alive is **stale and
 reclaimable**.
 
+**A build reads the holder twice, and only the second read is under the write lock.** The first, with no
+transaction, refuses a live holder at once. Only a build that saw *no holder* opens `BEGIN IMMEDIATE`,
+reads again, and takes the lock — so of two builds spawned inside one model-load window, the second waits
+for the first's short acquisition to commit, reads it, and refuses as busy, where under a deferred `BEGIN`
+both read *no holder* and the loser met the driver's `database is locked`. `IMMEDIATE` on every
+acquisition would be worse: a build arriving during the winner's index phase would wait out that phase's
+current transaction instead of refusing at once, and past the corpus connection's `busy_timeout` answer
+the very `database is locked` this removes. This is the one corpus-database transaction that opens
+`IMMEDIATE` (`architecture.md` §"The service's connections").
+
 **This is deliberately a *weaker* test than the consolidation lease uses, and the difference is the
 point.** The consolidation lease is taken over only by an explicit human reinvocation through
 `plan_groups`, on the reasoning that a human act is the only liveness evidence that exists (FINDINGS
@@ -1781,9 +1798,10 @@ mid-repair — old dimension, old vectors, working FTS — takes the shadow tabl
 does not collide, and the new dimension survives a reopen and rejects old-dimension inserts. The two
 failures are both about *how the statements are issued*:
 
-- **`sqlite3`'s legacy transaction control opens an implicit transaction only before DML**, so a
-  `DROP TABLE` issued with no transaction open runs in **autocommit** and a later `ROLLBACK` does not
-  restore it.
+- **A statement issued with no transaction open runs in autocommit**, so a `DROP TABLE` issued that way
+  commits at once and a later `ROLLBACK` does not restore it. Every store connection is opened in
+  autocommit (`core/store/connection.py`), so no statement ever opens a transaction implicitly; under
+  `sqlite3`'s legacy default, where only DML does, a DDL statement behaves the same way.
 - **`executescript()` commits any open transaction first.** A repair written as one multi-statement
   script therefore dissolves the atomicity this paragraph rests on, silently.
 
@@ -2486,7 +2504,12 @@ without one.
 The build still detaches, so a command killed mid-wait leaves it running — the same situation as an
 agent ending its session after an MCP refresh, and correct for the same reason: the caller asked for
 a corpus to be built, not for a process to be supervised. It exits on each corpus's terminal state,
-`ok` alone being success.
+`ok` alone being success. **What it guarantees on return is narrower than "no indexer is running"**:
+`--wait` returns once the build's lock is gone — and, since the build attempts its `knowledge_build`
+row before it releases the lock (`schema.md` §"What is instrumented, what is not, and why"), once that
+row has landed or been dropped as best-effort; the indexer process may still be exiting. Waiting on the
+holder's pid instead would race, since a build that finishes between two polls is never seen and its
+pid never known.
 
 **The predicate is not "while the state is `indexing`"**, which §8.5's precedence rules out: a
 corpus rebuilt after an encoder mismatch reports `reindex_required` for the whole build. A build is
@@ -2516,8 +2539,9 @@ not even the dead holder that says a build died.
 The build re-establishes each of them for itself, since it is a separate
 process and the two are not one transaction, but by then there is nobody to tell: a detached build's
 output is discarded. **What that costs, stated rather than left to be met**: a build that fails after
-detaching is visible as a fact and not as a reason. Its corpus goes on reporting that it has not been
-built, and `status`'s `lock` (§8.5) shows a holder whose process is gone. The reason is recovered by
+detaching is visible as a fact, and its reason only as a name. Its corpus goes on reporting that it has
+not been built, `status`'s `lock` (§8.5) shows a holder whose process is gone, and its `knowledge_build`
+row records `ok=false` with the failure's wire name as `error_code`. The full reason is recovered by
 running the same command in the foreground, which both commands print for that purpose. The rejected
 alternative is a log file per knowledge base: several concurrent writers and a retention policy, for
 a diagnostic one re-run produces on demand.

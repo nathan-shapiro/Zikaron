@@ -66,6 +66,8 @@ from embcache import EmbedCache
 
 HERE = pathlib.Path(__file__).parent
 OUT = HERE / "results" / "twin_counterfactual.json"
+if "--r4" in sys.argv:
+    OUT = HERE / "results" / "twin_counterfactual_r4.json"
 SEED = 20260801
 N_BOOT = 10000
 
@@ -126,6 +128,10 @@ TEMPLATES = [
 ]
 
 TAGS = ["bge-small", "bge-small-prefix", "bge-large-prefix", "nomic"]
+# Round 4 (PREREGISTRATION-R4.md): the new arms, written to their own file so the round-3
+# artefact is untouched and its incumbent rows can be compared against the rerun.
+if "--r4" in sys.argv:
+    TAGS = TAGS + ["bge-small-fp32-prefix", "granite-30m", "e5-small", "granite-125m"]
 
 
 def verify_byte_identity(pa: str, pb: str, a: str, b: str) -> bool:

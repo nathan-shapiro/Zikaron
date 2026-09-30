@@ -4,9 +4,9 @@ nothing.
 `schema.md` §"`call` is an access log" is normative. Two claims live here and they are independent.
 
 **Completeness.** The whole reason the row is written at the dispatch seam rather than per verb is
-that a method added later is instrumented because it is in `_METHODS`, not because somebody
+that a method added later is instrumented because it is in `METHODS`, not because somebody
 remembered — the knowledge verbs are what per-verb discipline already cost. So the sweep below
-**drives a real call per method** rather than reading the table: a test that enumerated `_METHODS`
+**drives a real call per method** rather than reading the table: a test that enumerated `METHODS`
 and asserted something about the mapping would pass with the row write deleted.
 
 **Isolation.** The row is attempted after the handler has committed, on a connection of its own at
@@ -344,7 +344,7 @@ async def _knowledge_unlock_arms(ctx: ServiceContext) -> _Arms:
     )
 
 
-#: One entry per dispatched method. A method added to `_METHODS` without one fails
+#: One entry per dispatched method. A method added to `METHODS` without one fails
 #: `test_every_dispatched_method_has_a_recipe`, which is what keeps the sweep exhaustive rather than
 #: merely long.
 _ARMS: Final[dict[str, _Setup]] = {
@@ -376,7 +376,7 @@ def test_every_dispatched_method_has_a_recipe() -> None:
     Asserted as set equality in both directions: a recipe naming a method the table no longer holds
     is a test driving nothing, which reads as coverage.
     """
-    assert set(_ARMS) == set(server._METHODS)
+    assert set(_ARMS) == set(server.METHODS)
 
 
 @pytest.mark.parametrize("method", sorted(_ARMS))

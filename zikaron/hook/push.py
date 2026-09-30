@@ -42,6 +42,8 @@ _DEADLINE_SECONDS = 2.0
 #: `architecture.md` §"MCP tool surface": `surface`'s own documented default limit.
 _SURFACE_LIMIT = 5
 
+_MS_PER_SECOND = 1000
+
 
 def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
     """Run the whole `userPromptSubmit` sequence and return what to print to stdout, or `None` if
@@ -58,6 +60,10 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
     `main.py`'s own outermost catch-all, which reports nothing on either channel.
     """
     started_at = time.monotonic()
+    # Read at the same instant as `started_at`, so the deadline the service is told and the one this
+    # process enforces are one deadline: the service shares this machine's realtime clock, and a
+    # monotonic reading means nothing in another process.
+    deadline_at_ms = int((time.time() + _DEADLINE_SECONDS) * _MS_PER_SECOND)
     spec = detect.current_spec()
     env_session_id = detect.session_label(spec)
     if envelope.is_subagent_session(
@@ -92,13 +98,25 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
             return _degrade(hook_log_path, "deadline_exceeded")
         sock.settimeout(remaining)
         client_envelope = envelope.build_envelope(session_id=env_session_id, pid=pid)
-        return rpc.surface_once(sock, prompt=prompt, limit=_SURFACE_LIMIT, envelope=client_envelope)
+        try:
+            return rpc.surface_once(
+                sock,
+                prompt=prompt,
+                limit=_SURFACE_LIMIT,
+                envelope=client_envelope,
+                deadline_at_ms=deadline_at_ms,
+            )
+        except TimeoutError:
+            # Sent, and not answered by the deadline: the service received this push. Scoped to
+            # this call alone, because a timeout inside `connect_once` is a listener that accepts
+            # and never answers `health` — a blocked event loop — which stays `transport`.
+            return _degrade(hook_log_path, "unanswered")
     except (connect.HookTransportError, rpc.SurfaceRejectionError, ZikaronError) as error:
         kind, code = _classify_failure(error)
         return _degrade(hook_log_path, kind, code=code)
     except Exception:
-        # Anything else — a send/recv failure, a malformed response, a timeout mid-request, or a
-        # genuinely unanticipated defect in this function's own future edits. Never logs the
+        # Anything else — a send/recv failure, a malformed response, a timeout before the send, or
+        # a genuinely unanticipated defect in this function's own future edits. Never logs the
         # underlying exception's own message text: `_degrade`'s `kind` argument here is the fixed
         # word "transport", which is what keeps `hook.log` holding only the closed vocabulary
         # `architecture.md`'s error table names rather than arbitrary exception text that could
@@ -109,16 +127,16 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
             sock.close()
 
 
-#: `architecture.md`'s error table names five wire codes a `surface` call can plausibly receive:
-#: contention, the three store-level open failures, and an identity mismatch this module never
-#: reaches through `SurfaceRejectionError` (it is caught earlier, inside `connect.connect_once`,
-#: as a `HookTransportError`). Mapped to the log kind so `hook.log` names the same vocabulary
-#: `architecture.md` §"Errors" already uses, rather than inventing a second one.
+#: The wire codes a `surface` answer can carry, by the `hook.log` kind each is recorded as — the
+#: vocabulary `architecture.md` §"Errors" already uses, rather than a second one. An identity
+#: mismatch is not here: it is caught inside `connect.connect_once`, before any `surface`. Literals,
+#: because this package is stdlib-only; a guard test holds each to its `ErrorCode`'s wire name.
 _REJECTION_KINDS: dict[int, str] = {
     -32020: "store_busy",
     -32022: "reindexing",
     -32023: "bad_config",
     -32024: "schema_incompatible",
+    -32026: "deadline_passed",
 }
 
 
@@ -159,9 +177,9 @@ def _classify_failure(error: Exception) -> tuple[str, int | None]:
         # leave `hook.log` naming, for example, `bad_config` with no accompanying `-32023`.
         return str(error.code.wire_name), int(error.code)
     # `connect.HookTransportError`'s own "no server became reachable" case, and anything else the
-    # socket calls or JSON parsing can raise — a send/recv failure, a malformed response, a
-    # timeout mid-request. `architecture.md` draws no distinction between these and a plain
-    # transport failure.
+    # socket calls or JSON parsing can raise before the `surface` request is sent, or while it is
+    # — a send/recv failure, a malformed response. A timeout waiting for the answer is `unanswered`
+    # and is decided in `run()`, around that one call.
     return "transport", None
 
 

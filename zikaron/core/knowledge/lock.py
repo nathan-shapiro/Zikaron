@@ -188,27 +188,36 @@ def running_holder(raw: Mapping[str, str], *, host: str) -> LockHolder | None:
     return holder
 
 
-async def acquire(db: aiosqlite.Connection, *, pid: int, host: str, started_at: str) -> None:
-    """Take the lock, or refuse because somebody else holds it.
-
-    Runs inside the caller's transaction, and must: reading the existing rows and writing the new
-    ones in *two* transactions would let a second acquisition slip between them and commit over the
-    first. What one transaction buys is that at most one of two racing acquisitions commits — it
-    does not stop both of them reading *no holder*, which a deferred `BEGIN` allows, and the loser's
-    failure is then the driver's rather than the refusal below. `scan._begin` records why that is
-    left as it is.
+def refuse_if_running(raw: Mapping[str, str], *, host: str) -> None:
+    """Refuse, from a knowledge base's `meta` rows, if a build this host cannot show has stopped
+    holds its lock.
 
     Raises:
         IndexerBusyError: a live local indexer, or any indexer on another host, holds it. The same
             refusal anything else that must not run beside a build raises, so a caller branching
             on it does not have to know which of the two noticed.
     """
-    holder = running_holder(await database.read_meta(db), host=host)
+    holder = running_holder(raw, host=host)
     if holder is not None:
         raise IndexerBusyError(
             f"an indexer is already running against this knowledge base ({holder.describe()})",
             holder=holder,
         )
+
+
+async def acquire(db: aiosqlite.Connection, *, pid: int, host: str, started_at: str) -> None:
+    """Take the lock, or refuse because somebody else holds it.
+
+    Runs inside the caller's transaction, and must: reading the existing rows and writing the new
+    ones in *two* transactions would let a second acquisition slip between them and commit over the
+    first. That transaction must be `IMMEDIATE`, so the read below is under the write lock: under a
+    deferred `BEGIN` both of two racing acquisitions read *no holder*, and the loser's failure is
+    the driver's rather than the refusal below.
+
+    Raises:
+        IndexerBusyError: as `refuse_if_running`.
+    """
+    refuse_if_running(await database.read_meta(db), host=host)
     await database.write_meta(
         db,
         {
