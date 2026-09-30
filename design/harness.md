@@ -439,12 +439,7 @@ since registration is session-wide, while the benefit accrues only inside a suba
 server and `Read` — a list short enough that deferral does not fire on it today, per the measurement
 above, which is why that key is insurance against a longer list rather than a live need.
 
-**What refuses a Claude Code artefact is ownership rather than equality**, so a field this installer
-changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a `.mcp.json` entry, and for a settings hook group the
-command **list**, equal to ours rather than merely containing it — so a group carrying our command
-beside one of the user's is refused, not rewritten. Anything else is rewritten and reported.
-`architecture.md` §"The install contract" states both predicates and the merge, and kiro's equivalents,
-for servers and hooks alike, still compare whole.
+**An install predating the key is an upgrade, not a conflict** — §"The installer's two targets".
 
 ## Tool descriptions are capped, and the cut takes the tail
 
@@ -576,6 +571,14 @@ name, an injection budget, the consolidator's model default) is a `HarnessSpec` 
 table" and a drift-guard test; a *shape* that differs (which files exist, how they are merged) is a
 `HarnessTarget` method. A value that migrates into a `HarnessTarget` method is the seam failing.
 
+**What refuses an entry is ownership rather than equality, on both harnesses**, so a field this
+installer changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a server entry — `.mcp.json`'s or kiro's
+`mcpServers` — and a hook's command. Under Claude Code that is a settings hook group's command
+**list**, equal to ours rather than merely containing it — so a group carrying our command beside one
+of the user's is refused, not rewritten. Anything else is rewritten and reported. The rule is written
+once, in `zikaron/install/ownership.py`, and both targets import it; `architecture.md` §"The install
+contract" states the predicates and the merge.
+
 ### What a Claude Code install writes
 
 Four artefacts, against kiro's two-plus-a-merge:
@@ -600,7 +603,7 @@ to escape to: it is project-scoped by definition, sits at the repository root, a
 `git add -A` commits it. **Accepted, with the residual named** — no per-project, declaratively
 writable, machine-local MCP scope exists, so the choice is between this file and not registering the
 servers at all. It degrades safely rather than silently: a clone-mate's install refuses on the
-differing entry rather than merging over it, and the README tells them to ignore the file or re-run
+differing `command` rather than merging over it, and the README tells them to ignore the file or re-run
 the installer.
 
 **Three hook entries, because M14 built a third path.** `SessionStart`, `UserPromptSubmit` **and

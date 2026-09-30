@@ -420,7 +420,7 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
         before = _snapshot(project)
         assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 1
         assert _snapshot(project) == before
-        assert "pointing somewhere else" in capsys.readouterr().err
+        assert "differ from what this install would write" in capsys.readouterr().err
 
     def test_a_blocked_backup_path_leaves_the_project_untouched(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

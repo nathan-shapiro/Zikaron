@@ -38,7 +38,6 @@ from zikaron.install.assets import (
 )
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
-    MCP_OWNERSHIP_FIELDS,
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
     Commands,
@@ -52,6 +51,7 @@ from zikaron.install.entries import (
     mcp_servers_value,
 )
 from zikaron.install.harness import InstallError
+from zikaron.install.ownership import ANOTHER_INSTALL, merged_server, refuse_conflicting
 from zikaron.install.writer import (
     ARRAY_FORMAT_OUTPUT_CAP_NOTE,
     MergePlan,
@@ -380,7 +380,7 @@ class ClaudeCodeTarget(HarnessTarget):
         return project / ".claude" / "settings.local.json"
 
     def _mcp_config(self, project: Path) -> Path:
-        return project / ".mcp.json"
+        return claude_mcp_config(project)
 
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
         project = plan.project
@@ -462,8 +462,8 @@ class ClaudeCodeTarget(HarnessTarget):
 
         A difference outside `MCP_OWNERSHIP_FIELDS` is an upgrade rather than a conflict, so nothing
         refuses on it — and replacing the entry wholesale would therefore delete a key the *user*
-        put on Zikaron's own entry, silently. Merging keeps it, and `_merged_server` reports both
-        what it kept and what it overwrote, since not refusing must not mean not saying.
+        put on Zikaron's own entry, silently. Merging keeps it, and `ownership.merged_server`
+        reports what it kept, added and overwrote, since not refusing must not mean not saying.
 
         **`--force` replaces the entry whole**, which is what it is for: it takes over an entry
         another install owns, and merging there would carry that install's keys forward. **It does
@@ -479,82 +479,22 @@ class ClaudeCodeTarget(HarnessTarget):
         servers = claude_mcp_servers_value(plan.commands)
         existing = document.get("mcpServers")
         _refuse_unmergeable_shape(existing, dict, path=path, key="mcpServers")
-        _refuse_conflicting(existing, servers, path=path, key="mcpServers", force=plan.force)
+        refuse_conflicting(existing, servers, path=path, key="mcpServers", force=plan.force)
         current: dict[str, object] = existing if isinstance(existing, dict) else {}
         merged_servers: dict[str, object] = dict(current)
         notes: list[str] = []
         for name, entry in servers.items():
-            merged_servers[name], entry_notes = self._merged_server(
-                current.get(name), entry, name=name, force=plan.force
+            merged_servers[name], entry_notes = merged_server(
+                current.get(name),
+                entry,
+                name=name,
+                force=plan.force,
+                registered_for="for the whole session",
             )
             notes.extend(entry_notes)
         merged = dict(document)
         merged["mcpServers"] = merged_servers
         return MergePlan(path=path, document=merged, notes=tuple(notes))
-
-    @staticmethod
-    def _merged_server(
-        existing: object, ours: object, *, name: str, force: bool
-    ) -> tuple[object, list[str]]:
-        """One server entry: ours over theirs, keeping keys this installer does not write.
-
-        Both directions of that are silent by construction and both are worth saying out loud, so
-        the merge reports them. A value of ours that **replaces** a different one may be a
-        deliberate choice being reverted — `alwaysLoad: false` set by a user who wants deferral is
-        the case that motivated this, and it is reported on **either** path, because `--force`
-        arrives for reasons of its own and is not a request to revert that. A key of *theirs* that
-        survives rides into a server this install registers session-wide, and `.mcp.json` is
-        committed by design, so `env` in particular carries execution consequence from whoever
-        committed it. **Registration, not pre-approval, is the reason stated**: `--no-trust-tools`
-        writes no `enabledMcpjsonServers`, and a note true only on the default path is the class
-        `_plan_settings` conditions against.
-
-        `--force` replaces the entry whole, and names what it dropped — not refusing must not mean
-        not saying, on that path as much as on the merging one. **It points at the backup without
-        claiming what is in it**, because it cannot: the first backup wins, so the `.bak` on disk
-        may predate the user's key, postdate it, hold an older value of the same field or be
-        unreadable, and a note that asserts one of those is wrong on the others. The note exists so
-        the loss is not silent, not to be a recovery service.
-        """
-        if not isinstance(existing, dict) or not isinstance(ours, dict):
-            if force and existing is not None and not isinstance(existing, dict):
-                # No field can be named, but something was there and is now gone. Without the flag
-                # this shape is refused and the refusal names it; `--force` skips that, and it
-                # arrives for reasons of its own — a symlink at a shipped path, say — on which
-                # nothing else has mentioned this file.
-                return ours, [
-                    f"`{name}`: --force replaced an entry that was not an object. "
-                    "Check the .bak beside the file for it."
-                ]
-            return ours, []
-        kept = sorted(field for field in existing if field not in ours)
-        # Ownership fields are excluded so a takeover stays unannounced, which is the decision the
-        # hook path makes too. On the merging path this filters nothing: a differing `command` or
-        # `--mode` was refused before reaching here.
-        overwritten = sorted(
-            field
-            for field, value in ours.items()
-            if field in existing and existing[field] != value and field not in MCP_OWNERSHIP_FIELDS
-        )
-        kept_fields = ", ".join(f"`{field}`" for field in kept)
-        it = "it" if len(kept) == 1 else "them"
-        notes: list[str] = []
-        if overwritten:
-            fields = ", ".join(f"`{field}`" for field in overwritten)
-            notes.append(f"`{name}`: {fields} differed and was set to this install's value.")
-        if force:
-            if kept:
-                notes.append(
-                    f"`{name}`: --force replaced the entry whole, dropping {kept_fields}. "
-                    f"Check the .bak beside the file for {it}."
-                )
-            return ours, notes
-        if kept:
-            notes.append(
-                f"`{name}`: kept {kept_fields}, which this install did not write — "
-                f"review {it}, since this install registers that server for the whole session."
-            )
-        return {**existing, **ours}, notes
 
     def fragment(self, plan: Plan) -> str:
         # Built with this run's own flags rather than with the defaults, so the preview is a preview
@@ -628,18 +568,14 @@ TARGETS: Final[dict[Harness, HarnessTarget]] = {
 }
 
 
+def claude_mcp_config(project: Path) -> Path:
+    """Where a Claude Code install registers both servers; `doctor` reads the same path."""
+    return project / ".mcp.json"
+
+
 def target_for(harness: Harness) -> HarnessTarget:
     """The installer adapter for `harness`."""
     return TARGETS[harness]
-
-
-#: Shared by both conflict refusals below. They guard different shapes — a list of hook *groups*
-#: matched by command, and a server *map* matched by key — which is why there are two of them; the
-#: *explanation* is identical, so it is written once rather than kept as two hand-maintained copies.
-_ANOTHER_INSTALL: Final = (
-    "That usually means another Zikaron install owns them, whose paths may point at a venv this "
-    "one knows nothing about. Re-run with --force to replace them."
-)
 
 
 def _guard_backup_path_if_present(path: Path) -> None:
@@ -865,7 +801,7 @@ def _refuse_differing_hook_groups(
         return
     raise InstallError(
         f"{path} already carries Zikaron hook entries that differ from what this install would "
-        f"write ({'; '.join(differing)}). {_ANOTHER_INSTALL}"
+        f"write ({'; '.join(differing)}). {ANOTHER_INSTALL}"
     )
 
 
@@ -891,7 +827,7 @@ def _rewritten_hook_notes(
     readings of that are indistinguishable from the file: a new `HOOK_TIMEOUT_SECONDS` upgrading
     itself, or a user's hand-edited `timeout` being reverted. Refusing would block the first to
     protect the second, which is what comparing groups whole did. Reporting serves the second
-    without blocking the first, the same trade `_merged_server` makes for `.mcp.json`.
+    without blocking the first, the same trade `ownership.merged_server` makes for a server entry.
 
     **Ownership is re-checked here rather than assumed from the refusal**, which `--force` skips
     entirely — without it, taking over another install's hook would advise re-applying a hand-edit
@@ -952,10 +888,8 @@ def _user_commands_in(group: object, commands: Commands) -> list[str]:
 def _describe_group_difference(group: object, expected: list[dict[str, object]]) -> str:
     """Which command the other install wrote, not merely that a group differs.
 
-    Kiro's `_describe_difference` names the offending fields and its docstring gives the reason:
-    naming only the location leaves a user unable to tell **their own edit** from a Zikaron version
-    change, and therefore unable to decide whether `--force` is the right answer. The settings
-    refusal named only the trigger, which is the asymmetry this wording removes.
+    Naming only the location would leave a user unable to tell another install from their own
+    edit, and therefore unable to decide whether `--force` is the right answer.
 
     Only the command is described, because only a differing command reaches here — anything else is
     an upgrade this install performs and reports through `_rewritten_hook_notes`.
@@ -963,71 +897,3 @@ def _describe_group_difference(group: object, expected: list[dict[str, object]])
     commanded = _commands_in(group)
     wanted = [command for one in expected for command in _commands_in(one)]
     return f"command is {commanded or 'absent'}, this install writes {wanted}"
-
-
-def _ownership(entry: object) -> dict[str, object]:
-    """The part of a server entry that says which install wrote it.
-
-    A non-object entry projects to `{}`, which compares unequal to ours and is therefore refused —
-    the safe direction for a malformed entry we did not write.
-    """
-    if not isinstance(entry, dict):
-        return {}
-    return {name: entry[name] for name in MCP_OWNERSHIP_FIELDS if name in entry}
-
-
-def _refuse_conflicting(
-    existing: object,
-    ours: dict[str, object],
-    *,
-    path: Path,
-    key: str,
-    force: bool,
-) -> None:
-    """Refuse when a key we own is already present with different content.
-
-    An entry whose **ownership** differs from what this install would write means another install
-    owns it, whose absolute paths may point at a venv that no longer has Zikaron in it. Overwriting
-    silently would hide that the user has two installs; the refusal names the entry and the flag
-    that overrides it.
-
-    Only the entries this install writes are compared. Anything else under the same key is the
-    user's and is merged around, never inspected.
-
-    **Ownership is `MCP_OWNERSHIP_FIELDS` — the interpreter path and the mode — not the whole
-    entry.** A difference outside them is a key this installer adds, so it is an upgrade rather than
-    a conflict; comparing entries whole makes an install refuse its own upgrade the day the entry
-    gains a key, the class `kiro-cli agent create`'s `"toolsSettings": null` produced. **Kiro's
-    equivalent (`writer.py`) still compares whole** and carries that hazard.
-
-    Raises:
-        InstallError: a Zikaron-owned entry differs and `--force` was not passed.
-    """
-    if force or not isinstance(existing, dict):
-        return
-    differing = {
-        name: _differing_ownership_fields(existing[name], value)
-        for name, value in ours.items()
-        if name in existing and _ownership(existing[name]) != _ownership(value)
-    }
-    if not differing:
-        return
-    named = ", ".join(f"{name} ({reason})" for name, reason in sorted(differing.items()))
-    raise InstallError(
-        f"{path} already carries {key} entries that differ from what this install would write "
-        f"({named}). {_ANOTHER_INSTALL}"
-    )
-
-
-def _differing_ownership_fields(existing: object, ours: object) -> str:
-    """Why one entry's ownership disagrees, in the reader's terms.
-
-    The field is worth naming rather than only the entry, because the two call for different
-    responses: `command` says another install points at a different interpreter — possibly a venv
-    that no longer has Zikaron in it — while `args` says the same interpreter registered a different
-    mode. That is the argument `_describe_group_difference` already makes for hook groups.
-    """
-    if not isinstance(existing, dict):
-        return "not an object"
-    theirs, mine = _ownership(existing), _ownership(ours)
-    return ", ".join(name for name in MCP_OWNERSHIP_FIELDS if theirs.get(name) != mine.get(name))

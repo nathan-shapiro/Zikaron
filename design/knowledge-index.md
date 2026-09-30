@@ -2148,7 +2148,7 @@ thing.
 
 **What `list` omits** is the diagnostic half of `status`: `root_path`, the `include`/`exclude`/
 `git_mode` echo, `git_mode_effective`, `chunks`, `bytes_indexed`, `max_file_bytes`, `files_seen`,
-`files_skipped`, the four §12 counters, the nine-way `skipped` breakdown, `last_scan_started_at`,
+`files_skipped`, the four §12 counters, the `skipped` breakdown, `last_scan_started_at`,
 `last_scan_completed_at`, and `lock`. Those answer *why is this corpus the way it is*, which is a
 different question from *which corpus should I search*.
 
@@ -2182,9 +2182,9 @@ below tells the caller to compare them and one operand alone cannot; the KB's
 otherwise tell why a file is missing); **`git_mode_effective`** from `last_scan_git_mode_effective`
 (§5.2), so a corpus built under a silent degradation says so; the four **§12 counters** (`searches`,
 `searches_empty`, `results_returned`, `results_stale`); `max_file_bytes`; **`files_skipped`**, the total
-this breakdown decomposes — which is the sum of the eight *file* reasons and **not** of all nine, since
-`pruned_directories` counts directories, so a reader summing the breakdown against the total needs to be
-told which of the two it is; and **`skipped`, broken down
+this breakdown decomposes — which is the sum of the *file* reasons and **not** of every key in it,
+since `pruned_directories` counts directories, so a reader summing the breakdown against the total
+needs to be told which of the two it is; and **`skipped`, broken down
 by reason**: `binary`, `denied_extension`, `over_size_cap`, `excluded_by_glob`, `gitignored`,
 `decode_error`, `symlink`, `unreadable`, and `pruned_directories` (a count **of directories**, labelled
 as such, not of files). And **`files_seen`** — the walk phase's progress, ~~reported additionally while
@@ -2253,7 +2253,7 @@ true of every counter rather than a contrast with `files_seen`, per the withdraw
 
 **What each of the four counts, because "a total after one" does not say *a total of what* and the
 two readings differ where it matters most.** `files_seen` and `files_skipped` count the scan's own
-work — entries the walk evaluated as file candidates, and files it refused for one of the eight
+work — entries the walk evaluated as file candidates, and files it refused for one of the skip
 reasons. **`files_indexed` and `bytes_indexed` instead describe the corpus the scan leaves behind**:
 every admitted file the scan established is in the index increments them, whether it was reindexed
 or cleared as unchanged. The alternative reading — files this scan *wrote* — makes a rescan that
@@ -2266,7 +2266,7 @@ nothing left `unreadable`, `files_indexed` equals `COUNT(files)` and `bytes_inde
 **One consequence of `files_seen`'s definition, stated because it is otherwise read as a defect.**
 The walk evaluates every file it reaches, and under `git_mode = tracked` the `ls-files` intersection
 then removes the untracked ones — which are **seen** and outside the corpus without being
-**skipped**, since none of the eight reasons describes them and inventing a ninth would put a value
+**skipped**, since none of the skip reasons describes them and inventing another would put a value
 on this reported table that §3.2 does not carry. The difference `files_seen − files_skipped −
 files_indexed` is where they are, and `git_mode` is what explains them.
 
@@ -2308,7 +2308,7 @@ when there are none, so a caller reads its contents rather than testing for the 
 > `include`/`exclude`/`git_mode` say what the corpus was ever defined to hold.
 >
 > `files_seen` is what the last walk looked at, `files_indexed` what the corpus now contains,
-> and `files_skipped` the eight file reasons summed. The gap between them is files a
+> and `files_skipped` the file reasons summed. The gap between them is files a
 > `git_mode` of `tracked` left out, seen and not skipped. `pruned_directories` counts
 > directories, not files, and is outside that sum; no `include` pattern rescues a pruned
 > directory, so `.github/`, `build/` and `dist/` are invisible however it is written.

@@ -2398,18 +2398,19 @@ Three rules go with it, and each closes a way the measurement could be lost:
 
 > **Harness delta (D34).** This contract is kiro's. Claude Code writes four artefacts — two JSON (`.claude/settings.local.json`, `.mcp.json`)
 > and two YAML-frontmatter Markdown files and needs no
-> model-id validation. The collision and backup discipline below is harness-independent. **The
-> refuse-on-difference rule is not, and what differs is what counts as a difference**: kiro compares a
-> server entry *and* a hook entry whole, while Claude Code refuses only on **ownership** —
-> `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for `.mcp.json`, and for a settings
-> hook group the command **list**, equal to ours rather than merely containing it. So a
-> field this installer changes is an upgrade rather than a conflict, and **not refusing does not mean not
-> saying**: `.mcp.json` merges per key, so a user's own key on Zikaron's entry survives and is reported
-> alongside anything overwritten, while a Zikaron hook group of ours whose other fields differ is
-> rewritten and reported; refusing on those differences instead would block every existing install's
-> upgrade the day a timeout moved. `--force` replaces either whole **and says what of the user's own it
-> discarded** — taking over another install is what the flag is for and is not announced, but it arrives
-> for reasons unrelated to whatever else it overwrites.
+> model-id validation. The collision and backup discipline below is harness-independent, **and so is
+> the refuse-on-difference rule: both targets refuse only on ownership** (`zikaron/install/ownership.py`)
+> — `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for a server entry, whether
+> `.mcp.json`'s or kiro's `mcpServers`; a kiro hook entry's command; and under Claude Code a settings
+> hook group's command **list**, equal to ours rather than merely containing it. So a field this
+> installer changes is an upgrade rather than a conflict, and **not refusing does not mean not
+> saying**: a server entry merges per key, so a user's own key on Zikaron's entry survives and is
+> reported alongside anything set — added or overwritten — while a Zikaron hook entry or group of
+> ours whose other fields differ is rewritten and reported; refusing on those differences instead would block every
+> existing install's upgrade the day a timeout moved. A kiro hook entry on a trigger this install does
+> not write is neither compared nor touched. `--force` replaces either whole **and says what of the
+> user's own it discarded** — taking over another install is what the flag is for and is not
+> announced, but it arrives for reasons unrelated to whatever else it overwrites.
 > `design/harness.md`.
 
 Installation is a **program**, not a documented procedure, and the reason is one rule above: "packaging
@@ -2421,7 +2422,7 @@ things and refuses rather than guesses when it cannot.
 |---|---|---|
 | consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported when its bytes already are what this install ships; otherwise backed up, rewritten, and reported |
 | consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | the same rule — see the note below |
-| `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry differs from what this install would write, unless `--force` |
+| `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry is owned by another install, unless `--force`; any other difference is rewritten and reported |
 | nothing (the entries printed to stdout) | when `--agent` is omitted | n/a |
 
 - **Staleness is a content comparison, and it replaced a narrower predicate in M15.** The rule above

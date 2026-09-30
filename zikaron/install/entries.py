@@ -237,7 +237,7 @@ ALWAYS_LOAD_KEY: Final = "alwaysLoad"
 
 #: The fields of a `.mcp.json` server entry that say **which install** wrote it: an absolute
 #: interpreter path and the `--mode`. Anything else is a key this installer adds and may add more
-#: of, so a merge compares only these — see `targets._refuse_conflicting`.
+#: of, so a merge compares only these — see `ownership.refuse_conflicting`.
 MCP_OWNERSHIP_FIELDS: Final = ("command", "args")
 
 

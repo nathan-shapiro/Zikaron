@@ -3250,6 +3250,8 @@ Plan:
 
 
 ## References
+- **M36** — `reviews/m36-brief-review.md` (the brief's trail, APPROVED, with the operator's narrowing
+  of `doctor` to the `alwaysLoad` row) and `reviews/m36-review.md` (the implementation's, APPROVED).
 - **M35 brief** — `reviews/m35-brief-review.md` (the review trail, APPROVED) and
   `reviews/m35-brief-perturbation.md` (the interruption × writer × connection walk the brief's
   requirements came out of). Measurements: `spikes/m35_busy_snapshot_probe.py`,
@@ -6896,3 +6898,47 @@ the condition at the point of decision, and passed at 7 in 105 by reading. A cla
 "so" symptoms was replayed, let verdicts back through, and was withdrawn. Review trails:
 `reviews/m34-implementation-review.md` (five rounds, APPROVED) and `reviews/m34-prose-review.md`.
 Reinstalled the same day into `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory`.
+
+## M35 as built (moved out of FINDINGS 2026-09-30, once it landed as `7937ae5`)
+
+Every transaction on a service connection is serialized behind that connection's lock through one
+primitive. Writes run on one writer and open `BEGIN IMMEDIATE`. Reads lease a connection from a small
+pool and retry once from `IMMEDIATE` on contention. A plan is computed on a read snapshot and written
+in a short transaction that re-checks a fingerprint over both tiers. `memory_surface` takes
+`deadline_at_ms` and answers `deadline_passed`, committing nothing, past it less a 20 ms margin. A
+wedged service writes `SIGUSR1`/`SIGUSR2` dumps, a long-request line and signal stop reasons. Two
+builds starting together refuse as busy, and a build's row lands before its corpus lock is released.
+The brief is `design/build-plan.md` §M35. The evidence is `research/m35-implementation-evidence.md`:
+the probes against a true HEAD control, the margin's distribution, the macOS measurement, and every
+guard's mutation. The review trail is `reviews/m35-review.md` (APPROVED), and PR #14 was merged by the
+operator.
+
+**The wait for the write lock is the primitive's, not SQLite's**, a decision the macOS CI job forced
+after the implementation had been approved. SQLite's busy handler, in the SQLite uv's managed Python
+ships, overran `busy_timeout` by 0.6 to 1 s at `BEGIN IMMEDIATE` on macOS. So the store's serving
+connections run at `busy_timeout = 0`, and the primitive polls. The brief's struck paragraph records the
+withdrawn design. The same change exposed a test-fixture race, one `sqlite3` connection driven from two
+worker threads, which failed macOS with *API misuse* and crashed a 3.14 job. The fixture now gives each
+outside commit its own connection. The review of that change was bounded to the diff since the approved
+commit (operator).
+
+**The defects M35 closed**, as the owed-work pool listed them:
+- every request's transactions ran on one unserialized connection;
+- a plan held the writer for its whole run;
+- a deferred `BEGIN` could be refused by another process's commit, which was the CI flake;
+- a push the hook had abandoned was still recorded as shown;
+- two builds starting together answered `database is locked` instead of `IndexerBusyError`;
+- the LeibaTrader wedge of 2026-09-29 (pid 3002334, silent 20:14–20:25Z) had no diagnostics. Its cause
+  was never established, and the dumps are what would show the next one.
+
+**Tool descriptions arriving late, truncated or not at all — fixed 2026-09-29.** Claude Code defers MCP
+tools when the tool list is crowded, and truncates a description past a cap. The install writes
+`alwaysLoad` on both `.mcp.json` servers, and every description sits under `DESCRIPTION_BUDGET`. That
+every verb carries a full description was verified from a fresh session. `design/harness.md` §§"MCP
+tools may arrive deferred" and "Tool descriptions are capped" are normative. The installer items that
+followed from it are M36.
+
+**The embedder spike (2026-09-29): keep `bge-small`.** No candidate — granite-30m, granite-125m,
+e5-small-v2 — cleared the preregistered swap gate in the deployed hybrid (granite-30m −0.0052
+useful-recall@5, CI [−0.0365, +0.0208], against +0.05). `research/granite-embedder-spike.md`. It closed
+Q8 and gave Q2 a second instance, and it landed in M35's commit.

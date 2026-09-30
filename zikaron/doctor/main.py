@@ -34,8 +34,9 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         "--project",
         type=Path,
         default=None,
-        help="the project to check — its socket path, and its subagents' reach. The default is the "
-        "harness's own project directory where it names one, else the current directory.",
+        help="the project to check — its socket path, its .mcp.json, and its subagents' reach. The "
+        "default is the harness's own project directory where it names one, else the current "
+        "directory.",
     )
     return parser
 

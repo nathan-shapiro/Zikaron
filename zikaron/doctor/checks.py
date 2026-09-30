@@ -19,6 +19,8 @@ interpreter, and routing them through `aiosqlite` would make a failure of the pr
 indistinguishable from a failure of the thing probed.
 """
 
+import json
+import shlex
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -31,6 +33,8 @@ from zikaron.core.indexing.acquisition import verify
 from zikaron.core.indexing.model_cache import resolved_model_cache_dir, snapshot_dir
 from zikaron.core.indexing.model_pin import PINNED_ARTIFACTS, PinnedArtifact
 from zikaron.install import agent_scan
+from zikaron.install.entries import ALWAYS_LOAD_KEY, CONSOLIDATOR_AGENT_NAME, MCP_SERVER_NAME
+from zikaron.install.targets import claude_mcp_config
 from zikaron.service import paths, security
 from zikaron.service.asyncio_compat import interpreter_version
 
@@ -201,6 +205,56 @@ def check_socket_path(*, store_dir: Path, environ: Mapping[str, str], platform: 
     return _passed(name, f"{socket} fits {paths.sun_path_size(platform)} bytes")
 
 
+ALWAYS_LOAD_ROW: Final = "zikaron servers in .mcp.json"
+
+
+def check_always_load(*, project: Path) -> Finding | None:
+    """Whether a Claude Code install predates `alwaysLoad`, which leaves its tool descriptions
+    deferred — arriving late, per tool, or not at all — while everything else keeps working.
+
+    **Only that key is judged.** A value of the user's own, `false` included, passes: it is how
+    deferral is asked for. The remedy names no interpreter, because this command need not run from
+    the one the project was installed from.
+
+    Returns:
+        The row, or **`None` when there is nothing to ask the question of** — no file, one that
+        cannot be read or parsed, or no Zikaron server in it. Validating the file is not this
+        row's job.
+    """
+    try:
+        document = json.loads(claude_mcp_config(project).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    servers = document.get("mcpServers") if isinstance(document, dict) else None
+    if not isinstance(servers, dict):
+        return None
+    ours = [name for name in (MCP_SERVER_NAME, CONSOLIDATOR_AGENT_NAME) if name in servers]
+    if not ours:
+        return None
+    stale = [
+        name
+        for name in ours
+        if isinstance(servers[name], dict) and ALWAYS_LOAD_KEY not in servers[name]
+    ]
+    if not stale:
+        carrying = [name for name in ours if isinstance(servers[name], dict)]
+        return _passed(
+            ALWAYS_LOAD_ROW,
+            f"`{ALWAYS_LOAD_KEY}` present on {', '.join(carrying)}"
+            if carrying
+            else f"nothing to judge: {', '.join(ours)} not an object",
+        )
+    return _failed(
+        ALWAYS_LOAD_ROW,
+        f"{', '.join(stale)} predate `{ALWAYS_LOAD_KEY}`, so their tool descriptions may arrive "
+        "late or not at all",
+        f"upgrade Zikaron in the environment this project was installed from and re-run "
+        f"`zikaron install --harness claude-code --project {shlex.quote(str(project))}` there, "
+        f"which upgrades the entries in place; or set `{ALWAYS_LOAD_KEY}` by hand — `false` keeps "
+        "deferral",
+    )
+
+
 def report_blind_subagents(*, project: Path) -> Finding | None:
     """Which of this project's Claude Code subagents cannot reach Zikaron's own server.
 
@@ -246,17 +300,17 @@ def run_all(
 ) -> Sequence[Finding]:
     """Every check and every report, in the order `distribution.md` states them.
 
-    The subagent row is dropped when there was no directory to scan, which is the one row whose
-    presence is conditional — `distribution.md` §"The front door" is normative for that too.
+    A row that had nothing to ask its question of is dropped rather than shown empty —
+    `distribution.md` §"The front door" is normative for which rows are conditional.
     """
     cache_dir = resolved_model_cache_dir()
-    subagents = report_blind_subagents(project=project)
+    conditional = (check_always_load(project=project), report_blind_subagents(project=project))
     return (
         check_extension_loading(),
         check_fts5(),
         check_sqlite_vec(),
         *(check_model_cache(pin, cache_dir=cache_dir) for pin in PINNED_ARTIFACTS.values()),
         check_socket_path(store_dir=store_dir, environ=environ, platform=platform),
-        *((subagents,) if subagents is not None else ()),
+        *(finding for finding in conditional if finding is not None),
         report_sqlite_version(),
     )

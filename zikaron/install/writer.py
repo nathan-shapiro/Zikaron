@@ -12,10 +12,10 @@ owns.
   what this install ships is kept and reported; one that differs is backed up and refreshed, which
   is what makes a re-run after an *upgrade* correct rather than merely safe. A Zikaron entry in a
   file the user owns whose **ownership** differs from what this install would write is a *refusal*,
-  because that means another install owns it — the whole entry under kiro; under Claude Code the
-  interpreter path and the mode for a `.mcp.json` entry, and the command list for a settings hook
-  group, where a difference outside those is an upgrade that is merged and reported
-  (`design/architecture.md` §"The install contract", the harness delta).
+  because that means another install owns it — the interpreter path and the mode for a server
+  entry, the command for a hook entry (under Claude Code, a hook group's command list). A
+  difference outside those is an upgrade that is merged and reported (`ownership.py`, and
+  `design/architecture.md` §"The install contract").
 - **A merge is backed up first, and the first backup wins.** `<config>.bak` is written only when
   nothing is there — not even a dangling symlink — because overwriting it on every run would replace
   the pristine original with the copy the first install had already modified.
@@ -37,7 +37,6 @@ from typing import Final, NamedTuple
 from zikaron.install.assets import SKILL_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
-    MCP_SERVER_NAME,
     TOOL_SELECTOR,
     Commands,
     HookFormat,
@@ -46,6 +45,7 @@ from zikaron.install.entries import (
     mcp_servers_value,
 )
 from zikaron.install.harness import InstallError
+from zikaron.install.ownership import ANOTHER_INSTALL, merged_server, refuse_conflicting
 
 _JSON_INDENT = 2
 
@@ -390,11 +390,9 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
 
     Raises:
         InstallError: the file is missing, not a JSON object, carries `hooks`/`mcpServers` in a
-        shape this cannot merge into, or already carries a Zikaron entry that differs from what
-            this install would write. The last is the one worth refusing loudly: it means a
-            previous install from a *different* interpreter, whose paths may point at a venv that
-            no longer has Zikaron in it. Replacing is almost always right, and doing it silently
-            would hide that the user has two installs.
+            shape this cannot merge into, or already carries a Zikaron entry another install owns.
+            The last is the one worth refusing loudly: its paths may point at a venv that no longer
+            has Zikaron in it, and replacing it silently would hide that the user has two installs.
     """
     document = _load_agent_config(path)
     hook_format = _detect_format(document, path=path, requested=plan.hook_format)
@@ -404,7 +402,7 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
 
     merged = dict(document)
     merged["hooks"] = _merged_hooks(document, plan.commands, hook_format)
-    merged["mcpServers"] = _merged_servers(document, plan.commands)
+    merged["mcpServers"], server_notes = _merged_servers(document, plan.commands, force=plan.force)
     merged["tools"] = _selecting(document, "tools")
     if plan.trust_tools:
         merged["allowedTools"] = _selecting(document, "allowedTools")
@@ -416,6 +414,8 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
         merged["resources"] = resources
 
     notes = [ARRAY_FORMAT_OUTPUT_CAP_NOTE] if hook_format is HookFormat.ARRAY else []
+    notes.extend(_rewritten_hook_notes(document, plan.commands))
+    notes.extend(server_notes)
     notes.extend(crew_notes)
     notes.extend(resource_notes)
     if TOOL_SELECTOR not in _string_list(document.get("tools")):
@@ -579,11 +579,10 @@ def _guard_crew_shape(document: dict[str, object], *, path: Path) -> None:
 def _guard_existing_entries(
     document: dict[str, object], commands: Commands, *, path: Path, force: bool
 ) -> None:
-    """Refuse a config already wired to a *different* Zikaron install, unless forced.
+    """Refuse a config carrying a Zikaron entry that another install owns, unless forced.
 
-    Both halves are checked, and the hook half was the gap: an earlier version guarded only the
-    `mcpServers` entry, so a config carrying a stale hook command and no server entry had that
-    command silently replaced. The two are installed together and must be refused together.
+    Both halves are checked, because they are installed together: a config carrying another
+    install's hook command and no server entry is as much a second install as one carrying both.
     """
     servers = document.get("mcpServers")
     if not _is_unset(document, "mcpServers") and not isinstance(servers, dict):
@@ -591,85 +590,101 @@ def _guard_existing_entries(
             f"{path} has an `mcpServers` value that is not an object "
             f"({type(servers).__name__}). Fix or remove it before installing."
         )
+    refuse_conflicting(
+        servers,
+        mcp_servers_value(commands, mode="primary"),
+        path=path,
+        key="mcpServers",
+        force=force,
+    )
     if force:
         return
-    has_server = isinstance(servers, dict) and MCP_SERVER_NAME in servers
-    existing_server = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
-    expected_server = mcp_servers_value(commands, mode="primary")[MCP_SERVER_NAME]
-    if has_server and existing_server != expected_server:
+    conflicts = [
+        f"{hook.where}: command is {_entry_command(hook.entry)!r}, "
+        f"this install writes {str(commands.hook)!r}"
+        for hook in _recognised_hooks(document, commands)
+        if not _is_owned(hook.entry, commands)
+    ]
+    if conflicts:
         raise InstallError(
-            f"{path} already has an `mcpServers.{MCP_SERVER_NAME}` entry pointing somewhere else "
-            f"({existing_server!r}). That is a previous install from a different interpreter. "
-            "Re-run with --force to replace it."
-        )
-    differing = _differing_zikaron_hooks(document, commands)
-    if differing:
-        raise InstallError(
-            f"{path} already has Zikaron hook entries that differ from what this install would "
-            f"write ({'; '.join(differing)}). That is either a previous install from a different "
-            "interpreter or an entry you edited. Re-run with --force to adopt this install's "
-            "entries."
+            f"{path} already carries Zikaron hook entries that differ from what this install "
+            f"would write ({'; '.join(conflicts)}). {ANOTHER_INSTALL}"
         )
 
 
-def _differing_zikaron_hooks(document: dict[str, object], commands: Commands) -> list[str]:
-    """Every existing Zikaron hook entry that is not **exactly** what this install would write.
+class _RecognisedHook(NamedTuple):
+    """An existing entry the merge will replace, beside the entry it replaces it with."""
 
-    The contract's word is *differs*, and equality of one field is not equality of an entry: an
-    entry carrying the current command with `timeout_ms: 1`, or the reserved name with a changed
-    `trigger`, is something a person chose, and the merge below would replace it. So the comparison
-    is structural, against the generated entry for that entry's own trigger.
+    where: str
+    entry: object
+    expected: dict[str, object]
 
-    Recognition uses **both** identities the merge uses — an object-format entry by its command's
-    file name, an array-format entry by its reserved `name` — because guarding one while replacing
-    on either is how an entry comes to be rewritten silently.
 
-    Returned as descriptions rather than a boolean so the refusal can say *what* differs. That is
-    the only way a user can tell their own edit from a Zikaron version change, and therefore
-    whether
-    `--force` is the right answer.
+def _recognised_hooks(document: dict[str, object], commands: Commands) -> list[_RecognisedHook]:
+    """Every existing entry the merge replaces — the one list both the guard and the merge read.
+
+    Recognised by the command's file name, and in the array format also by the reserved `name`, so
+    another install's entry is found and not left beside this one. **Only on the triggers this
+    install writes**: an entry elsewhere has nothing here to replace it with, so it is neither
+    compared nor touched.
     """
     hooks = document.get("hooks")
     if isinstance(hooks, dict):
-        expected_by_trigger = {
-            trigger: entries[0] for trigger, entries in hooks_object(commands).items()
-        }
-        described = [
-            _describe_difference(entry, expected_by_trigger.get(trigger), where=trigger)
-            for trigger, entries in hooks.items()
-            if isinstance(entries, list)
-            for entry in entries
+        return [
+            _RecognisedHook(trigger, entry, expected[0])
+            for trigger, expected in hooks_object(commands).items()
+            for entry in _as_list(hooks.get(trigger))
             if _is_our_command(entry, commands)
         ]
-        return [description for description in described if description is not None]
-    if not isinstance(hooks, list):
-        return []
-    expected_by_name = {entry["name"]: entry for entry in hooks_array(commands)}
-    descriptions: list[str] = []
-    for entry in hooks:
-        name = entry.get("name") if isinstance(entry, dict) else None
-        named = isinstance(name, str) and name in expected_by_name
-        if not (named or _is_our_command(entry, commands)):
+    ours = hooks_array(commands)
+    by_name: dict[object, dict[str, object]] = {entry["name"]: entry for entry in ours}
+    by_trigger: dict[object, dict[str, object]] = {entry["trigger"]: entry for entry in ours}
+    recognised: list[_RecognisedHook] = []
+    for entry in _as_list(hooks):
+        if not isinstance(entry, dict):
             continue
-        expected = expected_by_name.get(name) if isinstance(name, str) else None
-        description = _describe_difference(entry, expected, where=str(name or "an unnamed entry"))
-        if description is not None:
-            descriptions.append(description)
-    return descriptions
+        name, trigger = entry.get("name"), entry.get("trigger")
+        if isinstance(name, str) and name in by_name:
+            recognised.append(_RecognisedHook(name, entry, by_name[name]))
+        elif (
+            isinstance(trigger, str) and trigger in by_trigger and _is_our_command(entry, commands)
+        ):
+            recognised.append(_RecognisedHook(str(trigger), entry, by_trigger[trigger]))
+    return recognised
 
 
-def _describe_difference(entry: object, expected: object, *, where: str) -> str | None:
-    """`None` if `entry` is exactly `expected`, else a short account of how the two differ."""
-    if entry == expected:
-        return None
-    if expected is None:
-        return f"{where}: not an entry this install writes"
-    if not isinstance(entry, dict) or not isinstance(expected, dict):
-        return f"{where}: {entry!r}"
-    differing = [
-        key for key in sorted(set(entry) | set(expected)) if entry.get(key) != expected.get(key)
-    ]
-    return f"{where}: {', '.join(differing)}"
+def _as_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _is_owned(entry: object, commands: Commands) -> bool:
+    """Whether a recognised hook entry is this install's own: its command, unquoted, is ours."""
+    return _entry_command(entry) == str(commands.hook)
+
+
+def _rewritten_hook_notes(document: dict[str, object], commands: Commands) -> list[str]:
+    """What replacing this install's own hook entries cost, where they were not what it writes.
+
+    The two readings are indistinguishable from the file — a new default upgrading itself, or a
+    hand-edited timeout being reverted — so the entry is rewritten, which serves the first, and the
+    fields are named, which serves the second. Another install's entry, replaced under `--force`, is
+    not reported: taking it over is what the flag is for.
+    """
+    notes = []
+    for hook in _recognised_hooks(document, commands):
+        if not _is_owned(hook.entry, commands) or hook.entry == hook.expected:
+            continue
+        entry = hook.entry if isinstance(hook.entry, dict) else {}
+        fields = ", ".join(
+            f"`{key}`"
+            for key in sorted(set(entry) | set(hook.expected))
+            if entry.get(key) != hook.expected.get(key)
+        )
+        notes.append(
+            f"Zikaron's own hook on {hook.where} differed in {fields} and was replaced — if you "
+            "had hand-edited it, re-apply that."
+        )
+    return notes
 
 
 def _entry_command(entry: object) -> str | None:
@@ -772,11 +787,9 @@ def _merged_hooks(
 ) -> object:
     """This install's hook entries, folded into whatever the config already had.
 
-    Replacement is keyed on identity rather than appended blindly: an object-format entry is
-    identified by its `command`'s file name, an array-format entry by its `name`. Appending instead
-    would give a twice-installed project two hooks per trigger, and therefore two injected blocks
-    per
-    user message.
+    Replacement is keyed on identity rather than appended blindly — the entries
+    `_recognised_hooks` finds. Appending instead would give a twice-installed project two hooks per
+    trigger, and therefore two injected blocks per user message.
     """
     if hook_format is HookFormat.OBJECT:
         return _merged_hooks_object(document, commands)
@@ -799,23 +812,28 @@ def _merged_hooks_object(
 
 
 def _merged_hooks_array(document: dict[str, object], commands: Commands) -> list[object]:
-    ours = hooks_array(commands)
-    our_names = {entry["name"] for entry in ours}
-    existing = document.get("hooks")
-    kept = [
-        entry
-        for entry in (existing if isinstance(existing, list) else [])
-        if not (isinstance(entry, dict) and entry.get("name") in our_names)
-        and not _is_our_command(entry, commands)
-    ]
-    return [*kept, *ours]
+    replaced = {id(hook.entry) for hook in _recognised_hooks(document, commands)}
+    kept = [entry for entry in _as_list(document.get("hooks")) if id(entry) not in replaced]
+    return [*kept, *hooks_array(commands)]
 
 
-def _merged_servers(document: dict[str, object], commands: Commands) -> dict[str, object]:
+def _merged_servers(
+    document: dict[str, object], commands: Commands, *, force: bool
+) -> tuple[dict[str, object], list[str]]:
+    """The `mcpServers` value, merged per key as `.mcp.json` is, and what the merge cost."""
     servers = document.get("mcpServers")
     merged: dict[str, object] = dict(servers) if isinstance(servers, dict) else {}
-    merged.update(mcp_servers_value(commands, mode="primary"))
-    return merged
+    notes: list[str] = []
+    for name, entry in mcp_servers_value(commands, mode="primary").items():
+        merged[name], entry_notes = merged_server(
+            merged.get(name),
+            entry,
+            name=name,
+            force=force,
+            registered_for="for every session of this agent",
+        )
+        notes.extend(entry_notes)
+    return merged, notes
 
 
 def _merged_resources(

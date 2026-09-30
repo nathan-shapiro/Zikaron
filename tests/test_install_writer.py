@@ -1012,21 +1012,19 @@ class TestATopLevelNullIsAnAbsence:
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "m", "mcpServers": {MCP_SERVER_NAME: None}})
         before = config.read_text()
-        with pytest.raises(InstallError, match="pointing somewhere else"):
+        with pytest.raises(InstallError, match="differ from what this install would write"):
             merge_agent_config(config, _plan(tmp_path), Report())
         assert config.read_text() == before
 
 
-class TestAnEntryThatDiffersInAnyFieldIsRefused:
-    """The contract says *differs from what this install would write*, and equality of the command
-    alone is not equality of the entry.
-
-    The case that matters is an operator who deliberately set their own `timeout_ms`: silently
-    resetting it would discard a choice somebody made, and the refusal names the differing field so
-    they can tell their own edit from a Zikaron version change.
+class TestOwnershipDecidesARefusal:
+    """An entry is refused only when another install owns it: a server entry by its command and
+    mode, a hook entry by its command. Any other difference is this install's own entry from an
+    earlier version, which is rewritten and reported — refusing it would block every upgrade the day
+    an entry gained a field or a timeout moved.
     """
 
-    def test_an_object_entry_with_the_current_command_but_a_changed_timeout(
+    def test_an_earlier_install_upgrades_without_force_and_says_what_it_changed(
         self, tmp_path: Path
     ) -> None:
         config = tmp_path / "mine.json"
@@ -1035,16 +1033,28 @@ class TestAnEntryThatDiffersInAnyFieldIsRefused:
             {
                 "name": "mine",
                 "hooks": {"userPromptSubmit": [{"command": str(_COMMANDS.hook), "timeout_ms": 1}]},
+                "mcpServers": {
+                    MCP_SERVER_NAME: {
+                        "command": str(_COMMANDS.mcp),
+                        "args": ["--mode", "primary"],
+                        "env": {"MINE": "1"},
+                    }
+                },
             },
         )
-        before = config.read_text()
-        with pytest.raises(InstallError, match="timeout_ms"):
-            merge_agent_config(config, _plan(tmp_path), Report())
-        assert config.read_text() == before
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        written = json.loads(config.read_text())
+        assert [entry["timeout_ms"] for entry in written["hooks"]["userPromptSubmit"]] == [
+            TIMEOUT_MS
+        ]
+        assert written["mcpServers"][MCP_SERVER_NAME]["env"] == {"MINE": "1"}
+        notes = "\n".join(report.notes)
+        assert "hook on userPromptSubmit differed in `max_output_size`, `timeout_ms`" in notes
+        assert "`env`" in notes
 
-    def test_an_array_entry_with_the_reserved_name_but_a_changed_trigger(
-        self, tmp_path: Path
-    ) -> None:
+    def test_an_earlier_array_install_upgrades_without_force(self, tmp_path: Path) -> None:
+        """Recognised by its reserved `name`, so a changed `trigger` is a field of our own entry."""
         config = tmp_path / "mine.json"
         _write_agent(
             config,
@@ -1060,14 +1070,132 @@ class TestAnEntryThatDiffersInAnyFieldIsRefused:
                 ],
             },
         )
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), report)
+        hooks = json.loads(config.read_text())["hooks"]
+        spawn = [entry for entry in hooks if entry["name"] == "zikaron-agentSpawn"]
+        assert [entry["trigger"] for entry in spawn] == ["agentSpawn"]
+        assert any("zikaron-agentSpawn" in note and "trigger" in note for note in report.notes)
+
+    @pytest.mark.parametrize("fmt", [HookFormat.OBJECT, HookFormat.ARRAY])
+    def test_our_command_on_a_trigger_this_install_does_not_write_is_left_alone(
+        self, tmp_path: Path, fmt: HookFormat
+    ) -> None:
+        mine: dict[str, object] = {"command": shlex.quote(str(_COMMANDS.hook)), "timeout_ms": 5}
+        hooks: object = (
+            {"stop": [mine]}
+            if fmt is HookFormat.OBJECT
+            else [{"name": "my-stop", "trigger": "stop", "action": {"type": "command", **mine}}]
+        )
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "hooks": hooks})
+        merge_agent_config(config, _plan(tmp_path, fmt=fmt), Report())
+        written = json.loads(config.read_text())["hooks"]
+        if fmt is HookFormat.OBJECT:
+            assert written["stop"] == [mine]
+        else:
+            assert [entry for entry in written if entry["name"] == "my-stop"] == hooks
+
+    def test_an_unnamed_array_entry_running_our_command_is_replaced_not_duplicated(
+        self, tmp_path: Path
+    ) -> None:
+        """Recognised by its command when it carries no reserved `name`; an entry that is not an
+        object is the user's, and is kept as it stands."""
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "hooks": [
+                    "a note of the user's",
+                    {
+                        "name": "renamed-by-hand",
+                        "trigger": "userPromptSubmit",
+                        "action": {"type": "command", "command": shlex.quote(str(_COMMANDS.hook))},
+                    },
+                ],
+            },
+        )
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), report)
+        hooks = json.loads(config.read_text())["hooks"]
+        assert "a note of the user's" in hooks
+        prompt = [h for h in hooks if isinstance(h, dict) and h["trigger"] == "userPromptSubmit"]
+        assert [entry["name"] for entry in prompt] == ["zikaron-userPromptSubmit"]
+        assert any("hook on userPromptSubmit differed in `name`" in note for note in report.notes)
+
+    def test_an_unhashable_name_or_trigger_is_left_alone_rather_than_crashing(
+        self, tmp_path: Path
+    ) -> None:
+        odd = {"name": ["x"], "trigger": {"y": 1}, "action": {"type": "command", "command": "z"}}
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "hooks": [odd]})
+        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), Report())
+        assert odd in json.loads(config.read_text())["hooks"]
+
+    def test_an_array_entry_from_another_interpreter_is_refused(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "hooks": [
+                    {
+                        "name": "zikaron-userPromptSubmit",
+                        "trigger": "userPromptSubmit",
+                        "action": {
+                            "type": "command",
+                            "command": shlex.quote(str(_OTHER_COMMANDS.hook)),
+                        },
+                    }
+                ],
+            },
+        )
         before = config.read_text()
-        with pytest.raises(InstallError, match="trigger"):
-            merge_agent_config(config, _plan(tmp_path), Report())
+        with pytest.raises(InstallError, match=str(_OTHER_COMMANDS.hook)):
+            merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), Report())
         assert config.read_text() == before
 
+    def test_a_server_entry_in_another_mode_is_refused_and_names_the_mode(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "mcpServers": {
+                    MCP_SERVER_NAME: {
+                        "command": str(_COMMANDS.mcp),
+                        "args": ["--mode", "consolidator"],
+                    }
+                },
+            },
+        )
+        with pytest.raises(InstallError, match=r"args is \['--mode', 'consolidator'\]"):
+            merge_agent_config(config, _plan(tmp_path), Report())
+
+    def test_force_replaces_a_server_entry_whole_and_names_what_it_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "mcpServers": {
+                    MCP_SERVER_NAME: {"command": str(_OTHER_COMMANDS.mcp), "env": {"MINE": "1"}}
+                },
+            },
+        )
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path, force=True), report)
+        assert "env" not in json.loads(config.read_text())["mcpServers"][MCP_SERVER_NAME]
+        assert any("--force" in note and "`env`" in note for note in report.notes)
+        assert not any("`args`" in note for note in report.notes), "a takeover is not announced"
+
     def test_an_identical_entry_is_not_a_refusal(self, tmp_path: Path) -> None:
-        """Re-running the same install must stay safe, which is what makes the comparison structural
-        rather than merely strict."""
+        """Re-running the same install must stay safe."""
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine"})
         merge_agent_config(config, _plan(tmp_path), Report())
@@ -1102,7 +1230,7 @@ class TestMergeRefusals:
                 },
             },
         )
-        with pytest.raises(InstallError, match="pointing somewhere else"):
+        with pytest.raises(InstallError, match=rf"command is '{_OTHER_COMMANDS.mcp}'"):
             merge_agent_config(config, _plan(tmp_path), Report())
 
     def test_that_refusal_happens_before_anything_is_written(self, tmp_path: Path) -> None:

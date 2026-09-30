@@ -242,11 +242,22 @@ harness, so pass `--harness` alongside it exactly as a real install would.
 
 **Re-run the installer after you upgrade the package.** Upgrading replaces the code, not what an
 earlier version wrote into your project, and a release can change a merged entry — `alwaysLoad` is
-one such change. **Under Claude Code** re-running upgrades those entries in place and needs no
-`--force`; it refuses only where another Zikaron install owns something, or where you have added a
-hook of your own inside Zikaron's group (both below), which is what `--force` exists for.
-**Under kiro** any changed Zikaron entry is refused instead, so a release that moves one needs
-`--force` to adopt it; the paragraph on merging below says why the two differ.
+one such change. On both harnesses re-running upgrades those entries in place and needs no
+`--force`; it refuses only where another Zikaron install owns something, or, under Claude Code,
+where you have added a hook of your own inside Zikaron's group (both below), which is what `--force`
+exists for. `zikaron doctor` afterwards says whether a Claude Code project's Zikaron entries carry
+`alwaysLoad` — the one thing about `.mcp.json` it judges.
+
+**What upgrading the package does not do by itself:**
+
+- **A service already running keeps the old code** until it idles out (`idle_timeout`, below) or is
+  stopped — `pkill -f zikaron.service.main`. Until then `zikaron knowledge` may be refused with a
+  `bounds` error naming a field you never typed: that is the older service not knowing the newer
+  command.
+- **A store moves forward, never back.** The first time a newer service opens a project's store it
+  migrates it in one transaction, without saying so, and an older Zikaron then refuses that store —
+  `0.1.0` cannot open one `0.3.0` has opened. If more than one environment serves the same project,
+  upgrade them together.
 
 Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
 the MCP config too:
@@ -312,15 +323,18 @@ to drop your entry silently. `--force` overrides that, and then says which comma
 dropped.
 
 `.mcp.json` is merged **per key**: a key you added to Zikaron's own entry is kept and named in the
-output, a value this install writes — `alwaysLoad` in particular — is reset to this install's and
-named too, and only a different `command` or `--mode` refuses. `--force` is the exception: it
+output, a value this install writes — `alwaysLoad` in particular — is set to this install's and
+named too, whether it was missing or different, and only a different `command` or `--mode` refuses. `--force` is the exception: it
 replaces the entry whole, says which of your keys that dropped, and points you at the `.bak` beside
 the file. It does not say whether the backup has them, because it cannot know — the first backup
 wins, so the `.bak` on disk may have been written before or after you added the key.
 
-Under kiro any difference in a Zikaron entry still refuses, for hooks as well as servers, and it also
-validates the consolidator's model id, because an unknown model would otherwise be silently replaced
-by the harness's default.
+Under kiro the same rules hold inside the agent config you name: the `mcpServers` entry merges per
+key, a Zikaron hook entry whose command is this install's is rewritten and its trigger named, and
+only an entry naming a different install's command, or another `--mode`, refuses. A hook of Zikaron's
+on a trigger this install does not write is left alone. Kiro's install also validates the
+consolidator's model id, because an unknown model would otherwise be silently replaced by the
+harness's default.
 
 `@zikaron` has to be in `tools` or Zikaron's tools are simply absent: the `mcpServers` entry
 *configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
@@ -419,7 +433,7 @@ global and unregisters the tool, after which the consolidator itself refuses to 
 | `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a `.mcp.json` entry is replaced **whole**, so a key you added to Zikaron's own entry goes, and a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
+| `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
 rewrites a config in whichever format it read, so mixing them in one file has no defined meaning.
@@ -447,13 +461,16 @@ It exits non-zero if any check fails. **A model cache that is not there yet is n
 is no prefetch at install time, so a first run reports it as fetched on first use and exits 0. The
 last row reports rather than checks: the linked SQLite version varies between interpreter builds on
 one machine and there is no correct value to compare against, so stating it is the whole point.
-`zikaron doctor --project <dir>` checks another project's socket path.
+Some rows appear only where a project gives them something to check: under Claude Code, whether
+the Zikaron servers in `.mcp.json` carry `alwaysLoad` — an older install lacks it, and a re-install
+fixes that — and which of your subagents cannot reach Zikaron's tools.
+`zikaron doctor --project <dir>` checks another project.
 
 **`zikaron --version` names the version you installed**, which is the first thing to put in a bug
 report; `doctor` reports on the machine and leaves the version to this. A PyPI install reports a
-release. A `git+` install or a source checkout reports a `.dev` version — `0.3.0.dev0` means "working
-toward `0.3.0`, not released" — so it never impersonates a release, but it does span every commit
-until the next bump, and a bug report from one needs the commit as well.
+release. A `git+` install or a source checkout between releases reports a `.dev` version — a `.dev0`
+suffix means "working toward that number, not released" — so it never impersonates a release, but it
+does span every commit until the next bump, and a bug report from one needs the commit as well.
 
 Then start a session with the agent you installed into. On start you should see nothing unusual — the
 write policy goes into the model's context, not to your terminal. Then, from the project directory:
@@ -694,8 +711,11 @@ error code, never your prompt or a memory's text, so it cannot hold a leaked sec
 
 There is one more log that is not a file: an event table inside `memory.db`. It records what happened
 on every **memory** read and write — used to measure whether the write policy is working, and kept in
-the database because those rows must commit alongside the change they describe. A knowledge base has
-no event log: it keeps four **search** counters in its own metadata — searches, empty searches,
+the database because those rows must commit alongside the change they describe. It also holds an
+access log, best-effort: a `call` row for each request the service answers — which method, how long
+it took, and what it refused, if anything — and a `knowledge_build` row for each corpus build.
+Neither carries text. A knowledge base's own database has no event log: it keeps four **search**
+counters in its metadata — searches, empty searches,
 results returned, results stale — which `zikaron_knowledge_status` reports beside the last build's
 own file, byte and skip-reason counts.
 
@@ -725,7 +745,7 @@ symptoms it cannot see.
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
 | the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af zikaron.service.main` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
-| Zikaron's tools are listed but arrive name-only, or the agent's first calls are refused for argument shape | Claude Code: an install predating `alwaysLoad`; re-run the installer. The entry upgrades in place and needs no `--force` |
+| Zikaron's tools are listed but arrive name-only, or the agent's first calls are refused for argument shape | Claude Code: an install predating `alwaysLoad`, which `zikaron doctor` reports. Upgrade Zikaron where the project was installed from and re-run the installer there; the entry upgrades in place and needs no `--force` |
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |
 

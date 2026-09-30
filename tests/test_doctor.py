@@ -6,6 +6,7 @@ says when something is wrong.
 """
 
 import hashlib
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -19,6 +20,13 @@ from zikaron.core.indexing.model_pin import PinnedArtifact
 from zikaron.doctor import checks
 from zikaron.doctor.main import main, rendered
 from zikaron.install import agent_scan
+from zikaron.install.entries import (
+    ALWAYS_LOAD_KEY,
+    MCP_SERVER_NAME,
+    Commands,
+    claude_mcp_servers_value,
+)
+from zikaron.install.targets import claude_mcp_config
 from zikaron.service import paths, security
 
 #: A synthetic artefact, because a digest cannot be reversed into bytes a test can write. The
@@ -395,6 +403,7 @@ class TestTheSubagentScan:
         cannot fail for a different reason.
         """
         agent_scan.agents_directory(tmp_path).mkdir(parents=True)
+        _write_mcp_config(tmp_path, claude_mcp_servers_value(_COMMANDS))
         names = [
             finding.name
             for finding in checks.run_all(
@@ -404,4 +413,87 @@ class TestTheSubagentScan:
                 platform="linux",
             )
         ]
-        assert names[-2:] == ["subagents reaching zikaron", "sqlite version"]
+        assert names[-4:] == [
+            "socket path length",
+            checks.ALWAYS_LOAD_ROW,
+            "subagents reaching zikaron",
+            "sqlite version",
+        ]
+
+
+_COMMANDS: Final = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
+
+
+def _write_mcp_config(project: Path, servers: object) -> None:
+    claude_mcp_config(project).write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+
+
+class TestTheAlwaysLoadCheck:
+    """A Claude Code install older than `alwaysLoad` keeps working with its tool descriptions
+    deferred, and nothing else tells the user a re-install is what fixes it."""
+
+    def test_an_entry_without_the_key_fails_with_the_remedy(self, tmp_path: Path) -> None:
+        servers = claude_mcp_servers_value(_COMMANDS)
+        stale = {name: dict(entry) for name, entry in servers.items() if isinstance(entry, dict)}
+        del stale[MCP_SERVER_NAME][ALWAYS_LOAD_KEY]
+        _write_mcp_config(tmp_path, stale)
+        finding = checks.check_always_load(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.FAILED
+        assert MCP_SERVER_NAME in finding.detail
+        assert finding.remedy is not None
+        assert "--harness claude-code" in finding.remedy
+        assert f"{ALWAYS_LOAD_KEY}` by hand" in finding.remedy
+        assert "`false` keeps deferral" in finding.remedy
+
+    def test_the_remedy_quotes_a_project_path_it_asks_the_user_to_paste(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "my project"
+        project.mkdir()
+        _write_mcp_config(project, {MCP_SERVER_NAME: {"command": "zikaron-mcp"}})
+        finding = checks.check_always_load(project=project)
+        assert finding is not None
+        assert finding.remedy is not None
+        assert f"--project '{project}'" in finding.remedy
+
+    def test_a_current_install_passes(self, tmp_path: Path) -> None:
+        _write_mcp_config(tmp_path, claude_mcp_servers_value(_COMMANDS))
+        finding = checks.check_always_load(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.PASSED
+
+    def test_a_value_of_the_users_own_passes(self, tmp_path: Path) -> None:
+        """`false` is how a user asks for deferral, and failing on it would never stop failing."""
+        _write_mcp_config(
+            tmp_path, {MCP_SERVER_NAME: {"command": "zikaron-mcp", ALWAYS_LOAD_KEY: False}}
+        )
+        finding = checks.check_always_load(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.PASSED
+
+    def test_a_null_entry_passes_rather_than_raising(self, tmp_path: Path) -> None:
+        _write_mcp_config(tmp_path, {MCP_SERVER_NAME: None})
+        finding = checks.check_always_load(project=tmp_path)
+        assert finding is not None
+        assert finding.outcome is checks.Outcome.PASSED
+        assert "present" not in finding.detail
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(None, id="no file"),
+            pytest.param("{not json", id="unparseable"),
+            pytest.param("[]", id="not an object"),
+            pytest.param('{"mcpServers": null}', id="null servers"),
+            pytest.param('{"mcpServers": {"git": {"command": "git-mcp"}}}', id="no zikaron"),
+        ],
+    )
+    def test_nothing_to_check_is_no_row(self, tmp_path: Path, content: str | None) -> None:
+        if content is not None:
+            claude_mcp_config(tmp_path).write_text(content, encoding="utf-8")
+        assert checks.check_always_load(project=tmp_path) is None
+
+    def test_an_unreadable_file_is_no_row(self, tmp_path: Path) -> None:
+        claude_mcp_config(tmp_path).mkdir()
+        assert checks.check_always_load(project=tmp_path) is None

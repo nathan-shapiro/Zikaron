@@ -673,7 +673,7 @@ class TestClaudeCodeRefusals:
         assert "env" not in entry
 
     def test_an_install_predating_always_load_is_upgraded_rather_than_refused(
-        self, tmp_path: Path
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """The entry this installer used to write, merged by the installer that adds a key to it.
 
@@ -689,11 +689,15 @@ class TestClaudeCodeRefusals:
         for entry in before["mcpServers"].values():
             del entry[ALWAYS_LOAD_KEY]
         mcp.write_text(json.dumps(before), encoding="utf-8")
+        capsys.readouterr()
 
         assert main(["--project", str(project)]) == 0
         servers = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]
         for name in (MCP_SERVER_NAME, CONSOLIDATOR_AGENT_NAME):
             assert servers[name][ALWAYS_LOAD_KEY] is True, name
+        said = capsys.readouterr().out
+        for name in (MCP_SERVER_NAME, CONSOLIDATOR_AGENT_NAME):
+            assert f"`{name}`: `{ALWAYS_LOAD_KEY}` added" in said, name
 
     def test_an_unrelated_server_survives_the_merge(self, tmp_path: Path) -> None:
         project = _project(tmp_path, dotdirs=(".claude",))
@@ -709,9 +713,9 @@ class TestClaudeCodeRefusals:
     def test_a_non_object_entry_under_our_own_name_is_refused_rather_than_merged_into(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """`_ownership` projects a non-object to `{}`, which is the safe direction: unequal to ours,
-        so refused. The alternative — treating an unrecognisable entry as unowned and overwriting —
-        destroys whatever a user or another tool put there without ever saying so."""
+        """`ownership.ownership` projects a non-object to `{}`, which is the safe direction: unequal
+        to ours, so refused. The alternative — treating an unrecognisable entry as unowned and
+        overwriting — destroys whatever a user or another tool put there without ever saying so."""
         project = _project(tmp_path, dotdirs=(".claude",))
         mcp = _claude_paths(project)["mcp"]
         mcp.write_text(json.dumps({"mcpServers": {MCP_SERVER_NAME: "garbage"}}), encoding="utf-8")
@@ -1051,10 +1055,8 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
         capsys: pytest.CaptureFixture[str],
         installed_commands: Commands,
     ) -> None:
-        """Kiro's `_describe_difference` names the offending fields, and its docstring gives the
-        reason: naming only the location leaves a user unable to tell **their own edit** from a
-        Zikaron version change, and so unable to decide whether `--force` is the right answer. The
-        settings refusal named only the trigger, which is the asymmetry this covers.
+        """Naming only the location would leave a user unable to tell **their own edit** from a
+        Zikaron version change, and so unable to decide whether `--force` is the right answer.
 
         This fixture is *our own* command with a changed `timeout`, which is **not** a refusal: the
         command is the ownership signal, so this install owns the group and rewrites it. Refusing

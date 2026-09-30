@@ -5,8 +5,8 @@ a list of names in the schema module and a matching list of reasons somewhere el
 be free to disagree, and the symptom would be a scan writing a count nothing reports — invisible,
 because both halves would still look right on their own.
 
-Two kinds of counter live here and the difference is deliberate. `files_seen` and the eight skip
-reasons count **the scan's own work**: what the walk looked at, and what it refused. `files_indexed`
+Two kinds of counter live here and the difference is deliberate. `files_seen` and the skip reasons
+count **the scan's own work**: what the walk looked at, and what it refused. `files_indexed`
 and `bytes_indexed` describe **the corpus the scan leaves behind** — every admitted file the scan
 established is in the index raises them, whether it was reindexed or cleared as unchanged. The
 alternative reading, *files this scan wrote*, makes a rescan that finds nothing changed report zero
@@ -93,7 +93,7 @@ PROGRESS_KEYS: Final[tuple[str, ...]] = (
     BYTES_INDEXED_KEY,
 )
 
-#: Every key the skip breakdown is reported from: the eight file reasons, then the directory count.
+#: Every key the skip breakdown is reported from: the file reasons, then the directory count.
 SKIP_REASON_KEYS: Final[tuple[str, ...]] = (
     *(reason.meta_key for reason in SkipReason),
     PRUNED_DIRECTORIES_KEY,
@@ -121,7 +121,7 @@ class ScanCounters:
 
     @property
     def files_skipped(self) -> int:
-        """The total the eight file reasons decompose. Pruned directories are not part of it."""
+        """The total the file reasons decompose. Pruned directories are not part of it."""
         return sum(self.skipped.values())
 
     def skip(self, reason: SkipReason) -> None:
