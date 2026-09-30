@@ -23,9 +23,11 @@ letting this file sprawl. It is the thing a fresh session resumes from, and it i
 current.
 
 **What belongs in it is narrow, and the test is: would a fresh session act differently without
-this?** Four kinds do — a settled decision and where its rationale lives; where the work stands and
-what is next; an open question with what would close it; and a measured fact that constrains a
-choice, stated once, with the command that re-derives it.
+this?** These do — a settled decision and where its rationale lives; where the work stands and
+what is next; an open question with what would close it **and the answer you propose**; and a
+measured fact that constrains a choice, stated once, with the command that re-derives it. **A defect
+entered here carries the fix you would make**, not only its description — an entry that says what is
+wrong and stops there hands the problem to whoever reads it next.
 
 **Everything else goes nowhere.** Not to the archive — nowhere. Specifically: how a defect was
 found, what a sweep or review round covered, what an earlier version of a sentence said, how many
@@ -138,9 +140,9 @@ kill having gone wrong rather than as having hit itself. Write `'[b]in/pytest'` 
 not only the gate check.
 **And the bracket protects the pattern, not the command** — `pgrep -af '[c]heck\.sh' || echo
 "check.sh: gone"` matches itself on the *echo*, because what `-f` searches is the whole command line
-and the fallback message put the literal back. Both halves failed here within two minutes. So the
-rule is about the command, not the argument: **no literal you are hunting may appear anywhere in the
-line that hunts it**, message strings included. Split it (`'[b]in/pyt''est'`) or say something that
+and the fallback message put the literal back. So the rule is about the command, not the argument:
+**no literal you are hunting may appear anywhere in the line that hunts it**, message strings
+included. Split it (`'[b]in/pyt''est'`) or say something that
 does not contain it.
 
 **Waiting for a gate you have already invalidated is waste; kill it instead — and kill its child.**

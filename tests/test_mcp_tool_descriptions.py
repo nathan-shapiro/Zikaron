@@ -66,6 +66,7 @@ async def test_zikaron_memory_retire_describes_the_supersession_graph_rules(
     ("tool", "required_phrase"),
     [
         ("zikaron_memory_amend", "may be shorter than the one it replaces"),
+        ("zikaron_memory_amend", "a corrected verdict is still a verdict"),
         ("zikaron_memory_remember", "keeps resolving long after the finding has left it"),
     ],
 )
@@ -127,6 +128,20 @@ async def test_zikaron_memory_next_group_describes_shard_serve_count_and_remaini
     or the last group of a run."""
     description = await _description_of("consolidator", "zikaron_memory_next_group", tmp_path)
     assert required_phrase in description
+
+
+async def test_promote_conditions_the_in_place_form_where_the_call_is_built(
+    tmp_path: Path,
+) -> None:
+    """In-place promotion writes no prose, so no authoring rule reaches the gist it keeps. Stated
+    only in the prompt's authoring section, the condition did not bind: a replay promoted 41
+    entries in place, verdicts and an order among them. The description is read as the call is
+    built, so it carries both the fact and the condition."""
+    flat = " ".join(
+        (await _description_of("consolidator", "zikaron_memory_promote", tmp_path)).split()
+    )
+    assert "no prose is written" in flat
+    assert "fits only an entry whose gist and content already satisfy" in flat
 
 
 @pytest.mark.parametrize(

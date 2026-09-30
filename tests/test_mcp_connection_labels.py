@@ -33,8 +33,12 @@ def connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServiceConnec
     monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
     conn = ServiceConnection(tmp_path)
 
+    class _FakeSocket:
+        def settimeout(self, _timeout: float) -> None:
+            pass
+
     async def fake_connected_socket(_self: ServiceConnection) -> object:
-        return object()
+        return _FakeSocket()
 
     monkeypatch.setattr(ServiceConnection, "_connected_socket", fake_connected_socket)
     return conn

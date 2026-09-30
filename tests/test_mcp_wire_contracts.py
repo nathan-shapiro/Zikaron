@@ -37,7 +37,12 @@ async def _client_for(
         return _FakeEnvelope(kind)
 
     async def fake_request(
-        _self: ServiceConnection, method: str, params: dict[str, object], *, envelope: _FakeEnvelope
+        _self: ServiceConnection,
+        method: str,
+        params: dict[str, object],
+        *,
+        envelope: _FakeEnvelope,
+        timeout: float = 0.0,  # noqa: ARG001
     ) -> dict[str, object]:
         calls.append((method, dict(params), envelope.kind))
         return response

@@ -18,6 +18,9 @@ class _FakeSocket:
     def close(self) -> None:
         self.closed = True
 
+    def settimeout(self, _timeout: float) -> None:
+        pass
+
 
 @pytest.fixture
 def connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServiceConnection:

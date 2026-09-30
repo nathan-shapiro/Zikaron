@@ -23,7 +23,7 @@ Skip it for routine, low-stakes steps — each loop spends extra model cycles.
 
    **Then re-check every number, name, path and source you wrote**, against the thing that determines it: a count against the constant, a path by opening it, a figure by re-deriving it, a cited document by reading it. One asserted from memory reads exactly like one that was checked.
 
-   **One pass is evidence about that pass, not about the artifact.** Successive passes over a single change have run 8 → 4 → 3 → 2 → 1 → 0 defects, and one pass's own fix was itself false and needed a later pass to correct it. Every edit is a chance to create the next defect and a repair is still an edit, so a fix made during a pass is an input to the next one, never a closed item.
+   **One pass is evidence about that pass, not about the artifact.** A single change typically needs several passes to reach zero. Every edit is a chance to create the next defect and a repair is still an edit, so a fix made during a pass is an input to the next one, never a closed item.
 
    It is a step here because re-reading is never itself one of the findings being applied, so it is never on the list being executed — which leaves this protocol as the only place the trigger reliably fires.
 3. **Delegate the review.** Use the Agent tool with `subagent_type: memory-reviewer` and a prompt containing:
@@ -41,8 +41,8 @@ Skip it for routine, low-stakes steps — each loop spends extra model cycles.
 
 ## Notes
 - The reviewer has no `Agent` tool, so it cannot delegate — it reviews only. That is fine.
-- **The reviewer's "writes only to `reviews/`" boundary is enforced by its prompt, not by the harness.** Kiro scoped it with `allowedPaths`; Claude Code has no per-subagent path rule, so this is now a discipline rather than a guarantee. If you ever see the reviewer edit the artifact under review, treat it as a defect in the loop and say so — the protocol depends on all edits staying with you so changes remain coherent and validated.
-- The reviewer runs `fable` — a different model from the author, but the same family. Kiro ran it on `gpt-5.6-sol`, so cross-family independence is a property this loop has **lost**, not one it still has. Weigh an `APPROVED` accordingly on anything where shared-family blind spots are plausible.
+- **The reviewer's "writes only to `reviews/`" boundary is enforced by its prompt, not by the harness** — Claude Code has no per-subagent path rule. If you ever see the reviewer edit the artifact under review, treat it as a defect in the loop and say so — the protocol depends on all edits staying with you so changes remain coherent and validated.
+- The reviewer runs `fable` — a different model from the author but the same family, so there is no cross-family independence. Weigh an `APPROVED` accordingly wherever shared-family blind spots are plausible.
 
 ## Reviewer brief template
 ```

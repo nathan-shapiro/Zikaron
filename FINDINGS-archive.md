@@ -3250,6 +3250,9 @@ Plan:
 
 
 ## References
+- **M34, a headline carries no verdict** — `reviews/m34-implementation-review.md` (the
+  implementation), `reviews/m34-prose-review.md` (the shipped agent-facing text, three rounds, the
+  third refuted and reverted), `research/m34-gist-form-replay.md` (the replay evidence).
 - **Deferred tool loading, the description cap, and what the installer may refuse** —
   `reviews/always-load-review.md`. Carries why `alwaysLoad` is written per server rather than
   `ENABLE_TOOL_SEARCH` per project; why the consolidator keeps a key measurement shows is idle; the
@@ -6798,3 +6801,52 @@ in the tree. What is worth carrying:
 **Findings from those audits are in `reviews/`, and the working tree is the authority on which are
 still outstanding.** `git diff HEAD` is how to tell; a list here is a second copy of state that
 moves every time one is applied.
+
+## M33 as built (moved out of FINDINGS 2026-09-29, once it stopped being live)
+
+Merged as `8ce198f`, together with the deferred-tool-loading work on top of it. The live remainder —
+that all three real stores are at schema 3, the five queries the log exists for, and the three
+consequences that are easy to re-open — stayed in `FINDINGS.md`.
+
+**The access-log row's cost is accepted as measured — operator decision 2026-09-28, and the bar that
+demanded otherwise was the error.** ~0.75–1.10 ms per user message stands; the write is not moved after
+`writer.drain()`. §M33's done-when clause is struck there with this reason. **The bar should not have
+been written**: a p95 gate on a per-call delta of ~1 ms, against a `push._DEADLINE_SECONDS` of 2,000 ms,
+made a decision out of a rounding error — and a gate, once written, has to be serviced by every review
+round that follows it. `research/m33-access-log-cost.md` is the evidence and is closed; **do not reopen
+it to improve it.**
+
+**The measured cost itself.** The idle paired per-call delta's p50 has read **0.75–1.10** against a bar
+of 1.0, straddling it with no monotone relation to `load1`; **the p95 misses in every run computed
+pairwise, 2.0–3.1 against 2.0**. The cost splits at the dispatch seam: the row's own await is about 2×
+the isolated write, and the other half is what its *commit* costs the **next** call — a page-cache
+reset, since any connection committing before the next `BEGIN` makes it drop its whole cache and
+re-read. That half is **0.140–0.197 ms** and is a floor, since it scales with the timed call's footprint
+at 40 seeded memories against 252 live. No placement of the row on its own connection moves it.
+Re-derive: `.venv/bin/python experiments/m33_access_log_cost.py 300`, on an idle machine.
+
+**`memory_surface`'s treatment p95 under a real writer is 8.357 ms against `push._DEADLINE_SECONDS` of
+2,000 ms** — two orders of magnitude inside the one budget the row could have broken, on both arms.
+
+**The 2→3 migration is 642 ms with `integrity_check ok` on a 29,007-event snapshot of
+`~/Trading/LeibaTrader`, and `call` adds 22.4 MB/year at 463.7 bytes a row** — 18.8% more rows than
+that log already held, and a **floor**, since the knowledge verbs left no `op_id` to count. Re-derive:
+`.venv/bin/python spikes/m33_schema_three_and_call_volume.py`;
+`research/m33-schema-three-and-call-volume.md`.
+
+**`registry.ensure_table` went beyond the brief.** It **reads `sqlite_master` and issues nothing when
+the table is there**, where it used to issue `CREATE TABLE IF NOT EXISTS` unconditionally. The design
+rested a normative bullet on that statement taking no write lock; measured on the connection the service
+holds it takes one and waits out the whole `busy_timeout`, so **every knowledge verb was answering
+`store_unavailable` whenever another write had held the lock that long** — `knowledge_search` included.
+`research/m33-registry-ensure-takes-the-write-lock.md`. One consequence, fixed at
+`dispatch_knowledge`'s boundary rather than in `core`: a registry write now holds a WAL snapshot before
+asking for the lock, so contention arrives as `SQLITE_BUSY_SNAPSHOT` and is mapped to **`store_busy`**
+rather than `store_unavailable`.
+
+**The production defect it also fixed**: a Claude Code subagent whose frontmatter sets an explicit
+`tools:` allowlist does not inherit the project-wide MCP registration, so Zikaron's verbs are absent
+from it and the installer said nothing — found in `~/Dividends` 2026-09-27 with a correct install, a
+warm service, 10 pushes and zero memories. The install and `zikaron doctor` now both report it. That
+project's own agent was granted `mcp__zikaron` the same day, and its store's first memory lands about
+five hours later, which is what confirms the allowlist was the cause rather than a coincidence.

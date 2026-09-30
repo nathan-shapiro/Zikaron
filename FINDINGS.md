@@ -4,7 +4,8 @@
 > where the work stands, and what is still open.
 >
 > **What belongs here** — a settled decision and where its rationale lives; where the work stands
-> and what is next; an open question with what would close it; a measured fact that constrains a
+> and what is next; an open question with what would close it and the answer proposed; a defect
+> with the fix proposed; a measured fact that constrains a
 > choice, stated once with the command that re-derives it. The test is whether a fresh session
 > would act differently without it.
 >
@@ -21,10 +22,9 @@
 > **§"Dogfooding notes" before proposing anything** — most of what a fresh session would think to
 > try has already been measured there, and several plausible ideas are refuted.
 >
-> **§"Owed work" below is the pool the next brief is drawn from.** It exists because M33 shipped two
-> prose changes and silently dropped a third that this file had already specified; anything owed and
-> unscoped belongs there rather than inside a milestone's narrative, where it disappears when that
-> milestone is archived.
+> **§"Owed work" below is the pool the next brief is drawn from.** Anything owed and unscoped belongs
+> there rather than inside a milestone's narrative, where it disappears when that milestone is
+> archived.
 
 ## Settled decisions — index
 One line each. **Rationale, measurements and rejected alternatives are in `design/overview.md` §4.**
@@ -71,42 +71,30 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M32 are built, reviewed and landed**, the last merged as `ad3f99c`. M26 shipped **nothing** —
+**M0–M33 are built, reviewed and landed**, the last merged as `8ce198f`. M26 shipped **nothing** —
 neither the reranker nor any chunking change — and that is the result, not a stall. Each milestone's
 record is in `FINDINGS-archive.md`; the briefs are in `design/build-plan.md`; M32's shipped prose
 surfaces are normative in `design/retrieval.md` and decoded in `research/injected-prose-log.md`.
 
-**M33 and the deferred-tool-loading work on top of it are open as PR #12, commit `402f978`, and CI is
-green on all four jobs** — the review trails are `reviews/m33-implementation-review.md` (eight rounds)
-and `reviews/always-load-review.md` (eleven), both APPROVED, and Codecov's patch view reads *all
-modified and coverable lines are covered*. **Waiting on the operator to merge, which this agent does
-not do.**
+**`8ce198f` carries M33's access log *and* the deferred-tool-loading work on top of it**, since the two
+were entangled in one tree and `test_ddl.py` reads `schema.md` verbatim. Review trails:
+`reviews/m33-implementation-review.md` (eight rounds) and `reviews/always-load-review.md` (eleven), both
+APPROVED. That second half ships `alwaysLoad` on both `.mcp.json` servers, four tool descriptions
+rewritten under `DESCRIPTION_BUDGET`, and **ownership rather than equality as what refuses a Claude Code
+artefact**, with every loss reported on both the merging and `--force` paths. `design/harness.md`
+§§"MCP tools may arrive deferred" and "Tool descriptions are capped" and `architecture.md` §"The install
+contract" are normative; §"Owed work" below carries what it leaves behind.
 
-The second half ships `alwaysLoad` on both `.mcp.json` servers, four tool descriptions rewritten under
-`DESCRIPTION_BUDGET`, and **ownership rather than equality as what refuses a Claude Code artefact**,
-with every loss reported on both the merging and `--force` paths. `design/harness.md` §§"MCP tools may
-arrive deferred" and "Tool descriptions are capped" and `architecture.md` §"The install contract" are
-normative; §"Owed work" below carries what it leaves behind. `./check-matrix.sh --parallel` was never
-run on this tree and did not need to be: CI's per-version jobs are that claim against the commit.
-
-**The access-log row's cost is accepted as measured — operator decision 2026-09-28, and the bar that
-demanded otherwise was the error.** ~0.75–1.10 ms per user message stands; the write is not moved after
-`writer.drain()`. §M33's done-when clause is struck there with this reason. **The bar should not have
-been written**: a p95 gate on a per-call delta of ~1 ms, against a `push._DEADLINE_SECONDS` of 2,000 ms,
-made a decision out of a rounding error — and a gate, once written, has to be serviced by every review
-round that follows it. `research/m33-access-log-cost.md` is the evidence and is closed; **do not reopen
-it to improve it.**
-
-**`registry.ensure_table` went beyond the brief, and the PR carries it.** It **reads `sqlite_master` and
-issues nothing when the table is there**, where it used to issue `CREATE TABLE IF NOT EXISTS`
-unconditionally. The design
-rested a normative bullet on that statement taking no write lock; measured on the connection the service
-holds it takes one and waits out the whole `busy_timeout`, so **every knowledge verb was answering
-`store_unavailable` whenever another write had held the lock that long** — `knowledge_search` included.
-`research/m33-registry-ensure-takes-the-write-lock.md`. One consequence, fixed at
-`dispatch_knowledge`'s boundary rather than in `core`: a registry write now holds a WAL snapshot before
-asking for the lock, so contention arrives as `SQLITE_BUSY_SNAPSHOT` and is mapped to **`store_busy`**
-rather than `store_unavailable`.
+**M34 is in PR, waiting on the operator to merge: Q22's form rule on `remember`, `amend` and
+`promote`'s descriptions and the consolidator prompt, plus the consolidator's planning timeout.**
+`design/build-plan.md` §M34 is the brief; `research/m34-gist-form-replay.md` is the evidence — the
+rule held wherever the consolidator wrote a gist, leaked through in-place promotion, and a targeted
+re-run verified the promote-condition fix. `reviews/m34-implementation-review.md` is APPROVED and
+`./check.sh` is green. Reinstalled 2026-09-29 into `~/Trading/LeibaTrader`, `~/Dividends` and
+`~/Memory` (Claude Code in all three, kiro too in `~/Memory`).
+**M35 is pooled read connections plus the service's wedge diagnostics — a `SIGUSR1` stack dump and
+a per-request start line** (§"Owed work" has both defects and the proposed shape). §"How the next review should be briefed" is what either review costs
+if briefed badly.
 
 **The release goes out after the next milestone, not on the `0.1.0` → `main` gap — operator decision
 2026-09-29.** So the gap stands meanwhile and is worth knowing rather than re-deciding: `0.1.0` has no
@@ -115,29 +103,6 @@ declares `SUPPORTED_SCHEMA_VERSION = 1`, so it cannot open any store this build 
 is `0.3.0.dev0`: two unreleased `MIGRATIONS` steps since `0.1.0`, and a schema bump is a minor bump
 (`design/distribution.md` §3, which also says why the minor matching the schema number is a
 coincidence of this history rather than a rule).
-
-**The design and the code are one commit.** `test_ddl.py` and `test_event_kinds.py` read `schema.md`'s
-DDL block and per-kind table verbatim, so a PR carrying only one of the two is red by construction.
-
-**The access-log row's measured cost, because it is what decision 1 turns on.** The idle paired per-call
-delta's p50 has read **0.75–1.10** against a bar of 1.0, straddling it with no monotone relation to
-`load1`; **the p95 misses in every run computed pairwise, 2.0–3.1 against 2.0**. The cost splits at the
-dispatch seam: the row's own await is about 2× the isolated write, and the other half is what its
-*commit* costs the **next** call — a page-cache reset, since any connection committing before the next
-`BEGIN` makes it drop its whole cache and re-read. That half is **0.140–0.197 ms** and is a floor, since
-it scales with the timed call's footprint at 40 seeded memories against 252 live. No placement of the row
-on its own connection moves it. `research/m33-access-log-cost.md` has the per-run table, the probe, its
-positive control and what the bar itself got wrong. Re-derive:
-`.venv/bin/python experiments/m33_access_log_cost.py 300`, on an idle machine.
-
-**`memory_surface`'s treatment p95 under a real writer is 8.357 ms against `push._DEADLINE_SECONDS` of
-2,000 ms** — two orders of magnitude inside the one budget the row could have broken, on both arms.
-
-**The 2→3 migration is 642 ms with `integrity_check ok` on a 29,007-event snapshot of
-`~/Trading/LeibaTrader`, and `call` adds 22.4 MB/year at 463.7 bytes a row** — 18.8% more rows than
-that log already holds, and a **floor**, since the knowledge verbs left no `op_id` to count. Re-derive:
-`.venv/bin/python spikes/m33_schema_three_and_call_volume.py`;
-`research/m33-schema-three-and-call-volume.md`.
 
 **All three real stores are at schema 3 — `~/Trading/LeibaTrader`, `~/Memory` and `~/Dividends`,
 migrated 2026-09-29 by the services a reinstall check started.** Nothing announced it, which is the
@@ -158,17 +123,17 @@ stays uninstrumented** (operator decision): deferred groups are how `spill_thres
 instead. And **link coverage is not comparable across the schema 3 boundary**, because linkage is
 defined over `client_kind` and a session whose only `mcp` traffic was refused now counts as linked.
 
-**The production defect M33 also fixes**: a Claude Code subagent whose frontmatter sets an explicit
-`tools:` allowlist does not inherit the project-wide MCP registration, so Zikaron's verbs are absent
-from it and the installer says nothing — found in `~/Dividends` 2026-09-27 with a correct install, a
-warm service, 10 pushes and zero memories. The install and `zikaron doctor` now both report it.
-
 **`main` is published at `github.com/nathan-shapiro/Zikaron`, and CI runs four jobs on it**: linux
 3.12/3.13/3.14 and macOS 3.12, the last **required** since M29. `gh run list --branch main` says
 where the most recent stands. **The operator merges; this agent does not.** There is no branch
 protection — operator decision, rationale in `design/distribution.md` §"The macOS job is required".
 
 ### Facts that constrain how you work in this repository
+
+**A schema change is one commit with its design.** `test_ddl.py` and `test_event_kinds.py` read
+`schema.md`'s DDL block and per-kind table verbatim, so a PR carrying the code without the document —
+or the document without the code — is red by construction. That is the drift guard working, not an
+obstacle to route around.
 
 **`sun_path` is tighter on macOS than Linux, and only the runtime directory can spend it.** The
 store is hashed to a fixed width, so **project nesting depth cannot move the socket path's length**;
@@ -228,7 +193,8 @@ would have opened, answered every query, and contained nothing. Use `Connection.
 ### Owed work — the candidate pool for the next milestone
 
 Scanned 2026-09-28, after M33 shipped something FINDINGS had assigned elsewhere. **Nothing here is
-scoped; this is the pool a brief is drawn from.** Each entry names what would close it.
+scoped; this is the pool a brief is drawn from.** Each entry names what would close it and the fix
+proposed.
 
 **Tool descriptions arrived late, or truncated, or not at all; the install now exempts them and all four
 over-long ones were rewritten — fixed 2026-09-29, with the items below still owed.** Claude Code defers
@@ -266,56 +232,60 @@ mechanism, the decision, what it costs in context and the unverified `instructio
   so — `README.md`'s troubleshooting row is the only channel. A `doctor` check for the key's absence is
   the obvious one and is not written.
 
-**Why this section exists rather than the items living in milestone narratives.** Twice now an item was
-lost by being stored beside finished work: Q22's surfaces were inside a milestone brief that enumerated
-and moved on, and `surface_min_score` was inside a results narrative that went to the archive with its
-evidence. **An owed item goes here the moment it is identified**, not into the section that happens to
-have measured it.
+**M35 is decided: pooled read connections — operator decision 2026-09-29, brief not yet written.**
+It fixes this: the service runs every client's transactions on one shared SQLite connection with
+nothing serializing them. While one request holds a transaction, another client's `BEGIN` fails
+`cannot start a transaction within a transaction` and is answered `internal error`. Reproduced live:
+five of eight searches failed while a 12 s plan ran; normally the window is milliseconds, which is
+why nothing had surfaced it. **The shape proposed with it**, for the brief to confirm: reads from a
+pool, each on its own WAL snapshot; writes on one connection behind an in-process lock, so writers
+never meet `busy_timeout` or `SQLITE_BUSY_SNAPSHOT` inside SQLite; and planning computed from a read
+snapshot and written in a short, re-validating transaction, since otherwise a plan still holds the
+writer for its whole 12 s. **What the brief has to weigh**: a reused pool rather than a connection
+per request, because each connection loads sqlite-vec and warms its own page cache; no long-held
+read snapshot, since one blocks WAL checkpoints; every handler takes `ctx.store.connection` today
+(`server.py`), so dispatch, the context's lifecycle and the test fixtures all move. Re-derive with
+`.venv/bin/python spikes/m34_service_staleness_probe.py <scratch-project-dir>`, which copies the
+M34 replay store there and runs all three perturbations — so it needs a store freshly made by
+`experiments/m34_gist_replay.py seed`: planning time scales with the unconsolidated journal, and
+the collision needs the plan to run for seconds.
 
-**Dropped from M33 and not refused there — the highest-priority entry, because the omission was
-silent.** Q22 names its form rule on **`zikaron_memory_remember`'s description** — the same description
-M33 edited for Q20 — and on **the consolidator at merge and promote**. M33 carried it on neither, while
-refusing only Q21's register candidate by name. Q22 passes M33's own admission test in its own words
-(*"missing information, not an ignored instruction"*).
+**The LeibaTrader service wedged on 2026-09-29 and stayed wedged until restarted — cause unknown;
+M35 carries all three items below, the `SIGUSR1` dump included (operator decision 2026-09-29).** Service pid 3002334 started 20:08Z, answered a `remember` at 20:14:19Z
+(447 ms), then answered nothing: every push 20:18–20:24Z failed `transport` (`hook.log`), the store
+has no event in that window, and `service.log` has no line after start — no idle-stop, no error. A
+fresh service at 20:25:34Z served from its first call. The clients are not the cause: a timed-out
+socket is dropped and reconnected, and a killed or frozen-then-resumed service recovers without a
+restart (both verified by the probe below). **Proposed fix, in M35's scope since it is the same
+service loop:** (1) `faulthandler.register(SIGUSR1)` into `service.log`, so the next wedge yields
+every thread's stack from one `kill -USR1`; (2) a per-request start line at debug level, so a hang
+names the request it hung in, and a `stopping: reason=signal` line — a `SIGTERM` exit logs nothing
+today, where an idle one logs `reason=idle`, so a killed service and a wedged one read alike; (3) M35's pool itself, since the shared connection is the one
+unserialized resource every request touches and the likeliest place for a handler to wait forever.
+The dump is what confirms or refutes (3).
 
-**That description is already at `DESCRIPTION_BUDGET`, so the form rule must *displace* text there
-rather than extend it** — decide what it replaces before the brief is written, or the gate refuses the
-change after it is drafted. Re-derive the current length with the command in `design/harness.md`
-§"Tool descriptions are capped"; the same constraint binds Q21's tone pass if it ever reaches this
-surface.
+**An owed item goes here the moment it is identified**, not into the section that happens to have
+measured it.
 
-**The point of the consolidator half is that it is a *gatekeeper*, not a repair pass — operator, and it
-is the stronger reason of the two.** Rewriting the prompt so the consolidator repairs the records already
-written is one-off and undersells it. The consolidator **already rewrites gists at merge and promote as a
-matter of course**, so giving it the form rule makes it the point where *"a headline carries no verdict"*
-is **checked and corrected on everything that passes through**, rather than requested and hoped for.
-**This is the only enforcement point the system has for that rule**: D2 forbids an extra LLM on the write
-path, so no gate exists at write time; the write-side tool description is advisory, and this corpus has
-measured that prose binds only where the agent does not know — four copies of a known instruction failed,
-and the one rule with grip is D26's read receipt, which **refuses**. The consolidator is already an extra
-LLM at a seam off the critical path, which is why Q21 says the placement is right.
-
-**Two limits, both of which keep the write-side sentence necessary rather than redundant.** D10 makes
-consolidation manual and rare, so enforcement is **eventual and partial** — a record lives as a verdict
-until a group takes it in, and one that never groups is never checked. So the description's job is to
-reduce how many verdicts get *created*, and the consolidator's is to stop them surviving. And the
-never-lose guard was not designed for a pass that rewrites records needing no substantive change, which
-is the widest rewrite surface consolidation would ever have had (Q21).
-
-**Sequencing is load-bearing**: the form rule must land **before** any corpus-wide gist repair, or a
-pass over the 169 records rewrites them into 169 fresh verdicts and reports success. The same applies
-to Q21's tone pass on that surface.
+**Q22's form rule left this pool: it is M34** (`design/build-plan.md` §M34 carries the gatekeeper
+reasoning, the surfaces and the sequencing constraint). **Still owed after it — a corpus repair pass**,
+which the form rule was sequenced ahead of so a pass over the 169 records does not rewrite them into
+169 fresh verdicts. Proposed shape: once M34 ships, re-seed the live long-term records as journal
+entries — `experiments/m34_gist_replay.py`'s `_SEED_ROWS` selects only rows a `remember` created, so
+this needs a `--tier long_term` option — and consolidate them in a replay store first, judged on the
+same four bars, before touching a live store. The consolidator reaches a long-term record otherwise
+only as a merge target, which would leave most of them unchecked.
 
 **Cheap and never run, in dependency order.**
 
-- **Q8's embedder survey — the one live retrieval lever, and its value is conditional** (operator,
-  2026-09-28): worth doing **only if** an embedder exists that is measurably better on *technical text*,
-  which is the axis Q8's own instrument never varied. Delegate to `memory-assistant`, target
-  `research/technical-embedders.md`. It must return *published benchmark scores on a relevant subset*
-  rather than vendor claims, and screen every candidate against D19/D36 servability — fetchable,
-  pinnable by revision and digest, ONNX under the M30 cold-start budget — before reporting it. **The
-  survey costs a subagent and no engineering time**, so it is not gated on anything; what is gated is
-  any *retest*, and the gate is whether the survey finds a candidate at all.
+- **Q8's embedder survey ran 2026-09-29** — `research/technical-embedders.md`. Code-trained embedders
+  do not beat `bge-small` on prose that contains identifiers. The candidates are general-purpose small
+  models: `ibm-granite/granite-embedding-30m-english` (30M, 384-dim, Apache-2.0, ONNX), at CoIR
+  StackOverflow-QA +5.9 and average +1.2, and `e5-small-v2` (33M, MIT, ONNX), one row above it in the
+  same table (average 47.1, StackOverflow-QA 83.5) though the survey did not screen it — **but every
+  figure, `bge-small`'s included, comes from IBM's own Granite paper**, the vendor-claim class the
+  survey was told to discount. **What would close it**: evaluated separately from M34 (operator
+  decision) — both candidates through Q8's own discrimination instrument in one run.
 - ~~**Q2's fusion sweep.**~~ **Already run and closed by M25 — do not re-propose it** (operator,
   2026-09-28). 252 cells over `rrf_k` × `fusion_depth` × **an arm weight**, 2,720 chunks of
   `cockroachdb/cockroach` `docs/RFCS/`: the best cell on `heading` — the only family whose queries are
@@ -388,6 +358,14 @@ re-deriving the set — which is how Q22 was dropped without anyone noticing. St
 the tally: `design/coding-standards.md` §5 already forbids this and a normative brief is the worst
 place to break it.
 
+**Research notes and experiment harnesses are reviewed for the decision they support, not for academic
+completeness — operator decision 2026-09-29.** A finding on a note counts only if it would change what
+the milestone ships or decides: a wrong conclusion, a number the decision rests on, a claim a code or
+design change cites. Wording, provenance detail, methodological polish and arithmetic that moves no
+decision are declined with that reason, not applied. Past milestones spent tens of review rounds
+polishing research notes. Say this in the review brief, and decline such findings when a round
+returns them anyway.
+
 ### Live design questions
 
 D1 was amended 2026-09-15: the knowledge index is Zikaron's own. `design/knowledge-index.md` is
@@ -443,13 +421,11 @@ normative and APPROVED; M19–M25 landed. What is still open:
   which is what fusion discards; but M25 already swept that and closed it, so there is no Q2 work to do
   first. The caveat stands: a dense-side gain may be erased at fusion whatever the embedder scores, and
   only a change to the fusion *scheme* — a design change amending D5 — could alter that.
-  **Owed: a survey of lightweight embedders with published strength on technical text and code
-  identifiers** — `memory-assistant`, target `research/technical-embedders.md`. It must return
-  *published benchmark scores on a relevant subset*, not vendor claims — the Jev lesson — and screen
-  every candidate against the servability constraints above before reporting it, since a model that
-  cannot be pinned and run locally is not a candidate whatever it scores. Cheap to run and not yet
-  run. **This is the live lever on this question**, and the survey answering "no such candidate is
-  servable" closes Q8 as cheaply as one answering yes opens it.
+  **The survey ran 2026-09-29** (`research/technical-embedders.md`), and it turned the axis around.
+  Training domain is not the lever: code-trained embedders score at or below `bge-small` on
+  StackOverflow-QA, the closest published proxy for prose containing identifiers. The one candidate is
+  a general-purpose model, `granite-embedding-30m-english`, whose margin rests on its vendor's own
+  paper. §"Owed work" says what would close it.
 - **Q9** — **Evaluation** (deferred by D14). Plan: `design/evaluation.md`, proposal not normative. No
   surveyed benchmark scores an end-task coding outcome; LoCoMo cannot score abstention; every
   published comparison in this space is vendor self-report. CTIM-Rover is a published negative
@@ -561,7 +537,21 @@ normative and APPROVED; M19–M25 landed. What is still open:
 - **Q22** — **Gists are verdicts, and a headline should create the desire to read rather than
   satisfy it.** Operator observation 2026-09-25, measured: **58 of 169** live long-term gists on
   `~/Trading/LeibaTrader` carry an explicit conclusion marker and **37 contain a literal " so "** —
-  a floor, since the regex catches only overt markers. The shape is consistent: *symptom*, then *so
+  a floor, since the regex catches only overt markers (93 by the wider `VERDICT_MARKER` screen in
+  `experiments/m34_gist_replay.py`, which also counts causal clauses). **M34 (2026-09-29) put the rule
+  on `remember`, `amend` and `promote`'s descriptions and the consolidator prompt, and
+  `design/write-policy.md` §1 states it; the replay verified the consolidator half
+  (`research/m34-gist-form-replay.md`).** Still open: the marker rate among new `remember` writes after
+  release — proposed: re-run the screen on each real store a month after release, read the marked
+  gists, and compare against this 169-record baseline. **Known limit of the shipped wording:** a gist
+  shaped *mechanism, so symptom* — where the `so` clause is what was seen (*"… so a live job looks
+  dead"*) — gets the symptom cut, losing the words push needs (1 of 8 in the re-run). **Accepted, not
+  fixed: the obvious one-clause fix is refuted** (2026-09-29). Telling the consolidator that "so"
+  introduces either an observation or a verdict kept every causal symptom — and let three real
+  verdicts back through in place (*"was a July artifact"*, *"is significantly harmful"*, *"only work
+  AFTER the fact"*), 19 of 20 rows unchanged. A leaked verdict is the failure the rule exists for; a
+  cut symptom costs push only, since content keeps it and pull finds it. `research/m34-gist-form-replay.md`
+  §"A fix for the over-fire, refuted". The shape is consistent: *symptom*, then *so
   [verdict]* — *"Ticks can share one microsecond timestamp at different prices, **so matching
   persisted trades to ticks by timestamp alone is wrong**."* The first clause triages; the second is
   what gets quoted instead of read. **M32 attacked the wrong half.** It renamed the object on the
@@ -573,9 +563,9 @@ normative and APPROVED; M19–M25 landed. What is still open:
   symptom, drop the `so` clause** — preserving D13's triage, since you can still tell what the record
   is about, while removing what makes the line sufficient.
   **This is missing information, not an ignored instruction**, which is why prose can fix it:
-  `design/write-policy.md` says *"lead with the observable symptom rather than the conclusion"*, an
-  instruction about **ordering** that is being obeyed — symptom first, verdict appended — while
-  nothing has ever prohibited the verdict's *presence*.
+  before M34 the write-side rule said *"lead with the observable symptom rather than the conclusion"*,
+  an instruction about **ordering** that was being obeyed — symptom first, verdict appended — while
+  nothing prohibited the verdict's *presence*.
   **Both surfaces, for different reasons.** The primary agent at write time
   (`zikaron_memory_remember`'s description), because D10 makes consolidation manual and rare so a
   record lives as a verdict for a long time; and the consolidator at merge and promote, **as the

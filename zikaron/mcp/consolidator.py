@@ -32,7 +32,11 @@ from fastmcp.exceptions import ToolError
 
 from zikaron.core.errors import ZikaronError
 from zikaron.mcp import spill
-from zikaron.mcp.connection import AmbiguousMutationError, ServiceConnection
+from zikaron.mcp.connection import (
+    REQUEST_TIMEOUT_SECONDS,
+    AmbiguousMutationError,
+    ServiceConnection,
+)
 from zikaron.mcp.errors import ServiceRejectionError, TransportFailureError, response_to_tool_result
 from zikaron.mcp.spill import SpillPolicy
 
@@ -46,6 +50,16 @@ _CLIENT_KIND = "consolidator"
 #: a *recognition* site reading a value the service already committed to that contract at, so the
 #: number is the wire contract itself rather than a literal standing in for one.
 _STORE_BUSY_CODE = -32020
+
+#: The request timeout for the two calls that can plan a run — `memory_plan_groups`, and
+#: `memory_next_group`, which plans inline when no run is active. Planning takes time proportional
+#: to the journal: 12.2 s for 284 rows, measured (13.1 s through the bridge), against the 10 s
+#: default every other call uses. At that rate this buys a journal of roughly 7,000 rows; both
+#: harnesses let a tool call run past it (`design/harness.md`, "MCP tool-call duration"). For
+#: `memory_plan_groups` the bridge treats a lost response as terminal for the process, so a timeout
+#: there is a whole consolidation lost; a `next_group` that outlasts it is one call lost, and the
+#: next call meets whatever the service went on to commit.
+_PLANNING_TIMEOUT_SECONDS = 300.0
 
 
 class _BridgeState(Enum):
@@ -128,7 +142,12 @@ class _PlanBridge:
                 raise self._failure
             try:
                 envelope = connection.envelope(kind=_CLIENT_KIND)
-                response = await connection.request("memory_plan_groups", {}, envelope=envelope)
+                response = await connection.request(
+                    "memory_plan_groups",
+                    {},
+                    envelope=envelope,
+                    timeout=_PLANNING_TIMEOUT_SECONDS,
+                )
                 response_to_tool_result(response)
             except asyncio.CancelledError:
                 # Whether `memory_plan_groups` had already committed on the service before this
@@ -168,6 +187,7 @@ async def _call(
     params: dict[str, object],
     *,
     spill_policy: SpillPolicy,
+    timeout: float = REQUEST_TIMEOUT_SECONDS,
 ) -> object:
     """One tool call's worth of translation — identical in shape to `primary.py`'s own `_call`,
     duplicated rather than shared because the one thing that differs, `client.kind`, is exactly
@@ -184,7 +204,7 @@ async def _call(
     """
     envelope = connection.envelope(kind=_CLIENT_KIND)
     try:
-        response = await connection.request(method, params, envelope=envelope)
+        response = await connection.request(method, params, envelope=envelope, timeout=timeout)
     except (OSError, ConnectionError, ZikaronError, AmbiguousMutationError) as error:
         raise TransportFailureError(str(error)) from error
     result = response_to_tool_result(response)
@@ -242,7 +262,13 @@ def register_consolidator_tools(
         # would delete a payload still in use, since a conflict response spills through this path.
         spill.release_finished(spill_policy)
         await bridge.ensure_planned(connection)
-        return await _call(connection, "memory_next_group", {}, spill_policy=spill_policy)
+        return await _call(
+            connection,
+            "memory_next_group",
+            {},
+            spill_policy=spill_policy,
+            timeout=_PLANNING_TIMEOUT_SECONDS,
+        )
 
     @mcp.tool
     async def zikaron_memory_merge(
@@ -281,11 +307,19 @@ def register_consolidator_tools(
     async def zikaron_memory_promote(
         group_id: str, gist: str, content: str, absorb: list[dict[str, object]]
     ) -> object:
-        """Create a long-term record from part or all of this group, or — if `absorb` names
-        exactly one journal row and `gist`/`content` are byte-identical to it — flip that row's
-        own tier in place rather than writing a new one. `absorb` is a list of
+        """Create a long-term record from part or all of this group. `absorb` is a list of
         `{uuid, expected_version}` naming journal entries delivered in this group and not yet
-        dispositioned. Returns `{uuid, version, remaining_uuids, group_complete}` on success, or
+        dispositioned. Two forms, decided by what you pass. Ordinarily a new record is created
+        from `gist`/`content` and every absorbed entry is retired against it, pointing at the new
+        uuid. If `absorb` names exactly one entry and `gist`/`content` are byte-identical to it,
+        that entry's own tier is flipped in place instead: no prose is written, so its gist and
+        content go to long-term exactly as the entry's author wrote them, and none of the
+        authoring rules in your instructions reaches them. The in-place form therefore fits only
+        an entry whose gist and content already satisfy every one of those rules — a symptom with
+        no verdict in the line, an observation rather than an order, its condition present. Any
+        change to either, however small, takes the ordinary form, and nothing is lost by it: the
+        entry is retired pointing at the record that carries its corrected text. Returns
+        `{uuid, version, remaining_uuids, group_complete}` on success, or
         `{conflict: true, current: [...], remaining_uuids}` on the same stale-version terms as
         `zikaron_memory_merge`.
         """

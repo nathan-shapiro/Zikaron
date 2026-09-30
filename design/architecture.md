@@ -1520,7 +1520,15 @@ now + `run_lease` (**default 30 min**), and the full group/member snapshot with 
 Membership is frozen here. Planning is a pure function of the store plus the **effective config** (§"Configuration"), which is read once at
 service startup and therefore fixed for a run, so it is
 reproducible. Called implicitly by `next_group` when the store has **no effectively-active run at all —
-whoever owns it**, in the precise sense defined below.
+whoever owns it**, in the precise sense defined below. **Planning runs in time proportional to the
+journal** — 12.2 s for 284 rows, measured — so the two consolidator-client calls that can trigger it,
+`memory_plan_groups` and `next_group` — every call of which may plan inline after a lapsed lease, so
+it carries the same ceiling whether or not it does — wait `_PLANNING_TIMEOUT_SECONDS` (300 s) rather
+than the 10 s every other request gets. A `memory_plan_groups` that outlasts it leaves the plan bridge
+`failed`, not retried; an inline plan on `next_group` that outlasts it is reported as a transport
+failure, and the next call meets whatever the service went on to commit. A service that stops
+answering holds a consolidator 300 s per `next_group`. Both
+harnesses let a tool call run past 300 s (`design/harness.md`, "MCP tool-call duration").
 
 - **"Effectively active" is the only run test anywhere in this document:** `status='active' AND
   expires_at ≥ now`. A stored `'active'` row past its lease is not active to anybody, including the session

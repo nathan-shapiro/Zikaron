@@ -26,6 +26,9 @@ class _FakeSocket:
     def close(self) -> None:
         self.closed = True
 
+    def settimeout(self, _timeout: float) -> None:
+        pass
+
 
 async def test_cancelling_during_send_closes_the_socket_so_a_later_call_gets_a_fresh_one(
     connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch

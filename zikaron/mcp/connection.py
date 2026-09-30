@@ -54,11 +54,12 @@ _MAX_ATTEMPTS = 2
 #: every ordinary request afterward: `zikaron/core/store/ddl.py`'s `PRAGMA busy_timeout = 5000`
 #: means a genuinely contended write may legitimately take up to 5 s to resolve (into either a
 #: success or a `store_busy` response, per `architecture.md`'s own error table), and every
-#: primary/consolidator RPC method is a single such transaction with no other unbounded step. A
+#: primary/consolidator RPC method but planning is a single such transaction with no other unbounded
+#: step — planning scales with the journal, and its callers pass their own timeout. A
 #: request timeout left at 1 s would cut that wait off first, misreporting a slow-but-successful
 #: (or a slow-but-honestly-`store_busy`) response as `AmbiguousMutationError` instead. Comfortably
 #: above the 5 s ceiling, with margin for ordinary scheduling jitter, rather than exactly at it.
-_REQUEST_TIMEOUT_SECONDS = 10.0
+REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +234,12 @@ class ServiceConnection:
         return ClientEnvelope(session_id=self._session_id, kind=kind, pid=os.getpid(), op_id=None)
 
     async def request(
-        self, method: str, params: dict[str, object], *, envelope: ClientEnvelope
+        self,
+        method: str,
+        params: dict[str, object],
+        *,
+        envelope: ClientEnvelope,
+        timeout: float = REQUEST_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
         """Send one JSON-RPC request, reconnecting once if the held connection turned out to be
         dead *before this request was sent*, and return the parsed response line — a success
@@ -271,6 +277,10 @@ class ServiceConnection:
         every other failure instead raises `AmbiguousMutationError` immediately, naming the
         genuine uncertainty rather than silently resolving it in either direction.
 
+        `timeout` bounds this one request's send and read. The default suits a method that is one
+        transaction under `busy_timeout`; a caller whose method is not — a consolidation plan runs
+        in time proportional to the journal — passes its own.
+
         Raises:
             ZikaronError: whatever `_read_store_identity`/`connect_start_if_absent` raise while
                 establishing a connection — a missing or unhealthy store, a `store_identity`
@@ -292,6 +302,7 @@ class ServiceConnection:
             last_error: Exception | None = None
             for _attempt in range(_MAX_ATTEMPTS):
                 sock = await self._connected_socket()
+                sock.settimeout(timeout)
                 try:
                     # `asyncio.to_thread`, not a bare synchronous call: `_send_request`/
                     # `_read_response` block on the raw socket, and calling either directly here
@@ -321,7 +332,7 @@ class ServiceConnection:
                     # `send`/`recv` — on Linux, closing a descriptor from another thread is not a
                     # reliable interrupt for a syscall already blocked on it, and the orphaned
                     # call may not observe anything until data arrives, the peer closes, or its
-                    # own `_REQUEST_TIMEOUT_SECONDS` elapses. What bounds the orphaned worker is
+                    # request's own `timeout` elapses. What bounds the orphaned worker is
                     # that timeout, not this `close()` — the close only guarantees detachment.
                     try:
                         await asyncio.to_thread(
@@ -416,7 +427,7 @@ class ServiceConnection:
         back still set to its own short connect-phase deadline
         (`lifecycle._CONNECT_TIMEOUT_SECONDS`), which is correct for establishing the connection
         and wrong for every request this connection serves afterward — see
-        `_REQUEST_TIMEOUT_SECONDS`'s own docstring for why.
+        `REQUEST_TIMEOUT_SECONDS`'s own docstring for why.
         """
         if self._sock is not None:
             return self._sock
@@ -460,7 +471,7 @@ class ServiceConnection:
                     break
             sock.close()
             raise
-        sock.settimeout(_REQUEST_TIMEOUT_SECONDS)
+        sock.settimeout(REQUEST_TIMEOUT_SECONDS)
         self._sock = sock
         return sock
 
