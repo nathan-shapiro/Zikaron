@@ -35,7 +35,9 @@ async def test_a_serve_delivers_the_journal_entries_in_group_order(tmp_path: Pat
     async with consolidator(tmp_path) as c:
         first = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         second = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert [record.uuid for record in served.journal_entries] == [first, second]
         assert [record.expected_version for record in served.journal_entries] == [1, 1]
@@ -54,7 +56,9 @@ async def test_a_serve_mints_a_group_receipt_for_every_delivered_row(tmp_path: P
     async with consolidator(tmp_path) as c:
         first = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         second = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0)
-        await serving.next_group(c.harness.store.connection, call=c.call())
+        await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         minted = {
             (session, kind, uuid, version, source)
             for session, kind, uuid, version, source in await c.receipts()
@@ -78,7 +82,9 @@ async def test_a_serve_emits_one_group_served_event_per_delivered_row(tmp_path: 
         )
         member = await c.write(gist=_A[0], content=_A[1], minute=2, degrees=10.0)
         await c.clear_events()
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.anchor is not None
         assert served.anchor.uuid == anchor
@@ -100,7 +106,9 @@ async def test_a_serve_persists_the_authorization_set_with_the_anchor_at_rank_ze
             gist=_C[0], content=_C[1], minute=1, degrees=0.0, tier=Tier.LONG_TERM
         )
         await c.write(gist=_A[0], content=_A[1], minute=2, degrees=10.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert await c.authorization_rows(served.group_id) == [(anchor, "anchor", 1, 0)]
 
@@ -115,7 +123,9 @@ async def test_candidates_exclude_the_anchor_and_every_member(tmp_path: Path) ->
         )
         other = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=5.0, tier=Tier.LONG_TERM)
         member = await c.write(gist=_A[0], content=_A[1], minute=3, degrees=10.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.anchor is not None
         candidate_uuids = [ranked.record.uuid for ranked in served.candidates]
@@ -141,7 +151,9 @@ async def test_candidates_are_capped_at_four(tmp_path: Path) -> None:
                 tier=Tier.LONG_TERM,
             )
         await c.write(gist=_A[0], content=f"{_A[1]} shared word", minute=10, degrees=6.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert len(served.candidates) == MAX_CANDIDATES
         assert [ranked.rank for ranked in served.candidates] == [1, 2, 3, 4]
@@ -162,7 +174,9 @@ async def test_the_group_query_stops_before_the_gist_that_would_exceed_the_budge
         # the only thing under budget pressure is the serve's own group query.
         c.harness.encoder.max_sequence_tokens = 3
         c.harness.encoder.n_special_tokens = 0
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert len(served.journal_entries) == 2
         assert served.n_gists_used == 1
@@ -177,7 +191,9 @@ async def test_no_gist_fitting_serves_no_candidates_at_all(tmp_path: Path) -> No
         await c.write(gist=_A[0], content=_A[1], minute=2, degrees=90.0)
         c.harness.encoder.max_sequence_tokens = 1
         c.harness.encoder.n_special_tokens = 1
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.n_gists_used == 0
         assert served.candidates == ()
@@ -193,10 +209,14 @@ async def test_a_second_worker_in_one_session_with_a_different_pid_gets_busy(
     plan."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await serving.next_group(c.harness.store.connection, call=c.call())
+        first = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(first, ServedGroup)
         busy = await serving.next_group(
-            c.harness.store.connection, call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1)
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(op_id="op2", pid=CONSOLIDATOR_PID + 1),
         )
         assert isinstance(busy, Busy)
         assert busy.holder_session == CONSOLIDATOR_SESSION
@@ -212,10 +232,14 @@ async def test_an_owner_whose_lease_lapsed_recovers_by_replanning(tmp_path: Path
     served a group from it, and was rejected `group_expired` forever."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await serving.next_group(c.harness.store.connection, call=c.call())
+        first = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(first, ServedGroup)
         await c.lapse_lease(first.run_id)
-        second = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        second = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(second, ServedGroup)
         assert second.run_id != first.run_id
         statuses = {run_id: status for run_id, _, _, status in await c.runs()}
@@ -231,11 +255,15 @@ async def test_a_lapsed_run_belonging_to_a_stranger_is_taken_over_by_the_same_pa
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         stranger = await serving.next_group(
-            c.harness.store.connection, call=c.call(session_id="other-session")
+            c.harness.store.connection,
+            pool=c.harness.store.pool,
+            call=c.call(session_id="other-session"),
         )
         assert isinstance(stranger, ServedGroup)
         await c.lapse_lease(stranger.run_id)
-        mine = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        mine = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(mine, ServedGroup)
         assert mine.run_id != stranger.run_id
 
@@ -246,8 +274,12 @@ async def test_a_re_serve_increments_the_count_and_refreshes_served_at(tmp_path:
     *including the first*, so a second delivery reports 2."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await serving.next_group(c.harness.store.connection, call=c.call())
-        second = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        first = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
+        second = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(first, ServedGroup)
         assert isinstance(second, ServedGroup)
         assert second.group_id == first.group_id
@@ -266,11 +298,15 @@ async def test_a_group_at_the_delivery_cap_is_deferred_and_the_run_finishes(
         for index in range(2):
             assert isinstance(
                 await serving.next_group(
-                    c.harness.store.connection, call=c.call(op_id=f"s{index}")
+                    c.harness.store.connection,
+                    pool=c.harness.store.pool,
+                    call=c.call(op_id=f"s{index}"),
                 ),
                 ServedGroup,
             )
-        done = await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2"))
+        done = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+        )
         assert isinstance(done, RunDone)
         groups = await c.groups()
         assert groups[0][5] is GroupStatus.DEFERRED
@@ -285,10 +321,17 @@ async def test_the_completing_run_reports_how_many_groups_it_deferred(tmp_path: 
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         await c.write(gist=_C[0], content=_C[1], minute=2, degrees=90.0)
         for index in range(2):
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id=f"s{index}"))
+            await serving.next_group(
+                c.harness.store.connection,
+                pool=c.harness.store.pool,
+                call=c.call(op_id=f"s{index}"),
+            )
         await c.clear_events()
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id="s9")), RunDone
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s9")
+            ),
+            RunDone,
         )
         assert detail_of(await c.events(), "consolidate_run") == [
             {
@@ -308,10 +351,14 @@ async def test_a_member_that_left_the_journal_is_vacated_and_not_delivered(tmp_p
     async with consolidator(tmp_path) as c:
         stays = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         leaves = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.harness.retire(leaves)
         await c.clear_events()
-        served = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(served, ServedGroup)
         assert [record.uuid for record in served.journal_entries] == [stays]
         assert await c.member_rows(served.group_id) == [
@@ -333,10 +380,14 @@ async def test_vacating_every_member_closes_the_group_without_delivering_it(
     `deferred`, contradicting this invariant's own completion condition."""
     async with consolidator(tmp_path) as c:
         alone = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.harness.retire(alone)
         await c.clear_events()
-        done = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        done = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(done, RunDone)
         groups = await c.groups()
         assert (groups[0][5], groups[0][6]) == (GroupStatus.COMPLETE, 0)
@@ -352,10 +403,14 @@ async def test_completion_beats_deferral_when_a_group_at_the_cap_vacates_out(
     the rest of the run and inflating `n_deferred`."""
     async with consolidator(tmp_path, overrides="[consolidation]\nmax_group_serves = 1\n") as c:
         alone = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         await c.harness.retire(alone)
-        done = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        done = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(done, RunDone)
         groups = await c.groups()
         assert groups[0][5] is GroupStatus.COMPLETE
@@ -373,9 +428,13 @@ async def test_an_anchor_that_stopped_being_targetable_is_dropped_and_reported(
             gist=_C[0], content=_C[1], minute=1, degrees=0.0, tier=Tier.LONG_TERM
         )
         member = await c.write(gist=_A[0], content=_A[1], minute=2, degrees=10.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.harness.retire(anchor)
-        served = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(served, ServedGroup)
         assert served.anchor is None
         assert served.anchor_vacated is True
@@ -387,7 +446,9 @@ async def test_an_orphan_group_reports_no_anchor_and_no_vacating(tmp_path: Path)
     """`anchor: null` with `anchor_vacated: false` is the other of the two situations."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.anchor is None
         assert served.anchor_vacated is False
@@ -401,9 +462,13 @@ async def test_a_member_whose_version_moved_is_delivered_at_its_current_version(
     because that is the version the receipt is minted at."""
     async with consolidator(tmp_path) as c:
         member = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         await c.amend(member, gist=_A[0], content="repaired content for the drift")
-        served = await serving.next_group(c.harness.store.connection, call=c.call(op_id="op2"))
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="op2")
+        )
         assert isinstance(served, ServedGroup)
         assert served.journal_entries[0].expected_version == 2
         assert served.journal_entries[0].content == "repaired content for the drift"
@@ -417,7 +482,9 @@ async def test_remaining_groups_counts_the_other_open_groups(tmp_path: Path) -> 
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0)
         await c.write(gist=_C[0], content=_C[1], minute=3, degrees=180.0)
-        first = await serving.next_group(c.harness.store.connection, call=c.call())
+        first = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(first, ServedGroup)
         assert first.remaining_groups == 2
 
@@ -427,7 +494,10 @@ async def test_an_empty_store_answers_done(tmp_path: Path) -> None:
     error."""
     async with consolidator(tmp_path) as c:
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call()), RunDone
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+            ),
+            RunDone,
         )
 
 
@@ -441,7 +511,9 @@ async def test_two_identical_stores_serve_byte_identical_payloads(tmp_path: Path
         async with consolidator(path) as c:
             for index, (gist, content) in enumerate((_A, _B, _C)):
                 await c.write(gist=gist, content=content, minute=index, degrees=index * 10.0)
-            served = await serving.next_group(c.harness.store.connection, call=c.call())
+            served = await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+            )
             assert isinstance(served, ServedGroup)
             return dumps(
                 {
@@ -471,7 +543,9 @@ async def test_serving_walks_every_group_of_the_run_in_order(tmp_path: Path) -> 
         delivered: list[str] = []
         for index in range(3):
             served = await serving.next_group(
-                c.harness.store.connection, call=c.call(op_id=f"s{index}")
+                c.harness.store.connection,
+                pool=c.harness.store.pool,
+                call=c.call(op_id=f"s{index}"),
             )
             assert isinstance(served, ServedGroup)
             delivered.append(served.journal_entries[0].uuid)

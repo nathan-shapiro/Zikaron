@@ -12,10 +12,11 @@ surfacing as a table that silently does not match its own specification.
 
 from typing import Final
 
-#: How long a statement on one of this store's ordinary connections waits for the write lock before
-#: giving up. Named rather than left inside the pragma string below because it is a bound a test can
-#: assert against: a write that is supposed to *decline* to wait has to be shown returning in a
-#: fraction of it, not merely faster than it.
+#: How long a wait for the write lock may last: SQLite's own, while a store opens and migrates, and
+#: the service's wait budget once it serves (`deadline.Deadline.budget`). Named rather than left
+#: inside the pragma string below because it is a bound a test can assert against: a write that is
+#: supposed to *decline* to wait has to be shown returning in a fraction of it, not merely faster
+#: than it.
 BUSY_TIMEOUT_MS: Final = 5000
 
 #: The three pragmas `schema.md`'s DDL block opens with, applied to every connection this store
@@ -27,22 +28,28 @@ PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA foreign_keys = ON",
 )
 
+#: Applied to a store's connections once the store is open, so no statement on them waits inside
+#: SQLite: the transaction primitive waits for the write lock itself, against the request's
+#: deadline. SQLite's own wait cannot be bounded by one — measured on macOS with the SQLite that
+#: uv's managed Python ships, it overran `busy_timeout` by 0.6 to 1 s at `BEGIN IMMEDIATE`
+#: (`research/m35-implementation-evidence.md`).
+SERVING_PRAGMA: Final = "PRAGMA busy_timeout = 0"
+
 #: The access log's own connection, which writes nothing but `event` rows on a caller's response
 #: path. Three of these differ from `PRAGMAS` above, each because the value that is right for a
 #: handler is wrong for a write no caller is waiting on the outcome of:
 #:
 #: - **`busy_timeout` at zero**, because a whole `BUSY_TIMEOUT_MS` of a caller's latency behind a
-#:   lock it has no stake in is worse than a dropped audit row. Set once, at open, rather than
-#:   toggled on the shared connection, which would leave it at zero for whatever other handler's
-#:   statement ran in that window.
+#:   lock it has no stake in is worse than a dropped audit row. On a connection of its own, since on
+#:   the writer the row would also queue behind the writer's own lock.
 #: - **`synchronous = NORMAL`**, so a row is a WAL append rather than an `fsync` on every
 #:   dispatched RPC's response path. What it gives up is the last few rows after a power loss,
 #:   which "best-effort" already concedes.
 #: - **`wal_autocheckpoint` at zero**, for the same reason one rung out: a commit crossing the
 #:   default page threshold would run the checkpoint — database-file `fsync` included — on that
-#:   same response path. The store's own connection keeps the default, so the WAL is checkpointed at
-#:   whichever of its commits finds the WAL past that threshold, or at the store's close; this
-#:   connection simply never pays for it.
+#:   same response path. The store's writer and read connections keep the default, so the WAL is
+#:   checkpointed at whichever of their commits finds the WAL past that threshold, or at the store's
+#:   close; this connection simply never pays for it.
 #:
 #: `test_ddl.py` holds the rest equal to `PRAGMAS`, so the difference stays these three.
 ACCESS_LOG_PRAGMAS: Final[tuple[str, ...]] = (

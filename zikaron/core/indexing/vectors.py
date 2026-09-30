@@ -108,7 +108,7 @@ async def embed_chunks(
 
     Runs **outside** any transaction, deliberately: a cold model load costs hundreds of
     milliseconds and holding SQLite's single write lock across it would make every concurrent
-    writer's `busy_timeout` a function of model-load time. Nothing is staged in the store at this
+    writer's wait for the lock a function of model-load time. Nothing is staged in the store at this
     point, so a failure here loses nothing.
 
     The embedder call goes through a worker thread because it is blocking and CPU-bound, and this

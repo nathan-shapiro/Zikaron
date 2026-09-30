@@ -129,7 +129,12 @@ class TestTellingTheConstraintsApart:
             assert not isinstance(caught.value, DuplicateNameError)
             assert caught.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_CHECK
 
-    async def test_a_rename_whose_table_is_gone_propagates_as_itself(self, tmp_path: Path) -> None:
+    async def test_a_rename_whose_table_is_gone_names_nothing_rather_than_failing_the_driver(
+        self, tmp_path: Path
+    ) -> None:
+        """A registry read on a store without the table answers from its presence read — an empty
+        registry — never from the driver's *no such table*, which would reach a caller as
+        `store_unavailable` rather than as the name it asked for being unknown."""
         async with open_store(tmp_path) as (_store_dir, db):
             await _ensure(db)
             await registry.insert(db, name="one", description="a", created_at="now")
@@ -137,7 +142,7 @@ class TestTellingTheConstraintsApart:
             assert found is not None
             await db.execute("DROP TABLE knowledge_bases")
             await db.commit()
-            with pytest.raises(aiosqlite.Error):
+            with pytest.raises(UnknownKnowledgeBaseError):
                 await registry.rename(db, name="one", new_name="two")
 
 
@@ -215,40 +220,41 @@ class TestTheOrdinaryVerbs:
 
 
 class TestWhatEnsuringTheTableCosts:
-    """Every knowledge verb calls `ensure` first, so what it costs is what each of them costs.
+    """What a registry read costs, and where the table comes from.
 
-    Measured before this was written, on the connection the service actually holds: issuing
-    `CREATE TABLE IF NOT EXISTS` unconditionally asks for the write lock and waits out
-    `busy_timeout` behind an unrelated writer, where the same statement on a freshly opened
-    connection to the same file does not
-    (`research/m33-registry-ensure-takes-the-write-lock.md`). So a `knowledge_search` failed with
-    `store_unavailable` whenever any write was in flight for five seconds, and the access log's own
-    isolation could not be tested through any verb at all.
+    `CREATE TABLE IF NOT EXISTS` against a table that exists still asks for the write lock and waits
+    out `busy_timeout` behind an unrelated writer
+    (`research/m33-registry-ensure-takes-the-write-lock.md`). So only a write creates the table, and
+    a read answers from a presence read in `sqlite_master`, which takes no write lock at all.
     """
 
-    async def test_a_store_that_already_has_the_table_is_left_alone_under_a_held_lock(
+    async def test_a_registry_read_on_a_read_connection_takes_no_write_lock(
         self, tmp_path: Path
     ) -> None:
-        """The property the fix buys: a present table means **no write**, not a cheap one.
+        """A present table means **no write**, not a cheap one — and so does an absent one.
 
         Asserted through a held lock rather than by counting statements, because "takes no write
         lock" is the claim `schema.md` rests on and a statement count would not notice the day
-        SQLite changes its mind about a no-op.
+        SQLite changes its mind about a no-op. On a connection like a read-pool one, deferred.
         """
-        async with open_store(tmp_path) as (_store_dir, db):
+        async with open_store(tmp_path) as (store_dir, db):
             await registry.ensure(db)
+            reader, _inode = await open_connection(
+                store_dir / "memory.db", pragmas=ddl.PRAGMAS, existing_only=True
+            )
             holder, _inode = await open_connection(
-                _store_dir / "memory.db", pragmas=ddl.PRAGMAS, existing_only=True
+                store_dir / "memory.db", pragmas=ddl.PRAGMAS, existing_only=True
             )
             try:
                 await holder.execute("BEGIN IMMEDIATE")
                 await holder.execute("INSERT INTO meta (key, value) VALUES ('held', '1')")
                 started = time.perf_counter()
-                await registry.ensure(db)
+                assert await registry.lookup_all(reader) == ()
                 elapsed = time.perf_counter() - started
                 await holder.rollback()
             finally:
                 await holder.close()
+                await reader.close()
         assert elapsed < ddl.BUSY_TIMEOUT_MS / 5_000, f"it waited {elapsed:.3f}s for the lock"
 
     async def test_a_store_without_the_table_still_gets_one(self, tmp_path: Path) -> None:

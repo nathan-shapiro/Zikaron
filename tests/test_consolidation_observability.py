@@ -50,7 +50,9 @@ async def test_members_sharing_a_created_at_are_ordered_by_uuid(tmp_path: Path) 
         second = await c.write(gist=_B[0], content=_B[1], minute=1, degrees=2.0)
         await c.harness.set_created_at(first, created_at(1))
         await c.harness.set_created_at(second, created_at(1))
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert len(served.journal_entries) == 2
         assert [record.uuid for record in served.journal_entries] == sorted((first, second))
@@ -119,10 +121,14 @@ async def test_a_serve_refreshes_the_lease(tmp_path: Path) -> None:
     the write verbs, because they are separate call sites and only one of them was covered."""
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        first = await serving.next_group(c.harness.store.connection, call=c.call())
+        first = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(first, ServedGroup)
         before = await c.expires_at(first.run_id)
-        second = await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2"))
+        second = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+        )
         assert isinstance(second, ServedGroup)
         assert await c.expires_at(first.run_id) > before
 
@@ -144,7 +150,9 @@ async def test_a_member_promoted_in_place_is_not_offered_back_as_a_candidate(
         second = await c.write(
             gist="alpha bravo two", content="charlie delta two", minute=2, degrees=2.0
         )
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert [record.uuid for record in served.journal_entries] == [first, second]
         promoted = await verbs.promote(
@@ -155,7 +163,9 @@ async def test_a_member_promoted_in_place_is_not_offered_back_as_a_candidate(
             call=c.call(op_id="p"),
         )
         assert promoted.uuid == first  # type: ignore[union-attr]
-        re_served = await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2"))
+        re_served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+        )
         assert isinstance(re_served, ServedGroup)
         assert [record.uuid for record in re_served.journal_entries] == [second]
         assert first not in [ranked.record.uuid for ranked in re_served.candidates]
@@ -175,13 +185,18 @@ async def test_a_run_emits_exactly_one_complete_event_however_many_observers_see
     async with consolidator(tmp_path) as c:
         first = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         second = await c.write(gist=_B[0], content=_B[1], minute=2, degrees=90.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert len(await c.groups()) == 2
         await c.harness.retire(first)
         await c.harness.retire(second)
         await c.clear_events()
         assert isinstance(
-            await serving.next_group(c.harness.store.connection, call=c.call(op_id="s2")), RunDone
+            await serving.next_group(
+                c.harness.store.connection, pool=c.harness.store.pool, call=c.call(op_id="s2")
+            ),
+            RunDone,
         )
         phases = [detail["phase"] for detail in detail_of(await c.events(), "consolidate_run")]
         assert phases == ["complete"]
@@ -209,7 +224,9 @@ async def test_the_group_query_charges_the_configured_prefix_against_the_budget(
         await c.write(gist="beta two", content="content about beta", minute=2, degrees=5.0)
         c.harness.encoder.max_sequence_tokens = 5
         c.harness.encoder.n_special_tokens = 0
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert len(served.journal_entries) == 2
         assert served.n_gists_used == 1
@@ -223,7 +240,9 @@ async def test_a_prefix_leaving_no_room_for_any_gist_serves_no_candidates(tmp_pa
         await c.write(gist="alpha one", content="content about alpha", minute=2, degrees=90.0)
         c.harness.encoder.max_sequence_tokens = 3
         c.harness.encoder.n_special_tokens = 0
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.n_gists_used == 0
         assert served.candidates == ()

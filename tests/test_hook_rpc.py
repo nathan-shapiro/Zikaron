@@ -16,6 +16,7 @@ from zikaron.hook.envelope import HookEnvelope
 from zikaron.hook.rpc import SurfaceRejectionError, surface_once
 
 _ENVELOPE = HookEnvelope(session_id="a-session", kind="hook", pid=1234, op_id=None)
+_DEADLINE = 1_900_000_000_000
 
 
 def _respond(server: socket.socket, response: dict[str, object]) -> None:
@@ -26,13 +27,16 @@ def test_sends_a_well_formed_surface_request() -> None:
     client, server = socket.socketpair()
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": "irrelevant"}})
-        surface_once(client, prompt="what failed", limit=5, envelope=_ENVELOPE)
+        surface_once(
+            client, prompt="what failed", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE
+        )
         sent = server.recv(65536).decode("utf-8")
         request = json.loads(sent)
         assert request["jsonrpc"] == "2.0"
         assert request["method"] == "memory_surface"
         assert request["params"]["prompt"] == "what failed"
         assert request["params"]["limit"] == 5
+        assert request["params"]["deadline_at_ms"] == _DEADLINE
         assert request["params"]["client"] == {
             "session_id": "a-session",
             "kind": "hook",
@@ -48,7 +52,9 @@ def test_returns_the_text_on_a_successful_result() -> None:
     client, server = socket.socketpair()
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": "gist one\ngist two"}})
-        text = surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+        text = surface_once(
+            client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE
+        )
         server.recv(65536)  # drain the request so the socket does not matter to the assertion
         assert text == "gist one\ngist two"
     finally:
@@ -68,7 +74,7 @@ def test_raises_surface_rejection_on_an_error_response() -> None:
             },
         )
         with pytest.raises(SurfaceRejectionError) as excinfo:
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
         assert excinfo.value.code == -32020
         assert excinfo.value.message == "store busy"
     finally:
@@ -81,7 +87,7 @@ def test_raises_connection_error_when_the_response_is_not_a_json_object() -> Non
     try:
         server.sendall(b"[1, 2, 3]\n")
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
     finally:
         client.close()
         server.close()
@@ -92,7 +98,7 @@ def test_raises_connection_error_when_the_result_has_no_text_field() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"not_text": "x"}})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
     finally:
         client.close()
         server.close()
@@ -103,7 +109,7 @@ def test_raises_connection_error_when_neither_result_nor_error_is_present() -> N
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
     finally:
         client.close()
         server.close()
@@ -114,7 +120,7 @@ def test_raises_connection_error_when_the_error_object_is_malformed() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "error": {"message": "no code"}})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
     finally:
         client.close()
         server.close()
@@ -138,7 +144,7 @@ def test_raises_connection_error_when_the_socket_closes_before_a_full_line() -> 
     thread.start()
     try:
         with pytest.raises(ConnectionError, match="closed before a full response"):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE)
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
     finally:
         thread.join(timeout=5.0)
         client.close()
@@ -150,7 +156,7 @@ def test_the_bootstrap_form_sends_a_null_session_id() -> None:
     try:
         bootstrap = HookEnvelope(session_id=None, kind="hook", pid=1, op_id=None)
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": ""}})
-        surface_once(client, prompt="p", limit=5, envelope=bootstrap)
+        surface_once(client, prompt="p", limit=5, envelope=bootstrap, deadline_at_ms=_DEADLINE)
         sent = json.loads(server.recv(65536).decode("utf-8"))
         assert sent["params"]["client"]["session_id"] is None
     finally:

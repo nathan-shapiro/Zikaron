@@ -65,7 +65,7 @@ reason, since those rows came from the model being abandoned.
 
 import asyncio
 import os
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -169,14 +169,12 @@ async def _begin(
     are ordinary, and the loser would then index with its own encoder into a corpus the winner had
     just relabelled. Nothing would raise, because at equal widths every insert fits.
 
-    **Two builds that begin at the very same moment can both read *no holder*, and only one of them
-    commits** — which is the right outcome, reached the wrong way: the loser gets the driver's
-    `database is locked` rather than the refusal this documents. It is reachable in ordinary use,
-    since two spawns inside one model-load window both pass the check the command runs first.
-    Closing it would mean a `BEGIN IMMEDIATE` variant of the shared transaction primitive, verified
-    by a test that holds one acquisition's transaction open while the other attempts its own —
-    bought for a better sentence in an outcome that is already correct, on a path whose output is
-    discarded.
+    **The holder is read twice, and only the second read is under the write lock.** The first, with
+    no transaction, refuses a live holder at once — a build arriving during another's index phase
+    must not wait out that phase's current transaction and then answer `database is locked`. Only a
+    build that saw *no holder* opens `BEGIN IMMEDIATE` and reads again: two builds spawned inside
+    one model-load window both see no holder, and the second then waits for the first's short
+    acquisition to commit, reads it, and refuses `IndexerBusyError` as documented.
 
     Returns:
         The recorded identity and the width the vector table is declared at, both as of the moment
@@ -188,11 +186,11 @@ async def _begin(
             whatever releases it.
     """
     started_at = timestamp()
+    host = lock.this_host()
+    lock.refuse_if_running(await database.read_meta(db), host=host)
 
     async def _work(connection: aiosqlite.Connection) -> tuple[KnowledgeMeta, int]:
-        await lock.acquire(
-            connection, pid=os.getpid(), host=lock.this_host(), started_at=started_at
-        )
+        await lock.acquire(connection, pid=os.getpid(), host=host, started_at=started_at)
         await database.write_meta(
             connection,
             {
@@ -205,7 +203,7 @@ async def _begin(
             await database.stored_vector_width(connection)
         )
 
-    return await in_one_transaction(db, _work, failure=propagate)
+    return await in_one_transaction(db, _work, failure=propagate, immediate=True)
 
 
 async def _walk_tree(
@@ -357,8 +355,20 @@ async def _release(db: aiosqlite.Connection) -> None:
     await in_one_transaction(db, _work, failure=propagate)
 
 
-async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
+#: Told how a build that took the lock ended, before the lock is released: the result on success,
+#: the exception on a failure by `Exception`. Must not raise.
+type Completion = Callable[[ScanResult | Exception], Awaitable[None]]
+
+
+async def run(
+    opened: KnowledgeDatabase, build: BuildSettings, *, on_completion: Completion | None = None
+) -> ScanResult:
     """Build this knowledge base's index, holding its lock for as long as it takes.
+
+    **`on_completion` runs once the lock is held and before it is released**, so whatever it records
+    has landed by the time a watcher of the lock sees it go. It never runs for a refusal before the
+    lock — nothing was taken — nor for `CancelledError` or `KeyboardInterrupt`, which release the
+    lock without waiting on anything else.
 
     Args:
         opened: the knowledge base to build, already open. Its `meta` is what defines the corpus —
@@ -370,6 +380,7 @@ async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
             by a changed encoder asks for none of that — dropping the derived tables leaves every
             file changed on its own terms — so the two compose without either knowing about the
             other.
+        on_completion: told how the build ended, while the lock is still held.
 
     Raises:
         CorpusRootMissingError: the indexed directory is gone. The index is left exactly as it is;
@@ -416,14 +427,22 @@ async def run(opened: KnowledgeDatabase, build: BuildSettings) -> ScanResult:
         )
         remaining = await pending.count(db)
         await _complete(db)
+        result = ScanResult(
+            git_mode=corpus.git_mode,
+            git_mode_effective=answers.effective,
+            attributes_available=answers.attributes_available,
+            files_deleted=deleted,
+            files_remaining=remaining,
+            counters=counters,
+            rebuilt_identity=rebuilt,
+        )
+    except Exception as error:
+        if on_completion is not None:
+            await on_completion(error)
+        raise
+    else:
+        if on_completion is not None:
+            await on_completion(result)
     finally:
         await _release(db)
-    return ScanResult(
-        git_mode=corpus.git_mode,
-        git_mode_effective=answers.effective,
-        attributes_available=answers.attributes_available,
-        files_deleted=deleted,
-        files_remaining=remaining,
-        counters=counters,
-        rebuilt_identity=rebuilt,
-    )
+    return result

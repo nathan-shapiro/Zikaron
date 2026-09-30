@@ -83,7 +83,7 @@ the short-lived, single-connection-attempt processes it was originally written t
 synchronous. `zikaron-mcp` is not that kind of client: M10 holds one connection across many tool calls in one
 long-running process, so a blocking call anywhere inside its own request path holds the *same*
 single-threaded event loop every other coroutine in that process runs on, for as long as the service takes to
-answer — including the full 5 s `busy_timeout` window a contended write may legitimately need. **Measured
+answer — including the full 5 s wait budget a contended write may legitimately need. **Measured
 directly, not merely reasoned about**, while building the very integration test meant to prove a request
 survives waiting out real contention: an earlier version of `ServiceConnection.request` called the blocking
 socket calls directly, and a concurrent `asyncio.sleep` in an unrelated task on the same loop — the test's own
@@ -476,18 +476,20 @@ error payload now carries the file and key.
 from.** With three layers, "why does this project behave differently" is otherwise a two-file hunt.
 
 **And one record is written when the service stops cleanly, naming which condition fired** —
-`reason=idle`, `reason=store_replaced` or `reason=encoder_failed`, with the store directory and how
-long it had been idle.
+`reason=idle`, `reason=store_replaced`, `reason=encoder_failed`, or the signal that asked for the
+stop, `reason=sigterm` or `reason=sigint` — with the store directory and how long it had been idle.
 Added after an inspection of a real machine found four stores, one live service, and four
 `service.log` files whose last entry was the startup config dump: `idle_self_stop` unlinked, shut
 down and returned in silence, so the only line any exit path had ever written was the forced-exit
 `exception()` below. That inverted this log's contract — silence meant a clean stop and a line meant
-a failed one — and left "did this service stop, or is it wedged?" answerable only with `ps`. The two
+a failed one — and left "did this service stop, or is it wedged?" answerable only with `ps`. The
 reasons are distinguished because their diagnoses differ: `idle` is routine; `store_replaced`
 means the file this process had open is no longer the one at its path, which is someone moving,
-deleting or restoring a store underneath a running service; and `encoder_failed` means the model
+deleting or restoring a store underneath a running service; `encoder_failed` means the model
 this service bound the socket ahead of never loaded, or loaded at a width the store cannot use
-(§"The model loads behind the socket").
+(§"The model loads behind the socket"); and a signal reason means the process was asked to stop,
+so its loop was running — a wedged loop never runs the handler (§"What a service that stops
+answering writes").
 
 ### Read once, at service startup
 
@@ -827,10 +829,14 @@ unobservable wherever it holds, and which of them acted would depend on the inte
 handlers are installed *before* the socket is bound.** `serve()` publishes the socket the instant it binds,
 so handlers installed after it would leave a window in which a signal takes its default disposition and the
 file outlives the process — small, and wider under load. Installed first, a signal at any moment the file
-exists is handled. Only a death this process **does not** handle — `SIGKILL` (an OOM kill included), a crash
-in native code, any other signal left at its default disposition (`SIGHUP` and `SIGQUIT` are catchable and
-deliberately uncaught), a power loss — leaves a stale socket, which is the case §"Start-if-absent" step 4
-clears, and why the signature above names no cause.
+exists is handled. The `SIGUSR2` task dump (§"What a service that stops answering writes") goes on with them
+and comes off on the same path out, since that signal defaults to *terminate* too; the `SIGUSR1` thread dump
+goes on earlier, as soon as `service.log` is open, so it can be taken while the store opens, migrates or — on
+the create path — loads its model, and comes off when the process leaves `run`. Only a death this
+process **does not** handle — `SIGKILL` (an OOM kill included), a crash in native code, any other signal
+left at its default disposition (`SIGHUP` and `SIGQUIT` are catchable and deliberately uncaught), a power
+loss — leaves a stale socket, which is the case §"Start-if-absent" step 4 clears, and why the signature above
+names no cause.
 
 **The same poll also checks for the store having been replaced out from under it, and stops immediately if
 so — a second, independent exit condition alongside the idle one, not a variant of it.** `memory.db` being
@@ -949,6 +955,91 @@ edge case that could theoretically leave something open. A deployed service has 
 moment it needs to exit, and normal interpreter shutdown is not guaranteed to finish quickly either once
 something has already failed to close in time. This is a deliberate choice of engineering effort, not a claim
 that the graceful path is airtight against every internal race in a dependency this project does not own.
+
+### The service's connections: one writer, a read pool, one wait budget
+
+**Every transaction on a connection holds that connection's lock for its whole span**, so no two nest,
+whoever issues them. One SQLite connection has one transaction state: a second `BEGIN` on it fails as a
+nested one, and a statement issued outside a transaction while another task's is open runs *inside* it
+and reads its uncommitted rows. The transaction primitive (`transactions.in_one_transaction`) takes the
+lock; it is the only `BEGIN` issued on a service connection, and a test holds every other module to that.
+Every statement a handler issues on the writer goes through it, reads included — the registry reads of
+the knowledge writes among them, which cover the registry statements alone so no corpus is opened while
+the writer's lock is held.
+
+**Which connection a request gets is decided by the method, which is classified once, beside its handler,
+as a read or a write.** A method is a write if it can write `memory.db` other than the event rows it emits
+about itself: `memory_remember`, `memory_amend`, `memory_retire`, `memory_fetch` (it mints receipts), the
+five consolidator methods, and `knowledge_add`, `knowledge_rename` and `knowledge_remove`. A write runs on
+the one **writer** connection. A read — the rest — leases a connection from a small **pool** for its
+handler's whole span, since a knowledge read runs several transactions with corpus opens between them. Pool
+connections open lazily, up to a fixed size chosen to cover one session's concurrent clients across a cold
+model load, when every read that arrives holds its lease while it waits on the one load; they get the
+store's pragmas and `sqlite-vec`, and close with the service and on a failed startup. Waits only point from
+the pool to the writer: nothing holding the writer waits on a lease, and nothing waits for the writer while
+holding a read snapshot, so no cycle can form.
+
+**A transaction on the writer opens `BEGIN IMMEDIATE`; one on a pool connection is deferred**, except a
+read's retry (`retrieval.md` §"One read is one transaction"). A deferred transaction that reads before it
+writes is refused at once with `SQLITE_BUSY_SNAPSHOT` when another connection commits between the two,
+and `busy_timeout` never retries that. Another connection can be another process — the detached indexer's
+build row, a second service, an operator's shell — so no in-process lock closes it; `IMMEDIATE` does, by
+taking the write lock before the first read. The indexer's own `memory.db` handle is a store's writer and
+opens `IMMEDIATE` the same way. The access log's connection and the corpus databases stay deferred; the one
+exception is a build's lock acquisition, `knowledge-index.md` §"6. The indexer process".
+
+**Every transaction on the writer, and every read, has one wait budget, `ddl.BUSY_TIMEOUT_MS`, for the
+wait for its connection and the wait for SQLite's write lock together.** On the writer the budget starts
+when the transaction is asked for — after any embed its method does first — and the primitive waits for the
+connection's lock no later than it, then polls for the write lock with what is left. A read's budget starts
+at its dispatch and covers its lease wait, its query's embed and its retry's poll — so an embed that
+outlasts the budget, a cold load, leaves the retry no wait. Without the one budget the waits compound: a
+writer queued behind another writer that is itself waiting for the write lock would wait one budget for the
+connection and another for the write lock, past the client timeout derived from one. A `memory_surface` carrying
+`deadline_at_ms` takes its budget from its caller's deadline instead (§"Degraded modes"). A task that asks
+for a connection lock it already holds fails at once — a programming error, not contention.
+
+**The wait for the write lock is the primitive's, not SQLite's.** Once a store is open its writer and every
+pool connection run at `busy_timeout = 0`, and an `IMMEDIATE` transaction's `BEGIN` is retried — pausing
+from 1 ms, doubling to 25 ms — until the lock is free or the deadline is reached, then refused as
+contention. SQLite's own busy handler cannot be bounded by a deadline: measured on macOS with the SQLite
+uv's managed Python ships, it overran `busy_timeout` by 0.6–1 s at `BEGIN IMMEDIATE`, where the same
+SQLite on Linux was exact (`research/m35-implementation-evidence.md`). Under WAL, `BEGIN IMMEDIATE` is
+where a serving transaction waits for another connection's write lock, so it is the only statement polled;
+a read's upgrade is refused at once, as it always was, and retried from `IMMEDIATE`. A store's open,
+and a migration's `BEGIN IMMEDIATE`, still run under SQLite's own 5 s wait, since no request's deadline
+applies before the socket exists.
+
+**The primitive's refusals before any statement runs are answered by the dispatcher**, with the method as
+`verb`: a lock or lease wait that reached the service's budget, and a writer a failed rollback closed while
+a request was queued on it, are `store_busy`; a wait a caller's own deadline cut is `deadline_passed`
+(§Errors). **A connection a failed rollback closed is never handed out again**: a pool connection is
+dropped and replaced, and the writer is reopened — once per closure, under the store's own lock, so writes
+dispatched into the gap share one reopen. Every connection opened after startup compares the file's inode
+with the one the store opened; one opened onto a replaced or absent `memory.db` is closed, and the request
+answers by its family — `store_unavailable` for a knowledge verb, `internal_error` with a `service.log`
+line naming the drift for a memory or consolidator verb — until the inode poll below stops the service.
+
+### What a service that stops answering writes
+
+**A wedge can take two shapes, and nobody may be at the terminal when it happens.** Three mechanisms cover
+them:
+
+- **`SIGUSR1` dumps every thread's stack into `service.log`**, through `faulthandler`, which runs without
+  the event loop — the one dump that works when the loop itself is blocked. It is raw text on the log
+  file's own stream, with no timestamp or `pid=` prefix, since it bypasses `logging`.
+- **`SIGUSR2` dumps every asyncio task's stack and the requests in flight**, each with its method, session
+  id and age. It sees what the first cannot: a loop that is idle while a coroutine awaits forever.
+- **A request in flight longer than the idle poll's interval is logged at `INFO` by that poll**, on each
+  poll while it stays in flight, from the same in-flight registry: its method, its session id —
+  `unresolved` if it wedged before its envelope resolved — and its age. So the end of the log names a wedge
+  however long it lasts. `memory_plan_groups` and `memory_next_group` are expected to exceed the interval
+  on a large journal; the method is what tells a plan from a wedge. The poll runs on the loop, so a
+  *blocked* loop logs no such line, and only `SIGUSR1` sees that case.
+
+**A signal exit writes the stop line too**, `stopping: reason=sigterm` or `reason=sigint`, beside the
+self-stop reasons. That separates a kill from a wedge in one direction only: a service that logged it was
+not wedged, but a wedged loop never runs the handler, so a wedge followed by `SIGKILL` logs nothing.
 
 ### Warming
 `agentSpawn` fires at session start (D18). The **hook process** prints the write policy — static text, no
@@ -1078,10 +1169,14 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
    a numbered sequence that serves both harnesses, in a section carrying no harness-delta note.*
    This is unrelated to the failure path below;
    it is not a failure at all.
-1. RPC `memory_surface(prompt, limit=5)`. On success, print what the service returned.
-2. **On any failure — transport, startup, contention, identity, or a store error** — `ENOENT`, `ECONNREFUSED`,
-   spawn failure, `health()` never ready, the internal deadline, a `store_identity` mismatch, `−32020
-   store_busy`, `−32023 bad_config`, `−32022 reindexing`, or anything unexpected: **append one line to its own
+1. RPC `memory_surface(prompt, limit=5, deadline_at_ms)`. On success, print what the service returned.
+   `deadline_at_ms` is the hook's own deadline — the ~2 s internal deadline below — as an absolute
+   wall-clock instant, read at the same instant as the monotonic reading the hook enforces it from.
+2. **On any failure — transport, startup, contention, lateness, identity, or a store error** — `ENOENT`,
+   `ECONNREFUSED`, spawn failure, `health()` never ready, the internal deadline passing before the request
+   was sent (`deadline_exceeded`), a request sent and not answered by that deadline (`unanswered`), a
+   `store_identity` mismatch, `−32020 store_busy`, `−32026 deadline_passed`, `−32023 bad_config`, `−32022
+   reindexing`, or anything unexpected: **append one line to its own
    `hook.log`** naming the failure kind and, where one exists, the error code, **and print a short,
    model-facing instruction to stdout** asking the agent to relay the failure to the operator, naming the same
    kind and pointing at `hook.log` for the exact detail. Never open the store, never read it, never write to
@@ -1153,6 +1248,67 @@ gets relayed in its own response — while not visibly delivering on the channel
   explicitly** (§"Distribution artefacts") rather than inheriting a default the corpus had recorded
   wrong, which is the whole reason the wrong figure was harmless here and would not have been
   somewhere the margin was thinner.
+
+### A push the agent never saw is never recorded as shown
+
+A `surface` row means *this session was shown this memory*, and it is the denominator of D30's repair
+signal. The hook abandons its request at its own deadline, and the service cannot see the hook's clock — so
+before `deadline_at_ms` it finished and committed anyway on a cold model load, a slow embed, or a read's
+retry waiting for the writer, and the rows counted a block nobody read.
+
+**`deadline_at_ms` is absolute rather than a remaining duration** because a duration is measured from when
+the service *reads* the request: a busy loop reads late, and a wedge that clears finds every push it missed
+still in its socket buffers, each of which would start a fresh budget and commit as shown. Both ends are one
+machine and share its realtime clock; NTP slew is microseconds per second, and a clock step is the one
+failure — rare, self-limiting, and accepted. `time.monotonic()` is not used, because its reference point is
+undefined across processes. Absent, a `surface` has no deadline and takes the `search` budget.
+
+**Past `deadline_at_ms` less a margin, a `surface` answers `deadline_passed` and commits nothing** — no
+`surface_call`, no `surface` row. The service checks at four points, and they are the rule: before any
+work; after the query's embed, before `BEGIN`, so a push whose embed outlasted its deadline spends no read
+pass; after a refused first attempt, before deciding to retry; and inside the transaction immediately before
+`COMMIT`. The read-pool lease wait and the retry's wait for the write lock are cut at the same instant, and
+a contention refusal from either is `deadline_passed` whenever the request carries a deadline — decided by
+which bound cut the wait, never by reading the clock a second time, since the event loop fires a timer up to
+one tick of its clock's resolution early, so a wait can end just before the instant a second reading would
+demand. A failure that is not contention keeps its own code, so a defect is never masked as lateness.
+
+**The margin covers the path from the check before `COMMIT` to the hook's `recv` returning** — the `COMMIT`
+and its WAL `fsync`, the worker-to-loop handoff, the `call` row attempt, encoding, the socket, and the hook's
+wake — because losing the race there records a push as shown that nobody saw. It is
+`dispatch.DEADLINE_MARGIN_MS`, set above the largest such path measured under the host's working load —
+not from socket transit on an idle host (`research/m35-implementation-evidence.md` has the distribution);
+the refusal path is shorter and covered by the same constant, and losing it only turns `deadline_passed`
+into `unanswered`. What remains is a race stated, not a gap left: a commit landing
+just inside the margin whose answer is slower than the margin is still counted.
+
+**`hook.log` records three kinds of lateness, and they are different facts.** `deadline_exceeded` is a
+push abandoned *before* it was sent — connecting consumed the budget — which the service never received.
+`unanswered` is a push sent and not answered by the deadline, which the service did receive; it is decided
+around the `surface` call alone, so a timeout inside the connect — a listener that accepts and never answers
+`health`, a blocked event loop's signature — stays `transport`. `deadline_passed` is the service's own
+refusal, delivered in time. **What D30's denominator loses is the pushes the agent did not see**:
+`deadline_passed` plus `unanswered` in `hook.log`, less the margin race. The access log's `deadline_passed`
+rows among `memory_surface` calls are a different population, and neither bounds the other — a refusal
+answered under a held writer reaches the hook and drops its `call` row, and one issued after a cold-load
+embed lands its row and reaches a hook that has already gone.
+
+**How each kind of wedge reads in `hook.log`**, since the service answers `health()` before any handler runs:
+
+- **a blocked event loop** logs `transport` on every push, though the socket connects;
+- **a wedge holding the writer** answers every later push at its deadline, from the retry's own refusal —
+  `deadline_passed` when that answer wins the margin race, `unanswered` when it loses — and its `call` rows
+  drop under the held lock, so the run has **no `call` rows behind it**;
+- **a wedge that has pinned every read-pool lease** answers each push at its lease wait with
+  `deadline_passed`, and its `call` rows land, since the write lock is free — so the same run **with**
+  `call` rows is an exhausted pool;
+- **a push whose own handler hangs** — an embed or a statement that never returns — logs `unanswered`.
+
+In every case `service.log`'s long-request line names the request (§"What a service that stops answering
+writes"). One wedge looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` at
+about one budget — a wedge holding the writer's lock with no transaction open — and the long-request line
+names it too. Before `unanswered` existed every kind logged `transport`, since a timeout after the send
+fell to the same catch-all.
 
 ## A result too large to deliver — the client spills it to a file
 
@@ -1524,7 +1680,29 @@ whoever owns it**, in the precise sense defined below. **Planning runs in time p
 journal** — 12.2 s for 284 rows, measured — so the two consolidator-client calls that can trigger it,
 `memory_plan_groups` and `next_group` — every call of which may plan inline after a lapsed lease, so
 it carries the same ceiling whether or not it does — wait `_PLANNING_TIMEOUT_SECONDS` (300 s) rather
-than the 10 s every other request gets. A `memory_plan_groups` that outlasts it leaves the plan bridge
+than the 10 s every other request gets.
+
+**The plan is computed on a read snapshot, and only its write takes the writer**
+(§"The service's connections"). `grouping.plan` runs in a read transaction on a pool connection, holding
+no write lock, and records a fingerprint of its input: the `(rowid, version)` of every active row, journal
+and long-term, since the plan reads both — the journal as candidates, the long-term tier as anchors. The
+write — closing a lapsed run, creating the run, inserting the groups and members, and the events — is one
+`IMMEDIATE` transaction that re-derives the fingerprint first. If a memory row moved meanwhile, it plans
+again inside itself rather than from a fresh snapshot: the smallest bound that still makes the check mean
+something, and one that always terminates. So a call plans at most twice, and holds the writer for a whole
+plan only when a write landed during the first; the journal that fits inside `_PLANNING_TIMEOUT_SECONDS`
+therefore halves, from roughly 7,000 rows to roughly 3,500. The run test and the takeover are decided in
+the write transaction, so two consolidators planning at once still end with one run.
+
+**`next_group`'s implicit replan and the serve after it stay one atomic step**, across up to three
+transactions of which exactly one mutates. A writer transaction asks whether an effectively-active run
+exists and, if one does, serves from it as below. If none does, the call releases the writer and plans on a
+snapshot. A final `IMMEDIATE` transaction re-checks the run and the fingerprint and writes the plan **and**
+serves — or, if the caller's own run appeared meanwhile (a concurrent `next_group` from the same owner,
+which one MCP process per session makes ordinary), discards its plan and serves from that run, or, if a
+stranger's did, answers `busy` and never replans over it. A serve embeds inside its transaction, so
+`next_group` first waits for the model to finish loading: a cold load there would hold SQLite's write lock
+for seconds while every other writer met its budget. A `memory_plan_groups` that outlasts it leaves the plan bridge
 `failed`, not retried; an inline plan on `next_group` that outlasts it is reported as a transport
 failure, and the next call meets whatever the service went on to commit. A service that stops
 answering holds a consolidator 300 s per `next_group`. Both
@@ -1690,8 +1868,9 @@ harnesses let a tool call run past 300 s (`design/harness.md`, "MCP tool-call du
   it held are dead — which is why `group_expired` tells it to call `next_group` rather than retry. A consolidator
   making steady progress never reaches this, because every successful call refreshes the lease.
 
-**Serving.** `next_group()` runs in **one transaction** and **iterates**, because a candidate group can turn
-out to have nothing left to deliver. It considers groups of the run in this order:
+**Serving.** A serve runs in **one transaction** — the one that mutates, of the up to three a `next_group()`
+spans (§"Planning" above) — and **iterates**, because a candidate group can turn out to have nothing left to
+deliver. It considers groups of the run in this order:
 
 1. the earliest `served`-but-incomplete group by `(order_key, shard_index)` — **re-served**, not skipped, so a
    consolidator cannot walk past a group it found hard by simply calling again;
@@ -1877,6 +2056,17 @@ and it raises no error code. Rounds 7–8 had a rung-0 `store_busy`, for the cas
 `session_client` insert could not commit; that table is gone (§"`label_source` is derived, not stored") and so is
 the failure. Rung 0 never changes which error a request returns.
 
+**`memory_surface`'s `deadline_at_ms` is validated whole by the dispatcher, before the read-pool lease,
+ahead of the rest of `surface`'s parameter rung** — an integer, no more than `ddl.BUSY_TIMEOUT_MS` in the
+future, or `bounds` — because it bounds the lease wait, which must be bounded only by a value validation
+has accepted. It runs inside the dispatcher's accounting, so its `bounds` writes a `call` row as the
+handler's does. The rest of the rung — `prompt`, `limit` — runs in the handler after the lease. Both answer
+`bounds`, so the order is observable only in `data.field`. `bounds` is decided before any of the four
+deadline checks, so a request both malformed and late answers `bounds` — unless it had to wait for a lease
+and its deadline cut that wait, which answers `deadline_passed` before the handler's rung runs
+(§"The service's connections"). A deadline already past is not malformed and answers `deadline_passed`
+(§"Degraded modes").
+
 **Primary-agent verbs (`amend`, `retire`):**
 
 1. **Envelope and bounds** — `bounds`. Cheapest, and independent of store state.
@@ -2000,12 +2190,13 @@ behaviour. Every such distinction gets its own code, or a declared field with a 
 | −32013 | `not_in_group` | an `absorb` uuid that is not an **actionable member** of this group — outside the group, already dispositioned, a member of a group that is still `pending` and so has delivered no version to act on, or (rung 6) still an undispositioned member that has left `tier='journal' AND active=1`, so a serve would record it `vacated`; also an empty `absorb` list | `{group_id, uuids}` — **uuids only**; no state, version or prose, so the error is not an existence oracle, and the rung-6 case discloses nothing new because that caller passed the receipt check. Recovery is `next_group`, which records the disposition or delivers the pending group (§"Validation precedence") |
 | −32014 | `bad_merge_target` | `merge` target is not in this group's persisted authorization set, or is no longer `tier='long_term' AND active=1` | `{group_id, uuid, reason}` with `reason ∈ not_authorized \| not_targetable`. `not_authorized` covers every uuid outside the authorization set **whether or not it exists**, deliberately, so the two cases are indistinguishable to the caller |
 | −32015 | `group_deferred` | a **write verb** names a group already `deferred` — it had been delivered `max_group_serves` times and was skipped for the rest of the run | `{group_id, serve_count}`. `next_group` never returns this: its loop marks the group `deferred` and moves on to the next candidate (§"Serving") |
-| −32020 | `store_busy` | the store was locked and the write could not proceed: `SQLITE_BUSY` still after `busy_timeout` (5 s), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT` | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored"). **On the `knowledge_*` methods `verb` carries the wire method name rather than the bare operation** every other raise site passes, because their bare verbs collide with the memory store's: an unqualified `search` would leave a caller unable to tell which subsystem was locked |
+| −32020 | `store_busy` | the store was locked and the call could not proceed: `SQLITE_BUSY` still after the request's wait budget (5 s, §"Lifecycle" — one budget for the wait for the connection and SQLite's own), or any other retryable lock or stale-snapshot result — classified by SQLite's **primary** result code, since a WAL reader whose snapshot goes stale before it writes reports the *extended* `SQLITE_BUSY_SNAPSHOT`. Also answered, by the dispatcher, when the transaction primitive refuses before any statement runs: a wait for the writer's lock or a read-pool lease that reached the service's budget, or a writer a failed rollback closed while the request was queued on it — nothing ran, so the retryable answer is the true one | `{verb}` — the caller may retry; the design places no bound on attempts, because contention is transient and a refused call changed nothing. Where a *state machine* is built on top of this, as the consolidator client's takeover guard is, the bound belongs on successful outcomes rather than on attempts (§"Consolidation lifecycle"). Like every other error it echoes the resolved `session_id`: label resolution touches no table, so there is no store state in which a request has a label the response must withhold (§"`label_source` is derived, not stored"). **On the `knowledge_*` methods `verb` carries the wire method name rather than the bare operation** every other raise site passes, because their bare verbs collide with the memory store's: an unqualified `search` would leave a caller unable to tell which subsystem was locked. **A refusal the dispatcher makes carries the wire method name on every method**, since the dispatcher holds no other name for the call |
 | −32021 | `index_failed` | embedding or index maintenance failed; nothing was written. Only the `index_write` stage runs inside a transaction — `prepare` raises the other three before `BEGIN` | `{stage}` with `stage ∈ budget \| assembly \| embed \| index_write` — the four ways an index write fails with nothing wrong in the caller's request: the token budget leaves no room for content at all, the preflight could not produce chunks satisfying its own arithmetic, the embedder failed or returned the wrong shape, or the store raised mid-transaction (`indexing.md` §"Implementation constraints") |
 | −32022 | `reindexing` | invariant 3's unavailable-until-complete window | `{since}` — the hook never reads the store on this, like every other failure (§"Degraded modes") |
 | −32023 | `bad_config` | **any of three sources**: a `meta` key missing, unparseable or out of range on open (`schema.md` §`meta`); a config-file failure — unparseable TOML, an unknown key, a wrong TOML type, or an effective value out of range (§"Configuration"); **or** a **derived** path — `store_dir` or `runtime_dir`, neither of which is a configuration key | `{source:'meta'\|'file'\|'derived', file, key, value, expected}` — `file` is the layer the offending key came from and is required for `source:'file'`, because with two layers "which file has the typo" is otherwise a hunt; it is absent for the other two sources, which have no file to name — the hook never reads the store on this, like every other failure |
 | −32024 | `schema_incompatible` | `meta.schema_version` above the supported range (`schema.md` §"Migration posture") | `{found, supported}`, where `supported` is the whole range rather than its maximum — a build that opens only one version and one that opens several must not send the same payload. A version inside the range but below `CURRENT_SCHEMA_VERSION` is not this error: it opens, and the service alone migrates it; below the range is `bad_config`, the row above. Distinct from `bad_config` on purpose: the value is well-formed and in no way corrupt, it simply describes a schema this binary does not know. Stable, so an operator or a newer client can branch on it. The hook never reads the store on this either. Echoes the resolved `session_id` like every other error, though the point is moot: the error is terminal for the client, so there is no later request to label |
-| −32025 | `store_unavailable` | a `knowledge_*` method met a driver or OS failure `core` deliberately lets travel out unnamed (`transactions.propagate`): a full disk, a revoked permission, a corpus database that will not open — **other than contention, which is `store_busy` on these methods as it is everywhere else**, since that is the one result a caller acts on differently | `{operation, cause}`. `cause` is **the driver's or the OS's own text** — the only payload field in this table carrying text from outside Zikaron, since it is not ours to reword, cannot be enumerated, and nothing invented at this boundary would say it better. A caller branches on the **code**; `cause` is for the person reading it. Unwrapped these reach `internal_error` with an empty payload, putting the only description in the service log |
+| −32025 | `store_unavailable` | a `knowledge_*` method met a driver or OS failure `core` deliberately lets travel out unnamed (`transactions.propagate`): a full disk, a revoked permission, a corpus database that will not open — **other than contention, which is `store_busy` on these methods as it is everywhere else**, since that is the one result a caller acts on differently | `{operation, cause}`. `cause` is **the driver's or the OS's own text** — the only payload field in this table carrying text from outside Zikaron, since it is not ours to reword, cannot be enumerated, and nothing invented at this boundary would say it better. A caller branches on the **code**; `cause` is for the person reading it. Unwrapped these reach `internal_error` with an empty payload, putting the only description in the service log. **Also the answer to a knowledge verb whose connection was opened after startup onto a `memory.db` that was replaced or is gone** (§"Lifecycle"); a memory or consolidator verb answers that `internal_error`, with a `service.log` line naming the drift |
+| −32026 | `deadline_passed` | a `memory_surface` carrying `deadline_at_ms` reached its caller's deadline, less the margin, before it could be answered (§"Degraded modes"): at one of its four check points, at a read-pool lease wait that deadline bounded, or when its retry's wait for the write lock was cut at it. Decided by which bound cut a wait, never by reading the clock a second time. A failure that is not contention keeps its own code past the deadline, so a defect is never masked as lateness | `{verb}`. Refused, not failed: the store is fine and the request was declined on its own terms. Terminal for that request and not retried, because the caller that set the deadline has gone. Nothing is committed — no `surface_call`, no `surface` row — so a push nobody read is never recorded as shown |
 | −32030 | `store_identity` | `health()` identity did not match the client's resolved store | `{expected, actual}` |
 | −32040 | `knowledge_base_unknown` | a `knowledge_*` method named a corpus the registry has no row for | `{name}` — the **normalized** spelling, since that is what the registry stores and what `list` reports |
 | −32041 | `knowledge_base_exists` | `knowledge_add` with a name already taken, or `knowledge_rename` to one. Never an upsert: silently reconfiguring a corpus underneath whoever created it is worse than a failed call (`knowledge-index.md` §8.4) | `{name}` |
@@ -2062,7 +2253,10 @@ because their bare verbs collide with the memory store's.
 The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `memory_amend` and
 `memory_retire`, plus:
 
-- `memory_surface(prompt, limit, client)` — the push path. Returns **formatted, ready-to-print text** so the hook
+- `memory_surface(prompt, limit, client, deadline_at_ms?)` — the push path. `deadline_at_ms` is the caller's
+  own deadline as a wall-clock instant in milliseconds since the epoch, no more than `ddl.BUSY_TIMEOUT_MS`
+  ahead; past it, less a margin, the call answers `deadline_passed` and commits nothing (§"A push the agent
+  never saw is never recorded as shown"). Returns **formatted, ready-to-print text** so the hook
   stays dumb: the untrusted-reference-data preamble, the stated best-first order, and the `[superseded]`
   labels all come from the service. Format spec: `design/retrieval.md` §"Push output format". Distinct from
   `search` because it applies D12's budget and, per D23, no reranker. `limit` is the **output** budget only;
@@ -2374,8 +2568,8 @@ permissions, error codes. What is listed below is measurement this document does
 decision. Still unmeasured:
 
 - real RPC round-trip latency, end to end, from a hook process;
-- behaviour under concurrent requests from two sessions sharing one store, including whether `busy_timeout`
-  at 5 s is the right number;
+- behaviour under concurrent requests from two sessions sharing one store, including whether the 5 s wait
+  budget is the right number;
 - whether the start-if-absent race actually holds under contention;
 - whether an active consolidation lease behaves sanely across a service restart in practice.
 

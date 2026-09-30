@@ -159,11 +159,10 @@ async def plan(
         UnknownKnowledgeBaseError: a name is registered under nothing. Raised rather than reported,
             because it is a fact about the request rather than about any corpus.
     """
-    await registry.ensure(db)
     if names is None:
-        wanted = list(await registry.list_all(db))
+        wanted = await registry.lookup_all(db)
     else:
-        wanted = [await registry.require(db, name) for name in names]
+        wanted = await registry.lookup_each(db, names)
     planned: list[PlannedBuild] = []
     for registered in wanted:
         observed = await reporting.observe(store_dir, registered, config)

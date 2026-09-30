@@ -37,7 +37,16 @@ MODELS = {
     "bge-large-prefix": ("BAAI/bge-large-en-v1.5",
                          "Represent this sentence for searching relevant passages: ", ""),
     "nomic": ("nomic-ai/nomic-embed-text-v1.5", "search_query: ", "search_document: "),
+    # Round 4 (PREREGISTRATION-R4.md); registered with fastembed by `custom_models`. Granite's
+    # card prescribes no instruction prefix; e5's requires `query: ` / `passage: `.
+    "bge-small-fp32-prefix": ("zk/bge-small-en-v1.5-fp32",
+                              "Represent this sentence for searching relevant passages: ", ""),
+    "granite-30m": ("zk/granite-embedding-30m-english", "", ""),
+    "granite-125m": ("zk/granite-embedding-125m-english", "", ""),
+    "e5-small": ("zk/e5-small-v2", "query: ", "passage: "),
 }
+
+import custom_models  # noqa: E402,F401  (registers the round-4 artifacts on import)
 
 TOKENIZE_TEXT = "unicode61"
 TOKENIZE_TOK = "unicode61 tokenchars '_-./'"

@@ -43,7 +43,7 @@ async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_ac
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1  # never idle: `may_stop` must return `False` throughout.
+        ctx.activity.begin_request("memory_search")  # never idle: `may_stop` stays `False`.
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -83,7 +83,7 @@ async def test_idle_self_stop_detects_a_replacement_that_already_happened_before
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1
+        ctx.activity.begin_request("memory_search")
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -106,7 +106,7 @@ async def test_idle_self_stop_does_not_exit_while_the_store_is_never_replaced_an
     untouched file repeatedly must never itself look like a replacement."""
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1
+        ctx.activity.begin_request("memory_search")
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -133,7 +133,7 @@ async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recre
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1
+        ctx.activity.begin_request("memory_search")
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -160,7 +160,7 @@ async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rathe
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1
+        ctx.activity.begin_request("memory_search")
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -207,7 +207,7 @@ async def test_a_clean_stop_writes_a_record_naming_its_reason(
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 1  # never idle, so only the replacement branch can fire.
+        ctx.activity.begin_request("memory_search")  # never idle: only replacement can fire.
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))
         original_inode = ctx.store.path.stat().st_ino
@@ -247,7 +247,7 @@ async def test_an_idle_stop_says_idle_rather_than_store_replaced(
     """
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
     async with open_context(tmp_path) as ctx:
-        ctx.activity.in_flight = 0
+        assert ctx.activity.in_flight == 0
         ctx.activity.last_activity -= 86_400  # a day of idleness, against a 1800 s default.
         sock_path = socket_dir / "server.sock"
         running = await server.serve(ctx, str(sock_path))

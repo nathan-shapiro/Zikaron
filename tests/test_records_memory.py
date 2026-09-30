@@ -5,7 +5,6 @@
 import asyncio
 import json
 import sqlite3
-import unittest.mock
 from pathlib import Path
 from typing import cast
 
@@ -21,7 +20,6 @@ from zikaron.core.events import (
     SearchDetail,
     StopReason,
 )
-from zikaron.core.records import supersession
 from zikaron.core.records.memory import (
     CallParams,
     ConflictRecord,
@@ -30,7 +28,6 @@ from zikaron.core.records.memory import (
     Tier,
     amend,
     amend_within_transaction,
-    commit_or_roll_back,
     create,
     create_within_transaction,
     fetch,
@@ -40,6 +37,7 @@ from zikaron.core.records.memory import (
 )
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
+from zikaron.core.store.transactions import commit_or_roll_back
 
 _MAX_DEPTH = 32
 
@@ -445,9 +443,8 @@ async def _attempt_retire(
     connection: aiosqlite.Connection, *, from_uuid: str, to_uuid: str
 ) -> object:
     """Run one `retire(from_uuid, superseded_by=to_uuid)` and return either the resulting
-    `Memory` or the exception it raised, rather than letting either propagate — a shared helper
-    for the concurrent-race tests below, whose racing coroutines need to compare outcomes after
-    the fact instead of having `asyncio.gather` raise on the first one to fail.
+    `Memory` or the `ZikaronError` it raised, so racing coroutines can compare outcomes after the
+    fact instead of having `asyncio.gather` raise on the first one to fail.
     """
     try:
         return await retire(
@@ -459,27 +456,21 @@ async def _attempt_retire(
         )
     except ZikaronError as error:
         return error
-    except sqlite3.OperationalError as error:
-        # Both connections hold a deferred transaction with a read already taken by the time
-        # they reach a synchronization point, so the loser of a write race can surface as
-        # SQLite's own lock contention rather than as a `ZikaronError` this module raises — a
-        # real, legitimate race outcome, not a defect in the retire path itself.
-        return error
 
 
 async def test_invariant_6_acceptance_two_concurrent_attempts_to_close_a_cycle(
     tmp_path: Path,
 ) -> None:
-    """The invariant's own named acceptance test, run as a genuine check-then-write race: two
-    initially-**live, edgeless** rows, `a` and `b`. One connection attempts `a -> b`, the other
-    attempts `b -> a`, concurrently. Both are synchronized to complete their own read-side
-    validation — the cycle walk inside `supersession.validate_new_edge` — before either is
-    allowed to proceed to its `UPDATE`, so both genuinely observe the same edgeless initial
-    graph rather than one attempt's read landing after the other's write. That is what a
-    sequential test on one connection, or two attempts against an *already*-illegal graph,
-    cannot expose: with no edge yet written, each attempt's own validation is legal on its own,
-    and only SQLite's single-writer serialization at the `UPDATE` step can decide which one
-    actually gets to keep it — a race exactly at the boundary invariant 6 has to hold across."""
+    """The invariant's own named acceptance test, as a check-then-write race between two
+    connections: two initially-**live, edgeless** rows, `a` and `b`, one connection attempting
+    `a -> b` and the other `b -> a`, concurrently.
+
+    Each validation alone is legal on an edgeless graph, so what has to decide the race is the
+    write lock. A write opens `BEGIN IMMEDIATE`, so the second attempt's transaction waits for the
+    first to commit and only then reads the graph — its cycle walk sees the first edge, and it is
+    refused `bad_supersession` by this module's own rule rather than by a driver error. So exactly
+    one edge commits, the loser's validation is recorded as having seen it, and the graph stays
+    acyclic."""
     store_dir = tmp_path / ".zikaron"
     config = _config(tmp_path)
     embedder = FakeEmbedder(model_name="BAAI/bge-small-en-v1.5", dim=384)
@@ -495,70 +486,21 @@ async def test_invariant_6_acceptance_two_concurrent_attempts_to_close_a_cycle(
         await Store.open(store_dir, config) as left,
         await Store.open(store_dir, config) as right,
     ):
-        real_validate = supersession.validate_new_edge
-        both_validated = asyncio.Event()
-        validated_count = 0
-        lock = asyncio.Lock()
-
-        async def _validate_then_synchronize(
-            db: aiosqlite.Connection, *, from_uuid: str, to_uuid: str, max_depth: int
-        ) -> None:
-            """Runs the real validation (both attempts' reads land, on an edgeless graph),
-            then blocks every racer until the other has *also* finished validating, so neither
-            attempt's `UPDATE` can start before both attempts' reads have both already run."""
-            nonlocal validated_count
-            await real_validate(db, from_uuid=from_uuid, to_uuid=to_uuid, max_depth=max_depth)
-            async with lock:
-                validated_count += 1
-                if validated_count == 2:
-                    both_validated.set()
-            await both_validated.wait()
-
-        with unittest.mock.patch.object(
-            supersession, "validate_new_edge", side_effect=_validate_then_synchronize
-        ):
-            a_to_b, b_to_a = await asyncio.gather(
-                _attempt_retire(left.connection, from_uuid=a.uuid, to_uuid=b.uuid),
-                _attempt_retire(right.connection, from_uuid=b.uuid, to_uuid=a.uuid),
-            )
-
-        assert validated_count == 2, "the synchronization point was never reached by both racers"
+        a_to_b, b_to_a = await asyncio.gather(
+            _attempt_retire(left.connection, from_uuid=a.uuid, to_uuid=b.uuid),
+            _attempt_retire(right.connection, from_uuid=b.uuid, to_uuid=a.uuid),
+        )
 
         outcomes = [a_to_b, b_to_a]
         successes = [outcome for outcome in outcomes if isinstance(outcome, Memory)]
-        rejections = [
-            outcome
-            for outcome in outcomes
-            if isinstance(outcome, ZikaronError | sqlite3.OperationalError)
-        ]
-        # Both attempts validated against the same edgeless graph, so both passed their own
-        # cycle check legitimately — this is exactly the race invariant 6 has to survive. What
-        # decides the outcome now is SQLite's single-writer lock at the `UPDATE` step, not
-        # either attempt's own logic, so exactly one commits and the other loses the write race,
-        # surfacing as `sqlite3.OperationalError` (this connection's own transaction already
-        # holds a conflicting lock) rather than a `ZikaronError` this module raises — a real,
-        # legitimate outcome of the race, not a defect. Two successes is the only truly
-        # disallowed outcome: it would mean both `a->b` and `b->a` committed, which is a cycle
-        # by definition.
-        assert len(successes) + len(rejections) == 2
-        assert len(successes) <= 1
+        refusals = [outcome for outcome in outcomes if isinstance(outcome, ZikaronError)]
+        assert len(successes) == 1
+        assert [refusal.code for refusal in refusals] == [ErrorCode.BAD_SUPERSESSION]
 
-        # A connection whose attempt ended in `OperationalError` may still be sitting inside an
-        # errored transaction; roll it back explicitly before reading through it below, since a
-        # driver-level failure — unlike this module's own `ZikaronError` rejections — is not
-        # guaranteed to have already resolved the transaction state on its own.
-        for connection, outcome in ((left, a_to_b), (right, b_to_a)):
-            if isinstance(outcome, sqlite3.OperationalError):
-                await connection.connection.rollback()
-
-        # The graph is acyclic either way. Whichever edge (if any) survived, walking from its
-        # tail must terminate without ever reaching back to where it started.
         records, _missing = await fetch(left.connection, uuids=[a.uuid, b.uuid], ctx=_ctx())
         by_uuid = {record.uuid: record for record in records}
-        if by_uuid[a.uuid].superseded_by == b.uuid:
-            assert by_uuid[b.uuid].superseded_by != a.uuid
-        if by_uuid[b.uuid].superseded_by == a.uuid:
-            assert by_uuid[a.uuid].superseded_by != b.uuid
+        edges = {uuid for uuid, record in by_uuid.items() if record.superseded_by is not None}
+        assert len(edges) == 1
 
 
 async def test_invariant_6_acceptance_retiring_a_replacement_outright_makes_a_terminal_component(
@@ -1299,7 +1241,8 @@ async def test_a_rejection_inside_a_composed_amend_commits_only_the_audit_receip
     tmp_path: Path,
 ) -> None:
     """Invariant 10's carve-out holds under composition too, as long as the composing caller
-    itself decides commit-vs-rollback the same way the wrapper does (`commit_or_roll_back`)
+    itself decides commit-vs-rollback the same way the primitive's finalization does
+    (`commit_or_roll_back`)
     rather than always rolling back — the neutral core itself commits nothing (see
     `_reject_version_conflict`'s own docstring), so an outer caller that used a bare
     `except: rollback()` would lose the carve-out under composition, which is exactly the shape
@@ -1497,12 +1440,12 @@ async def test_invariant_10_a_failure_between_fetchs_receipt_and_its_event_loses
 async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_owner(
     tmp_path: Path,
 ) -> None:
-    """`amend`'s own `finally: await commit_or_roll_back(db, error)` runs unconditionally, and
-    for a `VERSION_CONFLICT` — one of `commit_or_roll_back`'s two carve-out codes — that means
-    committing, not rolling back: `_reject_version_conflict` itself only staged the receipt and
-    event and raised, never touching the transaction, so `amend`'s own `finally` block is the
-    one place that actually commits them. This test proves that end to end through the real
-    public `amend` wrapper, and also checks the connection is left fully usable afterward."""
+    """`amend` runs on the transaction primitive, whose finalization commits for a
+    `VERSION_CONFLICT` — one of `commit_or_roll_back`'s two carve-out codes — rather than rolling
+    back: `_reject_version_conflict` itself only staged the receipt and event and raised, never
+    touching the transaction, so the primitive's finalization is the one place that actually
+    commits them. This test proves that end to end through the real public `amend` wrapper, and
+    also checks the connection is left fully usable afterward."""
     async with await _open_store(tmp_path) as store:
         created = await create(store.connection, gist="g", content="c", session_id="s1")
         await fetch(store.connection, uuids=[created.uuid], ctx=_ctx())
@@ -1524,8 +1467,8 @@ async def test_invariant_10_a_version_conflict_is_committed_by_the_transaction_o
             )
         assert excinfo.value.code is ErrorCode.VERSION_CONFLICT
 
-        # The conflict's receipt and event survived amend's own finally block, because that
-        # block committed them — not because there was nothing left for a rollback to undo.
+        # The conflict's receipt and event survived the primitive's finalization, because it
+        # committed them — not because there was nothing left for a rollback to undo.
         kinds = await _event_kinds(store, created.uuid)
         assert "version_conflict" in kinds
         rows = await store.connection.execute_fetchall(

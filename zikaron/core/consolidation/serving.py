@@ -1,7 +1,9 @@
-"""`next_group`: one transaction that re-validates, closes, defers or delivers — and iterates.
+"""`next_group`: one serve that re-validates, closes, defers or delivers — and iterates.
 
-`architecture.md` §"Consolidation lifecycle" §Serving is normative, and the ordering inside is part
-of the contract because it is observable in which status a group lands in:
+`architecture.md` §"Consolidation lifecycle" §Serving is normative. A serve is one transaction — of
+the up to three `next_group` spans when it has to plan a run first, the one that mutates (see
+`next_group`) — and the ordering inside it is part of the contract because it is observable in which
+status a group lands in:
 
 1. **Re-validate the members.** A member no longer `tier='journal' AND active=1` is marked `vacated`
    and not delivered; a planned anchor no longer `tier='long_term' AND active=1` is dropped. This
@@ -34,9 +36,9 @@ run and written its vacatings — so there is no text to embed before the transa
 the read path and the write path both manage. Splitting the call in two was the alternative and it
 is worse: the served set would be free to move between the decision and the delivery, which is
 exactly what "runs in one transaction" exists to prevent. The cost is that SQLite's write lock is
-held across one embedding call; consolidation is manually invoked, rare, and off every
-latency-critical path, and the call runs through `asyncio.to_thread` so at least the event loop is
-not also blocked.
+held across one embedding call — a warm one, since the dispatcher waits for the model to load before
+calling `next_group` — and the call runs through `asyncio.to_thread` so the event loop is not also
+blocked.
 """
 
 from collections.abc import Mapping, Sequence
@@ -62,6 +64,7 @@ from zikaron.core.consolidation.payload import (
     RunDone,
     ServedGroup,
 )
+from zikaron.core.consolidation.planning import Snapshot
 from zikaron.core.consolidation.runs import Run, RunStatus
 from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.events import GroupRef, GroupServedDetail, ServeRole
@@ -70,6 +73,7 @@ from zikaron.core.records import receipts
 from zikaron.core.records.memory import log_event
 from zikaron.core.records.receipts import ReceiptKey, ReceiptSource
 from zikaron.core.store import transactions
+from zikaron.core.store.pool import ReadPool
 
 #: The anchor's `rank` in the persisted authorization set. 0 rather than 1 so the anchor is
 #: distinguishable from the first candidate by rank alone, which is what the schema's own column
@@ -342,8 +346,13 @@ async def _serve(
     )
 
 
-async def _run_for(db: aiosqlite.Connection, *, call: ConsolidationCall, at: str) -> Run | Busy:
-    """The run this call will serve from — replanning, or refusing, exactly as the design requires.
+async def _run_for(
+    db: aiosqlite.Connection, *, call: ConsolidationCall, at: str
+) -> Run | Busy | None:
+    """The run this call will serve from, or a refusal, exactly as the design requires.
+
+    `None` when no effectively-active run exists: the caller plans one — on a read snapshot outside
+    this transaction, then in `_plan_then_serve`, which asks again before writing it.
 
     An **effectively-expired** run is treated as absent for every caller *including its owner*,
     which is the fix for a real dead end: `next_group` replans only when the caller has no active
@@ -365,7 +374,7 @@ async def _run_for(db: aiosqlite.Connection, *, call: ConsolidationCall, at: str
     """
     existing = await runs.stored_active(db)
     if existing is None or existing.has_lapsed(at=at):
-        return await planning.plan_within_transaction(db, call=call, at=at)
+        return None
     if existing.owner != call.owner:
         return Busy(
             holder_session=existing.owner.session_id,
@@ -377,19 +386,48 @@ async def _run_for(db: aiosqlite.Connection, *, call: ConsolidationCall, at: str
 
 async def next_group_within_transaction(
     db: aiosqlite.Connection, *, call: ConsolidationCall
+) -> NextGroupOutcome | None:
+    """`next_group`'s work, assuming the caller already holds an open `IMMEDIATE` transaction.
+
+    `None` when there is no effectively-active run to serve from — see `_run_for`.
+    """
+    at = runs.now()
+    resolved = await _run_for(db, call=call, at=at)
+    if resolved is None or isinstance(resolved, Busy):
+        return resolved
+    return await _serve_from(db, run=resolved, at=at, call=call)
+
+
+async def _plan_then_serve(
+    db: aiosqlite.Connection, *, call: ConsolidationCall, planned_from: Snapshot
 ) -> NextGroupOutcome:
-    """`next_group`'s work, assuming the caller already holds an open transaction.
+    """Write the snapshot's plan and serve from it, inside the caller's `IMMEDIATE` transaction —
+    unless a run appeared since the snapshot was taken.
+
+    The caller's own, from a concurrent `next_group` of the same owner, is served and the plan
+    discarded; a stranger's is `Busy`, never taken over.
+    """
+    at = runs.now()
+    resolved = await _run_for(db, call=call, at=at)
+    if resolved is None:
+        resolved = await planning.plan_within_transaction(
+            db, call=call, at=at, planned_from=planned_from
+        )
+    if isinstance(resolved, Busy):
+        return resolved
+    return await _serve_from(db, run=resolved, at=at, call=call)
+
+
+async def _serve_from(
+    db: aiosqlite.Connection, *, run: Run, at: str, call: ConsolidationCall
+) -> NextGroupOutcome:
+    """The next servable group of `run`, or `RunDone` once it has none.
 
     The loop is bounded by the run's own group count, which is fixed at plan time: every iteration
     either returns a served group or transitions its candidate out of `pending`/`served`, so after
     that many iterations there is nothing left to consider and falling through is the correct
     conclusion rather than a give-up.
     """
-    at = runs.now()
-    resolved = await _run_for(db, call=call, at=at)
-    if isinstance(resolved, Busy):
-        return resolved
-    run = resolved
     for _ in range((await groups.run_counts(db, run.run_id)).n_groups):
         candidate = await groups.next_candidate(db, run.run_id)
         if candidate is None:
@@ -422,13 +460,25 @@ async def next_group_within_transaction(
     return RunDone()
 
 
-async def next_group(db: aiosqlite.Connection, *, call: ConsolidationCall) -> NextGroupOutcome:
+async def next_group(
+    db: aiosqlite.Connection, *, call: ConsolidationCall, pool: ReadPool
+) -> NextGroupOutcome:
     """Deliver the next consolidation group, planning a run implicitly if the store has none.
 
-    One transaction covering re-validation, every status transition it causes, the candidate
-    recomputation and its embedding, the authorization set, the receipts and the events. The
-    instrumentation and the state it describes therefore commit together or not at all, which is
-    invariant 10 for this verb.
+    Up to three transactions, and exactly one of them mutates — invariant 2 is over a logical
+    mutation, and an implicit replan and the serve after it stay one atomic step:
+
+    1. On the writer, ask whether an effectively-active run exists; if one does, serve from it, or
+       answer `Busy` for a stranger's. The serve covers re-validation, every status transition it
+       causes, the candidate recomputation and its embedding, the authorization set, the receipts
+       and the events, so they commit together or not at all — invariant 10 for this verb.
+    2. If none exists, release the writer and plan on a read snapshot from `pool`.
+    3. On the writer, re-check the run: none, or a lapsed one it closes → write the plan and serve;
+       the caller's own, written meanwhile by a concurrent call → discard the plan and serve from
+       it; a stranger's → `Busy`, never a takeover.
+
+    The embedding in steps 1 and 3 holds the writer's lock, so the caller waits for the model to
+    load before calling this.
 
     Returns:
         A `ServedGroup`, or `RunDone` when this run has nothing left to serve, or `Busy` when an
@@ -440,12 +490,22 @@ async def next_group(db: aiosqlite.Connection, *, call: ConsolidationCall) -> Ne
             `INDEX_FAILED` for any other driver failure. Nothing is left behind in either case — a
             failed serve delivers no group and records no delivery, so the next call reconsiders the
             same group from the same state.
+        TransactionRefused: no pool connection, or the writer's lock, came free within the budget.
     """
+    failure = _failure_map("next_group")
 
-    async def work(connection: aiosqlite.Connection) -> NextGroupOutcome:
+    async def serve_existing(connection: aiosqlite.Connection) -> NextGroupOutcome | None:
         return await next_group_within_transaction(connection, call=call)
 
-    return await transactions.in_one_transaction(db, work, failure=_failure_map("next_group"))
+    served = await transactions.in_one_transaction(db, serve_existing, failure=failure)
+    if served is not None:
+        return served
+    planned_from = await planning.snapshot(pool, call=call)
+
+    async def plan_and_serve(connection: aiosqlite.Connection) -> NextGroupOutcome:
+        return await _plan_then_serve(connection, call=call, planned_from=planned_from)
+
+    return await transactions.in_one_transaction(db, plan_and_serve, failure=failure)
 
 
 def _failure_map(verb: str) -> transactions.FailureMap:

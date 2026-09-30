@@ -24,8 +24,8 @@ through a thread and never blocks the loop at all.
 embedding before `BEGIN`. The preflight reads nothing from the store and raises only `bounds`, which
 is rung 1 of the validation ladder and precedes existence, version and receipt anyway; the embedding
 is outside because a cold model load costs hundreds of milliseconds and holding SQLite's single
-write lock across it would make every concurrent writer's `busy_timeout` a function of model-load
-time. Nothing is staged before `BEGIN`, so failing there loses nothing.
+write lock across it would make every concurrent writer's wait for the lock a function of
+model-load time. Nothing is staged before `BEGIN`, so failing there loses nothing.
 
 The cost of that choice, stated rather than hidden: an `amend` that will be rejected as
 `version_conflict` has already paid for its embedding, because authorization happens inside the
@@ -330,7 +330,7 @@ async def remember_within_transaction(
     """`remember`'s work, assuming the caller already holds an open transaction.
 
     Neither commits nor rolls back — the caller owns that decision, through
-    `records.memory.commit_or_roll_back`, for the reasons that function's own docstring gives.
+    `store.transactions.commit_or_roll_back`, for the reasons that function's own docstring gives.
     """
     stored = await insert_row_and_indexes(db, prepared=prepared, call=call)
     await memory.log_event(

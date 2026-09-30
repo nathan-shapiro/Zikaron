@@ -32,8 +32,13 @@ class SurfaceRejectionError(Exception):
         super().__init__(f"{code}: {message}")
 
 
-def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope) -> str:
-    """Send one `memory_surface(prompt, limit)` request and return the text it answered with.
+def surface_once(
+    sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope, deadline_at_ms: int
+) -> str:
+    """Send one `memory_surface(prompt, limit, deadline_at_ms)` request and return its text.
+
+    `deadline_at_ms` is this process's own deadline as a wall-clock instant, so the service answers
+    `deadline_passed` rather than committing a push nobody will read.
 
     A single `sendall`/`recv`-until-newline round trip — this client makes exactly one request per
     process, so there is no held connection for a partial-send ambiguity to matter against: unlike
@@ -47,7 +52,7 @@ def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: Hook
         OSError: the socket failed during send or receive.
         ConnectionError: the connection closed before a full line arrived, or the response was
             not a well-formed JSON-RPC envelope.
-        SurfaceRejection: the service answered with an `error` object.
+        SurfaceRejectionError: the service answered with an `error` object.
     """
     request = {
         "jsonrpc": "2.0",
@@ -56,6 +61,7 @@ def surface_once(sock: socket.socket, *, prompt: str, limit: int, envelope: Hook
         "params": {
             "prompt": prompt,
             "limit": limit,
+            "deadline_at_ms": deadline_at_ms,
             "client": envelope.as_client_object(),
         },
     }

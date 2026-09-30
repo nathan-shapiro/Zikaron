@@ -54,8 +54,9 @@ _STORE_BUSY_CODE = -32020
 #: The request timeout for the two calls that can plan a run — `memory_plan_groups`, and
 #: `memory_next_group`, which plans inline when no run is active. Planning takes time proportional
 #: to the journal: 12.2 s for 284 rows, measured (13.1 s through the bridge), against the 10 s
-#: default every other call uses. At that rate this buys a journal of roughly 7,000 rows; both
-#: harnesses let a tool call run past it (`design/harness.md`, "MCP tool-call duration"). For
+#: default every other call uses. A call plans at most twice — once on a snapshot, and again inside
+#: its write if a row moved meanwhile — so at that rate this buys a journal of roughly 3,500 rows;
+#: both harnesses let a tool call run past it (`design/harness.md`, "MCP tool-call duration"). For
 #: `memory_plan_groups` the bridge treats a lost response as terminal for the process, so a timeout
 #: there is a whole consolidation lost; a `next_group` that outlasts it is one call lost, and the
 #: next call meets whatever the service went on to commit.

@@ -110,18 +110,14 @@ def normalize_name(name: str) -> str:
 async def ensure_table(db: aiosqlite.Connection) -> None:
     """Create `knowledge_bases` if this store does not have it yet.
 
-    **The presence check is a read of `sqlite_master`, and issuing the `CREATE` unconditionally is
-    what it replaces.** `CREATE TABLE IF NOT EXISTS` against a table that already exists is a no-op
-    in effect — but measured on the connection the service actually holds, it still asks for the
-    write lock and waits out `busy_timeout` behind an unrelated writer, where the same statement on
-    a freshly opened connection to the same file does not
-    (`research/m33-registry-ensure-takes-the-write-lock.md`). Every knowledge verb calls this first,
-    so each of them answered `store_unavailable` whenever another write had held the lock for that
-    whole timeout. A read that finds the table present performs **no write at all**, which is the
-    property `schema.md` §"`call` is an access log" rests on when it calls the access log's row the
-    first and only `memory.db` write of a `knowledge_list`.
+    **Only a write creates the table**: `knowledge_add`, and the indexer, each on its writer and so
+    under `IMMEDIATE`. A read on a store without it answers from the presence read in `find` and
+    `list_all` — an empty registry — so no read path ever writes DDL, and a knowledge read's `call`
+    row is its only `memory.db` write on every store.
 
-    The `IF NOT EXISTS` stays, so two callers that both find it absent still cannot collide.
+    `CREATE TABLE IF NOT EXISTS` against a table that already exists still asks for the write lock
+    (`research/m33-registry-ensure-takes-the-write-lock.md`), which is why a read must never reach
+    this function; its two callers already hold that lock.
 
     Must be called inside a transaction the caller owns. A bare `CREATE TABLE` with no transaction
     open runs in autocommit, which would leave the table behind after a caller's later statement
@@ -144,14 +140,46 @@ async def _table_exists(db: aiosqlite.Connection) -> bool:
 
 
 async def ensure(db: aiosqlite.Connection) -> None:
-    """`ensure_table` for a caller that has no transaction of its own to run it in.
-
-    The two exist because the table has exactly one creation site and two kinds of caller: a verb
-    already inside a transaction, which must not open a second one, and every read that merely
-    needs the table to be there. Both reach `ensure_table`, which is what keeps a store created
-    before this table existed opening and answering normally by construction rather than by a test.
-    """
+    """`ensure_table` in a transaction of its own, for the indexer, which has none to run it in."""
     await in_one_transaction(db, ensure_table, failure=propagate)
+
+
+async def lookup(db: aiosqlite.Connection, name: str) -> KnowledgeBase:
+    """`require`, in one transaction of its own that covers nothing else.
+
+    What every verb resolves a corpus through. On the service's writer a statement outside a
+    transaction would run inside another request's open one and read its uncommitted rows, so the
+    registry read is a transaction; and it is only the registry read, so no corpus is opened while
+    the writer's lock or a read snapshot is held.
+
+    Raises:
+        InvalidNameError: `name` is empty or blank.
+        UnknownKnowledgeBaseError: nothing is registered under `name`, or the store has no registry.
+    """
+
+    async def _work(connection: aiosqlite.Connection) -> KnowledgeBase:
+        return await require(connection, name)
+
+    return await in_one_transaction(db, _work, failure=propagate)
+
+
+async def lookup_each(db: aiosqlite.Connection, names: Sequence[str]) -> tuple[KnowledgeBase, ...]:
+    """`require` for each of `names`, in order, in one transaction — see `lookup`.
+
+    Raises:
+        InvalidNameError: a name is empty or blank.
+        UnknownKnowledgeBaseError: a name is registered under nothing.
+    """
+
+    async def _work(connection: aiosqlite.Connection) -> tuple[KnowledgeBase, ...]:
+        return tuple([await require(connection, name) for name in names])
+
+    return await in_one_transaction(db, _work, failure=propagate)
+
+
+async def lookup_all(db: aiosqlite.Connection) -> tuple[KnowledgeBase, ...]:
+    """`list_all`, in one transaction of its own — see `lookup`."""
+    return await in_one_transaction(db, list_all, failure=propagate)
 
 
 async def insert(
@@ -233,12 +261,14 @@ async def delete(db: aiosqlite.Connection, *, name: str) -> KnowledgeBase:
 
 
 async def find(db: aiosqlite.Connection, name: str) -> KnowledgeBase | None:
-    """The corpus registered under `name`, or `None`.
+    """The corpus registered under `name`, or `None` — including on a store with no registry.
 
     Raises:
         InvalidNameError: `name` is empty or blank.
     """
     stored = normalize_name(name)
+    if not await _table_exists(db):
+        return None
     rows = await db.execute_fetchall(
         "SELECT id, name, description, created_at FROM knowledge_bases WHERE name = ?", (stored,)
     )
@@ -266,7 +296,10 @@ async def list_all(db: aiosqlite.Connection) -> tuple[KnowledgeBase, ...]:
 
     Ordered in SQL rather than by the caller so that two runs over one store produce the same
     listing — a caller comparing output across runs should be comparing content, not sort luck.
+    Empty on a store with no registry.
     """
+    if not await _table_exists(db):
+        return ()
     rows = await db.execute_fetchall(
         "SELECT id, name, description, created_at FROM knowledge_bases ORDER BY name"
     )

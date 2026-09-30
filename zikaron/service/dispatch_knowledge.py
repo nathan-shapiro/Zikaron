@@ -68,6 +68,7 @@ from zikaron.knowledge.indexer import detach
 from zikaron.service import paths
 from zikaron.service.context import ServiceContext
 from zikaron.service.envelope import ResolvedEnvelope
+from zikaron.service.methods import Access, Method
 from zikaron.service.params import (
     Handler,
     optional_int,
@@ -535,8 +536,10 @@ def _naming_the_store(method: str, handler: Handler) -> Handler:
     `core/knowledge/errors.py` is explicit that this module is the boundary that gives them codes.
 
     **The two classes caught are the whole of it, and widening is wrong rather than generous.**
-    Anything else arriving here is a defect in this service — a closed connection raises
-    `ValueError`, not `aiosqlite.Error` — and `internal_error` is the honest answer for a defect.
+    The transaction primitive's own refusals — a closed handle, a lock wait that reached its
+    deadline — are not driver errors and pass through, to be answered by the dispatcher, which
+    names them for every method alike. Anything else arriving here is a defect in this service, and
+    `internal_error` is the honest answer for a defect.
     """
 
     async def named(
@@ -550,37 +553,41 @@ def _naming_the_store(method: str, handler: Handler) -> Handler:
         except aiosqlite.Error as error:
             # **Contention is the one retryable answer the design gives**, so it must not collapse
             # into `store_unavailable`, which tells a caller nothing it sends differently will help.
-            # It arrives as `SQLITE_BUSY_SNAPSHOT` rather than a waited-out timeout on the verbs
-            # that write the registry, because `registry.ensure_table` opens the transaction with a
-            # presence read: the write holds a WAL snapshot before asking for the lock, and a
-            # commit landing in that window is refused at once. A read-only verb reaches contention
-            # on the one call that creates the table, or through its own corpus database.
+            # A registry write reaches it as a `BEGIN IMMEDIATE` that waited out its budget; a read
+            # reaches it through a corpus database.
             if is_contention(error):
                 raise ZikaronError(ErrorCode.STORE_BUSY, verb=method) from error
-            raise ZikaronError(
-                ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error)
-            ) from error
+            raise _store_unavailable(method, error) from error
         except OSError as error:
-            raise ZikaronError(
-                ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error)
-            ) from error
+            raise _store_unavailable(method, error) from error
 
     return named
+
+
+def _store_unavailable(method: str, error: OSError | aiosqlite.Error) -> ZikaronError:
+    """`store_unavailable`, carrying the driver's or the OS's own text as `cause`.
+
+    Also what the dispatcher answers a knowledge verb whose connection could not be obtained
+    because `memory.db` was replaced or is gone.
+    """
+    return ZikaronError(ErrorCode.STORE_UNAVAILABLE, operation=method, cause=str(error))
 
 
 #: The knowledge methods this module handles, by wire name. `server.py` merges this table with the
 #: primary and consolidator ones. Every one of them is a primary-agent method: a consolidator has
 #: no use for a corpus of files, and D32's split is what keeps them out of that mode entirely.
-KNOWLEDGE_METHODS: dict[str, Handler] = {
-    method: _naming_the_store(method, handler)
-    for method, handler in (
-        ("knowledge_search", knowledge_search),
-        ("knowledge_list", knowledge_list),
-        ("knowledge_status", knowledge_status),
-        ("knowledge_add", knowledge_add),
-        ("knowledge_remove", knowledge_remove),
-        ("knowledge_rename", knowledge_rename),
-        ("knowledge_refresh", knowledge_refresh),
-        ("knowledge_unlock", knowledge_unlock),
+KNOWLEDGE_METHODS: dict[str, Method] = {
+    method: Method(_naming_the_store(method, handler), access, store_failure=_store_unavailable)
+    for method, handler, access in (
+        ("knowledge_search", knowledge_search, Access.READ),
+        ("knowledge_list", knowledge_list, Access.READ),
+        ("knowledge_status", knowledge_status, Access.READ),
+        ("knowledge_add", knowledge_add, Access.WRITE),
+        ("knowledge_remove", knowledge_remove, Access.WRITE),
+        ("knowledge_rename", knowledge_rename, Access.WRITE),
+        # Reads the registry and spawns an indexer; the build's writes are the indexer's own.
+        ("knowledge_refresh", knowledge_refresh, Access.READ),
+        # Writes only the corpus's own database.
+        ("knowledge_unlock", knowledge_unlock, Access.READ),
     )
 }

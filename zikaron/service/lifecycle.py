@@ -26,7 +26,7 @@ from pathlib import Path
 
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.indexing.encoder import BackgroundLoadedEncoder
-from zikaron.service import log, security
+from zikaron.service import diagnostics, log, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.server import RunningServer
 
@@ -100,6 +100,7 @@ async def idle_self_stop(
     idle_timeout = ctx.config.get_int("idle_timeout")
     while True:
         await asyncio.sleep(IDLE_POLL_INTERVAL_SECONDS)
+        diagnostics.log_long_requests(ctx.activity, older_than=IDLE_POLL_INTERVAL_SECONDS)
         # Bound to a name rather than left inline so the reason can be *named* in the log record
         # below. The `or` still short-circuits, which is load-bearing rather than incidental:
         # `_store_path_now_differs` stats the store on every poll it is reached on, and an idle

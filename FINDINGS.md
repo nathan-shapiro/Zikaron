@@ -71,34 +71,78 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M33 are built, reviewed and landed**, the last merged as `8ce198f`. M26 shipped **nothing** —
+**M0–M34 are built, reviewed and landed**, the last merged as `c66295f`. M26 shipped **nothing** —
 neither the reranker nor any chunking change — and that is the result, not a stall. Each milestone's
 record is in `FINDINGS-archive.md`; the briefs are in `design/build-plan.md`; M32's shipped prose
 surfaces are normative in `design/retrieval.md` and decoded in `research/injected-prose-log.md`.
 
-**`8ce198f` carries M33's access log *and* the deferred-tool-loading work on top of it**, since the two
-were entangled in one tree and `test_ddl.py` reads `schema.md` verbatim. Review trails:
-`reviews/m33-implementation-review.md` (eight rounds) and `reviews/always-load-review.md` (eleven), both
-APPROVED. That second half ships `alwaysLoad` on both `.mcp.json` servers, four tool descriptions
-rewritten under `DESCRIPTION_BUDGET`, and **ownership rather than equality as what refuses a Claude Code
-artefact**, with every loss reported on both the merging and `--force` paths. `design/harness.md`
-§§"MCP tools may arrive deferred" and "Tool descriptions are capped" and `architecture.md` §"The install
-contract" are normative; §"Owed work" below carries what it leaves behind.
+**M34 landed as `c66295f`** — the headline form rule and the consolidator's planning timeout;
+`FINDINGS-archive.md` §"M34 as built" has the record.
 
-**M34 is in PR, waiting on the operator to merge: Q22's form rule on `remember`, `amend` and
-`promote`'s descriptions and the consolidator prompt, plus the consolidator's planning timeout.**
-`design/build-plan.md` §M34 is the brief; `research/m34-gist-form-replay.md` is the evidence — the
-rule held wherever the consolidator wrote a gist, leaked through in-place promotion, and a targeted
-re-run verified the promote-condition fix. `reviews/m34-implementation-review.md` is APPROVED and
-`./check.sh` is green. Reinstalled 2026-09-29 into `~/Trading/LeibaTrader`, `~/Dividends` and
-`~/Memory` (Claude Code in all three, kiro too in `~/Memory`).
-**M35 is pooled read connections plus the service's wedge diagnostics — a `SIGUSR1` stack dump and
-a per-request start line** (§"Owed work" has both defects and the proposed shape). §"How the next review should be briefed" is what either review costs
-if briefed badly.
+**M35 is built, reviewed and in a pull request (branch `m35-serialized-transactions`, operator ask
+2026-09-30); the operator merges.** Serialized transactions with `BEGIN IMMEDIATE` for writes, a read
+pool with one `IMMEDIATE` retry, planning off the writer, wedge diagnostics, and `deadline_at_ms` on
+`memory_surface`. The brief is `design/build-plan.md` §M35 (`reviews/m35-brief-review.md`, APPROVED);
+the implementation review is `reviews/m35-review.md`, whose last round is the verdict; the evidence —
+probes against a true HEAD control, the margin's distribution, every guard's mutation — is
+`research/m35-implementation-evidence.md`. **Once it merges**: move this paragraph to
+`FINDINGS-archive.md` as §"M35 as built", and write M36's brief. The PR's CI is the version matrix;
+`gh pr checks` says where it stands.
+**PR #14's required macOS job was red before the fix; the fix is in the tree, and all four jobs and
+Codecov's patch (100%) are green on the PR's current head (`gh pr checks`).** SQLite's own busy
+wait overruns `busy_timeout` on macOS with the SQLite uv's managed Python ships, so the store's
+serving connections run at zero and the transaction primitive polls for the write lock itself
+(`architecture.md` §"The service's connections"; evidence in
+`research/m35-implementation-evidence.md`). The same amend carries the
+coverage items the operator asked for and a test-fixture race the new timing exposed. **The review
+round on this change is bounded to `git diff f5bb459..HEAD`** (operator; `f5bb459` is reachable
+from the reflog only, since the PR's commit is amended in place); its trail is
+`reviews/m35-review.md` from round 9.
 
-**The release goes out after the next milestone, not on the `0.1.0` → `main` gap — operator decision
-2026-09-29.** So the gap stands meanwhile and is worth knowing rather than re-deciding: `0.1.0` has no
-`init`, so on that release `zikaron knowledge` still creates a store wherever it is typed, and it
+**M36, next — the installer upgrade path (proposed 2026-09-29; brief to be written into
+`design/build-plan.md` when M35 lands).** One subsystem, `zikaron/install/` and `zikaron/doctor/`,
+and nothing in the service. Normative: `design/harness.md` §"The installer's two targets" and
+`design/architecture.md` §"The install contract".
+1. **Kiro's two compares are whole, so the next change refuses every kiro install's own upgrade.**
+   - *Where*: `writer.py` compares the `mcpServers` entry with `!=` against `mcp_servers_value(...)`,
+     and the hook entries through `_differing_zikaron_hooks`, which tests structural equality with
+     the generated entry.
+   - *Effect*: any added field, or a changed `TIMEOUT_MS`/`HOOK_TIMEOUT_SECONDS`, makes an
+     unmodified old install "differ", and the upgrade is refused without `--force`. This is the
+     defect `alwaysLoad` exposed in `.mcp.json`, fixed under Claude Code, still latent on both kiro
+     artefacts, and covered by no test.
+   - *Fix*: the predicate Claude Code already uses (`targets.py` `_ownership`, `_differing_ownership_fields`,
+     `MCP_OWNERSHIP_FIELDS`). Ownership is the command, plus `args` for a server entry; any other
+     difference is an upgrade to rewrite and report, not a conflict.
+   - *Wording*: the server refusal's *"That is a previous install from a different interpreter"*
+     becomes true only once the predicate is fixed — say so in the same change.
+   - *Tests*: an old kiro install with an extra field and an old timeout upgrades without `--force`
+     and reports what it rewrote. A different command still refuses. Each is shown red before the
+     fix.
+2. **"The eight file reasons" is spelled out in five places and pinned in none.** The sites are
+   `zikaron_knowledge_status`'s description (`mcp/primary.py`), its mirror in `knowledge-index.md`,
+   two comments in `core/knowledge/counters.py`, and a docstring in `tests/test_knowledge_counters.py`.
+   `SKIP_REASON_KEYS` is already guarded against the design's table, so only the spelled-out count
+   can drift. *Fix*: drop the number from prose ("the file reasons"), or derive it where a count is
+   shown. *Test*: a drift guard that fails on a spelled-out count beside `SKIP_REASON_KEYS`'s
+   length.
+3. **An install that predates `alwaysLoad` is stale until re-run, and only `README.md` says so.**
+   *Fix*: a `doctor` check in `doctor/checks.py`, beside `check_model_cache` and its peers, that
+   reads the project's `.mcp.json` and fails, naming the re-install command, when a Zikaron server
+   entry lacks the key. *Test*: a stale fixture fails the check, and a current install passes it.
+
+Done when: all three are in, each test is mutation-verified, `README.md`'s troubleshooting row points
+at the `doctor` check, and `./check.sh` is green.
+
+**The embedder spike ran 2026-09-29: keep `bge-small`.** No candidate — granite-30m, granite-125m,
+e5-small-v2 — clears the preregistered swap gate in the deployed hybrid (granite-30m −0.0052
+useful-recall@5, CI [−0.0365, +0.0208], against +0.05). `research/granite-embedder-spike.md`; Q8 closed
+on it and Q2 gained a second instance. The host is busy for days (operator, 2026-09-29), so no
+latency figure measured meanwhile is comparable with an idle-host budget.
+
+**The release is due now: it was to go out after the milestone following M33 — operator decision
+2026-09-29 — and M34 has landed.** Tagging is the operator's act. What the gap means until then:
+`0.1.0` has no `init`, so on that release `zikaron knowledge` still creates a store wherever it is typed, and it
 declares `SUPPORTED_SCHEMA_VERSION = 1`, so it cannot open any store this build has touched. The number
 is `0.3.0.dev0`: two unreleased `MIGRATIONS` steps since `0.1.0`, and a schema bump is a minor bump
 (`design/distribution.md` §3, which also says why the minor matching the schema number is a
@@ -118,7 +162,7 @@ each method refuses by code, the refusal rate of a bounded write, the drop rate 
 **Three consequences that are not obvious from the brief and are easy to re-open.** `call` is
 **exempt from invariant 10** and best-effort, so the access log undercounts under contention while
 `knowledge_build` is best-effort on the *opposite* terms — a build has no latency budget, waits its
-full `busy_timeout`, and no row write is ever the reason a build reports failure. **A payload spill
+full wait budget for the write lock, and no row write is ever the reason a build reports failure. **A payload spill
 stays uninstrumented** (operator decision): deferred groups are how `spill_threshold` is judged
 instead. And **link coverage is not comparable across the schema 3 boundary**, because linkage is
 defined over `client_kind` and a session whose only `mcp` traffic was refused now counts as linked.
@@ -180,6 +224,10 @@ the first compaction: it goes here, and the tracker is the live view of it.
 `<project>/.zikaron/`, one per directory, no global tier. **`~/Trading/LeibaTrader` is the primary
 real-work store** — 252 memories and 116 planned groups as of 2026-09-13
 (`research/consolidation-payload-sizes.md`) — and every production report since M17 came from it.
+**It runs this repository's working tree**: its `.mcp.json` and its service both launch
+`/home/nathan/Zikaron/.venv`, an editable install, so every service or MCP client it starts imports
+whatever the tree holds at that moment — an uncommitted edit here is live there at its next start.
+Its service running M35's code was confirmed 2026-09-30 from `SigCgt` and both signal dumps.
 `~/Memory` is a sibling project's store: 31 long-term records, 26 journal entries, one consolidation
 run completed. It is **read-only for this agent**; writing there needs the operator's per-task
 say-so.
@@ -208,61 +256,33 @@ description now sits under that budget. Verified from a fresh session, not infer
 servers carries a full description, none name-only, and none truncated.**
 `design/harness.md` §§"MCP tools may arrive deferred" and "Tool descriptions are capped" carry the
 mechanism, the decision, what it costs in context and the unverified `instructions`-field alternative.
-**What is still owed:**
 
-- **Run the `bounds`-on-first-call query once M33 ships** — the share of sessions whose first call to each
-  verb is refused `bounds`, which before `call` wrote no event at all. It says how often an agent worked
-  from a guessed schema, which is what the rules were competing with. **It does not verify `alwaysLoad`**;
-  that was checked directly, by reading a session's tool list after the change.
-- **"the eight file reasons" is restated in five places and pinned in none.** `SKIP_REASON_KEYS` is
-  guarded against the design's table, so the *set* cannot drift; the spelled-out count in
-  `zikaron_knowledge_status`'s description, its `knowledge-index.md` mirror, two `counters.py` comments
-  and a test docstring would all be silently wrong the day a ninth reason lands.
-- **Both of kiro's compares are still whole** — the server entry, and the hook entry through
-  `writer._differing_zikaron_hooks`, which tests structural equality against the generated entry. So
-  the next added field *or* a changed `TIMEOUT_MS`/`HOOK_TIMEOUT_SECONDS` refuses every existing kiro
-  install's own upgrade: the defect `alwaysLoad` exposed in `.mcp.json`, fixed on both artefacts under
-  Claude Code and latent on both here. Neither is covered by a test. Fix is the predicate Claude Code
-  now uses — ownership is the command (plus `args` for a server entry), and anything outside it is an
-  upgrade to rewrite and report rather than a conflict. **The server refusal's wording goes with it**:
-  it says a difference *"means a previous install from a different interpreter"*, which a whole compare
-  makes false for a user's own added key — the hook refusal beside it already hedges with *"or an entry
-  you edited"*, and the predicate fix is what makes the unhedged form true.
-- **An install predating the key is stale until re-run**, and nothing *in the software* tells its user
-  so — `README.md`'s troubleshooting row is the only channel. A `doctor` check for the key's absence is
-  the obvious one and is not written.
+**What is still owed.** The installer items that were here are now M36, in §"Current state".
 
-**M35 is decided: pooled read connections — operator decision 2026-09-29, brief not yet written.**
-It fixes this: the service runs every client's transactions on one shared SQLite connection with
-nothing serializing them. While one request holds a transaction, another client's `BEGIN` fails
-`cannot start a transaction within a transaction` and is answered `internal error`. Reproduced live:
-five of eight searches failed while a 12 s plan ran; normally the window is milliseconds, which is
-why nothing had surfaced it. **The shape proposed with it**, for the brief to confirm: reads from a
-pool, each on its own WAL snapshot; writes on one connection behind an in-process lock, so writers
-never meet `busy_timeout` or `SQLITE_BUSY_SNAPSHOT` inside SQLite; and planning computed from a read
-snapshot and written in a short, re-validating transaction, since otherwise a plan still holds the
-writer for its whole 12 s. **What the brief has to weigh**: a reused pool rather than a connection
-per request, because each connection loads sqlite-vec and warms its own page cache; no long-held
-read snapshot, since one blocks WAL checkpoints; every handler takes `ctx.store.connection` today
-(`server.py`), so dispatch, the context's lifecycle and the test fixtures all move. Re-derive with
-`.venv/bin/python spikes/m34_service_staleness_probe.py <scratch-project-dir>`, which copies the
-M34 replay store there and runs all three perturbations — so it needs a store freshly made by
-`experiments/m34_gist_replay.py seed`: planning time scales with the unconsolidated journal, and
-the collision needs the plan to run for seconds.
+- **The `bounds`-on-first-call query ran 2026-09-29: 0 of 18** (session, verb) first calls refused
+  `bounds`, across all three real stores. That is only a day of `call` rows, 61 of them on
+  `~/Trading/LeibaTrader`, so it says nothing yet. **Re-run it 2026-10-29**, with the query below
+  (read-only, per store). It measures how often an agent worked from a guessed schema. **It does not
+  verify `alwaysLoad`**, which was checked directly, by reading a session's tool list.
+  `WITH c AS (SELECT session_id s, json_extract(detail,'$.method') m, json_extract(detail,'$.error_code') e, id FROM event WHERE kind='call' AND session_id IS NOT NULL) SELECT c.m, count(*), sum(coalesce(c.e,'')='bounds') FROM c JOIN (SELECT s, m, min(id) i FROM c GROUP BY s, m) f ON c.id=f.i GROUP BY c.m`
 
-**The LeibaTrader service wedged on 2026-09-29 and stayed wedged until restarted — cause unknown;
-M35 carries all three items below, the `SIGUSR1` dump included (operator decision 2026-09-29).** Service pid 3002334 started 20:08Z, answered a `remember` at 20:14:19Z
-(447 ms), then answered nothing: every push 20:18–20:24Z failed `transport` (`hook.log`), the store
-has no event in that window, and `service.log` has no line after start — no idle-stop, no error. A
-fresh service at 20:25:34Z served from its first call. The clients are not the cause: a timed-out
-socket is dropped and reconnected, and a killed or frozen-then-resumed service recovers without a
-restart (both verified by the probe below). **Proposed fix, in M35's scope since it is the same
-service loop:** (1) `faulthandler.register(SIGUSR1)` into `service.log`, so the next wedge yields
-every thread's stack from one `kill -USR1`; (2) a per-request start line at debug level, so a hang
-names the request it hung in, and a `stopping: reason=signal` line — a `SIGTERM` exit logs nothing
-today, where an idle one logs `reason=idle`, so a killed service and a wedged one read alike; (3) M35's pool itself, since the shared connection is the one
-unserialized resource every request touches and the likeliest place for a handler to wait forever.
-The dump is what confirms or refutes (3).
+**M35's defects left this pool: `design/build-plan.md` §M35 carries them** — every request's
+transactions on one unserialized connection, a plan holding the writer for its whole run, a deferred
+`BEGIN` that another process's commit refuses (the CI flake), a push the hook abandoned still
+recorded as shown (which inflates D30's repair-signal denominator), two builds starting together
+answering `database is locked` instead of `IndexerBusyError`, and the LeibaTrader wedge of
+2026-09-29 (pid 3002334, silent 20:14–20:25Z, cause unknown). Re-derive the first two with
+`.venv/bin/python spikes/m34_service_staleness_probe.py <scratch-project-dir>`, which needs a store
+freshly made by `experiments/m34_gist_replay.py seed`, since the collision needs a plan lasting
+seconds; the third with `python3 spikes/m35_busy_snapshot_probe.py <scratch-dir>`.
+
+**`tests/test_knowledge_cli_integration.py`'s `reaped` fixture spends 10 s in every teardown**, six
+tests a run. It `waitpid`s the service after killing it, but `lifecycle._spawn_detached` already reaps
+its own child on a daemon thread, which wins: every later `waitpid` raises `ChildProcessError`, which
+the fixture suppresses, so it polls until its deadline. Neither the fixture nor the spawn changed in
+M35. *Fix*: after the `SIGKILL`, poll `os.kill(pid, 0)` until `ProcessLookupError`, which does not
+depend on who reaps; a minute off every gate run. Proposed as its own chore commit after M35 lands,
+since M35's fence does not reach the test harness's reaping.
 
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
@@ -278,14 +298,6 @@ only as a merge target, which would leave most of them unchecked.
 
 **Cheap and never run, in dependency order.**
 
-- **Q8's embedder survey ran 2026-09-29** — `research/technical-embedders.md`. Code-trained embedders
-  do not beat `bge-small` on prose that contains identifiers. The candidates are general-purpose small
-  models: `ibm-granite/granite-embedding-30m-english` (30M, 384-dim, Apache-2.0, ONNX), at CoIR
-  StackOverflow-QA +5.9 and average +1.2, and `e5-small-v2` (33M, MIT, ONNX), one row above it in the
-  same table (average 47.1, StackOverflow-QA 83.5) though the survey did not screen it — **but every
-  figure, `bge-small`'s included, comes from IBM's own Granite paper**, the vendor-claim class the
-  survey was told to discount. **What would close it**: evaluated separately from M34 (operator
-  decision) — both candidates through Q8's own discrimination instrument in one run.
 - ~~**Q2's fusion sweep.**~~ **Already run and closed by M25 — do not re-propose it** (operator,
   2026-09-28). 252 cells over `rrf_k` × `fusion_depth` × **an arm weight**, 2,720 chunks of
   `cockroachdb/cockroach` `docs/RFCS/`: the best cell on `heading` — the only family whose queries are
@@ -371,7 +383,7 @@ returns them anyway.
 D1 was amended 2026-09-15: the knowledge index is Zikaron's own. `design/knowledge-index.md` is
 normative and APPROVED; M19–M25 landed. What is still open:
 
-**Ids are stable and retired rather than reused.** 4, 10, 11, 13, 15 and 18 closed and their numbers stay spent, so an `open question N` citation written anywhere in the corpus still means what it meant; the closed entries are in `FINDINGS-archive.md`. Ids sit outside the list marker because a Markdown renderer renumbers `1. 2. 3.` sequentially and would undo this.
+**Ids are stable and retired rather than reused.** 4, 8, 10, 11, 13, 15 and 18 closed and their numbers stay spent, so an `open question N` citation written anywhere in the corpus still means what it meant; the closed entries are in `FINDINGS-archive.md`. Ids sit outside the list marker because a Markdown renderer renumbers `1. 2. 3.` sequentially and would undo this.
 - **Q1** — **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires once
   per user message; the moment a memory is most needed arrives twenty tool calls later, when no
   injectable hook fires. Push covers task-framing recall only.
@@ -384,6 +396,10 @@ normative and APPROVED; M19–M25 landed. What is still open:
   than a tuning question**, and what stays open is narrow: RRF is rank-based, and a *score*-based fusion
   with per-arm normalisation was never tested. That is a design change amending D5, not a config sweep —
   do not re-propose the sweep. Detail: `design/retrieval.md`.
+  **A second model family shows the same thing (2026-09-29)**: `granite-embedding-125m`'s dense-only
+  gain, +0.0677 useful-recall@5 with a CI excluding 0, is exactly 0.0000 in the hybrid
+  (`research/granite-embedder-spike.md`). **So no embedder swap is worth proposing until the fusion
+  scheme changes**, and score-based fusion is the next thing to test if retrieval quality is reopened.
 - **Q3** — **Chunking follows entry length, not provenance.** 93 authored writes run 162–879 tokens, median
   273, against `chunk_max_tokens` 450. A record can also *become* chunked by amendment.
 - **Q5** — **Nothing tells the agent *why* a demoted memory is shown.** D27 keeps no reason-for-supersession
@@ -406,26 +422,6 @@ normative and APPROVED; M19–M25 landed. What is still open:
   genuinely hard-won material in the next session it wrote unprompted. That is a D1 question, not a
   prompt-wording one: widening scope to decisions invites every passing preference in, and leaving
   it invites the next argument to be had twice.
-- **Q8** — **Does model capacity help identifier discrimination?** Discrimination index 0.194–0.233 for all
-  four models; `bge-large − bge-small` is +0.029 against a preregistered 0.15 bar. fastembed serves
-  a quantized small against an unquantized large, so this compares artifacts, not capacity.
-  **And it never varied training domain**, which is the likelier lever: the four were general-purpose
-  English text embedders (`bge-small`, `bge-large`, `nomic`, one more), so the instrument tested scale
-  and family and not whether a model trained where identifiers and technical terms are dense scores
-  differently. Uniform 0.194–0.233 across four general-purpose models is weak evidence that ~0.23 is
-  a ceiling. **What gates a retest is servability**: a candidate must be fetchable, pinnable by revision
-  and digest, and ONNX under the M30 cold-start budget the way D19 and D36 require, which rules out a
-  hosted API on the same grounds as Jev.
-  **Q2 is a caveat on the payoff, not a prerequisite — corrected 2026-09-28.** An embedder that surfaced
-  identifier matches the lexical arm misses would put them in the ~72% of the pool only one arm returns,
-  which is what fusion discards; but M25 already swept that and closed it, so there is no Q2 work to do
-  first. The caveat stands: a dense-side gain may be erased at fusion whatever the embedder scores, and
-  only a change to the fusion *scheme* — a design change amending D5 — could alter that.
-  **The survey ran 2026-09-29** (`research/technical-embedders.md`), and it turned the axis around.
-  Training domain is not the lever: code-trained embedders score at or below `bge-small` on
-  StackOverflow-QA, the closest published proxy for prose containing identifiers. The one candidate is
-  a general-purpose model, `granite-embedding-30m-english`, whose margin rests on its vendor's own
-  paper. §"Owed work" says what would close it.
 - **Q9** — **Evaluation** (deferred by D14). Plan: `design/evaluation.md`, proposal not normative. No
   surveyed benchmark scores an end-task coding outcome; LoCoMo cannot score abstention; every
   published comparison in this space is vendor self-report. CTIM-Rover is a published negative

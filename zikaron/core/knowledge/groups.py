@@ -417,8 +417,7 @@ async def search_all(
     Returns:
         A response with one group per named corpus, ordered by best cosine, within the byte cap.
     """
-    await registry.ensure(db)
-    registered = await registry.list_all(db)
+    registered = await registry.lookup_all(db)
     wanted, unknown = _requested(registered, request.names)
     groups: list[AnyGroup] = [UnknownGroup(knowledge_base=name) for name in unknown]
     # Carried only when some name went unmatched: a caller whose names all resolved is being told

@@ -113,7 +113,9 @@ async def test_a_write_verb_naming_a_pending_group_answers_not_in_group(tmp_path
     """
     async with consolidator(tmp_path) as c:
         member = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        await planning.plan_groups(c.harness.store.connection, call=c.call())
+        await planning.plan_groups(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         group_id = (await c.groups())[0][0]
         with pytest.raises(ZikaronError) as raised:
             await verbs.discard(
@@ -142,7 +144,9 @@ async def test_a_merge_target_that_stopped_being_targetable_is_refused(tmp_path:
             gist=_RECORD[0], content=_RECORD[1], minute=1, degrees=0.0, tier=Tier.LONG_TERM
         )
         await c.write(gist=_A[0], content=_A[1], minute=2, degrees=10.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         assert served.anchor is not None
         await c.harness.retire(record)
@@ -184,7 +188,9 @@ async def test_a_promotion_returns_a_conflict_when_its_member_moved(tmp_path: Pa
     has since changed."""
     async with consolidator(tmp_path) as c:
         member = await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
-        served = await serving.next_group(c.harness.store.connection, call=c.call())
+        served = await serving.next_group(
+            c.harness.store.connection, pool=c.harness.store.pool, call=c.call()
+        )
         assert isinstance(served, ServedGroup)
         await c.amend(member, gist=_A[0], content="a primary agent got here first")
         outcome = await verbs.promote(

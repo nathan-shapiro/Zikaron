@@ -18,6 +18,7 @@ from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.indexing.writes import IndexingContext
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import CallParams, ConflictRecord, Rewrite
+from zikaron.core.store import ddl
 from zikaron.core.write import dedup
 from zikaron.core.write.tools import (
     Amended,
@@ -723,7 +724,7 @@ async def test_bad_supersession_rejection_commits_no_event_at_all(tmp_path: Path
 
 
 async def test_a_locked_store_during_remember_is_store_busy_not_index_failed(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Invariant 10's cross-cutting re-assertion for `write.tools.remember`'s own transaction
     wrapper: contention is an ordinary, reachable production outcome under real concurrent access,
@@ -737,10 +738,10 @@ async def test_a_locked_store_during_remember_is_store_busy_not_index_failed(
     mapping.
 
     A second connection holds a write transaction while this one tries to open its own, with the
-    waiting connection's `busy_timeout` lowered so the test does not sit out the real five seconds.
+    wait budget lowered so the test does not sit out the real five seconds.
     """
+    monkeypatch.setattr(ddl, "BUSY_TIMEOUT_MS", 50)
     async with harness(tmp_path) as h:
-        await h.store.connection.execute("PRAGMA busy_timeout = 50")
         async with aiosqlite.connect(h.store.path) as holder:
             await holder.execute("BEGIN IMMEDIATE")
             await holder.execute(

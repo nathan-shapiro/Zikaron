@@ -50,7 +50,13 @@ RESULTS = HERE / "results"
 RESULTS.mkdir(exist_ok=True)
 DB_PATH = HERE / "index_v2.db"
 
-DENSE_TAGS = ["bge-small", "bge-small-prefix", "bge-large-prefix", "nomic"]
+DENSE_TAGS = ["bge-small", "bge-small-prefix", "bge-large-prefix", "nomic",
+              # round 4 (PREREGISTRATION-R4.md)
+              "bge-small-fp32-prefix", "granite-30m", "e5-small", "granite-125m"]
+
+# Round 4: tag -> config suffix. Each gets a D_ (dense alone) and an H_ (RRF with L_A) row.
+R4_ARMS = {"bge-small-fp32-prefix": "small_fp32", "granite-30m": "granite30",
+           "e5-small": "e5small", "granite-125m": "granite125"}
 
 # name -> (family, description). The planned set; PREREGISTRATION section 7 forbids adding
 # unplanned contrasts without labelling them exploratory.
@@ -78,6 +84,8 @@ CONFIGS = [
     ("H_large",           "H", "RRF(L_A, bge-large prefix) - round-1 config 6"),
     ("H_nomic",           "H", "RRF(L_A, nomic) - round-1 config 7"),
 ]
+CONFIGS += [(f"{fam}_{sfx}", fam, f"R4: {tag} {'dense alone' if fam == 'D' else 'RRF with L_A'}")
+            for tag, sfx in R4_ARMS.items() for fam in ("D", "H")]
 
 # Declared contrasts: (name, arm_a, arm_b, what it isolates)
 CONTRASTS = [
@@ -99,6 +107,15 @@ CONTRASTS = [
     ("tokens_hybrid_isolated", "H_tok_w3", "H_tokchar_notok", "isolated tokens effect, in hybrid"),
     ("tokens_hybrid_confounded", "H_tok_w3", "H_small_prefix", "round-1 config 5 vs 4p"),
 ]
+# Round 4: R4.3 decides on the H_ vs H_small_prefix rows; R4.4 reports the rest.
+for _tag, _sfx in R4_ARMS.items():
+    CONTRASTS += [
+        (f"r4_{_sfx}_vs_small_hybrid", f"H_{_sfx}", "H_small_prefix", f"R4.3 DECIDING: {_tag}, deployed pipeline"),
+        (f"r4_{_sfx}_vs_small_dense", f"D_{_sfx}", "D_small_prefix", f"R4.4: {_tag}, dense alone"),
+    ]
+    if _sfx != "small_fp32":
+        CONTRASTS += [(f"r4_{_sfx}_vs_fp32_hybrid", f"H_{_sfx}", "H_small_fp32",
+                       f"R4.4 attribution: {_tag} vs unquantized bge-small, hybrid")]
 
 
 # Which dense models each config needs, so --only can skip loading models it will not use.
@@ -109,6 +126,7 @@ DENSE_TAGS_FOR = {
     "H_tokchar_notok": {"bge-small-prefix"}, "H_tok_w3": {"bge-small-prefix"},
     "H_tok_w3_nodup": {"bge-small-prefix"}, "H_large": {"bge-large-prefix"},
     "H_nomic": {"nomic"},
+    **{f"{fam}_{sfx}": {tag} for tag, sfx in R4_ARMS.items() for fam in ("D", "H")},
 }
 
 
@@ -158,6 +176,11 @@ def rank_for(cfg: str, db, qtext: str, qvecs: dict, depth: int) -> list:
     if cfg == "H_nomic":
         return F(B(db, "fx_text", qtext, (1, 1), depth),
                  D(db, qvecs["nomic"], "nomic", depth))
+    for tag, sfx in R4_ARMS.items():
+        if cfg == f"D_{sfx}":
+            return D(db, qvecs[tag], tag, depth)
+        if cfg == f"H_{sfx}":
+            return F(B(db, "fx_text", qtext, (1, 1), depth), D(db, qvecs[tag], tag, depth))
     raise KeyError(cfg)
 
 

@@ -596,7 +596,8 @@ class QueryShape:
 
 @dataclass(frozen=True, slots=True)
 class SurfaceCallDetail(EventDetail):
-    """`surface_call` — exactly one per push, including when nothing was returned."""
+    """`surface_call` — exactly one per push answered within its deadline, including when nothing
+    was returned; none for one answered `deadline_passed`."""
 
     kind: ClassVar[EventKind] = EventKind.SURFACE_CALL
 
@@ -884,10 +885,11 @@ class CallDetail(EventDetail):
     holding no refusal at all. Whoever raises one converts it, in a converter typed over both error
     enums so `mypy --strict` refuses a bare string at the call site.
 
-    `duration_ms` covers the handler alone and not envelope resolution, which every call pays alike;
-    a float, because an integer reads 0 for the cheapest verbs and makes them indistinguishable from
-    an unmeasured call. It is a population to compare against a control, never a figure to quote on
-    its own.
+    `duration_ms` spans what the caller waited on that differs between calls — the wait for its
+    connection, for `memory_surface` the parse of `deadline_at_ms`, and the handler — and not
+    envelope resolution, which every call pays alike; a float, because an integer reads 0 for the
+    cheapest verbs and makes them indistinguishable from an unmeasured call. It is a population to
+    compare against a control, never a figure to quote on its own.
 
     **No argument values, ever.** A query and a gist are user prose, and this store is plaintext on
     disk (`write-policy.md`'s secrets boundary); sizes and counts only.

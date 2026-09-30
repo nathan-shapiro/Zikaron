@@ -216,14 +216,14 @@ async def test_a_failure_after_both_tasks_exist_still_cancels_and_awaits_every_o
 async def test_a_context_close_failure_does_not_mask_an_earlier_setup_failure(
     tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`run()`'s own outer `finally: await ctx.close()` used to let a close failure **replace**
-    whatever exception was already propagating — the identical exception-masking class already
-    fixed once inside `ServiceContext.assemble` itself, but at a different call site: this is
-    `run()`'s own cleanup, which runs *after* `assemble` has already returned successfully,
-    against whatever failure happens later in `run()`'s own body. Forces both a
-    `loop.add_signal_handler` failure — which, now that the handlers go on before the bind, is the
-    earliest failure `run()`'s outer `finally` must preserve, reached with no socket bound and no
-    `except BaseException:` clause in the way — and a
+    """The outer `finally: await ctx.close()` that `run()` reaches through `_open_and_serve` used
+    to let a close failure **replace** whatever exception was already propagating — the identical
+    exception-masking class already fixed once inside `ServiceContext.assemble` itself, but at a
+    different call site: this is the service's own cleanup, which runs *after* `assemble` has
+    already returned successfully, against whatever failure happens later in the serving body.
+    Forces both a `loop.add_signal_handler` failure — which, now that the handlers go on before the
+    bind, is the earliest failure that outer `finally` must preserve, reached with no socket bound
+    and no `except BaseException:` clause in the way — and a
     `Store.close` failure, and asserts the *setup* failure is what a caller's own `except`
     catches — not the close failure that happened while handling it."""
     store_dir = tmp_path / ".zikaron"
@@ -553,7 +553,7 @@ async def test_signal_handlers_are_removed_after_a_fully_successful_signal_drive
 
     await main.run(sock_path, store_dir)
 
-    assert set(removed) == {signal.SIGTERM, signal.SIGINT}
+    assert set(removed) == {signal.SIGTERM, signal.SIGINT, signal.SIGUSR2}
     # The signal path's own unlink. From 3.13 a closing Unix server would remove the socket path
     # itself, at which point this assertion would stop distinguishing `run()`'s unlink from
     # asyncio's; `serve` switches that off wherever it exists, so this stays a statement about

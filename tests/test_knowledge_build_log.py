@@ -394,11 +394,11 @@ class TestWhatTheRowMayNotCost:
     ) -> None:
         """The driver arm, which no test driving real contention reaches.
 
-        A build waits its full `busy_timeout` rather than dropping its row, so contention *resolves*
-        instead of raising. What has to be told apart from it is the driver failure that will not
-        resolve: a lock means the row lands on a later build, a `disk I/O error` means the store is
-        failing, and swallowing the second as though it were the first is the one outcome that
-        leaves no trace of why.
+        A build polls for the write lock for its whole budget rather than dropping its row, so
+        contention *resolves* instead of raising. What has to be told apart from it is the driver
+        failure that will not resolve: a lock means the row lands on a later build, a `disk I/O
+        error` means the store is failing, and swallowing the second as though it were the first is
+        the one outcome that leaves no trace of why.
         """
         project = _project(tmp_path)
 
@@ -419,9 +419,8 @@ class TestWhatTheRowMayNotCost:
 
         A lock means the row will land on a later build and there is nothing for the operator to do,
         so reporting it would train them to ignore the line that matters. The code is **injected**
-        here rather than reproduced: `_write`'s docstring names the real route — this connection
-        holding a stale WAL snapshot makes the attempt an immediate `SQLITE_BUSY_SNAPSHOT` rather
-        than a wait — and arranging that would test the transaction helper instead of this arm.
+        here rather than reproduced: the real route is a lock held past the connection's whole
+        budget, and waiting that out would test the transaction helper instead of this arm.
         """
         project = _project(tmp_path)
 
@@ -438,30 +437,26 @@ class TestWhatTheRowMayNotCost:
         assert "could not record this build" not in capsys.readouterr().err
         assert _rows(project) == []
 
-    def test_a_success_write_that_fails_outside_the_guard_writes_no_failure_row(
+    def test_a_success_payload_that_cannot_be_built_changes_nothing_about_the_build(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Why the success write sits **after** the `try`/`except` and not at the end of its body.
+        """The completion callback runs inside `scan.run`'s `try`, so its guard must be whole.
 
-        `_write` guards the statement itself, so a driver failure there is already swallowed — what
-        placement decides is the rest of `succeeded()`, which is unguarded. Inside the `try`, a
-        failure building the payload would enter the failure catch, write a *second* row saying
-        `ok=false` for a build that **completed**, and re-raise: status 1 and a false failure row
-        over a built corpus.
+        A failure building the success payload must not reach the scan's failure path — which would
+        record a completed build `ok=false` and exit 1 — and must not be attempted again after the
+        lock's release, which is the ordering the callback exists for. So: status 0, no row at all,
+        and no second attempt.
 
-        Driven by making `succeeded` itself raise, which stands for any unguarded failure inside it:
-        the payload construction, or the attribution read. Making a *shared* dependency raise cannot
-        show this: it breaks `failed` too, so neither placement writes a row and the two are
-        indistinguishable. Verified by mutation, which is how that first attempt was found.
+        Driven through the payload construction itself rather than a shared dependency, which would
+        break the failure payload too and leave the two outcomes indistinguishable.
         """
         project = _project(tmp_path)
 
-        async def _explode(_self: object, _result: object) -> None:
+        def _explode(_self: object, _result: object) -> object:
             raise RuntimeError("the success payload could not be built")
 
-        monkeypatch.setattr(build_log.BuildLog, "succeeded", _explode)
-        with pytest.raises(RuntimeError):
-            _build(project)
+        monkeypatch.setattr(build_log.BuildLog, "_completed", _explode)
+        assert _build(project) == 0
         assert _rows(project) == [], "a completed build must not be recorded as a failed one"
 
     def test_a_row_write_that_fails_on_the_failure_path_leaves_the_refusal_as_the_outcome(
@@ -488,7 +483,8 @@ class TestWhatTheRowMayNotCost:
     ) -> None:
         """**A build waits where the access log refuses to, and the asymmetry is the point.** `call`
         declines because a caller is holding a response; a build has just spent minutes and that row
-        is the only record of them, so it takes its connection's ordinary `busy_timeout`."""
+        is the only record of them, so it polls for the write lock for the primitive's whole budget,
+        `ddl.BUSY_TIMEOUT_MS`."""
         project = _project(tmp_path)
         started = time.perf_counter()
         asyncio.run(_build_against_a_briefly_held_lock(project))

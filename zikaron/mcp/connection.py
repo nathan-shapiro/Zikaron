@@ -51,14 +51,16 @@ _MAX_ATTEMPTS = 2
 
 #: `connect_start_if_absent` hands back a socket whose timeout is still set to `lifecycle.py`'s
 #: own `_CONNECT_TIMEOUT_SECONDS` (1.0 s) — correct for *establishing* the connection, wrong for
-#: every ordinary request afterward: `zikaron/core/store/ddl.py`'s `PRAGMA busy_timeout = 5000`
-#: means a genuinely contended write may legitimately take up to 5 s to resolve (into either a
-#: success or a `store_busy` response, per `architecture.md`'s own error table), and every
-#: primary/consolidator RPC method but planning is a single such transaction with no other unbounded
-#: step — planning scales with the journal, and its callers pass their own timeout. A
-#: request timeout left at 1 s would cut that wait off first, misreporting a slow-but-successful
-#: (or a slow-but-honestly-`store_busy`) response as `AmbiguousMutationError` instead. Comfortably
-#: above the 5 s ceiling, with margin for ordinary scheduling jitter, rather than exactly at it.
+#: every ordinary request afterward. The service gives each transaction one wait budget,
+#: `ddl.BUSY_TIMEOUT_MS` (5 s), for its wait for the connection and for SQLite's write lock
+#: together, and a read one budget for its lease and its retry (`architecture.md` §"The service's
+#: connections"), so a contended call resolves — into a success or a `store_busy` — within that
+#: budget plus its own work; planning scales with the journal, and its callers pass their own
+#: timeout. A request timeout left at 1 s would cut that wait off first, misreporting a
+#: slow-but-successful (or a slow-but-honestly-`store_busy`) response as `AmbiguousMutationError`
+#: instead. Comfortably above the 5 s ceiling, with margin for scheduling jitter. The one call it
+#: does not cover is a knowledge write whose two transactions each wait nearly the whole budget and
+#: then both succeed.
 REQUEST_TIMEOUT_SECONDS = 10.0
 
 
@@ -278,8 +280,8 @@ class ServiceConnection:
         genuine uncertainty rather than silently resolving it in either direction.
 
         `timeout` bounds this one request's send and read. The default suits a method that is one
-        transaction under `busy_timeout`; a caller whose method is not — a consolidation plan runs
-        in time proportional to the journal — passes its own.
+        transaction under the service's wait budget; a caller whose method is not — a consolidation
+        plan runs in time proportional to the journal — passes its own.
 
         Raises:
             ZikaronError: whatever `_read_store_identity`/`connect_start_if_absent` raise while
@@ -307,14 +309,14 @@ class ServiceConnection:
                     # `asyncio.to_thread`, not a bare synchronous call: `_send_request`/
                     # `_read_response` block on the raw socket, and calling either directly here
                     # would hold the single-threaded event loop for as long as the service takes
-                    # to answer — including the full `PRAGMA busy_timeout = 5000` window a
-                    # contended write may legitimately need — starving every other coroutine on
-                    # this same loop for that entire wait. Measured directly: an earlier version
-                    # of this method called both synchronously, and a concurrent `asyncio.sleep`
-                    # in another task on the same loop was starved for the whole blocking wait
-                    # rather than resuming on schedule — the exact self-inflicted-deadlock shape
-                    # `coding-standards.md` §6 already documents for the service's own SQL calls,
-                    # reproduced here on the client side instead.
+                    # to answer — including the full 5 s wait budget a contended write may
+                    # legitimately need — starving every other coroutine on this same loop for
+                    # that entire wait. Measured directly: an earlier version of this method called
+                    # both synchronously, and a concurrent `asyncio.sleep` in another task on the
+                    # same loop was starved for the whole blocking wait rather than resuming on
+                    # schedule — the exact self-inflicted-deadlock shape `coding-standards.md` §6
+                    # already documents for the service's own SQL calls, reproduced here on the
+                    # client side instead.
                     #
                     # **Cancelling this `await` does not stop the worker thread underneath it.**
                     # `asyncio.to_thread` has no mechanism to interrupt a thread already inside a

@@ -1,4 +1,4 @@
-"""The two external read verbs: `search` (pull) and `surface` (push), each one transaction.
+"""The two external read verbs: `search` (pull) and `surface` (push), one transaction per attempt.
 
 `retrieval.md`'s two paths differ in three ways and share everything else. `surface` spends D12's
 five-gist budget on a user prompt and returns **ready-to-print text**, so the hook stays dumb;
@@ -7,13 +7,14 @@ widen eligibility to outright-retired rows. Neither reranks: D23's measured late
 exactly one affordable point on the push path, and reranking five candidates is operationally
 pointless.
 
-**Each call is one transaction**, and the instrumentation is inside it: both arms, the `chunk_count`
-the dense arm's coverage is compared against, the pool load, and the `event` rows. A read that
-writes its own instrumentation is a WAL snapshot upgrade, so a write committed by another process
-mid-call refuses the upgrade — which is `store_busy`, retryable, and exactly the stale-snapshot case
-`architecture.md` §Errors defines that code to cover. Any *other* driver failure has no Zikaron code
-and propagates: `index_failed` speaks of index maintenance and a rolled-back write, and a read
-performs neither.
+**Each attempt is one transaction**, and the instrumentation is inside it: both arms, the
+`chunk_count` the dense arm's coverage is compared against, the pool load, and the `event` rows. A
+read that writes its own instrumentation is a WAL snapshot upgrade, and one that has read is refused
+it at once, without waiting, when another connection holds the write lock or committed since its
+snapshot. So a refused first attempt is retried once from `BEGIN IMMEDIATE`, which waits for the
+lock within the read's budget; only a refused retry is `store_busy` (`retrieval.md` §"One read is
+one transaction"). Any *other* driver failure has no Zikaron code and propagates: `index_failed`
+speaks of index maintenance and a rolled-back write, and a read performs neither.
 
 `search` mints **no receipt** and returns **no version**, which is the same fact twice. A row the
 agent has only seen as a gist is a row it may not write, and holding a version would imply a licence
@@ -23,7 +24,7 @@ row, absent an own-write or conflict response for that exact row in this session
 
 import asyncio
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 import aiosqlite
@@ -46,6 +47,7 @@ from zikaron.core.retrieval.query import ExternalQuery
 from zikaron.core.retrieval.ranking import RankedMemory
 from zikaron.core.retrieval.retrieve import RetrievalSettings, retrieve
 from zikaron.core.store import transactions
+from zikaron.core.store.deadline import Deadline
 
 #: `schema.md` §Bounds: the **output** budget, not retrieval depth. Per-arm depth is `fusion_depth`
 #: and lives in configuration precisely so that asking for a different number of results cannot
@@ -67,6 +69,9 @@ class ReadCall:
     ctx: CallParams
     settings: RetrievalSettings
     encoder: Encoder
+    #: The request's one wait budget, shared with whatever it already waited for: the service's
+    #: budget, or for a push, its caller's own deadline less the margin.
+    deadline: Deadline = field(default_factory=Deadline.budget)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +152,7 @@ async def _prepare(text: str, *, call: ReadCall) -> ExternalQuery:
 
     Outside any transaction, like the write path's own preflight and for the same reason: a cold
     model load costs hundreds of milliseconds, and holding a transaction open across it would make
-    every concurrent writer's `busy_timeout` a function of model-load time.
+    every concurrent writer's wait for the lock a function of model-load time.
     """
     return await asyncio.to_thread(
         query.external_query,
@@ -158,15 +163,58 @@ async def _prepare(text: str, *, call: ReadCall) -> ExternalQuery:
     )
 
 
-def _failure_map(verb: str) -> transactions.FailureMap:
-    """Name contention `store_busy` and propagate everything else, per `architecture.md` §Errors.
+def _retry_failure_map(verb: str, deadline: Deadline) -> transactions.FailureMap:
+    """Name the retry's contention, and propagate everything else, per `architecture.md` §Errors.
+
+    The retry opens `IMMEDIATE` from no transaction, so its one contention refusal is its wait for
+    the write lock giving up, and that wait was cut at `deadline`. Cut at the caller's own deadline
+    it is lateness, `deadline_passed`; cut at the service's budget it is `store_busy`. Decided by
+    which bound it was, not by reading the clock again.
 
     A read has no `index_failed`: that code's contract names index maintenance and a rolled-back
     write, so reusing it here would be a lie in both halves, and inventing a `read_failed` would add
     a code no client can act on differently.
     """
+    code = ErrorCode.DEADLINE_PASSED if deadline.set_by_caller else ErrorCode.STORE_BUSY
     return lambda error: (
-        ZikaronError(ErrorCode.STORE_BUSY, verb=verb) if transactions.is_contention(error) else None
+        ZikaronError(code, verb=verb) if transactions.is_contention(error) else None
+    )
+
+
+def _refuse_if_late(deadline: Deadline, *, verb: str) -> None:
+    """`deadline_passed` if the caller's own deadline has been reached.
+
+    A no-op for the service's budget, which is contention's bound rather than lateness's.
+    """
+    if deadline.set_by_caller and deadline.passed():
+        raise ZikaronError(ErrorCode.DEADLINE_PASSED, verb=verb)
+
+
+async def _read_with_one_retry[T](
+    db: aiosqlite.Connection, work: transactions.Work[T], *, verb: str, deadline: Deadline
+) -> T:
+    """Run a read that writes its own events, retrying once from `BEGIN IMMEDIATE` on contention.
+
+    The first attempt is deferred and never waits: a read has read before its event insert, so its
+    upgrade to the write lock is refused at once, whether a writer holds the lock or committed
+    since the snapshot. The retry asks for the lock before it reads, so it waits — for what remains
+    of `deadline` — and can then be neither staled nor refused. The refused attempt rolled back,
+    events included, so the retry is idempotent.
+    """
+    try:
+        return await transactions.in_one_transaction(
+            db, work, failure=transactions.propagate, deadline=deadline
+        )
+    except aiosqlite.Error as error:
+        if not transactions.is_contention(error):
+            raise
+    _refuse_if_late(deadline, verb=verb)
+    return await transactions.in_one_transaction(
+        db,
+        work,
+        failure=_retry_failure_map(verb, deadline),
+        immediate=True,
+        deadline=deadline,
     )
 
 
@@ -188,9 +236,9 @@ async def search(
     Emits exactly one `search` event, inside the same transaction as the read it describes.
 
     Raises:
-        ZikaronError: `BOUNDS` if `limit` is outside 1-50; `STORE_BUSY` if the store was locked or
-            the read's snapshot went stale before its event could be written, which the caller may
-            retry; `BAD_SUPERSESSION` if the candidate pool's supersession edges are cyclic.
+        ZikaronError: `BOUNDS` if `limit` is outside 1-50; `STORE_BUSY` if the store stayed locked
+            past the read's budget through its one retry, which the caller may retry;
+            `BAD_SUPERSESSION` if the candidate pool's supersession edges are cyclic.
     """
     budget = _checked_limit(limit)
     external = await _prepare(text, call=call)
@@ -220,7 +268,7 @@ async def search(
         )
         return tuple(_hit(ranked) for ranked in returned)
 
-    return await transactions.in_one_transaction(db, work, failure=_failure_map("search"))
+    return await _read_with_one_retry(db, work, verb="search", deadline=call.deadline)
 
 
 async def _log_surface(
@@ -254,17 +302,26 @@ async def surface(
     base one — under which superseded rows are eligible and demoted, which is what D25's measurement
     requires and what the block's label then explains.
 
-    Emits one `surface_call` event always, including when nothing was returned, followed by one
-    `surface` event per returned memory sharing its `op_id`.
+    Emits one `surface_call` event whenever it answers, including when nothing was returned,
+    followed by one `surface` event per returned memory sharing its `op_id`.
+
+    **Past its caller's own deadline it commits nothing**: a `surface` row means the session was
+    shown the memory, and a push its caller has abandoned was shown to nobody. `call.deadline` is
+    checked before any work, after the embed, before a retry and immediately before `COMMIT`.
 
     Returns:
         Ready-to-print text, or `""` when nothing was eligible — no header, no empty block.
 
     Raises:
-        ZikaronError: as `search`, minus `include_retired`'s widening.
+        ZikaronError: as `search`, minus `include_retired`'s widening; and `DEADLINE_PASSED` when
+            `call.deadline` is its caller's own and has passed at a check, or cut its retry's wait.
     """
     budget = _checked_limit(limit)
+    _refuse_if_late(call.deadline, verb="surface")
     external = await _prepare(prompt, call=call)
+    # A push whose embed outlasted its deadline — a cold load — spends no read pass the check
+    # before `COMMIT` would only roll back.
+    _refuse_if_late(call.deadline, verb="surface")
 
     async def work(connection: aiosqlite.Connection) -> str:
         retrieved = await retrieve(
@@ -290,6 +347,9 @@ async def surface(
             memory_uuid=None,
         )
         await _log_surface(connection, rows=returned, call=call)
-        return block.render(returned)
+        text = block.render(returned)
+        # Last, so rows for a push nobody is waiting for roll back rather than count as shown.
+        _refuse_if_late(call.deadline, verb="surface")
+        return text
 
-    return await transactions.in_one_transaction(db, work, failure=_failure_map("surface"))
+    return await _read_with_one_retry(db, work, verb="surface", deadline=call.deadline)

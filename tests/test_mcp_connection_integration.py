@@ -163,7 +163,7 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
     """`connect_start_if_absent` hands back a socket whose timeout is set for the *connect*
     phase alone (`lifecycle._CONNECT_TIMEOUT_SECONDS`, 1 s) — `ServiceConnection` must reset it
     before using the same socket for ordinary requests, since a genuinely contended write may
-    legitimately take up to `PRAGMA busy_timeout = 5000`'s full 5 s to resolve
+    legitimately take up to `ddl.BUSY_TIMEOUT_MS`'s full 5 s to resolve
     (`zikaron/core/store/ddl.py`), and a 1 s request timeout would cut that wait off first. This
     holds the store's own write lock for real, for longer than 1 s but less than 5 s, via a raw
     `aiosqlite` connection racing an ordinary MCP `remember` call — proving the call's real
@@ -213,6 +213,6 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
     )
     assert elapsed < hold_seconds + 2.0, (
         f"the request took {elapsed:.1f}s — suspiciously long for a lock held only "
-        f"{hold_seconds}s, suggesting it waited out the service's own busy_timeout instead of "
+        f"{hold_seconds}s, suggesting it waited out the service's own wait budget instead of "
         "the holder releasing when expected"
     )

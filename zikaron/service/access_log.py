@@ -7,8 +7,8 @@ the table rather than because somebody remembered.
 
 **It is best-effort, and that is a mechanism rather than an intention.** Every connection the store
 opens waits `ddl.BUSY_TIMEOUT_MS` for the write lock, and this row is attempted on the response path
-of a caller with no stake in the lock it needs. So the writer owns a connection of its own, opened
-with that timeout at zero, and drops the row rather than waiting: losing an audit row is a
+of a caller with no stake in the lock it needs. So the access log owns a connection of its own,
+opened with that timeout at zero, and drops the row rather than waiting: losing an audit row is a
 measurement gap, and holding a response behind an unrelated lock is not. The access log therefore
 undercounts under contention, by construction, and the semantic kinds remain the authority on what
 happened to the store.
@@ -48,11 +48,10 @@ class AccessLog:
     connection closed out from under this writer becomes, and a caller never has to ask which it
     holds.
 
-    **The connection is private rather than the store's own**, because the pragmas that make this
-    write cheap are per-connection and toggling them on a shared one would leave them applied to
-    whatever other handler's statement ran in that window — turning an unrelated caller's write into
-    a spurious `store_busy`. What is borrowed from `core/knowledge/counters.py` is its contention
-    swallow, not its toggle, which is safe only because that caller owns its connection.
+    **The connection is private rather than the store's writer**, because on the writer the row
+    would queue behind the writer's lock — which serializes every transaction on that connection —
+    and wait out whatever write held it, on the caller's response path. What is borrowed from
+    `core/knowledge/counters.py` is its contention swallow.
     """
 
     _connection: aiosqlite.Connection | None
@@ -135,12 +134,13 @@ class AccessLog:
             if connection is None:
                 return
             # Validated **before** the transaction, which is what lets the two failure dispositions
-            # below be told apart. `EventSpec.validate` raises `ValueError`, and so does a statement
-            # on a connection `transactions.finalize` has closed — but a refused payload says
-            # nothing about the next row, where a closed connection fails every one. Inside the
-            # transaction the two would be one `except`, and a single bad payload would switch the
-            # log off for the process. **After** the check above, so a stopped log validates nothing
-            # and cannot report a payload from a writer the design says writes nothing.
+            # below be told apart. `EventSpec.validate` raises `ValueError`, and a connection
+            # `transactions.finalize` has closed is refused with `WriterClosedError` — both land in
+            # `except Exception` below, but a refused payload says nothing about the next row, where
+            # a closed connection fails every one. Inside the transaction the two would be one
+            # `except`, and a single bad payload would switch the log off for the process. **After**
+            # the check above, so a stopped log validates nothing and cannot report a payload from a
+            # writer the design says writes nothing.
             try:
                 EVENT_SPECS[detail.kind].validate(detail.as_detail())
             except ValueError:
@@ -153,9 +153,10 @@ class AccessLog:
                     self._report("could not write a call event")
             except Exception:
                 # Two causes, one disposition. `finalize` closed this connection after a rollback it
-                # could not complete, and the next statement on a closed one raises; or the failure
-                # is one no layer below named. Reopening would retry against transaction state that
-                # could not be repaired, so the log stops and a restart restores it.
+                # could not complete, and the transaction primitive refuses a closed one with
+                # `WriterClosedError`; or the failure is one no layer below named. Reopening would
+                # retry against transaction state that could not be repaired, so the log stops and a
+                # restart restores it.
                 #
                 # Closed before the field is cleared, because on the second cause the connection is
                 # still open and `aiosqlite`'s worker thread is not a daemon — abandoning it keeps

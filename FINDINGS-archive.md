@@ -3250,6 +3250,18 @@ Plan:
 
 
 ## References
+- **M35 brief** — `reviews/m35-brief-review.md` (the review trail, APPROVED) and
+  `reviews/m35-brief-perturbation.md` (the interruption × writer × connection walk the brief's
+  requirements came out of). Measurements: `spikes/m35_busy_snapshot_probe.py`,
+  `spikes/m35_read_upgrade_probe.py`.
+- **M35 implementation** — `reviews/m35-review.md` (the review trail, APPROVED) and
+  `research/m35-implementation-evidence.md`: the probes against a true HEAD control, the commit-path
+  distribution `DEADLINE_MARGIN_MS` is set from, the warm-latency and footprint figures, and every
+  guard's mutation. Harnesses: `experiments/m35_commit_path_margin.py`, `spikes/m35_warm_and_footprint.py`.
+- **Granite and e5 against the shipped bge-small (2026-09-29)** — `research/granite-embedder-spike.md`,
+  harness round 4 in `experiments/embedder-precision/` (`PREREGISTRATION-R4.md`, `custom_models.py`,
+  `r4_report.py`). No candidate clears the swap gate; Q8 closed; a second instance of Q2.
+  Candidates from `research/technical-embedders.md` (CoIR figures from arXiv:2502.20204, IBM's own).
 - **M34, a headline carries no verdict** — `reviews/m34-implementation-review.md` (the
   implementation), `reviews/m34-prose-review.md` (the shipped agent-facing text, three rounds, the
   third refuted and reverted), `research/m34-gist-form-replay.md` (the replay evidence).
@@ -4967,6 +4979,20 @@ question — the heading above says when the first batch moved, not when every e
     group becomes `deferred`, so `spill_threshold` is judged by deferred groups rather than by a
     spill count. `design/schema.md` §"What is instrumented, what is not, and why" is normative, and
     a reader tempted to add the spill event should change that paragraph rather than the code.
+
+8. **Does model capacity help identifier discrimination?** Discrimination index 0.194–0.233 for
+   four general-purpose embedders; `bge-large − bge-small` +0.029 against a preregistered 0.15 bar.
+   Two confounds were left: quantized small against unquantized large, and training domain never
+   varied. **CLOSED 2026-09-29, no.** The survey (`research/technical-embedders.md`) found that
+   code-trained embedders are not the lever on prose containing identifiers. The round-4 spike
+   (`research/granite-embedder-spike.md`, preregistered in
+   `experiments/embedder-precision/PREREGISTRATION-R4.md`) measured the survey's candidates on this
+   project's instruments. DI is 0.16–0.24 across seven artifacts, and the largest model
+   (granite-125m) scores lowest. Shipped quantized and fp32 bge-small are identical on every task
+   metric, so quantization was never the confound. No candidate clears the swap gate in the deployed
+   hybrid, and a significant dense-only gain is erased by RRF again, which moves the lever to Q2's
+   fusion scheme. A new embedder is worth re-testing only after fusion changes, through the same
+   harness (`r4_report.py` applies the gate).
 
 
 ## Closed priority items and the Amazon Q source traces (moved out of FINDINGS 2026-09-20)
@@ -6850,3 +6876,23 @@ from it and the installer said nothing — found in `~/Dividends` 2026-09-27 wit
 warm service, 10 pushes and zero memories. The install and `zikaron doctor` now both report it. That
 project's own agent was granted `mcp__zikaron` the same day, and its store's first memory lands about
 five hours later, which is what confirms the allowlist was the cause rather than a coincidence.
+
+**What `8ce198f` carried** (moved out of FINDINGS 2026-09-29, when M34 landed): M33's access log *and*
+the deferred-tool-loading work on top of it, since the two were entangled in one tree and
+`test_ddl.py` reads `schema.md` verbatim. Review trails: `reviews/m33-implementation-review.md` and
+`reviews/always-load-review.md`, both APPROVED. The second half shipped `alwaysLoad` on both
+`.mcp.json` servers, four tool descriptions rewritten under `DESCRIPTION_BUDGET`, and ownership rather
+than equality as what refuses a Claude Code artefact, with every loss reported on both the merging and
+`--force` paths. `design/harness.md` §§"MCP tools may arrive deferred" and "Tool descriptions are
+capped" and `architecture.md` §"The install contract" are normative.
+
+## M34 as built (moved out of FINDINGS 2026-09-29, once it landed as `c66295f`)
+
+Q22's form rule — *a headline carries no verdict* — on `remember`, `amend` and `promote`'s
+descriptions and the consolidator prompt, plus the consolidator's 300 s planning timeout. The brief is
+`design/build-plan.md` §M34; the evidence is `research/m34-gist-form-replay.md`: the rule held wherever
+the consolidator wrote a gist, leaked through in-place promotion until `promote`'s description stated
+the condition at the point of decision, and passed at 7 in 105 by reading. A clause to spare causal
+"so" symptoms was replayed, let verdicts back through, and was withdrawn. Review trails:
+`reviews/m34-implementation-review.md` (five rounds, APPROVED) and `reviews/m34-prose-review.md`.
+Reinstalled the same day into `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory`.

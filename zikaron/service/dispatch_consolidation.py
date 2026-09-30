@@ -13,6 +13,7 @@ before constructing that type rather than letting an avoidable `ValueError` reac
 protocol-level internal-error fallback for a case the design already has a name for.
 """
 
+import asyncio
 from dataclasses import dataclass
 
 import aiosqlite
@@ -33,7 +34,8 @@ from zikaron.core.events import ClientKind
 from zikaron.core.records.memory import Rewrite
 from zikaron.service.context import ServiceContext
 from zikaron.service.envelope import ResolvedEnvelope
-from zikaron.service.params import Handler, call_params, require_int, require_object, require_str
+from zikaron.service.methods import Access, Method
+from zikaron.service.params import call_params, require_int, require_object, require_str
 from zikaron.service.serialize import (
     ConflictRecordJson,
     GroupRecordJson,
@@ -185,8 +187,17 @@ async def next_group(
     params: dict[str, object],  # noqa: ARG001 — every `Handler` shares this signature; this method
     # takes no params of its own, but the dispatch table's uniform call shape still passes one.
 ) -> ServedGroupResult | RunDoneResult | BusyResult:
-    """`memory_next_group() -> ServedGroup | {done: true} | {busy: true, ...}`."""
-    outcome = await serving.next_group(db, call=_consolidation_call(ctx, envelope))
+    """`memory_next_group() -> ServedGroup | {done: true} | {busy: true, ...}`.
+
+    Waits for the model to finish loading before it takes the writer: the serve embeds inside its
+    transaction, and a cold load there would hold SQLite's write lock for seconds while every other
+    writer met its budget. The wait is `failure()`, which blocks until the load ends and has no side
+    effect; a failed load raises at the embed regardless, so its value is not needed.
+    """
+    call = _consolidation_call(ctx, envelope)
+    if ctx.encoder_load is not None:
+        await asyncio.to_thread(ctx.encoder_load.failure)
+    outcome = await serving.next_group(db, call=call, pool=ctx.store.pool)
     if isinstance(outcome, RunDone):
         return RunDoneResult()
     if isinstance(outcome, Busy):
@@ -221,7 +232,9 @@ async def plan_groups(
     `architecture.md`'s whole argument for why tool omission is what D32 relies on rather than a
     socket-level boundary.
     """
-    run = await planning.plan_groups(db, call=_consolidation_call(ctx, envelope))
+    run = await planning.plan_groups(
+        db, call=_consolidation_call(ctx, envelope), pool=ctx.store.pool
+    )
     return PlanGroupsResult(run_id=run.run_id, status=str(run.status))
 
 
@@ -388,10 +401,10 @@ async def consolidator_discard(
 #: things: the RPC surface section is the one place the document states the actual wire method name,
 #: and it is unambiguous — a client built against it would otherwise receive `METHOD_NOT_FOUND`
 #: for every write.
-CONSOLIDATOR_METHODS: dict[str, Handler] = {
-    "memory_plan_groups": plan_groups,
-    "memory_next_group": next_group,
-    "memory_apply_merge": consolidator_merge,
-    "memory_apply_promote": consolidator_promote,
-    "memory_apply_discard": consolidator_discard,
+CONSOLIDATOR_METHODS: dict[str, Method] = {
+    "memory_plan_groups": Method(plan_groups, Access.WRITE),
+    "memory_next_group": Method(next_group, Access.WRITE),
+    "memory_apply_merge": Method(consolidator_merge, Access.WRITE),
+    "memory_apply_promote": Method(consolidator_promote, Access.WRITE),
+    "memory_apply_discard": Method(consolidator_discard, Access.WRITE),
 }

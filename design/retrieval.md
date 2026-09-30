@@ -244,13 +244,34 @@ diverge.
   a read has none — but because the arm diagnostics describe *this* snapshot, and a separately committed event
   could report a depth against a store that had already moved. It also means a read has exactly one outcome:
   either the caller gets rows and the log gets its `surface_call`, or neither happens.
-- **The cost is a real one and it is the same cost every write already pays.** A read that writes is a WAL
-  snapshot upgrade, so a write committed by another process between the first probe and the event insert
-  refuses the upgrade immediately, without the busy handler running. That is `−32020 store_busy` — which
-  `architecture.md` §Errors already defines to cover exactly this stale-snapshot case — and it is retryable,
-  and on the push path the hook logs it to `hook.log` and relays it to the model rather than retrying. The
-  alternative, taking the write lock up front for every read, trades a rare retry for serializing every read
-  behind every writer.
+- **The cost is a real one, and a read pays it once before it is paid for.** A read runs on a connection of
+  its own, leased from the service's read pool (`architecture.md` §"The service's connections"), in a
+  deferred transaction. A read that writes is a WAL snapshot upgrade, and SQLite runs the busy handler for a
+  write-lock request only from a connection with no transaction open — which a read that has probed is not.
+  So the upgrade is refused at once, without waiting, both when another connection **holds** the write lock
+  (primary `SQLITE_BUSY`) — the service's own writer in a `remember`, `fetch` or consolidator transaction,
+  another process's commit in progress — and when one **committed** since the read's snapshot
+  (`SQLITE_BUSY_SNAPSHOT`). The alternative, taking the write lock up front for every read, trades a rare
+  retry for serializing every read behind every writer.
+- **So a `search` or `surface` refused for contention, by either code, is retried once, from `BEGIN
+  IMMEDIATE`.** A deferred retry would meet a held lock exactly as the first attempt did, and a writer's
+  transaction routinely outlasts a read pass. Opened `IMMEDIATE`, the retry asks for the lock before it
+  reads, so it waits for the writer and can then be neither staled nor refused. The refused attempt rolled
+  back, events included, so the retry is idempotent. Only a refused retry answers `−32020 store_busy`, which
+  `architecture.md` §Errors defines to cover both cases and a caller may retry; on the push path the hook
+  logs it to `hook.log` and relays it to the model rather than retrying. The cost is serializing retried
+  reads behind the writer and behind each other while a writer is active — each retry holds the write lock
+  for its pass — bounded by the pool's size times one read pass. The retry is the service's because the
+  hook makes one attempt and never a second (`architecture.md` §"Degraded modes"), so a push refused here
+  would otherwise be a skipped injection.
+- **A read has one wait budget**, `ddl.BUSY_TIMEOUT_MS` from its dispatch, covering its wait for a pool
+  lease and its retry's wait together: the retry polls for the write lock only for what the lease wait and
+  the query's embed left (`architecture.md` §"The service's connections"). So an embed that outlasts the
+  budget — a cold model load — leaves the retry no wait,
+  where a write's budget starts at its own `BEGIN`, after its embed. A `surface` carrying `deadline_at_ms`
+  takes the budget from its caller's deadline instead, less the margin, and past it answers
+  `deadline_passed` and commits nothing (`architecture.md` §"A push the agent never saw is never recorded as
+  shown").
 
 **The retrieval core itself neither begins nor commits.** `search` and `surface` own the transaction; the
 algorithm they call is a neutral form, because the internal-query consumers compose it into a transaction they

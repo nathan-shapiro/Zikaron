@@ -20,6 +20,14 @@ relabelling. **Rounds 2 and 3 together are the current answer**; round-1 code an
 retained unchanged for audit. Jump to "Round 2: what the independent review changed" and then
 "Round 3" if you only want the current state.
 
+**Round 4 (2026-09-29)** added four artifacts fastembed does not carry: granite-30m and -125m,
+e5-small-v2, and an fp32 bge-small control. They are registered in `custom_models.py`, which
+`retrieval.py` imports. It is preregistered in `PREREGISTRATION-R4.md` and written up in
+`../../research/granite-embedder-spike.md`. Run it with
+`eval_v2.py --out results/eval_r4.json`, then `twin_counterfactual.py --r4`, then `r4_report.py`.
+`r4_report.py` refuses to read a candidate until every round-3 figure reproduces bit-identically.
+`r4_latency.py` exists but was not run (amendment A2).
+
 ## Why this exists
 
 `research/embedding-models-technical-prose.md` established that **no published study measures
