@@ -10,13 +10,13 @@ that can be missing, mismatched or stale relative to the code that writes them, 
 ships with the code by construction. `zikaron/install/writer.py` writes them out; nothing reads them
 back.
 
-**Three prohibitions are stated in both this prompt and the write policy, deliberately.** The
-consolidator is a separate agent with no `agentSpawn` hook, so it never sees the injected write policy —
-it authors long-term prose with nothing else telling it not to record secrets, not to write orders,
-and to shape a gist as a cue. `tests/test_install_assets.py` asserts all three appear in both texts
-as a *property*, rather than asserting one is a copy of the other, because the two audiences differ:
-the primary agent is told how to decide what to record, and the consolidator how to rewrite what
-already was.
+**The authoring rules are stated in both this prompt and `zikaron_memory_remember`'s description,
+deliberately.** The write policy defers every headline rule to that description, and the consolidator
+never sees either — it has no `agentSpawn` hook and no primary tools — so it authors long-term prose
+with nothing else telling it the rules. `tests/test_install_assets.py` pins each shared rule on both
+surfaces as a *property*, rather than asserting one is a copy of the other, because the two
+audiences differ: the primary agent is told how to decide what to record, and the consolidator how
+to rewrite what already was.
 
 **The skill's `description` is assembled from fragments so it stays one physical line.** It is what
 kiro loads at startup to decide whether the skill is relevant, and a single-line plain YAML scalar
@@ -27,8 +27,8 @@ Code addresses an MCP tool as `mcp__<server>__<tool>` and the model sees that st
 (`research/claude-code-installer-probe.md` §6), so a bare `zikaron_memory_next_group` there names a
 tool that does not exist — and a model told to call a tool it cannot find improvises rather than
 failing.
-Two copies of ~200 lines of prose is the alternative and it is worse: the three shared prohibitions
-would drift silently between them. So there is one constant and a mechanical rewrite, guarded by
+Two copies of ~200 lines of prose is the alternative and it is worse: the shared rules would drift
+silently between them. So there is one constant and a mechanical rewrite, guarded by
 `_guard_known_tools` so that a name the rewrite does not recognise raises at build time rather than
 passing through untouched.
 """
@@ -98,9 +98,14 @@ or one of its `candidates`; nothing else is reachable. The absorbed journal rows
 point at the target.
 
 **`zikaron_memory_promote(group_id, gist, content, absorb)`** — make a long-term record out of entries with
-no good home. Pass exactly one entry to absorb and repeat its gist and content byte-for-byte, and
-that entry is promoted in place rather than copied; otherwise a new record is created and every
-absorbed entry retired against it.
+no good home. Ordinarily a new record is created from the gist and content you pass, and every
+absorbed entry is retired against it, pointing at the record. One case differs: absorb exactly one
+entry and repeat its gist and content byte-for-byte, and that entry is promoted in place — its tier
+flips, no prose is written, and its gist reaches long-term as its author wrote it, so nothing under
+"Authoring gists and content" below reaches it. That form fits an entry whose gist and content
+already satisfy every rule there. An entry whose gist needed any change, however small, is promoted
+as a new record, and nothing is lost by that: it is retired pointing at the record that carries the
+corrected text.
 
 **`zikaron_memory_discard(group_id, absorb, reason)`** — retire entries not worth keeping, with a short
 reason for the log. Nothing replaces them.
@@ -128,8 +133,30 @@ because the record that results still looks useful and is not.
 ## Authoring gists and content
 
 The **gist** is one line, and its only job is to let a future agent decide whether to read further.
-Lead with the observable symptom or situation rather than the conclusion: "integration tests flake on
-CI unless PGHOST is set" beats "notes on test configuration".
+Lead with the observable symptom or situation: "integration tests flake on CI unless PGHOST is set"
+beats "notes on test configuration".
+
+**A gist carries no verdict.** Keep the symptom and drop the conclusion drawn from it — the clause
+after "so", "therefore" or "which means", or a bare ruling such as "is wrong", "cannot work" or
+"must". "The deploy script exits 0 when its health check times out" is a gist; "…, so its exit code
+proves nothing" is the record's conclusion, and it goes in the content. A future agent that reads
+the verdict in the line repeats it as the finding and leaves the record unread, where the reasons,
+limits and exceptions are; a line that names the situation gets the record read when it looks
+relevant. The boundary is what was observed against what the writer made of it: the first is the
+gist, the second is the verdict.
+
+**Every gist you write passes through this rule, and nothing else applies it.** The agents who wrote
+these entries were asked for the same form, and many entries still arrive as verdicts; the gist you
+write is the one that lasts. That covers the gist you give a promoted record and the gist you give a
+merge target, whose existing gist may itself be a verdict whether or not the entries changed what it
+says. The one gist you do not write is an entry's own, promoted in place: that form changes no
+prose, and `zikaron_memory_promote` above says which entries it fits.
+
+**Taking the verdict out of the gist softens nothing.** The content states the conclusion in full,
+at the strength the entries gave it: "silently corrupts the store" stays "silently corrupts the
+store" and does not become "may affect". Severity is the finding, and a record that lost it while
+gaining a better gist is worse than the entries it replaced. A condition is not a verdict either:
+"unless PGHOST is set" and "until the migration lands" stay in the gist, as the rule below requires.
 
 **Length: aim for one sentence of about 20 to 25 words.** Two bounds apply and the first you cross rejects the write: 64 tokens by default
 and a fixed 1,024 characters, which only binds if the gist carries a long

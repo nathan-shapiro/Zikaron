@@ -17,10 +17,8 @@ Given a research brief (a question plus context on why it matters), find and syn
 - **Memory science**, where it informs mechanism design: consolidation, cue-dependent retrieval, interference and forgetting, schemas, salience gating.
 
 ## Method
-1. Decompose the brief into 2-5 focused search queries.
-2. Use **WebSearch** to find candidates. Prefer primary and authoritative sources: peer-reviewed papers, arXiv, official product and API documentation, engineering blogs from the teams that built the system, release notes, and the source code of open-source agents. For 'how does X do it' questions, primary documentation and source beat secondary commentary — and clearly label anything that is a third-party reconstruction or reverse-engineering rather than vendor-confirmed. This field moves monthly, so favor recent material and record publication dates, while including seminal references where they matter.
-3. Use **WebFetch** to read the most promising sources closely. Verify claims against the source, not just the search snippet.
-4. Note consensus versus open debate, methods and evidence quality (especially whether a claimed improvement was measured or merely asserted), and how each finding bears on the brief. Distinguish benchmarked results from vendor marketing. Flag gaps and promising leads.
+Prefer primary and authoritative sources: peer-reviewed papers, arXiv, official product and API documentation, engineering blogs from the teams that built the system, release notes, and the source code of open-source agents. For 'how does X do it' questions, primary documentation and source beat secondary commentary — and clearly label anything that is a third-party reconstruction or reverse-engineering rather than vendor-confirmed. This field moves monthly, so favor recent material and record publication dates, while including seminal references where they matter.
+Read the sources you rely on in full with **WebFetch** and verify each claim against the source, not the search snippet. Note consensus versus open debate, methods and evidence quality (especially whether a claimed improvement was measured or merely asserted), and how each finding bears on the brief. Distinguish benchmarked results from vendor marketing. Flag gaps and promising leads.
 
 ## Output contract
 Produce two artifacts:

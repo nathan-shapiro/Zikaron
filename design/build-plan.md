@@ -4405,6 +4405,139 @@ project's documents; that is work in that repository, and this milestone stops t
 written. **Not** the harness transcript — Q16's external answer is Claude Code's and decays with
 `cleanupPeriodDays`; this milestone makes the *store* answer what the store can.
 
+## M34 — A headline carries no verdict
+
+Normative: `design/write-policy.md` §1 "Why this text is shaped the way it is", which carries the
+symptom-first rule; `design/consolidation.md` §"Consolidator identity and model";
+`design/harness.md` §"Tool descriptions are capped". `FINDINGS.md` Q22 is the problem statement and
+Q21 the instrument; read both before this.
+
+**Gists are verdicts, and the verdict is what gets quoted instead of the record being read.** 93 of
+169 live long-term gists on `~/Trading/LeibaTrader` carry a conclusion marker by `VERDICT_MARKER` in
+`experiments/m34_gist_replay.py` — a screen that over-counts causal clauses, so reading decides — and
+the common shape is *symptom, so verdict*. The write policy asks for the symptom **first**, and that instruction is obeyed; nothing
+has ever said the verdict should be **absent**. That makes this missing information rather than an
+ignored instruction, which is the one case where prose has been measured to bind. The target, in the
+operator's wording: **a headline carries no verdict, and sparks the curiosity to read the record when
+it looks relevant.** The concrete rule is *keep the symptom, drop the `so` clause*, which keeps D13's
+triage intact.
+
+### The surfaces, and why each
+
+**The consolidator, at merge and promote — as the gatekeeper of the form, not as a repair pass.** It
+already rewrites gists there, so giving it the rule makes it the one point where a verdict is checked
+and corrected on everything that passes through. It is the only enforcement point the system has: D2
+bars a gate on the write path, and a tool description is advisory. Its text lives in
+`zikaron/install/assets.py` §"Authoring gists and content".
+
+**`zikaron_memory_remember`'s description, because D10 makes consolidation manual and rare**, so a
+record lives as a verdict for a long time before any consolidator sees it, and one that never groups
+is never checked. It is also the **only** write-time carrier of headline rules: both `agentSpawn`
+policies in `zikaron/hook/write_policy.py` defer to it (*"Headline and content rules are in
+zikaron_memory_remember's description"*), so there is no third surface to keep in step.
+`zikaron_memory_amend` inherits the rule through its own *"Both follow the rules in
+`zikaron_memory_remember`"*, and names it in its summary, because an amend is where a verdict gets
+corrected into another verdict.
+
+**`remember`'s description sits at the edge of `DESCRIPTION_BUDGET`** (1,894 of 1,900 characters
+after this milestone), so the rule displaced text rather than extending it: the weakest parts of
+the length sentence, one of two expiry examples, and a restated mechanism. The `3e1f6c7a` exemplar
+sat well inside the length bound while still being a verdict, so length is not the lever. **Kept**:
+the uuid-citation paragraph, the one write-side sentence with evidence of changing behaviour, and
+the `Returns` block, which truncation ate before. Re-derive the length with the command in
+`design/harness.md` §"Tool descriptions are capped".
+
+**`zikaron_memory_promote`'s description, because in-place promotion writes no prose.** The mechanism
+is unchanged: a row's tier flips only when the gist and content are byte-identical, as it always has.
+But that form carries the entry's own gist to long-term with no authoring rule applied, and the
+replay measured it as the one path verdicts leaked through (`research/m34-gist-form-replay.md`). So
+the description, and the skill's promote paragraph, say the in-place form fits only an entry that
+already satisfies every rule; any other is promoted as a new record, its entry retired against it —
+a new uuid, which the citation rule already tells agents not to hold.
+
+**`memory-reviewer` writes the shipped text for every surface, verbatim** — operator decision, as in
+M32 and M33. This brief specifies what each must carry; it is not the wording.
+
+### The instrument: replay the real journal through the real consolidator
+
+**No synthetic rewriter and no separate judge harness.** Seed a fresh store from
+`~/Trading/LeibaTrader` and run the ordinary consolidation skill over it with the form rule
+installed.
+
+**The journal as written is not fully recoverable, and the seed says so.** Events carry no prose, and
+amend, merge and promote rewrite rows in place. Of the 284 rows `remember` created, 100 still carry
+their author's prose unamended — 79 retired journal rows and 21 live ones; the rest have been
+rewritten since. So the seed is **every one of the 284 rows' current prose, re-inserted as journal
+entries in `created_at` order**. That is not a historical replay; it is a realistic journal, verdicts
+included.
+
+**The seed is the baseline, so there is no control run by default.** Each seed row *is* the store's
+current text, which is what the rule is judged against: whether the rewrite kept the row's facts,
+conditions and severity is a comparison of output against input, and a re-run under the old prompt
+would only interpose a second rewrite. What a control arm alone could show is whether plain
+re-consolidation, with no rule, moves a gist the same way — merging rewrites gists on its own. **Run
+one only if a bar fails and the failure could be regrouping rather than the rule**, from the same
+snapshot, installed from the tree as it stood before the consolidator text changed.
+
+**Read the source by `Connection.backup()` or `VACUUM INTO`, never by copying `memory.db`**, and
+never write to it. The replay runs in a scratch project directory outside the repository, with
+Zikaron installed under `--harness claude-code` (D17 scopes a store to its project directory), seeded
+from the snapshot through the service's own `remember` so chunks, vectors and events are what a real
+write produces. **The operator invokes the consolidation skill there by hand.**
+
+**Planning outlasted the client, and M34 carries the fix** because the replay cannot run without it.
+A 284-row journal plans in 12.2 s against the consolidator's 10 s request timeout, and the plan bridge
+treats the lost response as terminal for the process. `memory_plan_groups` and `memory_next_group`,
+which plans inline, now wait `_PLANNING_TIMEOUT_SECONDS`; the other consolidator verbs keep the
+default.
+
+**The comparison is row by row**: the script follows each seed row to the long-term record that
+absorbed it and prints the seed prose beside the record's.
+
+**The bars are set here, by judgement, and the outputs are read against them** — each names what
+would be done on either side of it:
+
+- **Verdicts removed.** ~~The output's long-term gists carry a conclusion marker at under a quarter
+  of the seed's rate, counted by the same marker regex and confirmed by reading.~~ **Amended after
+  the first run, by reading:** no order survives in any gist, and at most one gist in ten carries a
+  verdict, pooled over every output gist whether the consolidator wrote it or kept it, each residual
+  quoted in the research note — M34 passed at 7 in 105 (3 of 72 rewritten; 4 of 33 kept, three of
+  them promoted before the promote condition existed). The regex
+  selects what to read for verdicts — it matches no imperative, so the no-order clause is read over
+  every output gist; its ratio is not the test, because it counts causal clauses as verdicts on
+  both sides (`research/m34-gist-form-replay.md` gives both ratios). Short of the reading test, the
+  wording goes back to `memory-reviewer`.
+- **Severity kept.** No output gist or record understates the seed rows it absorbed — *"silently
+  corrupts"* read as *"may affect"*. Any unexplained instance sends the wording back; this is the
+  failure that would make the gatekeeper worse than nothing.
+- **Facts and conditions kept.** The output drops no error string, identifier, expiry or scope
+  condition its seed rows carry. Same consequence.
+- **Triage kept.** Each output gist still says what its record is about, judged by reading. A gist
+  that became a teaser with no subject fails D13 and sends the wording back.
+
+**The write-side sentence is not measured by the replay**, which exercises the consolidator only. Its
+evidence arrives after release, as the marker rate among new `remember` writes on the real stores.
+
+### Done when
+
+The replay script is in `experiments/` and re-runnable from a named source store, whole or by
+`--rows`; the replay has run, and so has the targeted re-run of the rows the first one leaked;
+`research/m34-gist-form-replay.md` holds the per-bar result and the gists that decided it. The
+consolidator prompt and the `remember`, `amend` and `promote` descriptions carry `memory-reviewer`'s
+wording; the golden `.kiro/agents/zikaron-consolidator.json` and the two consolidator entries of
+`tests/fixtures/kiro_artefacts.json` are **re-rendered** through the installer, not hand-edited;
+every description stays inside `DESCRIPTION_BUDGET`; `design/write-policy.md` states the
+rule where it states the symptom-first rule. `./check.sh` is green.
+
+### Scope fence
+
+**Not** repairing the existing corpus: the form rule lands first, or a repair pass rewrites 169
+verdicts into 169 fresh ones and reports success. **Not** Q21's tone pass, which the replay could
+test but this milestone does not ship. **Not** the injected block or anything push selects — M32's
+arm accumulates against its digest. **Not** a change to promote-in-place's mechanism — only to what
+its description tells the caller. **Not** the embedder:
+`granite-embedding-30m-english` is evaluated separately (operator decision 2026-09-29).
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

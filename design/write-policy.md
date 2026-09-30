@@ -75,6 +75,17 @@ this by reading the code?* — draws the line in a way an agent can actually app
 triggered by symptoms: the query arriving at the moment of need is the error text or the task, not the
 conclusion. So the instruction is to lead with the observable situation.
 
+**And a gist carries no verdict — leading with the symptom is not enough.** The gist is usually all a
+later agent acts on, so a conclusion appended to it — *symptom, so verdict* — is repeated as the finding
+while the record, where its reasons and limits are, goes unread (`FINDINGS.md` Q22). The rule is *keep
+the symptom, stop before the conclusion*, and the conclusion lives in `content` at full strength. A
+condition is not a verdict: an expiry still belongs in the line. `zikaron_memory_remember`'s
+description carries it at write time, as the only write-time carrier of headline rules, and `amend`
+inherits it. The consolidator applies it to every gist it writes at merge and promote, and is the only
+place the rule is enforced rather than requested — except on in-place promotion, which writes no
+prose, so `zikaron_memory_promote`'s description reserves that form for an entry already meeting
+every rule.
+
 **Repair has to be named as a duty.** D11 is the entire staleness mechanism and it only works if the agent
 that gets burned understands that fixing the memory is part of the job rather than a favour.
 

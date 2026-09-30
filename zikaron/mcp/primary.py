@@ -360,21 +360,21 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
 
     @mcp.tool
     async def zikaron_memory_remember(gist: str, content: str) -> object:
-        """Record a new memory. Writes unconditionally; the row is live at once.
+        """Record a new memory; it is live at once.
 
-        `gist` is the **headline**: all a later agent sees before deciding whether to read further.
-        Lead with the observable symptom, not the conclusion: "integration tests flake on CI unless
-        PGHOST is set", not "notes on test configuration". One sentence of 20 to 25 words; refused
-        over 64 tokens (default) or 1,024 characters. **If a claim expires, the headline has to say
-        so** — until a fix lands, for one dependency version: a condition left in `content`
-        reaches only those who fetch, so the claim is recalled as a permanent rule.
+        `gist` is the **headline**: all a later agent sees before deciding whether to read further,
+        and usually all it acts on. Lead with the observable symptom and stop before the
+        conclusion: "integration tests flake on CI unless PGHOST is set", not "…, so the suite is
+        fine". A verdict in the line is repeated as the finding and the record goes unread; put
+        the verdict in `content`. A condition is not a verdict: **if a claim expires, the headline
+        has to say so** ("until a fix lands"), or the claim is recalled as a permanent rule. About
+        20 to 25 words; refused over 64 tokens.
 
         **Write observations, not orders**: "deploying without --force left the old worker
         running", never "always deploy with --force", which an agent with less context than you
-        obeys. **Never record a secret or personal data** — no tokens, passwords, API keys,
-        private keys, credentialed connection strings or `.env` contents; name the credential and
-        where to obtain it, never its value. The store is plaintext on disk and retiring does not
-        erase it.
+        obeys. **Never record a secret or personal data** — no tokens, passwords, keys,
+        credentialed connection strings or `.env` contents; name the credential and where to
+        obtain it, never its value. The store is plaintext on disk and retiring does not erase it.
 
         Cite another memory by its subject ("the record about the deploy rollback"), in a document
         as in `content` — never by headline or uuid. An amend rewrites the headline and the record
@@ -394,10 +394,12 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
     @mcp.tool
     async def zikaron_memory_amend(uuid: str, version: int, gist: str, content: str) -> object:
         """Fully rewrite an existing record's `gist` and `content`. Both follow the rules in
-        `zikaron_memory_remember`: a headline leading with the symptom and carrying its own expiry
-        condition, observations rather than orders, no secrets. Use it to correct a record that
-        misled you, once you have established the current truth, and to fold a near-duplicate's
-        additions into the older row.
+        `zikaron_memory_remember`: a headline leading with the symptom, stopping before the
+        conclusion and carrying its own expiry condition, observations rather than orders, no
+        secrets. Use it to correct a record that misled you, once you have established the
+        current truth, and to fold a near-duplicate's additions into the older row. If the
+        headline you replace states a verdict, correct it in `content` and leave it out of the
+        line: a corrected verdict is still a verdict.
 
         **The rewrite is the whole record, and it may be shorter than the one it replaces.** A
         record that has gathered confirmations, corrections and scope notes across sessions is an

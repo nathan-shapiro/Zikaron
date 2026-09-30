@@ -210,8 +210,32 @@ class TestTheSharedRulesAreOnEveryAuthoringSurface:
             assert "permanent rule" in flat
             assert "until a fix lands" in flat, "both illustrate the condition concretely"
 
+    async def test_it_keeps_the_verdict_out_of_the_headline(self, tmp_path: Path) -> None:
+        """The operative clause is worded per audience, so it is pinned per surface; the boundary
+        is shared, because without it the rule licenses deleting the condition the rule above
+        requires."""
+        remember, consolidator = (_flat(text) for text in await _authoring_surfaces(tmp_path))
+        assert "stop before the conclusion" in remember
+        assert "A gist carries no verdict" in consolidator
+        for flat in (remember, consolidator):
+            assert "condition is not a verdict" in flat
+
 
 class TestTheRulesEachTextCarriesAlone:
+    def test_the_consolidator_keeps_severity_when_it_moves_a_verdict(self) -> None:
+        """It rewrites records other agents wrote, so the verdict rule alone would let it soften
+        the finding it moves into the content — the failure that makes a rewrite worse than none."""
+        flat = _flat(CONSOLIDATOR_PROMPT)
+        assert "softens nothing" in flat
+        assert "does not become" in flat, "and the pair that makes it checkable"
+
+    def test_the_consolidator_is_told_in_place_promotion_applies_no_rule(self) -> None:
+        """The verb paragraph is where the form is chosen, so the fact lives there; the authoring
+        section only acknowledges the one gist the consolidator does not write."""
+        flat = _flat(CONSOLIDATOR_PROMPT)
+        assert "no prose is written" in flat
+        assert "The one gist you do not write" in flat
+
     def test_only_the_policy_tells_the_primary_agent_when_to_search(self) -> None:
         """The consolidator has no search tool, so a recall rule there would name a capability it
         does not have."""

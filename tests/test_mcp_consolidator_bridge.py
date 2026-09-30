@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
-from zikaron.mcp.connection import ServiceConnection
+from zikaron.mcp.connection import REQUEST_TIMEOUT_SECONDS, ServiceConnection
 from zikaron.mcp.consolidator import _PlanBridge
 from zikaron.mcp.errors import ServiceRejectionError, TransportFailureError
 from zikaron.mcp.server import build_server
@@ -44,6 +44,7 @@ def _scripted(
         _params: dict[str, object],
         *,
         envelope: object,  # noqa: ARG001 — keyword-only name must match `ServiceConnection.request`'s.
+        timeout: float = 0.0,  # noqa: ARG001
     ) -> dict[str, object]:
         calls.append(method)
         queue = responses.get(method, [])
@@ -150,6 +151,7 @@ async def test_a_transport_failure_during_plan_groups_becomes_failed_too(
         _params: dict[str, object],
         *,
         envelope: object,  # noqa: ARG001 — keyword-only name must match `ServiceConnection.request`'s.
+        timeout: float = 0.0,  # noqa: ARG001
     ) -> dict[str, object]:
         calls.append(method)
         raise ConnectionError("service died mid-request")
@@ -216,6 +218,42 @@ async def test_end_to_end_a_second_next_group_does_not_replan(
     assert calls == ["memory_plan_groups", "memory_next_group", "memory_next_group"]
 
 
+async def test_both_calls_that_can_plan_outwait_the_default_request_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 284-row journal took 12.2 s to plan against a 10 s default, and the bridge turns that lost
+    response into a terminal failure. `memory_next_group` is included because it plans inline when
+    no run is active; a merge, promote or discard is one transaction and keeps the default."""
+    timeouts: dict[str, float] = {}
+
+    async def fake_request(
+        _self: ServiceConnection,
+        method: str,
+        _params: dict[str, object],
+        *,
+        envelope: object,  # noqa: ARG001
+        timeout: float = REQUEST_TIMEOUT_SECONDS,
+    ) -> dict[str, object]:
+        timeouts[method] = timeout
+        if method == "memory_plan_groups":
+            return _PLAN_OK
+        return {"jsonrpc": "2.0", "id": 1, "result": {"done": True}}
+
+    monkeypatch.setattr(ServiceConnection, "request", fake_request)
+
+    mcp = build_server("consolidator", scope_dir=tmp_path)
+    async with Client(mcp) as client:
+        await client.call_tool("zikaron_memory_next_group", {})
+        await client.call_tool(
+            "zikaron_memory_discard", {"group_id": "g", "absorb": [], "reason": "r"}
+        )
+
+    measured_plan_seconds = 13.1
+    assert timeouts["memory_plan_groups"] > 2 * measured_plan_seconds
+    assert timeouts["memory_next_group"] > 2 * measured_plan_seconds
+    assert timeouts["memory_apply_discard"] == REQUEST_TIMEOUT_SECONDS
+
+
 async def test_cancelling_during_plan_groups_moves_to_failed_never_back_to_unplanned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,6 +273,7 @@ async def test_cancelling_during_plan_groups_moves_to_failed_never_back_to_unpla
         _params: dict[str, object],
         *,
         envelope: object,  # noqa: ARG001
+        timeout: float = 0.0,  # noqa: ARG001
     ) -> dict[str, object]:
         assert method == "memory_plan_groups"
         # Models the exact scenario the docstring above names: the request has already reached

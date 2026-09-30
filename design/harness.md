@@ -72,6 +72,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Shipped consolidator `model` | pinned `claude-sonnet-5` (an alias would fail the `--list-models` check — *inferred*, not measured) | the `sonnet` alias — *decided*, see §"The consolidator's model" |
 | Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
+| MCP tool-call duration | a 330 s call **completed**, with no `timeout` on the server entry: kiro reported `status: Completed` and the model's reply carried the tool's own `slept 330.1s` (`spikes/m34_tool_call_duration_stub.py`, 2026-09-29) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
 | Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
 | MCP server start-up refusal (`zikaron-mcp` prints one line to stderr and exits 1) | **unmeasured** — no probe has recorded where kiro puts an MCP server's stderr, or whether a server that exits before serving is reported at all | **unmeasured** — same; `claude-code-harness-probe` §7g observed servers *starting*, never one that failed to |
@@ -483,12 +484,12 @@ correctly. That gap is what `DESCRIPTION_BUDGET` closes and no phrase pin can. T
 
 ```
 .venv/bin/python -c "
-import asyncio
-from unittest.mock import MagicMock
-from fastmcp import FastMCP
-from zikaron.mcp.primary import register_primary_tools
-mcp = FastMCP('probe'); register_primary_tools(mcp, MagicMock())
-for t in asyncio.run(mcp._list_tools()): print(len(t.description or ''), t.name)"
+import asyncio, tempfile
+from pathlib import Path
+from zikaron.mcp.server import build_server
+for mode in ('primary', 'consolidator'):
+    mcp = build_server(mode, scope_dir=Path(tempfile.mkdtemp()))
+    for t in asyncio.run(mcp._list_tools()): print(len(t.description or ''), mode, t.name)"
 ```
 
 ## Injection budgets
