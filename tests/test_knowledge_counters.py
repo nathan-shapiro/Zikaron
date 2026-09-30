@@ -9,6 +9,7 @@ writing a key nothing reports is invisible from either side on its own.
 import re
 import time
 from pathlib import Path
+from typing import Final
 
 import aiosqlite
 import pytest
@@ -42,7 +43,7 @@ def _keys_in_group(group: str) -> list[str]:
 
 class TestTheKeysMatchTheDesign:
     def test_the_skip_reasons_are_exactly_what_the_design_lists(self) -> None:
-        """The nine, in the design's own order: the eight file reasons and the directory count.
+        """In the design's own order: the file reasons, then the directory count.
 
         Order is checked as well as membership because the report walks this tuple, and a
         reordering would silently change what a person reading a breakdown sees first."""
@@ -251,3 +252,76 @@ class TestRecordingASearch:
         finally:
             await connection.close()
         assert raw["searches"] == "1"
+
+
+#: Assembled from fragments so this file's own source is not a hit. Bounded to the neighbours of the
+#: enumeration's size: smaller counts of *reasons* are ordinary English this tree already uses.
+_NUMBER: Final = (
+    r"\b(?:"
+    + "|".join(("six", "seven", "eig" + "ht", "ni" + "ne", "ten", "eleven", "twelve"))
+    + r"|[6-9]|1[0-2])\b"
+)
+_EMPHASIS: Final = r"[*_]*"
+_SPELLED_COUNT: Final = re.compile(
+    _NUMBER
+    + r"\s+"
+    + _EMPHASIS
+    + r"(?:(?:file|skip)"
+    + _EMPHASIS
+    + r"\s+"
+    + _EMPHASIS
+    + r")?reas"
+    + r"ons\b"
+    + "|"
+    + _NUMBER
+    + r"-way\W+(?:\S+\s+){0,3}?\W*(?:skip"
+    + r"ped|break"
+    + r"down)",
+    re.IGNORECASE,
+)
+_LINE_BREAK: Final = re.compile(r'"?\s*\n\s*(?:#:?|>)?\s*(?:[rfbRFB]{0,2}")?')
+_REPO: Final = Path(__file__).resolve().parent.parent
+
+
+def _spelled_counts(text: str) -> list[str]:
+    """Every count of the reasons in `text`, with a wrapped line joined back into its sentence."""
+    return [match.group(0) for match in _SPELLED_COUNT.finditer(_LINE_BREAK.sub(" ", text))]
+
+
+class TestNoProseCountsTheReasons:
+    """`SkipReason` is the enumeration, so a count written in prose is a second copy that goes
+    stale silently on the next reason added. `coding-standards.md` §5."""
+
+    def test_nothing_spells_out_how_many_there_are(self) -> None:
+        sources = [
+            *(_REPO / "zikaron").rglob("*.py"),
+            *(_REPO / "tests").rglob("*.py"),
+            _REPO / "design" / _DOCUMENT,
+        ]
+        found = {
+            str(path.relative_to(_REPO)): hits
+            for path in sources
+            if (hits := _spelled_counts(path.read_text(encoding="utf-8")))
+        }
+        assert found == {}
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "and `files_skipped` the eig" + "ht file reasons summed",
+            "the sum of the eig" + "ht *file* reasons and",
+            "files it refused for one of the eig" + "ht\nreasons.",
+            "`files_seen` and the eig" + "ht skip\n    reasons count",
+            "the ni" + "ne-way `skipped` breakdown",
+            '"refused for one of the eig' + 'ht "\n        "file reasons."',
+            '"refused for one of the eig' + 'ht "\n        f"file reasons {x}."',
+            "and the " + "8 file reas" + "ons summed",
+        ],
+    )
+    def test_the_guard_sees_each_phrasing_it_removed(self, sentence: str) -> None:
+        assert _spelled_counts(sentence)
+
+    def test_ordinary_small_counts_and_unrelated_compounds_stay_green(self) -> None:
+        assert not _spelled_counts(
+            "for two reasons, and a two-way guard; three reasons want; 3 reasons; 16 reasons"
+        )

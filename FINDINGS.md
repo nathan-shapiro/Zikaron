@@ -71,82 +71,25 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M34 are built, reviewed and landed**, the last merged as `c66295f`. M26 shipped **nothing** —
-neither the reranker nor any chunking change — and that is the result, not a stall. Each milestone's
-record is in `FINDINGS-archive.md`; the briefs are in `design/build-plan.md`; M32's shipped prose
-surfaces are normative in `design/retrieval.md` and decoded in `research/injected-prose-log.md`.
+**M0–M35 are built, reviewed and landed**, the last merged as `7937ae5` (PR #14). M26 shipped
+**nothing** — neither the reranker nor any chunking change — and that is the result, not a stall. Each
+milestone's record is in `FINDINGS-archive.md`, M35's in §"M35 as built"; the briefs are in
+`design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md` and
+decoded in `research/injected-prose-log.md`.
 
-**M34 landed as `c66295f`** — the headline form rule and the consolidator's planning timeout;
-`FINDINGS-archive.md` §"M34 as built" has the record.
+**M36, in progress (operator go, 2026-09-30) — the installer upgrade path, the `reaped` fixture's
+10 s teardown, and the `0.3.0` release.** The brief is `design/build-plan.md` §M36, APPROVED
+(`reviews/m36-brief-review.md`); `doctor` gains only the `alwaysLoad` row (operator, 2026-09-30).
+**Plan:** (a) brief, (b) items 1–4, (c) the release number and `README.md`, (d) implementation review
+(`reviews/m36-review.md`, APPROVED), (e) `./check.sh` green — **done**; a PR when the operator asks. **The release notes go in the PR description
+and are not in the tree**: a draft lives only in the session's scratchpad, so a fresh session
+re-derives them from `git log v0.1.0..` against the brief's §5 list. The operator tags the merge
+`v0.3.0` and publishes them; **the first commit after the tag sets `0.3.1.dev0`.** `0.1.0` shipped
+schema 1 and `0.3.0` ships schema 3, each step a minor bump, so there is no `0.2.0`
+(`design/distribution.md` §3).
 
-**M35 is built, reviewed and in a pull request (branch `m35-serialized-transactions`, operator ask
-2026-09-30); the operator merges.** Serialized transactions with `BEGIN IMMEDIATE` for writes, a read
-pool with one `IMMEDIATE` retry, planning off the writer, wedge diagnostics, and `deadline_at_ms` on
-`memory_surface`. The brief is `design/build-plan.md` §M35 (`reviews/m35-brief-review.md`, APPROVED);
-the implementation review is `reviews/m35-review.md`, whose last round is the verdict; the evidence —
-probes against a true HEAD control, the margin's distribution, every guard's mutation — is
-`research/m35-implementation-evidence.md`. **Once it merges**: move this paragraph to
-`FINDINGS-archive.md` as §"M35 as built", and write M36's brief. The PR's CI is the version matrix;
-`gh pr checks` says where it stands.
-**PR #14's required macOS job was red before the fix; the fix is in the tree, and all four jobs and
-Codecov's patch (100%) are green on the PR's current head (`gh pr checks`).** SQLite's own busy
-wait overruns `busy_timeout` on macOS with the SQLite uv's managed Python ships, so the store's
-serving connections run at zero and the transaction primitive polls for the write lock itself
-(`architecture.md` §"The service's connections"; evidence in
-`research/m35-implementation-evidence.md`). The same amend carries the
-coverage items the operator asked for and a test-fixture race the new timing exposed. **The review
-round on this change is bounded to `git diff f5bb459..HEAD`** (operator; `f5bb459` is reachable
-from the reflog only, since the PR's commit is amended in place); its trail is
-`reviews/m35-review.md` from round 9.
-
-**M36, next — the installer upgrade path (proposed 2026-09-29; brief to be written into
-`design/build-plan.md` when M35 lands).** One subsystem, `zikaron/install/` and `zikaron/doctor/`,
-and nothing in the service. Normative: `design/harness.md` §"The installer's two targets" and
-`design/architecture.md` §"The install contract".
-1. **Kiro's two compares are whole, so the next change refuses every kiro install's own upgrade.**
-   - *Where*: `writer.py` compares the `mcpServers` entry with `!=` against `mcp_servers_value(...)`,
-     and the hook entries through `_differing_zikaron_hooks`, which tests structural equality with
-     the generated entry.
-   - *Effect*: any added field, or a changed `TIMEOUT_MS`/`HOOK_TIMEOUT_SECONDS`, makes an
-     unmodified old install "differ", and the upgrade is refused without `--force`. This is the
-     defect `alwaysLoad` exposed in `.mcp.json`, fixed under Claude Code, still latent on both kiro
-     artefacts, and covered by no test.
-   - *Fix*: the predicate Claude Code already uses (`targets.py` `_ownership`, `_differing_ownership_fields`,
-     `MCP_OWNERSHIP_FIELDS`). Ownership is the command, plus `args` for a server entry; any other
-     difference is an upgrade to rewrite and report, not a conflict.
-   - *Wording*: the server refusal's *"That is a previous install from a different interpreter"*
-     becomes true only once the predicate is fixed — say so in the same change.
-   - *Tests*: an old kiro install with an extra field and an old timeout upgrades without `--force`
-     and reports what it rewrote. A different command still refuses. Each is shown red before the
-     fix.
-2. **"The eight file reasons" is spelled out in five places and pinned in none.** The sites are
-   `zikaron_knowledge_status`'s description (`mcp/primary.py`), its mirror in `knowledge-index.md`,
-   two comments in `core/knowledge/counters.py`, and a docstring in `tests/test_knowledge_counters.py`.
-   `SKIP_REASON_KEYS` is already guarded against the design's table, so only the spelled-out count
-   can drift. *Fix*: drop the number from prose ("the file reasons"), or derive it where a count is
-   shown. *Test*: a drift guard that fails on a spelled-out count beside `SKIP_REASON_KEYS`'s
-   length.
-3. **An install that predates `alwaysLoad` is stale until re-run, and only `README.md` says so.**
-   *Fix*: a `doctor` check in `doctor/checks.py`, beside `check_model_cache` and its peers, that
-   reads the project's `.mcp.json` and fails, naming the re-install command, when a Zikaron server
-   entry lacks the key. *Test*: a stale fixture fails the check, and a current install passes it.
-
-Done when: all three are in, each test is mutation-verified, `README.md`'s troubleshooting row points
-at the `doctor` check, and `./check.sh` is green.
-
-**The embedder spike ran 2026-09-29: keep `bge-small`.** No candidate — granite-30m, granite-125m,
-e5-small-v2 — clears the preregistered swap gate in the deployed hybrid (granite-30m −0.0052
-useful-recall@5, CI [−0.0365, +0.0208], against +0.05). `research/granite-embedder-spike.md`; Q8 closed
-on it and Q2 gained a second instance. The host is busy for days (operator, 2026-09-29), so no
-latency figure measured meanwhile is comparable with an idle-host budget.
-
-**The release is due now: it was to go out after the milestone following M33 — operator decision
-2026-09-29 — and M34 has landed.** Tagging is the operator's act. What the gap means until then:
-`0.1.0` has no `init`, so on that release `zikaron knowledge` still creates a store wherever it is typed, and it
-declares `SUPPORTED_SCHEMA_VERSION = 1`, so it cannot open any store this build has touched. The number
-is `0.3.0.dev0`: two unreleased `MIGRATIONS` steps since `0.1.0`, and a schema bump is a minor bump
-(`design/distribution.md` §3, which also says why the minor matching the schema number is a
-coincidence of this history rather than a rule).
+**The host is busy for days (operator, 2026-09-29)**, so no latency figure measured meanwhile is
+comparable with an idle-host budget.
 
 **All three real stores are at schema 3 — `~/Trading/LeibaTrader`, `~/Memory` and `~/Dividends`,
 migrated 2026-09-29 by the services a reinstall check started.** Nothing announced it, which is the
@@ -192,10 +135,6 @@ without a runner.** Point it at a directory as long as macOS's own `/var/folders
 Verified both ways: green as the tree stands, red with the `socket_dir` fixture pointed back at
 the default tempdir.
 
-**Both local gates are green on one tree**: `./check.sh`, and `./check-matrix.sh --parallel` across
-3.12, 3.13 and 3.14. The matrix refuses if anything changes while it runs, so do not edit during a
-sweep.
-
 **Nothing is installed into this repository**, deliberately. `python -m zikaron.install --project .
 --harness claude-code` would do it; `--harness auto` refuses here because the repo carries both
 dotdirs. Until then the memory tools and the push hook are **not live in this session**.
@@ -227,7 +166,6 @@ real-work store** — 252 memories and 116 planned groups as of 2026-09-13
 **It runs this repository's working tree**: its `.mcp.json` and its service both launch
 `/home/nathan/Zikaron/.venv`, an editable install, so every service or MCP client it starts imports
 whatever the tree holds at that moment — an uncommitted edit here is live there at its next start.
-Its service running M35's code was confirmed 2026-09-30 from `SigCgt` and both signal dumps.
 `~/Memory` is a sibling project's store: 31 long-term records, 26 journal entries, one consolidation
 run completed. It is **read-only for this agent**; writing there needs the operator's per-task
 say-so.
@@ -244,21 +182,6 @@ Scanned 2026-09-28, after M33 shipped something FINDINGS had assigned elsewhere.
 scoped; this is the pool a brief is drawn from.** Each entry names what would close it and the fix
 proposed.
 
-**Tool descriptions arrived late, or truncated, or not at all; the install now exempts them and all four
-over-long ones were rewritten — fixed 2026-09-29, with the items below still owed.** Claude Code defers
-MCP tools when the tool list is crowded, listing them by name with schemas unloaded, so a description
-reaches the model only when that verb is loaded — per verb and late, which a LeibaTrader transcript
-shows happening just before each first use. It also **truncates any description past a cap**, taking
-the tail, which had been eating `remember`'s whole `Returns` block; `design/harness.md` §"Tool
-descriptions are capped" holds the bracket and says which part of `DESCRIPTION_BUDGET` is measured and
-which is a bet on the constant. The install writes `alwaysLoad` on both `.mcp.json` servers, and every
-description now sits under that budget. Verified from a fresh session, not inferred: **every verb on both
-servers carries a full description, none name-only, and none truncated.**
-`design/harness.md` §§"MCP tools may arrive deferred" and "Tool descriptions are capped" carry the
-mechanism, the decision, what it costs in context and the unverified `instructions`-field alternative.
-
-**What is still owed.** The installer items that were here are now M36, in §"Current state".
-
 - **The `bounds`-on-first-call query ran 2026-09-29: 0 of 18** (session, verb) first calls refused
   `bounds`, across all three real stores. That is only a day of `call` rows, 61 of them on
   `~/Trading/LeibaTrader`, so it says nothing yet. **Re-run it 2026-10-29**, with the query below
@@ -266,33 +189,14 @@ mechanism, the decision, what it costs in context and the unverified `instructio
   verify `alwaysLoad`**, which was checked directly, by reading a session's tool list.
   `WITH c AS (SELECT session_id s, json_extract(detail,'$.method') m, json_extract(detail,'$.error_code') e, id FROM event WHERE kind='call' AND session_id IS NOT NULL) SELECT c.m, count(*), sum(coalesce(c.e,'')='bounds') FROM c JOIN (SELECT s, m, min(id) i FROM c GROUP BY s, m) f ON c.id=f.i GROUP BY c.m`
 
-**M35's defects left this pool: `design/build-plan.md` §M35 carries them** — every request's
-transactions on one unserialized connection, a plan holding the writer for its whole run, a deferred
-`BEGIN` that another process's commit refuses (the CI flake), a push the hook abandoned still
-recorded as shown (which inflates D30's repair-signal denominator), two builds starting together
-answering `database is locked` instead of `IndexerBusyError`, and the LeibaTrader wedge of
-2026-09-29 (pid 3002334, silent 20:14–20:25Z, cause unknown). Re-derive the first two with
-`.venv/bin/python spikes/m34_service_staleness_probe.py <scratch-project-dir>`, which needs a store
-freshly made by `experiments/m34_gist_replay.py seed`, since the collision needs a plan lasting
-seconds; the third with `python3 spikes/m35_busy_snapshot_probe.py <scratch-dir>`.
-
-**`tests/test_knowledge_cli_integration.py`'s `reaped` fixture spends 10 s in every teardown**, six
-tests a run. It `waitpid`s the service after killing it, but `lifecycle._spawn_detached` already reaps
-its own child on a daemon thread, which wins: every later `waitpid` raises `ChildProcessError`, which
-the fixture suppresses, so it polls until its deadline. Neither the fixture nor the spawn changed in
-M35. *Fix*: after the `SIGKILL`, poll `os.kill(pid, 0)` until `ProcessLookupError`, which does not
-depend on who reaps; a minute off every gate run. Proposed as its own chore commit after M35 lands,
-since M35's fence does not reach the test harness's reaping.
-
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
 
-**Q22's form rule left this pool: it is M34** (`design/build-plan.md` §M34 carries the gatekeeper
-reasoning, the surfaces and the sequencing constraint). **Still owed after it — a corpus repair pass**,
-which the form rule was sequenced ahead of so a pass over the 169 records does not rewrite them into
-169 fresh verdicts. Proposed shape: once M34 ships, re-seed the live long-term records as journal
-entries — `experiments/m34_gist_replay.py`'s `_SEED_ROWS` selects only rows a `remember` created, so
-this needs a `--tier long_term` option — and consolidate them in a replay store first, judged on the
+**A corpus repair pass is owed, now that M34's form rule has shipped** — the rule was sequenced first
+so a pass over the 169 records would not rewrite them into 169 fresh verdicts. Proposed shape:
+re-seed the live long-term records as journal entries — `experiments/m34_gist_replay.py`'s
+`_SEED_ROWS` selects only rows a `remember` created, so this needs a `--tier long_term` option — and
+consolidate them in a replay store first, judged on the
 same four bars, before touching a live store. The consolidator reaches a long-term record otherwise
 only as a merge target, which would leave most of them unchecked.
 

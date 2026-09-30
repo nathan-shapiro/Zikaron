@@ -196,7 +196,7 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
         `include`/`exclude`/`git_mode` say what the corpus was ever defined to hold.
 
         `files_seen` is what the last walk looked at, `files_indexed` what the corpus now contains,
-        and `files_skipped` the eight file reasons summed. The gap between them is files a
+        and `files_skipped` the file reasons summed. The gap between them is files a
         `git_mode` of `tracked` left out, seen and not skipped. `pruned_directories` counts
         directories, not files, and is outside that sum; no `include` pattern rescues a pruned
         directory, so `.github/`, `build/` and `dist/` are invisible however it is written.

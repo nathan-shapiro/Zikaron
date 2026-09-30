@@ -5461,12 +5461,207 @@ which refusal some calls answer, each named where it is decided:
 
 **Not** the access log's connection or its best-effort terms. **Not** a fix for the wedge beyond
 making the next one diagnosable; if the dumps name a cause, that is the next milestone's. **Not**
-the installer: its whole-entry compares, the file-reasons count and the `doctor` check are M36
-(`FINDINGS.md` §"Current state"). **Not** retrieval quality: the embedder spike closed that side for
+the installer: its whole-entry compares, the file-reasons count and the `doctor` check are M36.
+**Not** retrieval quality: the embedder spike closed that side for
 now (`research/granite-embedder-spike.md`).
 
 **Not** `BUSY_TIMEOUT_MS`: it is the budget for every request here except `surface`, and raising it
 is the first thing a red test invites, but it stays 5 s.
+
+## M36 — An upgrade the installer refused, a stale install nothing reported, and the release
+
+Normative: `design/harness.md` §"The installer's two targets"; `design/architecture.md` §"The
+install contract"; `design/distribution.md` §"The front door" for `doctor`'s rows and their order,
+and §3 "The version scheme" for the release.
+
+**Upgrading has two halves and neither works end to end.** The package moves on `uv tool upgrade`;
+what an earlier version wrote into a project moves only when the installer is re-run, and on kiro that
+re-run refuses its own previous install the day any field of an entry changes. Under Claude Code the
+re-run works, but nothing tells a user they need it: an install that predates `alwaysLoad` keeps
+working with its tool descriptions deferred, and only `README.md` says why. This milestone closes both
+halves and then releases, because `0.1.0` is the version on PyPI and it can no longer open any store
+this build has touched.
+
+### 1. Kiro compares on ownership, as Claude Code already does
+
+**Where.** `writer.py`'s `_guard_existing_entries` refuses when the `mcpServers.zikaron` entry is not
+equal to `mcp_servers_value(...)`, and `_differing_zikaron_hooks` refuses when a recognised hook entry
+is not structurally equal to the generated one. So any field this installer adds or changes — a new
+key, a moved `TIMEOUT_MS` or `HOOK_TIMEOUT_SECONDS` — turns every unmodified earlier install into a
+conflict, and the upgrade is refused without `--force`. Nothing tests the case.
+
+**What changes.** Ownership, defined once and used by both targets:
+- **A server entry** is owned by `entries.MCP_OWNERSHIP_FIELDS` — the interpreter path and the mode.
+  A different value there refuses, naming which of the two differs, since they call for different
+  responses. Any other difference is merged **per key**, as `.mcp.json` is: a key of the user's on
+  Zikaron's entry is kept and named, a value this install writes is set and named. `--force`
+  replaces the entry whole and names the keys that dropped.
+- **A hook entry** is owned by its command, unquoted as `_entry_command` already unquotes it. An entry
+  recognised as Zikaron's — by the command's file name, or in the array format by the reserved
+  `name` — whose command is not this install's refuses. One whose command is this install's and whose
+  other fields differ is rewritten, and the install names the trigger so a hand-edited timeout can be
+  re-applied.
+- **An entry on a trigger this install does not write is neither compared nor touched**, in either
+  format, as the Claude Code target already treats a group outside the triggers it writes. Kiro
+  refuses one today (*"not an entry this install writes"*), and in the array format its merge removes
+  every entry carrying our command whatever its trigger; both narrow to the triggers this install
+  writes, since an entry elsewhere is one nothing here would replace it with. An array entry carrying
+  a reserved `name` stays recognised by that name, so one whose `trigger` was changed is rewritten
+  and reported like any other field.
+
+**The predicate and the per-key merge move out of `targets.py` into one place both targets import**,
+since two copies of an ownership rule is the drift this item exists to end. What each target *says*
+stays with the target: a kiro server entry is registered for one agent, a `.mcp.json` entry for the
+whole session, and the notes must be true of their own file.
+
+**Wording.** The server refusal says *"That is a previous install from a different interpreter"*,
+which is true only once ownership is what refuses; after this change it is true of a differing
+`command`, and a differing `args` says a different mode instead. The hook refusal's *"or an entry you
+edited"* names the edit that is now rewritten and reported, so both kiro refusals end in the shared
+place's account of another install, as Claude Code's do (`targets._ANOTHER_INSTALL`).
+
+**Tests.** New: an earlier kiro install whose server entry carries an extra key and whose hook
+entries carry an old timeout upgrades without `--force`, keeps the extra key, and reports both; the
+same in the array format; our command on a trigger this install does not write, without a reserved
+`name`, is left in place, in both formats; a different command still refuses, in both formats and for both halves; a different
+`--mode` refuses and names the mode. **Existing: every test that asserts a refusal on a
+non-ownership difference inverts into a rewrite-and-report assertion**, and a class docstring stating
+the old contract goes with it; a refusal test that matches on the old sentence matches on the
+field-naming one. A test of behaviour this change removes is red against the fix; one that pins
+behaviour it keeps — a different command still refusing — is shown red against a mutation that
+compares nothing, instead.
+
+### 2. `doctor` reports a Claude Code install that predates `alwaysLoad`
+
+**Operator decision 2026-09-30: `doctor` keeps the checks it has and gains exactly one — whether
+Zikaron's `.mcp.json` entries carry `alwaysLoad`.** Nothing else about that file is judged: not its
+syntax, not which interpreter an entry names, not its mode.
+
+**One row, directly after `check_socket_path` and before the subagent row**, so the two rows that
+read a project's Claude Code files sit together.
+- **Present only when `<project>/.mcp.json` parses as a JSON object whose `mcpServers` is an object
+  carrying a Zikaron server as a key** — `MCP_SERVER_NAME` or `CONSOLIDATOR_AGENT_NAME`. Anything
+  else — no file, a file that cannot be read or does not parse, no Zikaron entry — produces no row:
+  the question is whether an install is older than the key, and a project with nothing to ask it of
+  has no answer, which is the *not checked* versus *nothing found* distinction the subagent row
+  already draws.
+- **Fails when a Zikaron entry that is an object has no `ALWAYS_LOAD_KEY`.** The remedy says to
+  upgrade Zikaron in the interpreter the project was installed from and re-run the installer with
+  `--harness claude-code`, which upgrades the entry in place — or to set the key by hand, `false`
+  to keep deferral. It names no interpreter, because `doctor` may run from a different one than the
+  install did.
+- **Passes otherwise, whatever the key's value.** `alwaysLoad: false` is how a user asks for
+  deferral, and failing on it would exit non-zero forever over a choice — the argument that made
+  the subagent row `REPORTED`.
+
+**Tests**: an entry without the key fails, with the remedy; a current install, **generated through
+`claude_mcp_servers_value`** rather than written by hand, passes; `alwaysLoad: false` passes;
+`"zikaron": null` produces a passing row rather than a traceback; no file, a file that cannot be read
+or does not parse, and a file naming no Zikaron server produce no row. The path is `targets.py`'s,
+lifted from `ClaudeCodeTarget._mcp_config` into a module-level function both the target and the row
+call, as `agent_scan.agents_directory` already is for the subagent row. `test_doctor.py`'s order test
+asserts only the last two rows today, so it gains a `.mcp.json` fixture and asserts this row's place.
+`README.md`'s troubleshooting row for deferred tools points at this check; `distribution.md` §"The
+front door" names the row in its place in the order; and every sentence that counts `doctor`'s
+conditional rows, or lists what `--project` reaches, is corrected without a new count.
+
+### 3. Counts written out in prose where the enumeration lives in code
+
+**"The eight file reasons", and "nine" for the breakdown's keys, are spelled out across the code, the
+tests and `design/knowledge-index.md`.** `SkipReason` and `SKIP_REASON_KEYS` are the enumeration, and
+`SKIP_REASON_KEYS` is already guarded against the design's table, so the written count is the only
+part that can drift, and it would drift silently on the next reason added. `coding-standards.md` §5
+already forbids it. **The predicate, not a list of sites**: every sentence that states how many skip
+reasons, file reasons or breakdown keys there are — including the ordinal form, *"inventing a
+ninth"*. Find them with `grep -rnE -i '\b(six|seven|eight|nine|ten|eleven|twelve|ninth|tenth)\b'
+zikaron tests design/knowledge-index.md`, which over-matches by design, and read every hit. Drop the number; where a
+count genuinely helps a reader, the design's table is where they count it.
+
+**Test**: a drift guard over `zikaron/`, `tests/` and `design/knowledge-index.md` that fails on a
+number word from *six* to *twelve* or a digit in the same range, then optional emphasis, an optional *file* or
+*skip*, optional emphasis, and *reasons* — or a number-word *-way* compound within a few words of
+*skipped* or *breakdown*. **It matches after collapsing whitespace, newlines included, in every file
+it scans**, because both kinds wrap a site across a line break — *"the eight skip / reasons"* in
+`counters.py`, *"one of the eight / reasons"* in the design — and a bare *-way* would redden on
+unrelated *"two-way"* prose. **Its own pattern is assembled from fragments**, as
+`tests/test_publication_hygiene.py` already does, or the guard matches its own source. It cannot
+pattern every phrasing — *"all nine"* names nothing it could anchor on — so the reading above is
+what removes those, and the guard keeps the common form from coming back. **The bound is
+deliberate**: the enumeration is eight and nine today, and the guard must catch the neighbours a
+reason added or removed would produce, while *"two reasons"* and *"three reasons"* are ordinary
+English this tree already uses and must stay green. Mutation: re-inserting each wrapped site — one
+in code, one in the design — and one single-line site each turns it red.
+
+### 4. A test fixture that waits ten seconds for nothing
+
+**`tests/test_knowledge_cli_integration.py`'s `reaped` fixture spends its full deadline in every
+teardown that found a service.** It kills the service and then polls `waitpid` — but
+`lifecycle._spawn_detached` reaps its own child on a daemon thread, which wins, so every later
+`waitpid` raises `ChildProcessError`, which the fixture suppresses, and the loop runs to its deadline.
+**Fix**: after the kill, poll until the process is gone by a test that does not depend on who reaps it
+— `os.kill(pid, 0)` raising `ProcessLookupError`. A zombie still answers that probe until it is
+reaped, so the poll ends exactly when the daemon thread has reaped it. **Its siblings are not the same
+defect**: every other `waitpid` loop under `tests/` ends its wait on `ChildProcessError` rather than
+spending it — most by returning, and `test_hook_connect_race.py`'s by advancing a `for` over pids,
+each waited on with a blocking `waitpid`. **Measured**: the file's wall time before and after, from
+`--durations` — six teardowns at 10.02 s each and 76.5 s for the file, before; 15.8 s for the file
+after, with no teardown among its slowest.
+
+### 5. The release: `0.3.0`
+
+**M36's commit carries `version = "0.3.0"`, and that is the commit the operator tags** `v0.3.0` after
+merging it — operator decision 2026-09-30, which is the case `CLAUDE.md`'s rule against setting a
+release version reserves: the number is set in the commit that gets tagged, and the tag is the
+operator's. `design/distribution.md` §3 is normative, and `release.yml` refuses a tag that disagrees
+with `[project] version`. **The first commit after the tag returns the tree to `0.3.1.dev0`**; that
+is not this milestone's commit and not its reviewer's to check.
+
+**Why `0.3.0` and not `0.2.0`**: two schema steps have accrued since `0.1.0` and each is a minor bump
+on its own (§3), so `0.2.0` is never released. This milestone moves no artefact's *shape* — both
+targets write what they wrote — so it adds nothing to the number.
+
+**What ships beside the number:**
+- **`README.md` states the product as `0.3.0` ships it.** Every section a user reads between
+  `uv tool install` and a working session, checked against the tree rather than against the milestone
+  list — the kiro upgrade paragraphs, the `doctor` output and its rows, and anything changed since
+  `v0.1.0` that it does not yet say.
+- **No document states the tree's version except `pyproject.toml`**, so the bump after a tag touches
+  one file. Every sentence **in the live documents** — `CLAUDE.md`, `README.md`, `design/`,
+  `FINDINGS.md`; the archive and `research/` record what was believed and are not re-pointed — that
+  names the current number **or states what is unreleased** says instead what a release shipped, or
+  what a `.dev` suffix means, as a fact the tag makes true rather than false:
+  *`0.3.0` ships schema 3, `0.1.0` shipped schema 1, and each step between is a minor bump.*
+- **Release notes for the operator**, in the pull request's description, written for someone upgrading
+  from `0.1.0`: everything since `v0.1.0` that such a user meets, derived from each commit message in
+  `git log v0.1.0..` and the milestone blocks in `FINDINGS-archive.md`, and at least — that the store
+  migrates forward on first open and `0.1.0` cannot open it afterwards; that `zikaron init` now creates a store and every
+  `knowledge` verb refuses a project without one; that the installer must be re-run and now upgrades
+  in place on both harnesses; that a running service is not replaced by an upgrade until it idles out
+  or is stopped; what `doctor` now checks; and why there is no `0.2.0`. Publishing them as the release
+  body is the operator's act, as is the tag.
+
+### Done when
+
+1. Items 1–4 are in, and every new or inverted test was **seen red** — against the tree before its
+   fix, or, for a guard or a test pinning behaviour that does not change, against the mutation it
+   names.
+2. `design/architecture.md` §"The install contract" and `design/harness.md` state one ownership rule for
+   both targets; nothing in `zikaron/`, `design/` or `README.md` still says kiro compares whole; and
+   `README.md`'s `--force` row covers kiro's server entry as well as `.mcp.json`'s.
+3. `pyproject.toml` says `0.3.0`, `README.md` is current as item 5 defines it, and the release notes
+   are drafted.
+4. `./check.sh` is green. The pull request's CI is the version matrix.
+
+### Scope fence
+
+**Not** any `doctor` check beyond item 2's (operator decision): no validation of `.mcp.json`'s
+syntax, interpreter paths or modes. **Not** a `doctor` check for kiro: its config is a path the user
+supplies to `install --agent`, and `doctor` has no such flag. **Not** a staleness check on Claude
+Code's hook entries in `settings.local.json`: a stale timeout there degrades nothing a user would
+notice, where a deferred tool description is measured to change behaviour. **Not** a version handshake between a client and an older
+running service — `distribution.md` §3 names that gap and declines it. **No change to any string the
+installer writes** into either harness: the golden files under `.kiro/` and
+`tests/test_install_targets.py`'s artefacts do not move. **Nothing in the service.**
 
 ## Standing notes for whoever picks this up
 

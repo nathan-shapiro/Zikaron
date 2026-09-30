@@ -365,7 +365,8 @@ class TestStatus:
 
     async def test_the_skip_breakdown_names_every_reason(self, tmp_path: Path) -> None:
         """Reported by the name a response uses rather than by the `meta` key that holds it, and
-        all nine every time — a reason missing from the breakdown is a count nothing adds up."""
+        every one of them every time — a reason missing from the breakdown is a count nothing adds
+        up."""
         async with open_context(tmp_path) as ctx:
             await _add(ctx, tmp_path)
             entry = _only(await _call(ctx, "knowledge_status", {"knowledge_base": "docs"}))

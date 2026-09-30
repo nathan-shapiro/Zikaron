@@ -185,9 +185,14 @@ symptom**. The checks and the reports, in order: `enable_load_extension` present
 `sqlite-vec` loading a real `vec0` table — a bare import establishes neither; the model cache present
 at the pinned revision and hash-verified; the socket path fitting this platform's `sun_path`, which
 is the second channel M29 owed for a refusal a user would otherwise meet only as a dead MCP server;
-and **subagents whose `tools:` allowlist cannot reach Zikaron's server**, the same scan the Claude
-Code install runs through the same function (`harness.md` §"What the install reports rather than
-enforces"). That last **runs when `<project>/.claude/agents/` exists** — a condition on the directory
+**whether the Zikaron servers in `<project>/.mcp.json` carry `alwaysLoad`** — an install older than
+the key keeps working with its tool descriptions deferred, and nothing else tells a user that a
+re-install fixes it. That row **fails only on the absent key**: a value of the user's own, `false`
+included, passes, since it is how deferral is asked for, and nothing else about the file is judged.
+It is **present only when the file parses and names a Zikaron server**, and absent otherwise, for the
+reason given for the next row; and **subagents whose `tools:` allowlist cannot reach Zikaron's
+server**, the same scan the Claude Code install runs through the same function (`harness.md` §"What
+the install reports rather than enforces"). That last **runs when `<project>/.claude/agents/` exists** — a condition on the directory
 rather than on a detected harness, since `doctor` takes `--project` and no `--harness` — and its
 outcome is **`REPORTED`, never `FAILED`**: a user's allowlist is a deliberate grant, and an agent that
 excludes every `mcp__*` on purpose must not make `doctor` exit non-zero forever, which is the status
@@ -358,20 +363,21 @@ statement about anything.
 **A `meta.schema_version` bump is a minor bump too, on its own, whether or not an artefact moves with
 it** (operator, 2026-09-29). A release that cannot open a store an earlier one wrote is at least as
 visible to an upgrading user as a changed config shape — `0.1.0` declares `SUPPORTED_SCHEMA_VERSION = 1`
-and refuses every store this build has touched — and a patch bump would tell that reader nothing needs
+and refuses every store `0.3.0` has opened — and a patch bump would tell that reader nothing needs
 refreshing. So the rule has two triggers and the artefact one is not the only way in: D37 governs a
 binary meeting a store, and this governs the number that warns them apart.
 
-**The tree says `0.3.0.dev0`, and that is arithmetic rather than a choice.** `MIGRATIONS` carries two
-steps that have never been released — `to_version=2` at M31 and `to_version=3` at M33 — so two minors
-have accrued since `0.1.0` shipped at schema 1. `.mcp.json` gaining `alwaysLoad` falls inside the
-second of them rather than adding a third: a release is one bump however many of the triggers it fires.
+**`0.3.0` follows `0.1.0` directly, and that is arithmetic rather than a choice.** `0.1.0` shipped
+schema 1 and `0.3.0` ships schema 3; the `MIGRATIONS` steps between them — `to_version=2` at M31 and
+`to_version=3` at M33 — are each a minor bump, so no `0.2.0` was ever released. `.mcp.json` gaining
+`alwaysLoad` falls inside the second of them rather than adding a third: a release is one bump however
+many of the triggers it fires.
 
-**That the minor now equals the schema version is a coincidence of this history, not an invariant, and
-must not be relied on.** It holds because the two started aligned and every bump since has been
-unreleased. The first release carrying an artefact-shape change with no schema move breaks it, and
-that release is still correct — the number's job is to say *something needs refreshing*, not to encode
-which store version this build speaks. `store.CURRENT_SCHEMA_VERSION` is where that is written.
+**That `0.3.0`'s minor equals its schema version is a coincidence of this history, not an invariant,
+and must not be relied on.** It held because the two started aligned and neither bump between them was
+released. The first release carrying an artefact-shape change with no schema move breaks it, and that
+release is still correct — the number's job is to say *something needs refreshing*, not to encode
+which store version a build speaks. `store.CURRENT_SCHEMA_VERSION` is where that is written.
 
 **Upgrading does not replace a running service, and since M31 that is visible.** A service is
 started by whichever build first needed one and keeps answering until `idle_timeout` passes with no

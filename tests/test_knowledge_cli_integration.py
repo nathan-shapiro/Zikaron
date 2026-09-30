@@ -78,11 +78,14 @@ def reaped(tmp_path: Path) -> Iterator[Path]:
         return
     with suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
+    # The spawner reaps its own child on a daemon thread, so `waitpid` here only ever raises
+    # `ChildProcessError`. A zombie still answers signal 0, so this ends once that reap is done.
     deadline = time.monotonic() + _REAP_DEADLINE_SECONDS
     while time.monotonic() < deadline:
-        with suppress(ChildProcessError):
-            if os.waitpid(pid, os.WNOHANG) != (0, 0):
-                return
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
         time.sleep(0.05)
 
 
