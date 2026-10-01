@@ -94,7 +94,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     # Property-based tests, for the places the design states a property rather than a case:
     # chunking never loses content, and no chunk exceeds the budget it was cut to.
-    "hypothesis==6.168.0",
+    "hypothesis==6.168.3",
     # Tests only, and never imported by shipped code. Two of Claude Code's four installed
     # artefacts are YAML-frontmatter Markdown, and the installer emits that frontmatter by string
     # formatting — so the only way to assert it is *valid* is to parse it with something that did
