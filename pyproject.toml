@@ -45,7 +45,7 @@ dependencies = [
     # changes how a client's connection — and therefore the session label this client adopts and
     # reuses across calls — is carried. That is a transport change worth its own measurement, so
     # the bump is deliberate rather than absorbed into an ordinary dependency refresh.
-    "fastmcp==3.4.7",
+    "fastmcp==4.0.10",
 ]
 
 # Absent until now, which is why the PyPI page M30 will publish would have rendered blank. The
