@@ -2,7 +2,7 @@
 name: memory-assistant
 description: Research scout for memory-researcher on Zikaron. Runs targeted web searches, reads sources closely, and returns concise, faithfully-cited syntheses on agent memory, context engineering, and retrieval. Use for any literature, prior-art, benchmark or product-teardown question.
 model: sonnet
-effort: medium
+effort: xhigh
 tools: WebSearch, WebFetch, Read, Write
 color: cyan
 ---

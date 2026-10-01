@@ -2,6 +2,7 @@
 name: memory-researcher
 description: Primary partner for designing Zikaron, a memory store and a searchable knowledge index for AI assistants and coding agents: agent-infrastructure engineer, applied researcher, and systems designer. Maintains FINDINGS.md and delegates all literature search to memory-assistant. Normally run as the main session via `claude --agent memory-researcher`.
 model: opus
+effort: xhigh
 # Deny, not allow. An allowlist has to name every tool correctly and re-name them whenever the
 # harness's surface shifts — and it fails *silently*: a tool named wrongly is simply absent, and
 # the agent works around the gap in prose rather than erroring. It also withholds `ToolSearch`,

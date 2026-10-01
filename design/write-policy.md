@@ -77,9 +77,9 @@ conclusion. So the instruction is to lead with the observable situation.
 
 **And a gist carries no verdict — leading with the symptom is not enough.** The gist is usually all a
 later agent acts on, so a conclusion appended to it — *symptom, so verdict* — is repeated as the finding
-while the record, where its reasons and limits are, goes unread (`FINDINGS.md` Q22). The rule is *keep
-the symptom, stop before the conclusion*, and the conclusion lives in `content` at full strength. A
-condition is not a verdict: an expiry still belongs in the line. `zikaron_memory_remember`'s
+while the record, where its reasons and limits are, goes unread (Q22, `FINDINGS-archive.md`). The
+rule is *keep the symptom, stop before the conclusion*, and the conclusion lives in `content` at full
+strength. A condition is not a verdict: an expiry still belongs in the line. `zikaron_memory_remember`'s
 description carries it at write time, as the only write-time carrier of headline rules, and `amend`
 inherits it. The consolidator applies it to every gist it writes at merge and promote, and is the only
 place the rule is enforced rather than requested — except on in-place promotion, which writes no

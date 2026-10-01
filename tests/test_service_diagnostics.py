@@ -9,7 +9,6 @@ a real process survives each signal, and names a signal exit in its stop line, i
 """
 
 import asyncio
-import faulthandler
 import logging
 import os
 import signal
@@ -129,13 +128,21 @@ async def test_the_task_dump_is_installed_for_the_block_and_removed_after_it(
     assert signal.getsignal(signal.SIGUSR2) is signal.SIG_DFL
 
 
-def test_the_thread_dump_is_installed_for_the_block_and_removed_after_it() -> None:
-    # typeshed declares `unregister` as returning `None`; CPython returns whether a handler was
-    # registered.
-    with diagnostics.thread_dump_on_signal():
-        assert faulthandler.unregister(signal.SIGUSR1) is True  # type: ignore[func-returns-value]
-        faulthandler.register(signal.SIGUSR1, file=diagnostics._log_stream(), all_threads=True)
-    assert faulthandler.unregister(signal.SIGUSR1) is False  # type: ignore[func-returns-value]
+def test_the_thread_dump_is_installed_for_the_block_and_removed_after_it(tmp_path: Path) -> None:
+    """`SIGUSR1` dumps into `service.log` while installed, and is back at its default disposition
+    afterwards, for the same reason as `SIGUSR2`."""
+    logger = logging.getLogger("zikaron.service")
+    handler = logging.FileHandler(tmp_path / "service.log")
+    logger.addHandler(handler)
+    try:
+        with diagnostics.thread_dump_on_signal():
+            os.kill(os.getpid(), signal.SIGUSR1)
+            time.sleep(0.05)
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    assert "most recent call first" in (tmp_path / "service.log").read_text(encoding="utf-8")
+    assert signal.getsignal(signal.SIGUSR1) is signal.SIG_DFL
 
 
 def test_the_thread_dump_is_armed_before_the_store_opens(
@@ -147,7 +154,7 @@ def test_the_thread_dump_is_armed_before_the_store_opens(
     armed: list[object] = []
 
     async def observing_open(_store_dir: Path) -> object:
-        armed.append(faulthandler.unregister(signal.SIGUSR1))  # type: ignore[func-returns-value]
+        armed.append(signal.getsignal(signal.SIGUSR1) is not signal.SIG_DFL)
         raise RuntimeError("stop after observing")
 
     monkeypatch.setattr(service_log, "configure_service_log", lambda _path: None)
