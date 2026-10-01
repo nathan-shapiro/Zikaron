@@ -39,7 +39,7 @@ Measured from PyPI and the project's own release notes (`research/onnxruntime-ma
   and split arm64/x86_64 wheels have been used ever since. *(The note checked four releases rather
   than every one, and says so; "exactly one, ever" would overstate it.)*
 
-**But `fastembed==0.8.0` does not require ≥ 1.24.2 on every interpreter.** It excludes specific broken
+**But `fastembed==0.8.1` does not require ≥ 1.24.2 on every interpreter.** It excludes specific broken
 point releases rather than everything below the cutoff, so on **cp312 and cp313** a resolver backtracks
 to 1.23.2 and the whole stack installs on an Intel Mac. Only **cp314** forces a release with no x86_64
 wheel at all.
