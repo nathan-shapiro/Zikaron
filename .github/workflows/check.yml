@@ -125,7 +125,7 @@ jobs:
           # back. `fastembed` stays in the key because it decides which files are wanted, even though
           # the revision now decides their bytes. `test_ci_workflow.py` reads all three from their
           # sources.
-          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
+          key: fastembed-0.8.1-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Build the virtualenv
         run: |
@@ -160,7 +160,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
+          key: fastembed-0.8.1-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Record what SQLite this interpreter brought
         # SQLite is bundled with the interpreter and FTS5 ranking can vary by host, which is the one
@@ -256,7 +256,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
+          key: fastembed-0.8.1-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Build the virtualenv
         run: |
@@ -275,7 +275,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/fastembed_cache
-          key: fastembed-0.8.0-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
+          key: fastembed-0.8.1-bge-small-en-v1.5-52398278842ec682c6f32300af41344b1c0b0bb2-${{ runner.os }}
 
       - name: Record what SQLite this interpreter brought
         run: .venv/bin/python -c "import sqlite3, sys; print(sys.version); print('sqlite', sqlite3.sqlite_version)"
