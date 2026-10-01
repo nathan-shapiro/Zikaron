@@ -29,3 +29,8 @@ updates:
     # each bump is judged on its own evidence — `fastembed` moving is a different question from
     # `ruff` moving, and a grouped PR would force one verdict on both.
     open-pull-requests-limit: 3
+    ignore:
+      # `fastembed` 0.8.1 requires `huggingface-hub<2.0`, so a 2.x pin cannot resolve. Remove this
+      # when a `fastembed` release lifts that cap.
+      - dependency-name: huggingface-hub
+        update-types: ["version-update:semver-major"]

@@ -103,6 +103,12 @@ that step 2's `--no-bin` ensures does not exist. A machine that already has a Py
 would rather use for `.venv` can substitute `python3 -m venv .venv` for step 3; the matrix still
 needs step 2.
 
+**Re-run `.venv/bin/pip install -e . --no-deps` after any change to `[project] version`.** An
+editable install's version is recorded when it is installed, not read from `pyproject.toml`, so
+without it `zikaron --version` keeps reporting the old number — and real projects run this `.venv`
+on purpose (`FINDINGS.md` §"Where the stores are"), so a bug report from one of them would name the
+wrong build. Nothing in the gate compares the two.
+
 **`--no-bin` is the part to get right.** Without it, `uv python install` puts a `python3.12` in
 `~/.local/bin`, which on a normal `PATH` sits *ahead of* `/usr/bin/python3.12` and silently becomes
 what every bare `python3.12` means — including for tools unrelated to this project.

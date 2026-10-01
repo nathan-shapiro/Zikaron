@@ -3,9 +3,11 @@
 `architecture.md` §"What a service that stops answering writes" is normative. Three mechanisms,
 because a wedge takes two shapes and nobody may be at the terminal when it happens:
 
-- **`SIGUSR1` dumps every thread's stack**, through `faulthandler`, which runs without the event
-  loop — the one dump that works when the loop itself is blocked. It writes raw text to
-  `service.log`'s own stream, with no timestamp or `pid=` prefix, since it bypasses `logging`.
+- **`SIGUSR1` dumps every thread's stack**, through `faulthandler` from a Python-level handler, so
+  it needs no event loop — the one dump that works when the loop itself is blocked, in Python code
+  or in a wait a signal interrupts. A loop stuck inside a single C call that no signal interrupts
+  is dumped when that call returns. It writes raw text to `service.log`'s own stream, with no
+  timestamp or `pid=` prefix, since it bypasses `logging`.
 - **`SIGUSR2` dumps every asyncio task's stack and the requests in flight**, through a loop signal
   handler. It sees what the first cannot: a loop that is idle while a coroutine awaits forever.
 - **A request that outlives the idle poll's interval is logged by that poll**, on each poll while
@@ -21,6 +23,7 @@ import logging
 import signal
 import sys
 from collections.abc import AsyncIterator, Iterator
+from types import FrameType
 from typing import TextIO
 
 from zikaron.service.context import ActivityTracker
@@ -70,12 +73,25 @@ def thread_dump_on_signal() -> Iterator[None]:
     It needs only `service.log`'s stream, so it goes on as soon as the log is open — ahead of the
     store's open, its migration and a created store's model load, since a slow start is exactly
     when an operator would send one, and the signal's default is *terminate*.
+
+    **A Python-level handler, not `faulthandler.register`.** The latter's handler runs in whichever
+    thread the signal lands on and walks every other thread's frames without the GIL, so a thread
+    running Python meanwhile is read mid-change and the process dies of `SIGSEGV`, as a starting
+    service did while its model load was importing `fastembed`. This handler runs on the main thread
+    holding the GIL, where every other thread's frames are at rest. A thread that `sigwait`s for the
+    signal would not depend on the main thread, but it receives the signal only if every thread
+    blocks it, and importing `numpy` starts a pool of native threads that do not.
     """
-    faulthandler.register(signal.SIGUSR1, file=_log_stream(), all_threads=True)
+    stream = _log_stream()
+
+    def dump(_signum: int, _frame: FrameType | None) -> None:
+        faulthandler.dump_traceback(file=stream, all_threads=True)
+
+    previous = signal.signal(signal.SIGUSR1, dump)
     try:
         yield
     finally:
-        faulthandler.unregister(signal.SIGUSR1)
+        signal.signal(signal.SIGUSR1, signal.SIG_DFL if previous is None else previous)
 
 
 @contextlib.asynccontextmanager

@@ -4993,7 +4993,10 @@ Step 3's run re-check has three outcomes:
 
 **4. The wedge can be seen into.**
 - **`SIGUSR1` dumps every thread's stack into `service.log`** through `faulthandler.register`, which
-  works when the event loop itself is blocked.
+  works when the event loop itself is blocked. *(As built, then replaced: that handler walks other
+  threads' frames without the GIL and crashed the service it was dumping, so the dump is now taken by a
+  Python-level handler on the main thread. `architecture.md` §"What a service that stops answering
+  writes" is normative for what that can and cannot see.)*
 - **`SIGUSR2` dumps every asyncio task's stack and the in-flight requests into `service.log`**,
   through a loop signal handler. Each in-flight request is listed with its method, session id and
   age. This is the case the first dump cannot see: a loop that is idle while a coroutine awaits

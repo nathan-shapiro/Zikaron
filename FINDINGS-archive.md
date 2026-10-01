@@ -6942,3 +6942,136 @@ followed from it are M36.
 e5-small-v2 — cleared the preregistered swap gate in the deployed hybrid (granite-30m −0.0052
 useful-recall@5, CI [−0.0365, +0.0208], against +0.05). `research/granite-embedder-spike.md`. It closed
 Q8 and gave Q2 a second instance, and it landed in M35's commit.
+
+## Closed with `0.3.0` (moved out of FINDINGS 2026-09-30, once M36 landed as `c22ad2b` and `v0.3.0` shipped)
+
+Moved byte-for-byte; "this file" inside them means `FINDINGS.md`.
+
+### M36, as it stood when it landed
+
+**M36, in progress (operator go, 2026-09-30) — the installer upgrade path, the `reaped` fixture's
+10 s teardown, and the `0.3.0` release.** The brief is `design/build-plan.md` §M36, APPROVED
+(`reviews/m36-brief-review.md`); `doctor` gains only the `alwaysLoad` row (operator, 2026-09-30).
+**Plan:** (a) brief, (b) items 1–4, (c) the release number and `README.md`, (d) implementation review
+(`reviews/m36-review.md`, APPROVED), (e) `./check.sh` green — **done**; a PR when the operator asks. **The release notes go in the PR description
+and are not in the tree**: a draft lives only in the session's scratchpad, so a fresh session
+re-derives them from `git log v0.1.0..` against the brief's §5 list. The operator tags the merge
+`v0.3.0` and publishes them; **the first commit after the tag sets `0.3.1.dev0`.** `0.1.0` shipped
+schema 1 and `0.3.0` ships schema 3, each step a minor bump, so there is no `0.2.0`
+(`design/distribution.md` §3).
+
+### The store-migration note the release carried
+
+**All three real stores are at schema 3 — `~/Trading/LeibaTrader`, `~/Memory` and `~/Dividends`,
+migrated 2026-09-29 by the services a reinstall check started.** Nothing announced it, which is the
+migration posture working as designed and still worth a release note: an installed `0.1.0` supports
+schema 1 alone and can no longer open any of them. Re-derive with
+`select value from meta where key='schema_version'` on a read-only connection.
+
+### Q2's fusion sweep, struck from the owed pool (Q2 itself stays live)
+
+- ~~**Q2's fusion sweep.**~~ **Already run and closed by M25 — do not re-propose it** (operator,
+  2026-09-28). 252 cells over `rrf_k` × `fusion_depth` × **an arm weight**, 2,720 chunks of
+  `cockroachdb/cockroach` `docs/RFCS/`: the best cell on `heading` — the only family whose queries are
+  not substrings of their own answers — beat the shipped configuration by **+0.0069 MRR@10, 95% paired
+  bootstrap CI [−0.0084, +0.0227]**, against a 0.02 threshold fixed before any cell ran. Defaults stood.
+  `design/build-plan.md` §M26's fence states it: *"No change to `rrf_k`, `fusion_depth` or arm weighting:
+  M25 closed those."* **What that turns Q2 into is below** — a structural finding, not a tuning one.
+
+### Q20, closed by M33's citation rule
+
+- **Q20** — **A claim copied out of the store escapes every withdrawal mechanism it has.** Agents
+  cite memories by uuid in project documents. A merge moves the *claim* to the target's uuid while
+  the absorbed record stays fetchable but demoted (D16, D25), so the citation resolves to a husk —
+  four were found and repointed on one store. Retiring a memory retracts nothing from a document
+  quoting it. **What would close it**: either a rule that memories are cited by subject rather than
+  uuid, the way `design/write-policy.md` already demands for gists, or `memory_fetch` returning the
+  successor alongside a superseded row — the same missing edge Q5 notes from the other direction.
+  **Measured on `~/Trading/LeibaTrader`, 2026-09-25: of six memory ids cited in that project's
+  `STATE.md`/`FINDINGS.md`, none is live.** Two (`1a445c0e`, `994cdcd5`) resolve to no record at all;
+  four are superseded, two of them into records amended the same day, so the citations point at rows
+  whose content moved under them. **The defect is semantic, not a tool gap — operator reading,
+  2026-09-25.** A uuid looks like a stable identifier and is not: it is an internal handle that
+  consolidation moves the claim away from, meaningful only inside the session that read it. **An
+  agent should cite a memory by its subject, never by its id**, and nothing tells it so — the write
+  policy's *"point at another record by its subject"* is a memory→memory rule whose stated reason is
+  that a gist gets rewritten, so a uuid in a document reads as outside it. **Teaching `memory_fetch`
+  to accept the 8-character prefixes those docs use would be the wrong fix**, legitimising the
+  practice; the missing thing is one sentence in `zikaron_memory_remember`'s description, **and it
+  lands in M33** (operator decision 2026-09-25; `design/build-plan.md` §M33 carries the reasoning and
+  why a write-side tool description does not disturb the read arm). A live memory (`b04a458f`, v1) instructs
+  re-checking those citations after consolidation: it surfaces, cannot be executed with whole-uuid
+  `fetch`, and costs a turn producing a flag — and it is phrased as an order, which the write policy
+  prohibits and nothing enforces.
+  **The sentence shipped and an agent acted on it unprompted — `~/Trading/LeibaTrader`, 2026-09-29.**
+  Having edited `STATE.md` to cite a record by its id, it went back and repointed that citation to the
+  record's *subject*, giving the reason the description gives: ids go stale when consolidation moves
+  the claim. Nothing in the prompt asked for it. That is one observation, not a rate, and it does not
+  touch the six citations already in that project's documents — but it is the first evidence the
+  write-side sentence changes what gets written, and it doubles as evidence the description **arrived**,
+  which `alwaysLoad` and the budget are what made possible.
+
+### Q22, closed by M34's form rule; its post-release measurement is owed work
+
+- **Q22** — **Gists are verdicts, and a headline should create the desire to read rather than
+  satisfy it.** Operator observation 2026-09-25, measured: **58 of 169** live long-term gists on
+  `~/Trading/LeibaTrader` carry an explicit conclusion marker and **37 contain a literal " so "** —
+  a floor, since the regex catches only overt markers (93 by the wider `VERDICT_MARKER` screen in
+  `experiments/m34_gist_replay.py`, which also counts causal clauses). **M34 (2026-09-29) put the rule
+  on `remember`, `amend` and `promote`'s descriptions and the consolidator prompt, and
+  `design/write-policy.md` §1 states it; the replay verified the consolidator half
+  (`research/m34-gist-form-replay.md`).** Still open: the marker rate among new `remember` writes after
+  release — proposed: re-run the screen on each real store a month after release, read the marked
+  gists, and compare against this 169-record baseline. **Known limit of the shipped wording:** a gist
+  shaped *mechanism, so symptom* — where the `so` clause is what was seen (*"… so a live job looks
+  dead"*) — gets the symptom cut, losing the words push needs (1 of 8 in the re-run). **Accepted, not
+  fixed: the obvious one-clause fix is refuted** (2026-09-29). Telling the consolidator that "so"
+  introduces either an observation or a verdict kept every causal symptom — and let three real
+  verdicts back through in place (*"was a July artifact"*, *"is significantly harmful"*, *"only work
+  AFTER the fact"*), 19 of 20 rows unchanged. A leaked verdict is the failure the rule exists for; a
+  cut symptom costs push only, since content keeps it and pull finds it. `research/m34-gist-form-replay.md`
+  §"A fix for the over-fire, refuted". The shape is consistent: *symptom*, then *so
+  [verdict]* — *"Ticks can share one microsecond timestamp at different prices, **so matching
+  persisted trades to ticks by timestamp alone is wrong**."* The first clause triages; the second is
+  what gets quoted instead of read. **M32 attacked the wrong half.** It renamed the object on the
+  *read* side and told the agent a headline is not the record; it changed nothing about what the
+  writer emits, and no framing makes a verdict stop reading like one. The existing guard is narrower
+  still — the consolidator is told not to produce a *list* ("a merged gist that becomes a list"),
+  which is about conflation, not about conclusions. **The target, operator's wording 2026-09-26: a headline carries no verdict and sparks
+  curiosity to read the record when it looks relevant.** The concrete rule to test is **keep the
+  symptom, drop the `so` clause** — preserving D13's triage, since you can still tell what the record
+  is about, while removing what makes the line sufficient.
+  **This is missing information, not an ignored instruction**, which is why prose can fix it:
+  before M34 the write-side rule said *"lead with the observable symptom rather than the conclusion"*,
+  an instruction about **ordering** that was being obeyed — symptom first, verdict appended — while
+  nothing prohibited the verdict's *presence*.
+  **Both surfaces, for different reasons.** The primary agent at write time
+  (`zikaron_memory_remember`'s description), because D10 makes consolidation manual and rare so a
+  record lives as a verdict for a long time; and the consolidator at merge and promote, **as the
+  gatekeeper of the form rather than as a repair pass** (operator, 2026-09-28) — it already rewrites
+  gists there, so the rule makes it the one place *"a headline carries no verdict"* is checked and
+  corrected on everything passing through, and the only enforcement point the system has, since D2
+  bars a gate at write time and a tool description is advisory. Repairing the records already written
+  is a consequence of that, not the reason for it. **How it closes**: Q21's replay harness, with a
+  fourth dimension beside fact/scope/severity — whether a reader who saw only the line would believe
+  they already had the finding.
+  **The exemplar, observed live 2026-09-26 under the new block text**: `3e1f6c7a` on
+  `~/Trading/LeibaTrader`, gist *"ZSpreadScale re-EVALUATES whenever any variant transacts, but that
+  is NOT re-selection — and every attempt to DAMP re-selection has deepened losses"*, carrying
+  **5,378 characters** of qualifying content. The agent repeated the headline's absolute across turns
+  and read the record only when the operator told it to. **Three things that makes concrete.** At 147
+  characters the gist is well inside the bound, so **the length rule is satisfied and the form is
+  still a verdict** — the bound is not the lever. The block's *"a headline is not the record"* was in
+  context on every one of those turns and did not prevent it, which is the measured case for acting
+  on the write side rather than adding read-side prose. And the record is **v6 with 5.4 KB of
+  content**, instantiating the accretion defect and Q21's register — the shouting capitals — at the
+  same time.
+  **And that gist is the repaired one. The repair worked on the axis it was aimed at**: the previous
+  wording was *incorrect*, and this one reflects reality (operator, 2026-09-26). What it did not
+  change is the **form** — the absolute and the capitals survive the rewrite. **Accuracy and form are
+  orthogonal, and only the first has a mechanism.** D11 repairs a memory that is *wrong*, the agent
+  applied it correctly, and nothing anywhere says a true headline may still be shaped so that reading
+  the record looks unnecessary — so rewriting a verdict yields another verdict.
+  **The sequencing consequence is load-bearing: the form rule must land before any corpus-wide gist
+  repair**, or a pass over the 169 existing records rewrites them into 169 fresh verdicts and reports
+  success. That applies to Q21's tone pass on the same surface.

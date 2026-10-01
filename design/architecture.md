@@ -1025,9 +1025,16 @@ line naming the drift for a memory or consolidator verb — until the inode poll
 **A wedge can take two shapes, and nobody may be at the terminal when it happens.** Three mechanisms cover
 them:
 
-- **`SIGUSR1` dumps every thread's stack into `service.log`**, through `faulthandler`, which runs without
-  the event loop — the one dump that works when the loop itself is blocked. It is raw text on the log
-  file's own stream, with no timestamp or `pid=` prefix, since it bypasses `logging`.
+- **`SIGUSR1` dumps every thread's stack into `service.log`**, through `faulthandler`, called from a
+  Python-level signal handler on the main thread. That needs no event loop, only the main thread
+  returning to Python, so it is the one dump that works when the loop itself is blocked — in Python code
+  or in a wait a signal interrupts. A loop stuck inside a single C call that no signal interrupts is
+  dumped when that call returns; the service's SQLite calls and embeddings run on worker threads, and
+  those the dump shows. It is raw text on the log file's own stream, with no timestamp or `pid=` prefix,
+  since it bypasses `logging`. **`faulthandler.register` is not the mechanism**, though it would dump
+  even from inside such a C call: its handler walks other threads' frames without the GIL, and a thread
+  running Python meanwhile crashes the process. A starting service, whose model load imports `fastembed`
+  on its own thread, died of it on most runs of five dumps (`research/sigusr1-dump-crash.md`).
 - **`SIGUSR2` dumps every asyncio task's stack and the requests in flight**, each with its method, session
   id and age. It sees what the first cannot: a loop that is idle while a coroutine awaits forever.
 - **A request in flight longer than the idle poll's interval is logged at `INFO` by that poll**, on each
