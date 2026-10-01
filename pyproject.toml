@@ -36,7 +36,7 @@ dependencies = [
     # Direct, not transitive: `core/indexing/acquisition.py` calls `snapshot_download` itself, so
     # that the revision and the digests are Zikaron's rather than whatever upstream head fastembed
     # would resolve. §6 pins direct dependencies exactly.
-    "huggingface_hub==1.26.0",
+    "huggingface_hub==1.33.0",
     # `zikaron-mcp` only. Deliberately not stdlib-only, unlike `zikaron-hook` — see
     # coding-standards.md §6 for the cost-model reasoning (once per agent spawn, not once per
     # message) and architecture.md §Components for the measured import cost.
