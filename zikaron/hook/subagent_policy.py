@@ -35,6 +35,11 @@ from zikaron.hook import write_policy
 CONSOLIDATOR_AGENT_TYPE = "zikaron-consolidator"
 
 
+def is_consolidator(agent_type: object) -> bool:
+    """Whether a `SubagentStart` payload's `agent_type` names the consolidator."""
+    return agent_type == CONSOLIDATOR_AGENT_TYPE
+
+
 def run(*, scope_dir: Path, agent_type: object) -> str | None:
     """Return the write-policy text to deliver to this subagent, or `None` for the consolidator.
 
@@ -49,7 +54,7 @@ def run(*, scope_dir: Path, agent_type: object) -> str | None:
     exit 0 having printed something or nothing, and `resolved_policy_text` absorbs any failure
     beneath it and falls back to the shipped constant.
     """
-    if agent_type == CONSOLIDATOR_AGENT_TYPE:
+    if is_consolidator(agent_type):
         return None
     # Resolved through the seam rather than assumed to be the one harness that sends this trigger:
     # a path that hard-coded a harness here would be the forked code path the single-implementation

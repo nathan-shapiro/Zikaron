@@ -42,12 +42,13 @@ _DELIBERATE_EXCEPTION = "warm_helper"
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "zikaron"
 
-#: Both packages on the critical path, not only the hook's own. `zikaron.harness` is imported by
-#: `zikaron-hook` on every trigger it serves, so an expensive import added there costs exactly what
-#: one added to `zikaron.hook` would — and the whole enforcement claim of this file is that a new
-#: module is covered by default rather than when someone remembers to list it. A seam that is
-#: stdlib-only by intent and unguarded in fact is the gap this closes.
-_CRITICAL_PATH_PACKAGES = ("hook", "harness")
+#: Every package on a per-call critical path, not only the hook's own. `zikaron.harness` is imported
+#: by `zikaron-hook` on every trigger it serves, so an expensive import added there costs exactly
+#: what one added to `zikaron.hook` would — and the whole enforcement claim of this file is that a
+#: new module is covered by default rather than when someone remembers to list it. A seam that is
+#: stdlib-only by intent and unguarded in fact is the gap this closes. `zikaron.guard` runs on every
+#: Bash call and every edit (`design/edit-guards.md` §1).
+_CRITICAL_PATH_PACKAGES = ("hook", "harness", "guard")
 
 
 def _discover_critical_path_modules() -> frozenset[str]:

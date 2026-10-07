@@ -34,6 +34,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Final, NamedTuple
 
+from zikaron.hook.components import Components
 from zikaron.install.assets import SKILL_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
@@ -101,9 +102,9 @@ class ShippedFile(NamedTuple):
 class Plan:
     """One install, as parsed from the command line: where, with what, and how forcefully.
 
-    A value rather than six parameters threaded through every function here. The grouping is not an
-    invention to satisfy an argument-count rule: these are exactly what one invocation decided, they
-    travel together to every writer below, and bundling them means a new option is added in one
+    A value rather than a parameter list threaded through every function here. The grouping is not
+    an invention to satisfy an argument-count rule: these are exactly what one invocation decided,
+    they travel together to every writer below, and bundling them means a new option is added in one
     place instead of in four signatures.
 
     `hook_format` is kiro's and is ignored by the Claude Code target, which has one hook shape. It
@@ -118,6 +119,8 @@ class Plan:
     hook_format: HookFormat
     force: bool
     trust_tools: bool
+    #: What is being installed: the memory store, the edit guards, or both.
+    components: Components = Components.MEMORY
 
 
 @dataclass(slots=True)

@@ -143,8 +143,11 @@ def test_the_wheel_declares_every_console_script(built: tuple[Path, Path]) -> No
     with zipfile.ZipFile(wheel) as archive:
         (entry_points,) = [n for n in archive.namelist() if n.endswith("entry_points.txt")]
         declared = archive.read(entry_points).decode()
-    for script in ("zikaron =", "zikaron-hook =", "zikaron-mcp ="):
-        assert script in declared, f"{script.rstrip(' =')} is not in the built wheel"
+    scripts = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "scripts"
+    ]
+    for script in scripts:
+        assert f"{script} =" in declared, f"{script} is not in the built wheel"
 
 
 def test_nothing_published_names_this_machine(built: tuple[Path, Path]) -> None:

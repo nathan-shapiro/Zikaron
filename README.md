@@ -32,6 +32,12 @@ yes, it is out of scope. That store is for what cost somebody time to discover, 
 be discovered again by the next agent, at full price. A knowledge base has no such test — it is
 whatever corpus you point it at.
 
+**And, on request, two edit guards for Claude Code** — independent of both stores. One refuses a
+find-replace edit to an authored file (`sed -i`, an inline script, a heredoc into the file) and
+points the agent at `Read` and `Edit`; the other reminds it, after each edit, to re-read what it
+changed. See [Edit guards](#edit-guards-claude-code-on-request); a project may install the memory
+store, the guards, or both.
+
 It runs entirely on your machine: SQLite databases under `.zikaron/`, a local embedding model, and a
 small background service on a Unix socket. **Zikaron reaches the network for exactly one thing** —
 the embedding-model download described under [Install](#install), pinned to one revision and
@@ -95,6 +101,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **service** | A long-running process per project. Holds the embedding model in memory and the databases open, and answers requests over a Unix socket. Starts itself when needed and stops itself when idle. |
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
 | **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
+| **guard** | Claude Code only, installed on request: a single-shot executable the harness runs before each Bash call and after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
 | **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running the foreground command a build result prints. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
 The service exists for one measured reason: loading the embedding model costs about **780 ms**, and
@@ -206,6 +213,16 @@ cd /path/to/your/project
 zikaron install --project . --harness claude-code    # or: --harness kiro
 ```
 
+Under Claude Code, `--components` adds the [edit guards](#edit-guards-claude-code-on-request), or
+installs them alone; without it you get the memory store only, exactly as before:
+
+```bash
+zikaron install --project . --harness claude-code --components both     # memory and guards
+zikaron install --project . --harness claude-code --components guards   # guards only
+```
+
+Installing one later keeps the other: an install touches only what it was asked for.
+
 **Name it on a first install, rather than leaving it to be detected.** Detection looks for a
 `.kiro/` or `.claude/` directory in the project and for `CLAUDECODE` in the environment, and it
 refuses rather than guessing when neither says. Running from an ordinary terminal, a first install
@@ -304,6 +321,12 @@ and under **Claude Code**:
 | `.claude/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
 | `.claude/settings.local.json` | three hooks — session start, per-message, and per-subagent — plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
 | `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
+
+With `--components guards` the install writes `.claude/settings.local.json` alone, and in it only
+hooks: the session-start and per-subagent hooks, which carry a short note about the guards, and the
+two guard hooks — before each Bash call, after each edit. No server, no approval key, no
+consolidator. With `--components both` you get all of the above together, and the start hooks carry
+the write policy and the guards' note.
 
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
@@ -422,6 +445,39 @@ guard, the receipts and the lease are untouched — but an unauthorized consolid
 tokens and could write a poorly-judged long-term record. `permissions.deny` is **not** the fix: it is
 global and unregisters the tool, after which the consolidator itself refuses to start.
 
+### Edit guards (Claude Code, on request)
+
+`--components guards` (or `both`) installs two deterministic hooks that hold an agent to two rules,
+with no model and no store behind them (`design/edit-guards.md`):
+
+- **A find-replace edit to an authored file is refused** — `sed -i`, `perl -pi`, an inline Python
+  or node script that writes a file, a heredoc or `echo` redirected into one, and a script under
+  `/tmp` or `$TMPDIR` that the command runs and that does any of these. The refusal reaches the
+  agent as the tool's result and tells it to use `Read` and `Edit`, or `Write` for a new file.
+  Paths under `/tmp`, `/var/tmp` and `$TMPDIR` are exempt, and so is a command carrying the
+  override the refusal itself describes, for the files whose bytes a program owns.
+- **After each edit, the agent is reminded** that the file has not been re-read, and asked for one
+  re-read of the edited material once that file's editing is done. A Bash command gets no such
+  reminder, so when the agent overrides a refusal, the guard's acknowledgement names what the
+  command changes and asks for that re-read instead.
+
+They are not a security boundary: a script the guard reads is one run from a scratch directory,
+and a script anywhere else — one of the project's own programs — is never read, by design. A guard
+that fails for any reason allows the call.
+
+They write no log and no store record: a refusal, an override and its reason are in the session's
+own transcript. `zikaron doctor` does not report on them. To see the refusal without a model in
+the loop, hand the guard the payload Claude Code would send it, from the project directory — run
+from a scratch directory such as `/tmp`, the same command is exempt and prints nothing:
+
+```bash
+printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$PWD"'","tool_input":{"command":"sed -i s/a/b/ README.md"}}' | zikaron-guard
+```
+
+It prints the deny the agent would read as the command's result. Asking an agent to run `sed -i`
+usually shows something else: told the rule when its session starts, it reaches for `Read` and
+`Edit` without trying.
+
 ### Options
 
 | Flag | Effect |
@@ -433,6 +489,7 @@ global and unregisters the tool, after which the consolidator itself refuses to 
 | `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
+| `--components {memory,guards,both}` | what to install: the memory store (the default), the edit guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no consolidator |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
@@ -834,6 +891,12 @@ and then remove Zikaron's `hooks`, `enabledMcpjsonServers` and `permissions` ent
 than deleted, because both hold settings that are not Zikaron's. **All three settings keys, because
 the install writes three** — leaving `enabledMcpjsonServers` behind names two servers that no longer
 exist, which loads nothing and breaks nothing but is not an uninstall.
+
+**The edit guards** live only in `.claude/settings.local.json`: remove the `PreToolUse` and
+`PostToolUse` hook groups whose command is `zikaron-guard`, and the `SessionStart` and
+`SubagentStart` groups whose command is `zikaron-hook`. To keep the memory store and drop only the
+guards, re-running the installer will not do it — an install never removes a selection — so delete
+the two guard groups and the `--components …` arguments from the two start groups' command.
 
 Note that `rm -rf .zikaron` takes the knowledge bases with it. They are rebuildable — an index is a
 view onto files you still have — but rebuilding one takes minutes per corpus.

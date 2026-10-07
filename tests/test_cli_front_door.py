@@ -25,10 +25,18 @@ _ROOT: Final = Path(__file__).resolve().parent.parent
 _SUBCOMMANDS: Final = ("init", "install", "knowledge", "doctor")
 
 
-def test_the_console_script_resolves_to_something_callable() -> None:
-    declared = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    target = declared["project"]["scripts"][NAME]
-    module_path, _, attribute = target.partition(":")
+_SCRIPTS: Final[dict[str, str]] = tomllib.loads(
+    (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+)["project"]["scripts"]
+
+
+def test_the_front_door_is_a_declared_console_script() -> None:
+    assert NAME in _SCRIPTS
+
+
+@pytest.mark.parametrize("script", sorted(_SCRIPTS))
+def test_every_console_script_resolves_to_something_callable(script: str) -> None:
+    module_path, _, attribute = _SCRIPTS[script].partition(":")
     entry = getattr(importlib.import_module(module_path), attribute)
     assert callable(entry)
 

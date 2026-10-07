@@ -21,12 +21,14 @@ discipline, atomic replacement.
 
 import json
 import re
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, Harness, HarnessSpec
+from zikaron.hook.components import Components
 from zikaron.install import agent_scan
 from zikaron.install import harness as harness_cli
 from zikaron.install.assets import (
@@ -37,6 +39,7 @@ from zikaron.install.assets import (
     skill_markdown,
 )
 from zikaron.install.entries import (
+    CLAUDE_START_TRIGGERS,
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
@@ -383,6 +386,9 @@ class ClaudeCodeTarget(HarnessTarget):
         return claude_mcp_config(project)
 
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
+        """The consolidator and its skill, which only the memory store ships."""
+        if not plan.components.memory:
+            return ()
         project = plan.project
         return (
             ShippedFile(
@@ -397,10 +403,13 @@ class ClaudeCodeTarget(HarnessTarget):
 
     def plan_merges(self, plan: Plan, agent: Path | None) -> tuple[MergePlan, ...]:
         del agent  # refused upstream by `accepts_agent_flag`; never reaches here.
+        if not plan.components.memory:
+            return (self._plan_settings(plan),)
         return (self._plan_settings(plan), self._plan_mcp(plan))
 
     def _plan_settings(self, plan: Plan) -> MergePlan:
-        """Hook entries, and optionally the server pre-approval, merged into the settings file.
+        """This selection's hook groups, and for the memory store the approvals, merged into the
+        settings file.
 
         **The user's own hooks on our triggers survive**, which is not a nicety: `SessionStart` and
         `UserPromptSubmit` are ordinary triggers a person may already be using, and this file is one
@@ -409,17 +418,19 @@ class ClaudeCodeTarget(HarnessTarget):
         applies, for the same reason. An earlier version of this method assigned the whole trigger
         key, which would have deleted a user's own hook and, worse, refused the install first on
         the grounds that it "differed".
+
+        **An install touches only its own selection** (`design/edit-guards.md` §5): triggers it does
+        not write are copied verbatim, so guards over a memory install keep every memory hook, and
+        the reverse. The start entries both selections share take the union of what they carry and
+        what is being installed.
         """
         path = self._settings(plan.project)
         _guard_backup_path_if_present(path)
         document = _load_json_object_or_empty(path)
-        existing = document.get("hooks")
-        _refuse_unmergeable_shape(existing, dict, path=path, key="hooks")
-        by_trigger: dict[str, list[object]] = {}
-        for key, value in (existing or {}).items() if isinstance(existing, dict) else ():
-            _refuse_unmergeable_shape(value, list, path=path, key=f"hooks.{key}")
-            by_trigger[key] = list(value)
-        ours = claude_hooks_value(plan.commands)
+        by_trigger = _hook_groups_by_trigger(document, path)
+        ours = claude_hooks_value(
+            plan.commands, plan.components, start=_start_selection(by_trigger, plan)
+        )
         _refuse_differing_hook_groups(by_trigger, ours, plan=plan, path=path)
 
         merged = dict(document)
@@ -438,23 +449,8 @@ class ClaudeCodeTarget(HarnessTarget):
             },
         }
         notes: list[str] = _rewritten_hook_notes(by_trigger, ours, plan=plan)
-        listed = document.get(_ENABLED_SERVERS_KEY)
-        _refuse_unmergeable_shape(listed, list, path=path, key=_ENABLED_SERVERS_KEY)
-        if plan.trust_tools:
-            merged[_ENABLED_SERVERS_KEY] = _with_servers(listed)
-        elif not _ZIKARON_SERVERS.issubset(_strings_in(listed)):
-            # **Conditioned on absence.** The merge never *removes* an
-            # entry, so a `--no-trust-tools` re-run over a previously-trusting install leaves both
-            # grants in the file — and an unconditional note would then assert the opposite of what
-            # the file now says. `plan_kiro_merge` already guards its equivalent note this way.
-            notes.append(
-                f"`{_ENABLED_SERVERS_KEY}` was **not** written (--no-trust-tools), so you will be "
-                "asked to approve both Zikaron servers before any Zikaron tool loads."
-            )
-        merged[_PERMISSIONS_KEY], allow_notes = _merged_permissions(
-            document, trust_tools=plan.trust_tools, path=path
-        )
-        notes.extend(allow_notes)
+        if plan.components.memory:
+            notes.extend(_merge_approvals(document, merged, plan=plan, path=path))
         return MergePlan(path=path, document=merged, notes=tuple(notes))
 
     def _plan_mcp(self, plan: Plan) -> MergePlan:
@@ -499,8 +495,15 @@ class ClaudeCodeTarget(HarnessTarget):
     def fragment(self, plan: Plan) -> str:
         # Built with this run's own flags rather than with the defaults, so the preview is a preview
         # of *this* install: showing `enabledMcpjsonServers` beside `--no-trust-tools` would promise
-        # something the real run would withhold.
-        previewed: dict[str, object] = {"hooks": claude_hooks_value(plan.commands)}
+        # something the real run would withhold — and the start entries' selection is the union
+        # the real run would write, read from the file as it stands.
+        start = self._previewed_start_selection(plan)
+        previewed: dict[str, object] = {
+            "hooks": claude_hooks_value(plan.commands, plan.components, start=start)
+        }
+        if not plan.components.memory:
+            settings = json.dumps(previewed, indent=_JSON_INDENT)
+            return f"Add these to {self._settings(plan.project)}:\n\n{settings}"
         if plan.trust_tools:
             previewed[_ENABLED_SERVERS_KEY] = sorted(_ZIKARON_SERVERS)
         previewed[_PERMISSIONS_KEY] = _merged_permissions(
@@ -519,6 +522,17 @@ class ClaudeCodeTarget(HarnessTarget):
             f"Add these to {self._settings(plan.project)}:\n\n{settings}\n\n"
             f"and these to {self._mcp_config(plan.project)}:\n\n{mcp}"
         )
+
+    def _previewed_start_selection(self, plan: Plan) -> Components:
+        """The start entries' selection an install would write over the settings file as it
+        stands, or this run's own where the file cannot be read: a preview refuses nothing it does
+        not have to, and the real run reports the file's problem."""
+        path = self._settings(plan.project)
+        try:
+            by_trigger = _hook_groups_by_trigger(_load_json_object_or_empty(path), path)
+        except InstallError:
+            return plan.components
+        return _start_selection(by_trigger, plan)
 
     def refuse_unknown_model(self, model: str) -> None:
         """Refuse a model id that cannot be written into YAML frontmatter as given.
@@ -551,6 +565,9 @@ class ClaudeCodeTarget(HarnessTarget):
         )
 
     def notes(self, plan: Plan) -> list[str]:
+        """The memory store's notes; the guards have none to give."""
+        if not plan.components.memory:
+            return []
         notes = [_APPROVAL_NOTE, _SPILL_READ_NOTE, _EXPOSURE_NOTE]
         blind = agent_scan.blind_agents(plan.project)
         if blind:
@@ -618,6 +635,66 @@ def _refuse_unmergeable_shape(value: object, expected: type, *, path: Path, key:
         f"{'an object' if expected is dict else 'an array'}. Whatever is there was put there "
         "deliberately, so it is refused rather than replaced. Move it aside and re-run."
     )
+
+
+def _hook_groups_by_trigger(document: dict[str, object], path: Path) -> dict[str, list[object]]:
+    """The settings file's hook groups, per trigger.
+
+    Raises:
+        InstallError: `hooks`, or a trigger's value under it, is the wrong shape.
+    """
+    existing = document.get("hooks")
+    _refuse_unmergeable_shape(existing, dict, path=path, key="hooks")
+    by_trigger: dict[str, list[object]] = {}
+    for key, value in (existing or {}).items() if isinstance(existing, dict) else ():
+        _refuse_unmergeable_shape(value, list, path=path, key=f"hooks.{key}")
+        by_trigger[key] = list(value)
+    return by_trigger
+
+
+def _start_selection(by_trigger: dict[str, list[object]], plan: Plan) -> Components:
+    """What the start entries carry after this install: the union of the selection being
+    installed and every selection a Zikaron start entry already names.
+
+    So guards over a memory install write `--components both`, and a memory install over guards or
+    both keeps `both` — neither install ever drops the other's start text.
+    """
+    selection = plan.components
+    for trigger in CLAUDE_START_TRIGGERS:
+        for group in by_trigger.get(trigger, []):
+            for command in _commands_in(group):
+                if _zikaron_script(command, plan.commands) == plan.commands.hook.name:
+                    selection = selection.union(Components.from_arguments(_words(command)[1:]))
+    return selection
+
+
+def _merge_approvals(
+    document: dict[str, object], merged: dict[str, object], *, plan: Plan, path: Path
+) -> list[str]:
+    """The memory store's two approval keys into `merged`, and what saying so needs.
+
+    Raises:
+        InstallError: either key is present and is the wrong shape.
+    """
+    notes: list[str] = []
+    listed = document.get(_ENABLED_SERVERS_KEY)
+    _refuse_unmergeable_shape(listed, list, path=path, key=_ENABLED_SERVERS_KEY)
+    if plan.trust_tools:
+        merged[_ENABLED_SERVERS_KEY] = _with_servers(listed)
+    elif not _ZIKARON_SERVERS.issubset(_strings_in(listed)):
+        # **Conditioned on absence.** The merge never *removes* an
+        # entry, so a `--no-trust-tools` re-run over a previously-trusting install leaves both
+        # grants in the file — and an unconditional note would then assert the opposite of what
+        # the file now says. `plan_kiro_merge` already guards its equivalent note this way.
+        notes.append(
+            f"`{_ENABLED_SERVERS_KEY}` was **not** written (--no-trust-tools), so you will be "
+            "asked to approve both Zikaron servers before any Zikaron tool loads."
+        )
+    merged[_PERMISSIONS_KEY], allow_notes = _merged_permissions(
+        document, trust_tools=plan.trust_tools, path=path
+    )
+    notes.extend(allow_notes)
+    return notes
 
 
 def _merged_permissions(
@@ -747,15 +824,43 @@ def _commands_in(group: object) -> list[str]:
     ]
 
 
+def _words(command: str) -> list[str]:
+    """A hook command split as the shell splits it — the field is a shell command line
+    (`research/claude-code-hook-command-shell-probe.md`) — or whole, where it does not split."""
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return [command]
+
+
+def _program(command: str, commands: Commands) -> str:
+    """What a hook command's ownership is decided by: a Zikaron command's program path, its first
+    shell word — the arguments are the selection, not the owner — and any other command whole.
+
+    A command naming an unquoted path with a space in it, as an install wrote before commands were
+    shell-quoted, does not split to a Zikaron program and is taken whole, so it still matches the
+    quoted path that replaces it.
+    """
+    words = _words(command)
+    first = words[0] if words else ""
+    return first if Path(first).name in (commands.hook.name, commands.guard.name) else command
+
+
+def _zikaron_script(command: str, commands: Commands) -> str | None:
+    """Which Zikaron script a hook command runs — `zikaron-hook` or `zikaron-guard` — or `None`."""
+    name = Path(_program(command, commands)).name
+    return name if name in (commands.hook.name, commands.guard.name) else None
+
+
 def _is_a_zikaron_hook_group(group: object, commands: Commands) -> bool:
     """Whether a settings hook group is one Zikaron installed.
 
-    Matched on the command's **file name**, not its full path, and that is deliberate: a group
+    Matched on the script's **file name**, not its full path, and that is deliberate: a group
     naming `/somewhere-else/venv/bin/zikaron-hook` belongs to a *different* Zikaron install, and
     recognising it is exactly what lets this install replace it rather than leave two hooks firing
     into the same store from two interpreters.
     """
-    return any(Path(command).name == commands.hook.name for command in _commands_in(group))
+    return any(_zikaron_script(command, commands) for command in _commands_in(group))
 
 
 def _refuse_differing_hook_groups(
@@ -795,7 +900,8 @@ def _refuse_differing_hook_groups(
         f"{trigger}: {_describe_group_difference(group, groups)}"
         for trigger, groups in ours.items()
         for group in by_trigger.get(trigger, [])
-        if _is_a_zikaron_hook_group(group, plan.commands) and not _is_ours(group, groups)
+        if _is_a_zikaron_hook_group(group, plan.commands)
+        and not _is_ours(group, groups, plan.commands)
     )
     if not differing:
         return
@@ -805,13 +911,35 @@ def _refuse_differing_hook_groups(
     )
 
 
-def _is_ours(group: object, expected: list[dict[str, object]]) -> bool:
-    """Whether this group's commands are the ones this install writes for that trigger.
+def _is_ours(group: object, expected: list[dict[str, object]], commands: Commands) -> bool:
+    """Whether this group's commands run the programs this install writes for that trigger.
 
     Hook-group ownership, shared by the refusal and the note so the two cannot disagree about which
-    groups belong to this install — the reason `_commands_in` is shared one level down.
+    groups belong to this install — the reason `_commands_in` is shared one level down. Programs,
+    not whole commands, because a start entry's `--components` is a selection this install unions
+    with, not a sign of another install.
     """
-    return _commands_in(group) == [command for one in expected for command in _commands_in(one)]
+    return _programs_in(group, commands) == [
+        program for one in expected for program in _programs_in(one, commands)
+    ]
+
+
+def _programs_in(group: object, commands: Commands) -> list[str]:
+    return [_program(command, commands) for command in _commands_in(group)]
+
+
+def _without_arguments(group: object, commands: Commands) -> object:
+    """A group with each Zikaron command reduced to its program, for telling an edit that matters
+    from a change of selection or of quoting."""
+    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+        return group  # pragma: no cover — only recognised groups reach here, and they are both
+    entries = [
+        {**entry, "command": _program(entry["command"], commands)}
+        if isinstance(entry, dict) and isinstance(entry.get("command"), str)
+        else entry
+        for entry in group["hooks"]
+    ]
+    return {**group, "hooks": entries}
 
 
 def _rewritten_hook_notes(
@@ -865,7 +993,13 @@ def _rewritten_hook_notes(
                 f"replaced and {'is' if one else 'are'} no longer there. Check the .bak beside the "
                 f"file for {'it' if one else 'them'}."
             )
-    rewritten = sorted(trigger for trigger, group in recognised if _is_ours(group, ours[trigger]))
+    rewritten = sorted(
+        trigger
+        for trigger, group in recognised
+        if _is_ours(group, ours[trigger], plan.commands)
+        and _without_arguments(group, plan.commands)
+        not in [_without_arguments(one, plan.commands) for one in ours[trigger]]
+    )
     if rewritten:
         notes.append(
             f"Zikaron's own hook on {', '.join(rewritten)} differed from what this install writes "
@@ -877,12 +1011,14 @@ def _rewritten_hook_notes(
 def _user_commands_in(group: object, commands: Commands) -> list[str]:
     """Commands inside a recognised group that are **the user's**, by the recogniser's own test.
 
-    A command whose file name is the hook's belongs to some Zikaron install — this one or another —
+    A command running a Zikaron script belongs to some Zikaron install — this one or another —
     and `--force` replacing it is the flag doing its job. Anything else is a hook the user put
     there, which `--force` discards as a side effect of replacing the group around it. Only the
     second is worth a note, and partitioning them here keeps that judgement in one place.
     """
-    return [command for command in _commands_in(group) if Path(command).name != commands.hook.name]
+    return [
+        command for command in _commands_in(group) if _zikaron_script(command, commands) is None
+    ]
 
 
 def _describe_group_difference(group: object, expected: list[dict[str, object]]) -> str:

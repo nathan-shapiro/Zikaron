@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Final
 
 from zikaron.harness.spec import CLAUDE_CODE, Harness
+from zikaron.hook.components import Components
 from zikaron.install.entries import Commands, HookFormat
 from zikaron.install.harness import InstallError
 from zikaron.install.targets import HarnessTarget, target_for
@@ -118,6 +119,14 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         action="store_true",
         help="overwrite files this would otherwise refuse to touch",
     )
+    parser.add_argument(
+        "--components",
+        choices=tuple(selection.value for selection in Components),
+        default=Components.MEMORY.value,
+        help="what to install: the memory store (the default), the edit guards — deterministic "
+        "hooks that refuse a find-replace edit to an authored file and ask for a re-read after "
+        "each edit, Claude Code only — or both",
+    )
     return parser
 
 
@@ -160,8 +169,11 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
     project: Path = options.project
     harness_choice, harness_notes = _resolve_harness(options.harness, project)
     target = target_for(harness_choice)
+    components = Components(options.components)
+    _refuse_unoffered_guards(components, target)
+    _refuse_model_without_consolidator(components, options.model)
     commands = Commands.from_this_interpreter()
-    _refuse_missing_commands(commands)
+    _refuse_missing_commands(commands, components)
     _refuse_unusable_agent_flag(agent, target)
     if not project.is_dir():
         raise InstallError(f"{project} is not a directory")
@@ -187,6 +199,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         hook_format=options.hook_format,
         force=options.force,
         trust_tools=options.trust_tools,
+        components=components,
     )
     report = Report()
     report.notes.extend(harness_notes)
@@ -340,8 +353,31 @@ def _refuse_agent_aliasing_a_shipped_target(
             )
 
 
-def _refuse_missing_commands(commands: Commands) -> None:
-    missing = commands.missing()
+def _refuse_unoffered_guards(components: Components, target: HarnessTarget) -> None:
+    """Refuse the edit guards where the harness offers none — read from the seam, where such a
+    harness's `edit_guards` is `None`, never from its name."""
+    if not components.guards or target.spec.edit_guards is not None:
+        return
+    raise InstallError(
+        f"--components {components.value} asks for the edit guards, which --harness {target.name} "
+        "does not offer: its post-edit hook has no documented path to the model "
+        "(design/edit-guards.md §2). Install --components memory there."
+    )
+
+
+def _refuse_model_without_consolidator(components: Components, model: str | None) -> None:
+    """Refuse `--model` where nothing would use it: the guards ship no consolidator. Refused rather
+    than ignored, as `--agent` is under Claude Code, because ignoring it discards an instruction."""
+    if model is None or components.memory:
+        return
+    raise InstallError(
+        f"--model names the consolidator's model, and --components {components.value} ships no "
+        "consolidator. Drop --model, or install --components both."
+    )
+
+
+def _refuse_missing_commands(commands: Commands, components: Components) -> None:
+    missing = commands.missing(components)
     if not missing:
         return
     listed = ", ".join(str(path) for path in missing)

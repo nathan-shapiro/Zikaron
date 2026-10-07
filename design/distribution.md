@@ -163,9 +163,10 @@ for someone establishing what they are running. `doctor` deliberately does not r
 by the same one-line call, and the choice is that a version belongs on the cheapest command rather
 than behind a run that resolves a socket path and loads an extension.
 
-**`zikaron-hook` and `zikaron-mcp` are deliberately not folded in.** Their absolute paths are written
-into harness configuration at install time — `architecture.md` §"The install contract" is normative —
-so absorbing them would rewrite every installed config to shorten two command lines no human types.
+**`zikaron-hook`, `zikaron-mcp` and `zikaron-guard` are deliberately not folded in.** Their absolute
+paths are written into harness configuration at install time — `architecture.md` §"The install
+contract" is normative — so absorbing them would rewrite every installed config to shorten command
+lines no human types. `zikaron-guard` is the edit guards' one process (`design/edit-guards.md` §5).
 The install contract is unchanged by M30, and `tests/test_install_targets.py`'s golden artefacts are
 what assert it rather than inspection.
 

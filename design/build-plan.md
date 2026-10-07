@@ -5666,6 +5666,196 @@ running service — `distribution.md` §3 names that gap and declines it. **No c
 installer writes** into either harness: the golden files under `.kiro/` and
 `tests/test_install_targets.py`'s artefacts do not move. **Nothing in the service.**
 
+## M37 — Edit guards: a find-replace edit is refused, and an edit asks to be re-read
+
+Normative: **`design/edit-guards.md`** (all of it); `design/harness.md` §"The installer's two
+targets" for where the guard selection's shape lives; `design/architecture.md` §"The install
+contract". Decision: D38.
+
+**This milestone takes up the 2026-09-24 *evaluator with teeth* proposal and supersedes it as a
+candidate.** That proposal (`FINDINGS-archive.md` §"The strongest M32 candidate, and why";
+`research/leibatrader-consolidation-2026-09-24.md` §"Candidate: an evaluator with teeth") argued
+that evaluating behaviour and reacting is the only way a rule has held in this project, and split
+rules into deterministic synchronous predicates and an asynchronous watcher. M37 builds the first
+class with **no model at all**, for two rules `CLAUDE.md` already states. The watcher class is not
+scoped by this milestone and stays a proposal. The proposal's stated risks are answered in
+`design/edit-guards.md`: a false block (§3.4's override and §6's fail-open), per-call latency (no
+model, stdlib only, operator: timing is not a constraint), and a fourth place rules live (two rules,
+both already in `CLAUDE.md`; the hook is enforcement, not a new source).
+
+Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` shows a
+`PreToolUse` deny reaching the model as the tool result, holding under `bypassPermissions`, and
+`PostToolUse` `additionalContext` reaching the model after an edit.
+
+### What ships
+
+1. **`zikaron/guard/`, a new stdlib-only package, and the console script `zikaron-guard`.** It reads
+   the hook payload from stdin and dispatches on `hook_event_name`: `PreToolUse` runs the
+   find-replace rule (`design/edit-guards.md` §3), `PostToolUse` the re-read nudge (§4). Pure
+   functions from a parsed payload to a decision, with a thin `main` that does the I/O, so the rule
+   table is tested without a process. The new package joins `check.sh`'s coverage list, which
+   `tests/test_check_gate.py` holds complete. The script joins `[project.scripts]`, which nothing
+   holds yet: `tests/test_cli_front_door.py` resolves only the `zikaron` entry, so M37 extends it to
+   resolve every declared script, and an entry naming a module that does not exist fails; and
+   `tests/test_distribution.py::test_the_wheel_declares_every_console_script` hand-lists three, so
+   M37 makes it read `[project.scripts]` from `pyproject.toml` instead.
+2. **The guard triggers and matchers are harness data.** `HarnessSpec` gains a field carrying the
+   guard hooks' trigger names and matchers, `None` for kiro. The installer's kiro refusal is derived
+   from that `None`, not written as a branch on the harness name. They do not enter `TRIGGERS`,
+   which is `zikaron-hook`'s dispatch table. The field gets its row in `design/harness.md` §"The
+   table" and its drift-guard test in `tests/test_harness_table.py`, as every differing value does.
+   The payload's own field names are **not** spec data (`design/edit-guards.md` §1).
+3. **An installer selection, `--components {memory,guards,both}`, default `memory`.** Without the
+   flag, an install writes byte-for-byte what it writes today. `guards` writes only the guard hook
+   groups; `both` writes both. `--harness kiro` with `guards` or `both` is refused before anything is
+   written, and so is `--model` with `guards`. `zikaron install` passes the flag through unchanged.
+4. **Ownership by selection.** The Claude Code target recognises a guard group by its command's
+   file name, as it already recognises a memory group, and an install replaces or adds only the
+   groups of the selection it was given. `Commands` gains the guard script, and `missing()` checks
+   only the scripts the selection needs. A guards-only install is exactly `design/edit-guards.md`
+   §5's: the guard groups under `hooks` and nothing else — no `enabledMcpjsonServers`, no
+   `permissions.allow` entry, no `.mcp.json`, neither the consolidator nor the skill, none of the
+   memory install's notes — and `--no-trust-tools` is a no-op. Each guard entry states its
+   `timeout`. **The start text** (`design/edit-guards.md` §5) is carried by `zikaron-hook`'s
+   existing `SessionStart`/`SubagentStart` entries: `guards` and `both` write
+   `zikaron-hook --components guards|both`, a `memory` install writes the entry unchanged, and a
+   guards-only install therefore writes those two groups too, with `zikaron-hook` among the
+   scripts `missing()` checks. The shared start entry takes the **union** of what it carries and
+   what is being installed, so `guards` over `memory` writes `both`, and `memory` over `both` keeps
+   it.
+5. **The guards are not installed in this repository** (operator decision 2026-10-07). This
+   repository's `.venv` is an editable install of the code under development, so a guard installed
+   here would run whatever the tree holds, and a broken guard would cripple the agent building it.
+   They are exercised in throwaway projects outside every scratch root, as the live test does.
+   `~/Trading/LeibaTrader`, which runs this `.venv`, is likewise unaffected: its
+   `settings.local.json` names no guard.
+6. **Documents.** Written with this brief: `design/edit-guards.md`, D38 in `design/overview.md` and
+   `FINDINGS.md`, and the new document's rows in the design tables of `CLAUDE.md`,
+   `design/README.md` and `design/overview.md` §5. Owed by the build: `design/harness.md` §"The
+   table" (item 2), its artefact table, and §"Three flags, and what each refuses" gaining
+   `--components` — its heading carries a count, so it loses the count rather than changing it, and
+   `CLAUDE.md`'s `harness.md` row with it; `design/architecture.md` §"Distribution artefacts" and
+   §"The install contract"; `design/distribution.md`'s console-script statement; `README.md`'s
+   install section.
+7. **The prompt texts, written by memory-reviewer** (operator decision 2026-10-07). Before the
+   code that emits them is final, memory-reviewer writes the final wording of the guard start
+   text, the deny message, the invalid-marker message, the override acknowledgement and the nudge
+   into the M37 review file, against what `design/edit-guards.md` §3.4, §3.5, §4 and §5 say each
+   must contain. The builder copies that wording verbatim and the tests assert it.
+
+**The release that carries M37 is a patch, `0.3.1`** (operator, 2026-10-07).
+`design/distribution.md` §3 bumps the minor on two triggers only — an installed artefact changing
+shape, and a `meta.schema_version` bump — and M37 fires neither: a default install's artefacts keep
+their shape and the schema stays at 3. A minor was considered, since the install contract (§3: *the
+set of shapes and locations of the artefacts the installer writes*) gains a selection, a console
+script and two hook groups, and declined: those are new artefacts a user opts into, and they leave
+nothing an upgrade must refresh, which is the reason the rule exists. The tag is the operator's.
+
+### Invariants and properties to cover
+
+- **Determinism**: the same payload, `$TMPDIR` and contents of any scratch script the command runs
+  always yield the same output. A property test over generated commands calls the decision
+  function twice.
+- **The rule table**: every row of `design/edit-guards.md` §3.2, the command-position rule (§3.1),
+  the heredoc rule (rows 1–4 scan a body only under a shell or interpreter opener; row 5 never
+  looks inside one for its sink),
+  line continuation, the per-form targets and exemptions (§3.3) and the "not denied" list, as a
+  parametrised table of commands with their expected decision. **`design/edit-guards.md` §8 is
+  the table's seed, and the one place its rows are listed**: the test table holds every row of
+  §8 and every edge §7 names with the value §7 gives it, judged under §8's stated payload. The test pins `cwd` and `$TMPDIR` with `monkeypatch`, since on the
+  macOS job `$TMPDIR` is set by the OS and a row judged under the runner's own value would differ
+  by machine. A row
+  found during the build goes into §8 in the same change as the test.
+- **The override**: examined only after a form matched; a valid one returns **no
+  `permissionDecision`**, only the acknowledging `additionalContext`, which names every authored
+  target of every form that matched, each once, in command order, or the fixed clause where none
+  resolves (`design/edit-guards.md` §3.4, amended 2026-10-07); a bare marker, a one-word
+  reason, or a marker glued to a preceding word (`f#ZIKARON-FORCE`) denies with the matching
+  message; a marker on a command no form matches produces no output at all.
+- **`tool_name`**: a `PreToolUse` payload for any tool but `Bash`, and a `PostToolUse` payload for
+  any tool outside the four, produce no output; the guard's tool sets are the spec field's matchers,
+  read from it.
+- **The nudge**: line ranges from `structuredPatch`, read from `tool_response` or `tool_output`;
+  omitted when absent; `notebook_path` for `NotebookEdit`; no nudge for a `Write` whose result
+  `type` is `"create"`, nor for a scratch path; a nudge for a `Write` with no `type`.
+- **The matchers** are `|`-joined bare tool names, which the guard splits to get its tool sets.
+- **Fail-open**: malformed JSON, an empty stdin, an unknown event, a missing field and an exception
+  inside a rule each exit 0 with no output.
+- **Stdlib only**: `zikaron/guard` is added to `tests/test_hook_stdlib_only.py`.
+- **Install by selection**, on the perturbation table below.
+- **Kiro refuses** `guards` and `both`, from the spec field, with nothing written.
+- **The spec field's row** in `design/harness.md` §"The table", held by `tests/test_harness_table.py`.
+- **Every guard entry states its `timeout`**, read from the `zikaron/guard/` constant.
+- **The start text by selection**: `zikaron-hook` with no flag emits exactly today's write policy on
+  `SessionStart` and `SubagentStart`; `--components guards` emits only the guard start text and
+  opens no socket; `--components both` emits the policy then the guard text. The guard text
+  carries no override syntax. A `memory` install's start entry is byte-identical to today's.
+- **A live test** (`integration_claude`): one real session under `--permission-mode
+  bypassPermissions`, **in a project created outside every scratch root** of
+  `design/edit-guards.md` §3.3 — a nonce directory under `Path.home() / ".cache" /
+  "zikaron-live-tests"`, removed in teardown — because pytest's `tmp_path` lies under `/tmp` or
+  `$TMPDIR`, where the guard would exempt the denied command and suppress the nudge; given the exact commands to run as the probe was, so that neither the edit nor
+  the override is the model's choice, and asserted on what the harness recorded rather than on what
+  the model chooses to say. In it a `sed -i` is denied with the deny reason as its tool result — the
+  deny holding under that mode is itself one of `design/edit-guards.md` §2's rows; the override
+  runs, changes the file, and its acknowledgement reaches the model; and an `Edit` is followed by
+  the nudge. **The mode is forced, and it hides one thing**: under headless `default` a
+  no-decision command waits for an approval nobody can give, so the file would not change; and under
+  `bypassPermissions`, `allow` and no decision look the same. So the override's withdrawing rather
+  than granting is held by the hermetic test on the hook's JSON — no `permissionDecision` key — and
+  the live test asserts only the file change and the acknowledgement. **The two halves are recorded in
+  different places**: the deny reason is a `tool_result` in the `stream-json` output, while
+  `additionalContext` never appears there and is found only in the session's own transcript under
+  `~/.claude/projects/`, as an `attachment` rendered as `<system-reminder>PostToolUse:Edit hook
+  additional context: …` — the fragile half (`design/edit-guards.md` §2), so that is the record
+  the test reads for the nudge and the acknowledgement.
+  Hermetic equivalents stub the harness as the existing tiers do; nothing is covered only live.
+
+### The perturbation table, walked before the first review round
+
+Axes: the prior state of `settings.local.json` (nothing; a memory install; a guards install; both;
+a memory install from an older version whose groups differ; a user's own `PreToolUse` or
+`PostToolUse` group, with and without a matcher equal to ours) × the selection (`memory`, `guards`,
+`both`) × the mode (`--print-only`, a normal run, `--force`) × the harness (`claude-code`, `kiro`)
+× the other flags (`--model`, `--no-trust-tools`, neither). Among the cells: `guards` over a memory
+install leaves `enabledMcpjsonServers` and `permissions.allow` byte-identical, and `memory` over a
+guards install leaves the guard groups byte-identical, and the shared start entry's flag is the
+union of what it carried and what the selection adds. Every cell's expected outcome is written
+into the test table before the code; any cell whose answer is not obvious from
+`design/edit-guards.md` §5 is a design question, raised before the first review round, not after a
+blocker.
+
+### Done when
+
+1. Items 1–7 are in, and every new test was **seen red** against the mutation it names.
+2. **The decision function is replayed, before the guards are installed, over every `Bash`
+   `tool_input.command` in this repository's existing session transcripts** —
+   `~/.claude/projects/<project>/**/*.jsonl`, subagents included — under each call's recorded `cwd`
+   and the machine's `$TMPDIR`. A note in `research/` reports the number of commands, how many a
+   form matched, how many would have been denied, and every would-be deny verbatim with a reading
+   of true or false. A false deny that recurs is a §3 change with its §8 row in this build; one
+   seen once is a §7 entry. The count is the denominator `design/edit-guards.md` §7's count (a) is
+   read against.
+3. In one session in a throwaway project with the guards installed, outside every scratch root,
+   whose prompt names a task with exact commands that include a denied form — as the live test does
+   — while saying nothing about the hooks, the session's own records show a deny as a `tool_result` and a nudge as a transcript
+   `attachment`, and whether a re-read of the edited path followed the nudge is reported
+   (`design/edit-guards.md` §7's count (d), n=1, without a bar). The observation goes in
+   `research/`.
+4. `./check.sh` is green. The pull request's CI is the version matrix.
+
+### Scope fence
+
+**Not** kiro: no guard is offered there, and nothing probes kiro's `postToolUse` (operator decision
+2026-10-06). **Not** installed in this repository (item 5). **Not** the asynchronous watcher class, nor any model on any path. **Not** an uninstall
+or a removal of a selection that was not requested. **Not** a `doctor` row for the guards. **Not**
+an override log or any store event: the transcript is the record. **Not** a rule beyond the two in
+`design/edit-guards.md`; a third rule is a design change to that document first. **No change to
+what a `memory` install writes**: the golden files under `.kiro/` and `test_install_targets.py`'s
+artefacts for the default selection do not move. **Nothing in the service or the store**; the
+hook client changes only to read `--components` on its start triggers, and with no flag does
+exactly what it does today.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

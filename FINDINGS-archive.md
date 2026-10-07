@@ -4035,6 +4035,16 @@ of this file) and it is worth re-running whenever either directory grows.
 | `research/m26-rerank-preregistration.md` | the reranker preregistration — **written but never reviewed**, and its within-corpus half is on weak ground while its cross-corpus half is not |
 | `research/publication-sweep.md` | the four-family pre-publication sweep: method, every hex run classified, and the decisions with their reasons |
 | `research/trial-corpus-candidates.md` | how the trial corpus was chosen, and the contamination risk the choice carried |
+| `research/claude-code-tool-hook-probe.md` | M37's feasibility, measured: a `PreToolUse` deny reaches the model as the tool result and holds under `bypassPermissions`; `PostToolUse` `additionalContext` reaches it after an edit; `Write` reports `create` vs `update` |
+| `research/claude-code-tool-hooks-docs.md` | the documented `PreToolUse`/`PostToolUse` contract (code.claude.com hooks guide, permissions, Agent SDK), each claim tagged verbatim or summarised, with the open GitHub issues on `additionalContext` delivery |
+| `reviews/m37-edit-guards-brief-review.md` | the M37 spec and brief's review trail, approved; rounds 22 onward judge readiness and what to cut rather than hunt edges |
+| `research/m37-guard-prototype-run.md` | the throwaway prototype of `design/edit-guards.md` §3 checked against every §8 row, decisions and named targets, with the readings it forced the spec to state |
+| `research/claude-code-hook-command-shell-probe.md` | a Claude Code hook `command` is a shell command line: an unquoted path with a space does not run, a quoted one with arguments does |
+| `research/m37-guard-transcript-replay.md` | the shipped decision function over this repository's 20,051 transcript `Bash` commands: 1,227 would-be denies, every false class one-session or §7-stated, and the two recurring false denies that changed §3.3 |
+| `research/m37-guard-live-observation.md` | the guards in three real sessions: the deny, the override and the nudge recorded by the harness, and the start text steering opus and sonnet off `sed -i` before any deny |
+| `research/m37-guard-interactive-test.md` | the operator's interactive 2×2 of start text × deny-and-nudge, arms A–D and C2 on a docs-tree fixture: the start text kept agents off scripts, the deny made one read first and was overridden with a true reason, the nudge gave the full re-read pass, and an overridden script's edits drew no nudge until the acknowledgement asked |
+| `research/m37-scratch-script-replay.md` | why §3.2 row 6 exists: the live test's vanilla agent edited through a staged scratch script, 231 such runs in local transcripts, and the product's 54 row-6 denies over 33,069 calls read by hand — 47 authored rewrites, 2 golden files, 5 the stated argv false deny |
+| `reviews/m37-edit-guards-review.md` | the M37 build's trail: memory-reviewer's prompt texts, then the build review rounds |
 
 ## M25, and the last three pre-knowledge-index milestones (moved out of FINDINGS 2026-09-20)
 
