@@ -176,6 +176,23 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert (answer == "yes") == spec.consolidator_can_read_files
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_edit_guard_hooks(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """The guards' triggers and matchers, or that the harness offers no guards at all — which is
+        what the installer's refusal of them reads."""
+        cell = _cell(rows, "Edit-guard hooks (`edit_guards`)", spec)
+        if spec.edit_guards is None:
+            assert _identifier(cell) is None
+            return
+        named = tuple(_BACKTICKED.findall(cell))[:4]
+        hooks = spec.edit_guards
+        assert named == (
+            hooks.find_replace.trigger,
+            hooks.find_replace.matcher,
+            hooks.reread.trigger,
+            hooks.reread.matcher,
+        )
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_harness_binary(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         """What the installer looks for on `PATH` before writing anything.
 

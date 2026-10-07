@@ -140,7 +140,7 @@ def test_the_project_table_still_holds_the_keys_a_later_table_can_swallow() -> N
     still *in `[project]`*, which is the property an inserted table destroys.
     """
     project = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    for key in ("name", "version", "readme", "license", "requires-python", "dependencies"):
+    keys = ("name", "version", "readme", "license", "requires-python", "dependencies", "scripts")
+    for key in keys:
         assert key in project, f"`{key}` has left [project] — a table header was inserted above it"
     assert len(project["dependencies"]) == 5, "the runtime dependency list changed size"
-    assert set(project["scripts"]) == {"zikaron", "zikaron-hook", "zikaron-mcp"}

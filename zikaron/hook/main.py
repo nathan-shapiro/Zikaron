@@ -1,15 +1,15 @@
 """The process entry point a harness's own hook configuration invokes.
 
 A hook receives its event as JSON on **stdin** — `{hook_event_name, cwd, session_id}` always, plus
-`prompt` for the prompt trigger and `agent_type` for the subagent trigger — and the same `command`
-string is registered under every trigger it serves, dispatching here on `hook_event_name` from the
-payload itself rather than on an argv flag.
+`prompt` for the prompt trigger and `agent_type` for the subagent trigger — and it dispatches on
+`hook_event_name` from the payload itself rather than on an argv flag.
 
-Both harnesses would accept a per-trigger flag, so this is a choice rather than a constraint. One
-identical command under every trigger keeps the installed entries uniform, and — the reason that
-actually matters — the payload's own `hook_event_name` cannot disagree with the event that fired
-it, while a flag copied into several config entries can be copied wrong exactly once and then
-mis-dispatch every invocation of that trigger, silently.
+Both harnesses would accept a per-trigger flag, so this is a choice rather than a constraint: the
+payload's own `hook_event_name` cannot disagree with the event that fired it, while a flag copied
+into several config entries can be copied wrong exactly once and then mis-dispatch every invocation
+of that trigger, silently. The one argument a command carries, `--components` on the two start
+triggers, selects what is said rather than which event is served, and reads as the memory hook
+whenever it does not read cleanly.
 
 **Trigger names are normalized before anything branches on them.** `zikaron.harness.spec` owns the
 vocabulary; this module knows only the three events it resolves to. That is what keeps one
@@ -36,21 +36,26 @@ import os
 import sys
 from pathlib import Path
 
+from zikaron.guard.start_text import GUARD_START_TEXT
 from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
 from zikaron.hook import push, spawn_warm, subagent_policy
+from zikaron.hook.components import Components
 
 
 def main() -> None:
     """Read one JSON payload from stdin, dispatch on `hook_event_name`, emit whatever the dispatched
     module returns (if anything) on that event's own channel, and exit 0 unconditionally.
+
+    `--components guards|both` on the command line selects what the start triggers emit
+    (`design/edit-guards.md` §5); without it this is exactly the memory hook.
     """
     with contextlib.suppress(Exception):
-        _run()
+        _run(Components.from_arguments(sys.argv[1:]))
     sys.exit(0)
 
 
-def _run() -> None:
+def _run(components: Components = Components.MEMORY) -> None:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
         return
@@ -60,31 +65,59 @@ def _run() -> None:
         # A trigger this hook is not registered for, or one a harness adds later. Not a failure of
         # anything this module owns: the process was invoked for a name it does not implement.
         return
-    output = _dispatch(event, payload)
+    output = _dispatch(event, payload, components)
     if output is not None:
         _emit(event, output, trigger=str(trigger))
 
 
-def _dispatch(event: HookEvent, payload: dict[str, object]) -> str | None:
-    """Whatever this event's own module wants emitted, or `None` for nothing at all."""
+def _dispatch(event: HookEvent, payload: dict[str, object], components: Components) -> str | None:
+    """Whatever this event's own module wants emitted, or `None` for nothing at all.
+
+    A start trigger emits the write policy for the memory store and the guard start text for the
+    guards, in that order; a guards-only start makes no service connection at all.
+    """
+    if event is HookEvent.PROMPT:
+        return _push(payload) if components.memory else None
+    parts = [_start_policy(event, payload) if components.memory else None]
+    if components.guards and not _is_consolidator(event, payload):
+        parts.append(GUARD_START_TEXT)
+    text = "\n\n".join(part for part in parts if part is not None)
+    return text or None
+
+
+def _scope_dir(payload: dict[str, object]) -> Path:
     # **Not the payload's `cwd` directly** — that is the value this harness reports *live*, and
     # under Claude Code it follows the agent's own `cd`, so keying a store on it put stores under
     # log directories and Scala source trees while `zikaron-mcp` stayed on the real one. The seam
     # decides; both clients ask it the same question. See `HarnessSpec.store_scope_dir`.
-    scope_dir = detect.current_spec().store_scope_dir(Path(str(payload.get("cwd", "."))))
+    return detect.current_spec().store_scope_dir(Path(str(payload.get("cwd", "."))))
+
+
+def _push(payload: dict[str, object]) -> str | None:
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str):
+        return None
+    return push.run(
+        scope_dir=_scope_dir(payload),
+        payload_session_id=payload.get("session_id"),
+        prompt=prompt,
+        pid=os.getpid(),
+    )
+
+
+def _start_policy(event: HookEvent, payload: dict[str, object]) -> str | None:
     if event is HookEvent.SPAWN:
-        return spawn_warm.run(scope_dir=scope_dir, payload_session_id=payload.get("session_id"))
-    if event is HookEvent.PROMPT:
-        prompt = payload.get("prompt")
-        if not isinstance(prompt, str):
-            return None
-        return push.run(
-            scope_dir=scope_dir,
-            payload_session_id=payload.get("session_id"),
-            prompt=prompt,
-            pid=os.getpid(),
+        return spawn_warm.run(
+            scope_dir=_scope_dir(payload), payload_session_id=payload.get("session_id")
         )
-    return subagent_policy.run(scope_dir=scope_dir, agent_type=payload.get("agent_type"))
+    return subagent_policy.run(scope_dir=_scope_dir(payload), agent_type=payload.get("agent_type"))
+
+
+def _is_consolidator(event: HookEvent, payload: dict[str, object]) -> bool:
+    """The consolidator's system prompt is its whole instruction, so it is given no start text."""
+    return event is HookEvent.SUBAGENT_START and subagent_policy.is_consolidator(
+        payload.get("agent_type")
+    )
 
 
 def _emit(event: HookEvent, output: str, *, trigger: str) -> None:

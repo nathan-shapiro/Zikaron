@@ -19,7 +19,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, NamedTuple
 
+from zikaron.guard.limits import TIMEOUT_SECONDS as GUARD_TIMEOUT_SECONDS
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.install.assets import consolidator_prompt, identity_vocabulary
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
@@ -43,6 +45,7 @@ CONSOLIDATOR_AGENT_NAME: Final = "zikaron-consolidator"
 
 _HOOK_SCRIPT: Final = "zikaron-hook"
 _MCP_SCRIPT: Final = "zikaron-mcp"
+_GUARD_SCRIPT: Final = "zikaron-guard"
 
 #: Kiro's two trigger names, **read from the seam rather than spelled again**. A second copy here
 #: would drift: the harness-table drift guard covers spec↔design and nothing covers
@@ -84,6 +87,15 @@ _CLAUDE_TRIGGERS: Final = tuple(
     if trigger is not None
 )
 
+#: The two start triggers, whose shared entry carries the `--components` selection.
+CLAUDE_START_TRIGGERS: Final = (_CLAUDE_TRIGGERS[0], _CLAUDE_TRIGGERS[2])
+
+#: The edit guards' two hook groups, read from the seam for the same reason. The filter is a type
+#: narrowing: Claude Code is the harness the guards are offered on.
+_CLAUDE_GUARD_HOOKS: Final = tuple(
+    hook for guards in (CLAUDE_CODE.edit_guards,) if guards is not None for hook in guards
+)
+
 
 class HookFormat(StrEnum):
     """Which of the two formats the harness accepts to write.
@@ -97,7 +109,7 @@ class HookFormat(StrEnum):
 
 
 class Commands(NamedTuple):
-    """The two absolute command paths every shipped entry names.
+    """The absolute command paths the shipped entries name.
 
     Resolved from the running interpreter rather than accepted as strings, so an install cannot
     write a `command` pointing at an interpreter that does not have Zikaron in it — which would fail
@@ -107,22 +119,30 @@ class Commands(NamedTuple):
     hook: Path
     mcp: Path
 
+    @property
+    def guard(self) -> Path:
+        """`zikaron-guard`, beside `zikaron-hook`: every console script lands in one directory."""
+        return self.hook.with_name(_GUARD_SCRIPT)
+
     @classmethod
     def from_this_interpreter(cls) -> "Commands":
         """`<venv>/bin/zikaron-hook` and `<venv>/bin/zikaron-mcp` for the interpreter running this.
 
-        `sysconfig.get_path("scripts")` is the same directory `pip install` put those two console
-        scripts in, so this resolves correctly under a venv, a `--user` install or a system install
-        without needing to know which of the three it is.
+        `sysconfig.get_path("scripts")` is the same directory `pip install` put the console scripts
+        in, so this resolves correctly under a venv, a `--user` install or a system install without
+        needing to know which of the three it is.
         """
         scripts = Path(sysconfig.get_path("scripts"))
         return cls(hook=scripts / _HOOK_SCRIPT, mcp=scripts / _MCP_SCRIPT)
 
-    def missing(self) -> tuple[Path, ...]:
-        """Whichever of the two is not an executable file, in path order.
+    def missing(self, components: Components = Components.MEMORY) -> tuple[Path, ...]:
+        """Whichever of the scripts `components` needs is not an executable file, in path order.
+
+        `zikaron-hook` is needed by every selection, since the start entries carry the guards'
+        start text too; `zikaron-mcp` by the memory store, `zikaron-guard` by the guards.
 
         Checked rather than assumed because the failure is otherwise invisible until a hook fires:
-        installing from a source checkout without `pip install` leaves both absent, and a hook whose
+        installing from a source checkout without `pip install` leaves them absent, and a hook whose
         `command` does not exist produces no output on the one channel the harness reads.
 
         **Executability, not merely existence.** A console script that exists without the execute
@@ -130,11 +150,12 @@ class Commands(NamedTuple):
         `noexec` — fails at exactly the moment this check exists to protect, and `is_file()` alone
         would pass it.
         """
-        return tuple(
-            path
-            for path in (self.hook, self.mcp)
-            if not (path.is_file() and os.access(path, os.X_OK))
+        needed = (
+            self.hook,
+            *([self.mcp] if components.memory else []),
+            *([self.guard] if components.guards else []),
         )
+        return tuple(path for path in needed if not (path.is_file() and os.access(path, os.X_OK)))
 
 
 def hooks_object(commands: Commands) -> dict[str, list[dict[str, object]]]:
@@ -269,30 +290,46 @@ def claude_tool_vocabulary() -> dict[str, str]:
     }
 
 
-def claude_hooks_value(commands: Commands) -> dict[str, list[dict[str, object]]]:
-    """The `hooks` value for `.claude/settings.local.json`: three triggers, one command each.
+def claude_hooks_value(
+    commands: Commands,
+    components: Components = Components.MEMORY,
+    *,
+    start: Components | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    """The `hooks` value for `.claude/settings.local.json` for one selection, one group per trigger.
+
+    Every selection writes the two start triggers, whose `zikaron-hook` command carries `start` —
+    the selection those entries emit start text for, `components` unless the caller widens it to a
+    union with what is already installed (`design/edit-guards.md` §5). The memory store adds the
+    prompt trigger; the guards add their two groups, each with its matcher.
 
     The doubled nesting is the harness's own and was confirmed by running it: an event maps to a
     list of *groups*, each carrying an optional `matcher` and its own inner `hooks` list
-    (`research/claude-code-installer-probe.md` §1). No `matcher` is written — `UserPromptSubmit`
-    accepts none at all, and the other two must fire for every session and every subagent, which is
-    what omitting it means.
+    (`research/claude-code-installer-probe.md` §1). The memory groups carry no `matcher` —
+    `UserPromptSubmit` accepts none at all, and the start triggers must fire for every session and
+    every subagent, which is what omitting it means.
 
-    `timeout` is **seconds** here, measured rather than assumed, and `command` is *not*
-    shell-quoted: unlike kiro's hook field this is not documented as passing through a shell, and
-    quoting a path the harness execs directly would make it look for a file whose name contains the
-    quotes — the same reasoning `mcp_servers_value` already applies to its own `command`.
+    `timeout` is **seconds** here, measured rather than assumed. `command` is a shell command line,
+    measured (`research/claude-code-hook-command-shell-probe.md`), so the path is shell-quoted: an
+    unquoted path containing a space does not run at all.
     """
-    entry: dict[str, object] = {
-        "hooks": [
-            {
-                "type": "command",
-                "command": str(commands.hook),
-                "timeout": HOOK_TIMEOUT_SECONDS,
-            }
-        ]
-    }
-    return {trigger: [entry] for trigger in _CLAUDE_TRIGGERS}
+    start_selection = components if start is None else start
+    start_group = _claude_group(commands.hook, start_selection.arguments, HOOK_TIMEOUT_SECONDS)
+    groups: dict[str, list[dict[str, object]]] = {}
+    for trigger in _CLAUDE_TRIGGERS:
+        if trigger in CLAUDE_START_TRIGGERS:
+            groups[trigger] = [start_group]
+        elif components.memory:
+            groups[trigger] = [_claude_group(commands.hook, (), HOOK_TIMEOUT_SECONDS)]
+    for hook in _CLAUDE_GUARD_HOOKS if components.guards else ():
+        guard = _claude_group(commands.guard, (), GUARD_TIMEOUT_SECONDS)
+        groups[hook.trigger] = [{"matcher": hook.matcher, **guard}]
+    return groups
+
+
+def _claude_group(script: Path, arguments: tuple[str, ...], timeout: int) -> dict[str, object]:
+    command = " ".join((hook_command_string(script), *arguments))
+    return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
 
 
 def claude_mcp_servers_value(commands: Commands) -> dict[str, object]:

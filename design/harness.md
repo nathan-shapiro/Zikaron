@@ -72,6 +72,8 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Shipped consolidator `model` | pinned `claude-sonnet-5` (an alias would fail the `--list-models` check — *inferred*, not measured) | the `sonnet` alias — *decided*, see §"The consolidator's model" |
 | Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
+| Hook `command` | a shell command line, measured, so the path is shell-quoted | a **shell command line** too — an unquoted path containing a space does not run at all, so the path is shell-quoted and a start entry's `--components` is its arguments (`hook-command-shell-probe`) |
+| Edit-guard hooks (`edit_guards`) | none — not offered: its post-edit hook has no documented path to the model, so the installer refuses the guards here (edit-guards §2) | `PreToolUse` matcher `Bash`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/edit-guards.md` §5) |
 | MCP tool-call duration | a 330 s call **completed**, with no `timeout` on the server entry: kiro reported `status: Completed` and the model's reply carried the tool's own `slept 330.1s` (`spikes/m34_tool_call_duration_stub.py`, 2026-09-29) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
 | Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
@@ -573,23 +575,32 @@ table" and a drift-guard test; a *shape* that differs (which files exist, how th
 
 **What refuses an entry is ownership rather than equality, on both harnesses**, so a field this
 installer changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a server entry — `.mcp.json`'s or kiro's
-`mcpServers` — and a hook's command. Under Claude Code that is a settings hook group's command
-**list**, equal to ours rather than merely containing it — so a group carrying our command beside one
-of the user's is refused, not rewritten. Anything else is rewritten and reported. The rule is written
-once, in `zikaron/install/ownership.py`, and both targets import it; `architecture.md` §"The install
+`mcpServers` — and a hook's command. Under Claude Code that is a settings hook group's **programs** —
+each command's first shell word, since a start entry's `--components` is a selection the install
+unions with rather than a sign of another install — as a list equal to ours rather than merely
+containing it, so a group carrying our command beside one of the user's is refused, not rewritten.
+Anything else is rewritten and reported. The rule is written once, in
+`zikaron/install/ownership.py`, and both targets import it; `architecture.md` §"The install
 contract" states the predicates and the merge.
 
 ### What a Claude Code install writes
 
-Four artefacts, against kiro's two-plus-a-merge:
+Four artefacts for the memory store, against kiro's two-plus-a-merge; `--components` selects the
+memory store, the edit guards (`design/edit-guards.md` §5), or both:
 
-| Artefact | Path | Notes |
-|---|---|---|
-| Hook entries | `.claude/settings.local.json` | merged; **three** entries, not two — see below |
-| Tool approval | the same `settings.local.json` | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
-| MCP servers | `.mcp.json` | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
-| Consolidator | `.claude/agents/zikaron-consolidator.md` | YAML frontmatter, prompt as body |
-| Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | YAML frontmatter, body |
+| Artefact | Path | Selection | Notes |
+|---|---|---|---|
+| Prompt entry | `.claude/settings.local.json`, merged, under `UserPromptSubmit` | memory | `zikaron-hook`, the per-message push; with the start entries, a memory install's hooks — see below |
+| Start entries | the same file's `SessionStart` and `SubagentStart` | every selection | `zikaron-hook`, carrying `--components guards\|both` beside the guards — the union of what is installed |
+| Guard entries | the same file's `PreToolUse` and `PostToolUse` | guards | `zikaron-guard`, each group with its matcher and its own `timeout` |
+| Tool approval | the same `settings.local.json` | memory | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
+| MCP servers | `.mcp.json` | memory | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
+| Consolidator | `.claude/agents/zikaron-consolidator.md` | memory | YAML frontmatter, prompt as body |
+| Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | memory | YAML frontmatter, body |
+
+**An install touches only its own selection.** Triggers it does not write are copied verbatim, so
+the guards over a memory install keep every memory hook and both approval keys byte-identical, and
+the reverse; nothing removes a selection.
 
 **`settings.local.json`, never `settings.json`.** The installer writes absolute venv paths — machine-local by
 construction, for the reason §"The install contract" gives about console scripts — and `settings.json` is the
@@ -621,8 +632,13 @@ about this same field's unit between themselves. The value is stated rather than
 that applies to other events, so `push.py`'s ~2 s internal deadline clears the *tightest* default in the
 table by 15× rather than the 300× a reader who checked only the general figure would have recorded.
 
-### Three flags, and what each refuses
+### The flags, and what each refuses
 
+- **`--components` is Claude Code's for the guards.** `memory` is the default and writes what an
+  install wrote before the flag existed. `guards` and `both` are **refused** under kiro, before
+  anything is written, and the refusal is read from the seam — `HarnessSpec.edit_guards` is `None`
+  there — never from the harness's name. `--model` under `guards` is refused too, since that
+  selection ships no consolidator; `--no-trust-tools` asks nothing of the guards and is a no-op.
 - **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two
   merge targets are fixed project paths. Passed under Claude Code it is **refused**, rather than ignored:
   ignoring it would silently discard the one instruction the user gave about where their config lives.

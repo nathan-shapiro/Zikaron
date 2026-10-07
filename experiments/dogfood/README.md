@@ -42,11 +42,11 @@ registered session-wide to be reachable by any subagent, so the primary agent ne
 ## Setup
 
 ```bash
-mkdir -p ~/zk-dogfood
+mkdir -p ~/ZikaronTesting/zk-dogfood
 cd /home/nathan/Zikaron
-.venv/bin/python -m zikaron.install --project ~/zk-dogfood --harness claude-code
-cp experiments/dogfood/zikaron-dogfood.md ~/zk-dogfood/.claude/agents/
-cd ~/zk-dogfood && claude --agent zikaron-dogfood
+.venv/bin/python -m zikaron.install --project ~/ZikaronTesting/zk-dogfood --harness claude-code
+cp experiments/dogfood/zikaron-dogfood.md ~/ZikaronTesting/zk-dogfood/.claude/agents/
+cd ~/ZikaronTesting/zk-dogfood && claude --agent zikaron-dogfood
 ```
 
 `--harness` is stated rather than left to `auto` as a habit worth keeping; here the directory is
@@ -54,5 +54,6 @@ empty so `auto` has only the environment to go on, and a habit that works by luc
 
 **The throwaway depends on this repository's venv.** The installer writes absolute paths to
 `/home/nathan/Zikaron/.venv/bin/zikaron-hook` and `.../zikaron-mcp`, so rebuilding the venv
-mid-experiment breaks the arm. And `~/zk-dogfood/.zikaron/memory.db` **is the evidence** — copy it
+mid-experiment breaks the arm. And `~/ZikaronTesting/zk-dogfood/.zikaron/memory.db` **is the
+evidence** — copy it
 somewhere durable before deleting the directory.

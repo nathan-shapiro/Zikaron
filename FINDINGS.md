@@ -68,6 +68,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x` with an artefact-shape rule |
 | D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back |
+| D38 | Edit guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read |
 
 ## Current state — resume here
 
@@ -78,10 +79,102 @@ record is in `FINDINGS-archive.md`, M36's in §"Closed with `0.3.0`"; the briefs
 `design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md` and
 decoded in `research/injected-prose-log.md`.
 
-**The tree is `0.3.1.dev0`** — the post-release bump, sent with this archive pass as a pull request
-of its own (operator, 2026-10-01): **PR #19**, which also carries the `SIGUSR1` dump's move off
-`faulthandler.register` (`research/sigusr1-dump-crash.md`) and the crew's `effort` settings. **No next
-milestone is chosen**; §"Owed work" below is the pool.
+**`main` is `0.3.1.dev0`; M37's pull request sets `0.4.0`**, which the operator releases from
+its merge (operator, 2026-10-07), so the first commit after that tag returns the tree to
+`0.4.1.dev0`. PR #19 (`b2dd415`) carried the post-release bump, this archive pass and
+the `SIGUSR1` dump's move off `faulthandler.register` (`research/sigusr1-dump-crash.md`). Three
+runtime-library bumps landed beside it — `fastmcp` 4.0.10 (PR #17), `fastembed` 0.8.1 (PR #20) and
+`huggingface_hub` 1.33.0 (PR #21) — and each passed both live-harness tiers before it merged; 0.8.1
+embeds bit-identically to 0.8.0 for the pinned model.
+
+**M37, edit guards, is built and reviewed, not yet landed (operator, 2026-10-06).** These are
+deterministic, regex-only Claude Code hooks:
+- one denies a Bash command that edits an authored file by find-replace, unless every target is
+  scratch or the command carries `#ZIKARON-FORCE #Reason: <at least two words>`;
+- one nudges, after each edit, for one re-read once that file's editing is done;
+- a short start text rides `zikaron-hook`'s existing `SessionStart`/`SubagentStart` entry.
+
+This is the first, model-free class of the 2026-09-24 *evaluator with teeth* proposal
+(`FINDINGS-archive.md` §"The strongest M32 candidate, and why"); the async-watcher class stays
+unscoped. The installer offers the memory store, the guards, or both, with guards only on request.
+Kiro gets no guards. **This repository does not install the guards** (operator, 2026-10-07): its
+`.venv` runs the code under development, so a broken guard would cripple the agent building it.
+
+**The design is approved**: spec `design/edit-guards.md`, brief `design/build-plan.md` §M37,
+decision D38, trail `reviews/m37-edit-guards-brief-review.md`. **The build is in progress
+(2026-10-07); its plan, in the brief's order:**
+1. **done** — the prompt texts, by memory-reviewer, in `reviews/m37-edit-guards-review.md`;
+2. **done** — `zikaron/guard/`, at 100% coverage; `tests/test_guard_rule_table.py` reads §8,
+   which now also holds every §7 edge as a row;
+3. **done** — `HarnessSpec.edit_guards`, `zikaron-hook --components`, the installer's
+   `--components` (`tests/test_install_components.py` walks the perturbation table), the console
+   script and the gate's lists;
+4. **done** — the owed documents (item 6), the README's install, options and uninstall included;
+5. **done** — the replay, `research/m37-guard-transcript-replay.md`: 1,227 of 20,051 commands
+   would be denied, every false deny one-session or §7-stated. It found two recurring false denies,
+   and the operator took both §3.3 changes (2026-10-07): a variable bound earlier in the same
+   command, and a `cd` in the same command, are now followed;
+6. **done** — `tests/test_guard_claude_live.py` passes against Claude Code 2.1.285, and
+   `research/m37-guard-live-observation.md` records three sessions. In the two natural ones the
+   start text alone kept opus and sonnet off `sed -i`, so the deny was seen only where the prompt
+   left no choice;
+7. **done** — the build review, APPROVED (`reviews/m37-edit-guards-review.md`); `./check.sh`
+   and `./check-matrix.sh --parallel` green on `93615a0+3fb5dbc5c7e3`. Nothing is committed; a
+   pull request is the operator's to ask for, and its release should be `0.4.0` (brief).
+8. **done (2026-10-07)** — the operator's interactive 2×2 of start text × deny-and-nudge,
+   `research/m37-guard-interactive-test.md`, its fixtures and scores in
+   `~/ZikaronTesting/story-key/`. The start text alone kept arms B and D off scripts; the deny
+   redirected C into reading every file first, and was then overridden with a true reason; the
+   nudge gave B its full re-read pass, through `git diff -U4`; C's overridden script rewrote all
+   fourteen files and no nudge reached any, which is step 10.
+9. **done (2026-10-07)** — **§3.2 row 6, a scratch script that is run** (operator, 2026-10-07:
+   make the change first, then re-run the arms). Round 3's arm A did its bulk edit with
+   `cat > <scratchpad>/fix.py <<'EOF'` … `python3 <scratchpad>/fix.py`, which passed two
+   exemptions at once. Measured (`research/m37-scratch-script-replay.md`): 231 runs of a `/tmp`
+   script in local transcripts, 85 staged by a heredoc in the same command; replayed through the
+   product, row 6 is the first deny on 54 of 33,069 calls — 47 authored rewrites, 2 golden files,
+   5 the stated argv false deny. The rule: a shell or row-4 interpreter whose script operand is
+   scratch has that script judged as a scanned heredoc body fed to the same word — its text a
+   body a `cat`/`tee` heredoc staged for that path earlier in the same unit, else **one bounded
+   read of the file**, the guard's one file read (§1), wired at `main` alone. The start text and
+   row 6's deny label are memory-reviewer's; the build review is APPROVED
+   (`reviews/m37-edit-guards-review.md`). **Row 4's script-flag test stays unchanged** (operator,
+   2026-10-07), so a Python `-W`/`-X` cluster ending in `e` keeps a run row 4's, a §7 miss.
+10. **done (2026-10-07) but the post-release install** — **the override's acknowledgement asks
+   for a re-read** (operator, 2026-10-07: implement it, re-run arm C, then the work is done),
+   since the nudge fires only after `Edit`/`Write`. Steps: (a) **done** — design §3.4; (b)
+   **done** — memory-reviewer's acknowledgement text; (c) **done** — the build, its review
+   rounds, `./check.sh` green; (d) **done** — arm C2 re-run and scored, in the note; (e) **done** —
+   `research/m37-guard-interactive-test.md`, and §7's count (d) now counts a `git diff` that shows
+   content, wherever after the last edit. **The landing** (operator, 2026-10-07: done means
+   documented, swept, version bumped, deployed, PR sent): (f) **done** — the sweep of every claim
+   this build changed; (g) **done** — `[project] version` is `0.4.0` (operator, 2026-10-07: "it
+   is v0.4.0 - since I'm going to release it"); (h) **PR #23**, branch `m37-edit-guards`, its CI
+   the matrix; (i) **after the operator's release** — the guards installed with
+   `--components both` into `~/Trading/LeibaTrader` and `~/Dividends`, and into `~/Memory` only
+   on the operator's say-so, since this agent treats it as read-only. Test debris lives in
+   `~/ZikaronTesting/` (operator, 2026-10-07).
+
+**Open with the operator:** whether to commit the replay's full verbatim deny list, which this
+build keeps out of `research/` because it names private paths and other projects.
+
+**Claude Code runs a hook `command` through a shell** (measured,
+`research/claude-code-hook-command-shell-probe.md`), so every Claude Code hook path is now
+shell-quoted — the memory install's too, which wrote an unquoted path that a venv directory
+containing a space broke. `shlex.quote` leaves a safe path unchanged, so no default install moves.
+
+`experiments/m37_guard_prototype.py` is superseded by the package and fails §8's subscript-chain
+row by design: §3.3 says a chain containing `.stem` yields nothing, and the prototype stopped
+reading a chain at a subscript.
+
+**Operator direction for the build and its review (2026-10-07):** the approved design and the
+filtering rules are fixed — nothing new is invented and nothing existing is changed unless it
+breaks the product — and the product's rule logic follows the prototype's algorithm but is
+organised, documented from examples and referenced to the rules, rather than transcribed.
+
+After any §3 or §8 edit, run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`.
+**§3's rules change only on an observed command, never on a conceived edge**
+(`design/edit-guards.md` §7).
 
 **The host is busy for days (operator, 2026-09-29)**, so no latency figure measured meanwhile is
 comparable with an idle-host budget.
@@ -124,8 +217,9 @@ without a runner.** Point it at a directory as long as macOS's own `/var/folders
 Verified both ways: green as the tree stands, red with the `socket_dir` fixture pointed back at
 the default tempdir.
 
-**Nothing is installed into this repository**, deliberately. `python -m zikaron.install --project .
---harness claude-code` would do it; `--harness auto` refuses here because the repo carries both
+**Nothing is installed into this repository**, deliberately — M37's edit guards included, since
+the `.venv` runs the code under development. `python -m zikaron.install --project .
+--harness claude-code` would install the memory store; `--harness auto` refuses here because the repo carries both
 dotdirs. Until then the memory tools and the push hook are **not live in this session**.
 
 **`design/harness.md` is normative for every harness-coupled fact.** Read it before touching the
@@ -187,6 +281,12 @@ proposed.
   the baseline says the write-side description does not bind and the consolidator is the only
   enforcement; that would argue for the corpus repair pass below before anything else.
 
+- **`tests/test_service_writer.py::test_the_wait_for_the_write_lock_ends_at_the_deadline` is
+  load-sensitive.** It asserts an overrun under `0.25 × budget` (125 ms) of wall clock, and measured
+  147 ms once on a host at load 6–7. **Fix proposed:** bound it at `0.5 × budget`, which still tells
+  "refused at the deadline" from "a whole budget late" — the property the test names. Outside M37's
+  fence (the service), so for the next milestone that touches the writer.
+
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
 
@@ -239,15 +339,18 @@ dropped / a condition dropped / severity reduced separately. Q12 and Q19 lack th
 ### How the next review should be briefed
 
 From M33's review trail, which cost about 20% of a week's reviewer capacity (operator measurement,
-2026-09-28).
+2026-09-28), and M37's, which cost about half of one (operator, 2026-10-07).
+
+**The brief is the self-review skill's template, filled with facts and nothing else**
+(`.claude/skills/self-review/SKILL.md` step 6). Operator direction goes in its `On the operator's
+authority:` line in the operator's exact words. Any framing the author composes — what to look for,
+how hard, what is wanted — tells the reviewer which findings to produce.
 
 **Do not narrow a review's scope to cut it, and do not name the artifact you expect the findings in.**
 M33's late blockers were in surfaces nobody thought were touched — the envelope deriving its accepted
 `client_kind`s from the enum, the drift guard binding the per-kind table to `EVENT_SPECS` — and a scope
 of "the seams this change reaches" excludes those by construction, since *which seams it reaches* is
-what the review finds out. Worse, seven briefs in a row pointed at one research note and got findings
-in it; the first brief that asked **where the earlier rounds had not looked** immediately found a
-three-round-old self-contradiction between two `design/` files.
+what the review finds out.
 
 **A bar is a gate, and a gate is serviced by every round that follows it — so size it to the decision it
 is supposed to force.** M33 preregistered a p50/p95 bar on the access-log row's per-call cost, missed the
@@ -268,8 +371,8 @@ completeness — operator decision 2026-09-29.** A finding on a note counts only
 the milestone ships or decides: a wrong conclusion, a number the decision rests on, a claim a code or
 design change cites. Wording, provenance detail, methodological polish and arithmetic that moves no
 decision are declined with that reason, not applied. Past milestones spent tens of review rounds
-polishing research notes. Say this in the review brief, and decline such findings when a round
-returns them anyway.
+polishing research notes. Put this decision in the brief's `On the operator's authority:` line as
+recorded here, and decline such findings when a round returns them anyway.
 
 ### Live design questions
 

@@ -10,7 +10,7 @@ name = "zikaron"
 # one is a minor bump, never a patch**, because those paths are written into harness config that an
 # upgrade has to be able to refresh, and a patch bump tells a reader nothing needs refreshing.
 # `design/distribution.md` §"The version scheme" is normative.
-version = "0.3.1.dev0"
+version = "0.4.0"
 # What a package index renders as the one-line summary, so it must name both stores: the memory
 # store, for what was learned by working here, and the knowledge index, for what the project already
 # wrote down.
@@ -64,12 +64,13 @@ Homepage = "https://github.com/nathan-shapiro/Zikaron"
 Repository = "https://github.com/nathan-shapiro/Zikaron"
 Issues = "https://github.com/nathan-shapiro/Zikaron/issues"
 
-# The two commands a shipped harness config names — either harness — and the reason they are console
-# scripts rather than `python -m` command lines: a hook entry's `command` and an `mcpServers` entry's
-# `command` each need one absolute path, and a console script's shebang pins the interpreter Zikaron
-# is installed into — which is also the interpreter start-if-absent will spawn the service with, via
-# `sys.executable`. Measured, so the choice costs nothing: the two forms differ by about 1.4 ms
-# median over a full hook process (architecture.md §"The install contract").
+# The commands a shipped harness config names — `zikaron-hook` and `zikaron-mcp` for either harness,
+# `zikaron-guard` for Claude Code's edit guards — and the reason they are console scripts rather than
+# `python -m` command lines: a hook entry's `command` and an `mcpServers` entry's `command` each need
+# one absolute path, and a console script's shebang pins the interpreter Zikaron is installed into —
+# which is also the interpreter start-if-absent will spawn the service with, via `sys.executable`.
+# Measured, so the choice costs nothing: the two forms differ by about 1.4 ms median over a full hook
+# process (architecture.md §"The install contract").
 #
 # `zikaron-service` is deliberately *not* here. No config names it: it is spawned by
 # `sys.executable -m zikaron.service.main` from whichever client finds the socket absent, which is
@@ -84,6 +85,7 @@ Issues = "https://github.com/nathan-shapiro/Zikaron/issues"
 zikaron = "zikaron.cli.main:main"
 zikaron-hook = "zikaron.hook.main:main"
 zikaron-mcp = "zikaron.mcp.main:main"
+zikaron-guard = "zikaron.guard.main:main"
 
 [project.optional-dependencies]
 dev = [
