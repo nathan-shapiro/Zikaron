@@ -13,8 +13,8 @@ and without a lock serializing the vet-and-clear-stale-socket-and-spawn sequence
 unlink a socket the *other* has just bound and is already live on, forcing a second, redundant
 service to start against a store the first is already correctly serving.
 
-**This reimplementation is narrower than the one it mirrors in exactly one direction, and
-nowhere else**: no *second outer attempt* after this one's own five-step sequence fails.
+**This reimplementation differs from the one it mirrors in two ways that matter here.** First,
+no *second outer attempt* after this one's own five-step sequence fails.
 `lifecycle.py`'s own sequence is that whole five-step race-safe procedure and runs to
 completion or raises — there is no looping inside it to narrow — but
 `zikaron.mcp.connection.ServiceConnection` wraps a call to it in an outer retry (`_MAX_ATTEMPTS =
@@ -25,6 +25,13 @@ waiting on it, so this module runs the five-step sequence exactly once: one conn
 recheck, one possible spawn, one poll to one deadline, then whatever the outcome is. A failure
 here is handed straight to the caller's degraded-mode path rather than retried, which is what
 keeps a slow or wedged service from costing the user two deadlines instead of one.
+
+Second, what ends a wait. Here it is the caller's deadline, for the lock as well as the poll;
+`lifecycle.py` blocks on the lock and polls to a fixed deadline of its own. Both end the poll early
+when the process they spawned fails — an exit because another service holds the store is not a
+failure, and that service is waited for instead. A user waits on every second of this one, so
+another client's start is not waited out past the deadline any more than its own, and a service
+the poll was queued behind is not called a start once it has stalled.
 
 Reuses `zikaron.service.paths` and `zikaron.service.security` directly: both were verified to
 import cleanly with no non-stdlib package added to `sys.modules`, so borrowing their path
@@ -45,20 +52,30 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
+from zikaron.hook import rpc
 from zikaron.service import paths, security
 
-#: How long this single attempt waits, in total, for a freshly spawned server to answer a genuine
-#: `health()` — not merely accept a connection. `push.py`'s own internal deadline
-#: (`architecture.md`: "enforce an internal deadline of ~2 s") is the budget for the *whole*
-#: `userPromptSubmit` hook, connect-through-print included, so this value must leave room for the
-#: request and response after it. Set well under that: a cold spawn racing this deadline and
-#: losing is exactly the case that must degrade (log to `hook.log`, relay on stdout) rather than
-#: make the user wait for the `timeout_ms` kiro enforces on the whole hook command — 10 s on this
-#: harness, and stated explicitly in the shipped entry (`architecture.md` §"The install contract").
-HEALTH_POLL_DEADLINE_SECONDS = 1.2
-_HEALTH_POLL_INTERVAL_SECONDS = 0.05
+_POLL_INTERVAL_SECONDS = 0.05
 _CONNECT_TIMEOUT_SECONDS = 0.3
+
+#: What a spawned service exits with when another already holds its store: that one is serving or
+#: starting the store, so a poll that sees it goes on looking. A child normally waits longer than a
+#: push's whole deadline before it exits that way, which is why a queued push is decided at its
+#: deadline by `_raise_if_queued_behind_a_stalled_start` and not by this. Restated rather than
+#: imported from `zikaron.service.ownership`, which would bring `asyncio` into a process that runs
+#: once per message (~27 ms measured here); a guard test holds the two equal.
+_ANOTHER_SERVICE_EXIT_STATUS = os.EX_TEMPFAIL
+
+#: How long another service holding the store may go without a sign of life, not shutting down,
+#: before a push queued behind it stops calling the wait a start. A serving service renews that
+#: sign on every idle poll, so only a holder that has stopped polling gets this old — a start that
+#: never reached its first poll, or a service whose loop is stuck. One that has gone this long has
+#: stalled — the operator has to hear about it — while a start that legitimately runs longer, a
+#: first run fetching its model over a slow link, costs every message after that minute an alarm
+#: until it binds, rather than going unreported forever.
+_STALLED_START_SECONDS = 60.0
 
 #: `architecture.md`: "`ECONNREFUSED` on an existing socket file is the signature of a service
 #: that died without cleaning up — unlink and respawn rather than reporting an error," and
@@ -69,16 +86,27 @@ _ABSENT_SERVER_ERRNOS = frozenset({errno.ENOENT, errno.ECONNREFUSED})
 
 
 class HookTransportError(Exception):
-    """No server became reachable within the deadline.
+    """No server became reachable: nothing answered, the one spawned here exited first, or the
+    start this attempt was queued behind has stalled.
 
-    `push.py` catches this alongside every other failure kind and logs it to `hook.log` plus a
-    stdout relay, per `architecture.md`'s "Degraded modes". `StoreIdentityError` is the one
-    subclass of this that names a more specific reason — a reachable server that answered, but
-    disagreed about which store it was serving — kept as a subclass rather than a sibling
-    exception so a caller that only wants "did this single attempt succeed" can still catch this
-    one base type, while a caller that wants to log the design's own `-32030 store_identity`
-    code specifically can check for the subclass first.
+    Its two subclasses name more specific reasons — a spawned service still starting, and a
+    reachable one serving a different store — and stay subclasses so a caller that only asks
+    whether this single attempt succeeded can catch this one base type.
     """
+
+
+class ServiceStartingError(HookTransportError):
+    """A start was still running at the poll deadline: the service this attempt spawned had not
+    yet answered `health()`, or another client still held the start-if-absent lock, which it
+    holds only while it starts one. A start that is slow, not one that failed — a spawned process
+    that exits before answering raises the plain `HookTransportError` instead.
+
+    `waited_on` says which: `lock` or `poll`.
+    """
+
+    def __init__(self, message: str, *, waited_on: Literal["lock", "poll"]) -> None:
+        self.waited_on = waited_on
+        super().__init__(message)
 
 
 class StoreIdentityError(HookTransportError):
@@ -96,96 +124,136 @@ class StoreIdentityError(HookTransportError):
 
 @dataclass(frozen=True, slots=True)
 class Health:
-    """`health()`'s result, exactly as `push.py`'s identity check needs it."""
+    """`health()`'s result, as this client uses it: the store's identity, and whether the service
+    is still loading its model and how long it has had its store open. A service too old to report
+    the last two is read as loaded, with no uptime."""
 
     store_path: str
     store_id: str
+    model_loaded: bool = True
+    uptime_seconds: float | None = None
+
+    def still_loading_within(self, seconds: float) -> bool:
+        """Whether this service is still starting: loading its model, its store open under
+        `seconds`. One still loading after longer has stalled, and is not a start."""
+        return (
+            not self.model_loaded
+            and self.uptime_seconds is not None
+            and self.uptime_seconds < seconds
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Connection:
+    """What `connect_once` hands back: a connected socket whose service's identity is verified.
+
+    `cold_start` is true when nothing answered this attempt's first connect — whether this attempt
+    then spawned the service or a racing client did while this one waited for the lock. `health`
+    is what the service answered, read once over `sock`.
+    `sock`'s timeout is whatever `_health` left of `_CONNECT_TIMEOUT_SECONDS`; the caller sets its
+    own before a request.
+    """
+
+    sock: socket.socket
+    cold_start: bool
+    health: Health
 
 
 def connect_once(
-    sock_path: Path, *, store_db_path: Path, store_id: str | None, server_command: Sequence[str]
-) -> socket.socket:
-    """One pass through start-if-absent, implementing `architecture.md`'s full five-step
-    sequence exactly: connect; on absence, take the `flock`, connect again (another client may
-    have won the race while this one reached the lock), and only then vet-and-spawn-and-poll;
-    verify identity; return a connected socket.
+    sock_path: Path,
+    *,
+    store_db_path: Path,
+    store_id: str | None,
+    server_command: Sequence[str],
+    poll_deadline: float,
+) -> Connection:
+    """One pass through `architecture.md`'s start-if-absent sequence: connect; on absence, take
+    the `flock` and connect again, since another client may have started the service while this
+    one waited for it; only then vet, spawn and poll; verify identity.
 
-    **This is one outer attempt with an internal lock, not two outer attempts.** The design's own
-    lock exists to prevent exactly this race: two hooks (or a hook racing `zikaron-mcp`'s own
-    start-if-absent) can both observe the socket absent, and without serialization the second one
-    can vet-and-unlink the *first* one's now-live socket — the first server's own file, not a
-    stale leftover — before spawning a second server
-    at the identical path. `architecture.md`'s own five steps are one race-safe *unit*: connect,
-    lock, recheck, spawn-if-still-absent, release. Nothing here retries that whole unit a second
-    time if it still fails after the lock is released; the "single attempt" property is about not
-    looping the five-step unit, not about omitting a step inside it.
+    **One outer attempt with an internal lock, not two outer attempts.** Without the lock, two
+    hooks — or a hook and `zikaron-mcp` — can both see the socket absent, and the second can
+    vet-and-unlink the first one's now-live socket before spawning a second server at the same
+    path. Nothing here retries the sequence once it has failed.
 
-    Returns:
-        A connected, unverified-timeout socket — `push.py` sets its own request timeout before
-        using it, since this socket's timeout is still whatever `_CONNECT_TIMEOUT_SECONDS` left it
-        at.
+    Args:
+        poll_deadline: the `time.monotonic()` instant this attempt stops waiting — for the lock,
+            and for a service it spawned. The caller's, because both waits spend its budget.
 
     Raises:
-        HookTransportError: no server became reachable before the deadline, or a reachable one's
-            `health()` disagreed with `store_db_path`/`store_id`.
-        OSError: a filesystem or vetting failure distinct from "the server is absent" —
-            `zikaron.service.security.ensure_runtime_dir`'s own `ZikaronError` on a hostile runtime
-            directory propagates as itself, since this single attempt has no fallback path to
-            degrade *through* a runtime directory it does not trust.
-    """
-    sock, health = _connect_or_start_under_lock(sock_path, server_command=server_command)
-    _verify_identity(health, store_db_path=store_db_path, store_id=store_id, sock=sock)
-    return sock
-
-
-def _connect_or_start_under_lock(
-    sock_path: Path, *, server_command: Sequence[str]
-) -> tuple[socket.socket, Health]:
-    """Steps 1 through 5 of `architecture.md`'s start-if-absent sequence, exactly: an unlocked
-    connect first (the ordinary warm case never needs the lock at all), then — only on absence —
-    the lock, a second connect under it, and the spawn-if-still-absent-and-poll branch, releasing
-    the lock on every exit path.
+        ServiceStartingError: a start was still running at `poll_deadline` — this attempt's, or
+            the one another client holds the lock for.
+        HookTransportError: no server became reachable — the one spawned here exited first, or
+            was queued behind a stalled start — or a reachable one's `health()` disagreed with
+            `store_db_path`/`store_id`.
+        OSError: a filesystem or vetting failure distinct from "the server is absent".
+        ZikaronError: `security.ensure_runtime_dir` refused the runtime directory. It propagates
+            as itself: there is no fallback to degrade through a directory this attempt does not
+            trust.
     """
     security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
     sock = _try_connect(sock_path)
-    if sock is not None:
-        # Already listening (the ordinary warm case): no lock needed at all, since nothing is
-        # about to be spawned or unlinked. This connection has never been asked `health()` yet,
-        # so one call is genuinely needed here.
-        try:
-            health = _health(sock)
-        except BaseException:
-            sock.close()
-            raise
-        return sock, health
+    cold_start = sock is None
+    if sock is None:
+        sock, health = _start_under_lock(
+            sock_path, server_command=server_command, poll_deadline=poll_deadline
+        )
+    else:
+        health = _health_or_close(sock)
+    _verify_identity(health, store_db_path=store_db_path, store_id=store_id, sock=sock)
+    return Connection(sock=sock, cold_start=cold_start, health=health)
 
-    lock_path = paths.lock_path(sock_path)
-    lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+
+def _start_under_lock(
+    sock_path: Path, *, server_command: Sequence[str], poll_deadline: float
+) -> tuple[socket.socket, Health]:
+    """The sequence's locked half, releasing the lock on every exit path."""
+    lock_fd = os.open(str(paths.lock_path(sock_path)), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        # Step 3: "another client may have won and already started it" — recheck under the lock
-        # before touching the socket file at all, so a live socket the other client just bound is
-        # never mistaken for a stale one.
+        _lock_by(lock_fd, deadline=poll_deadline)
+        # Recheck before touching the socket file at all, so a live socket another client bound
+        # while this one waited is never mistaken for a stale one.
         sock = _try_connect(sock_path)
         if sock is not None:
-            try:
-                health = _health(sock)
-            except BaseException:
-                sock.close()
-                raise
-            return sock, health
+            return sock, _health_or_close(sock)
         _vet_and_clear_stale_socket(sock_path)
-        _spawn_detached(server_command)
-        # `_poll_until_reachable` already confirmed readiness with its own `health()` call before
-        # returning — a **second** call over the identical connection would ask a server that
-        # answers one request per connection (the real `zikaron-service`'s own JSON-RPC loop
-        # answers many, but nothing in this function's own contract may assume a peer's request
-        # count) for a response it has no obligation to send twice. `_poll_until_reachable`
-        # therefore hands back the `Health` it already has, not merely the socket.
-        return _poll_until_reachable(sock_path)
+        child = _spawn_detached(server_command)
+        return _poll_until_reachable(sock_path, deadline=poll_deadline, child=child)
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+
+
+def _lock_by(lock_fd: int, *, deadline: float) -> None:
+    """Take the start-if-absent lock, waiting for it until `deadline` and no longer.
+
+    Another client holds the lock only while it starts the service, through a poll of its own that
+    can outlast this one's whole budget, so a blocking wait would leave the harness to kill this
+    process — which records nothing. That poll ends at once on a start that has failed, so a lock
+    still held at the deadline is a start still running.
+
+    Raises:
+        ServiceStartingError: the lock was still held at `deadline`.
+    """
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise ServiceStartingError(
+                    "another client is still starting the service", waited_on="lock"
+                ) from None
+            time.sleep(_POLL_INTERVAL_SECONDS)
+        else:
+            return
+
+
+def _health_or_close(sock: socket.socket) -> Health:
+    try:
+        return _health(sock)
+    except BaseException:
+        sock.close()
+        raise
 
 
 def _verify_identity(
@@ -237,17 +305,12 @@ def _vet_and_clear_stale_socket(sock_path: Path) -> None:
         sock_path.unlink()
 
 
-def _spawn_detached(server_command: Sequence[str]) -> None:
-    """Start the service, detached, and forget it — this single attempt does not wait on the
-    child beyond polling its socket, and does not reap it: a short-lived hook process exits long
-    before the spawned service's own eventual idle self-stop, so there is no zombie-avoidance
-    reason for this process to hold a `Popen` handle the way `zikaron.service.lifecycle`'s own
-    reaping thread exists for a *long-running* spawning client. Whatever process this hook's own
-    parent (kiro) reaps this child under is outside this function's concern once the fork
-    succeeds.
+def _spawn_detached(server_command: Sequence[str]) -> subprocess.Popen[bytes]:
+    """Start the service in a session of its own, and hand back its handle so the poll can see it
+    exit. Nothing waits on it beyond that: the service outlives this process by design.
     """
-    subprocess.Popen(  # noqa: S603 — `server_command` is caller-supplied, the fixed argv this
-        # process's own caller decided to spawn, never built from request data.
+    return subprocess.Popen(  # noqa: S603 — `server_command` is caller-supplied, the fixed argv
+        # this process's own caller decided to spawn, never built from request data.
         list(server_command),
         start_new_session=True,
         stdin=subprocess.DEVNULL,
@@ -256,13 +319,16 @@ def _spawn_detached(server_command: Sequence[str]) -> None:
     )
 
 
-def _poll_until_reachable(sock_path: Path) -> tuple[socket.socket, Health]:
-    """Poll for a genuine `health()` response, not merely a successful connect, until
-    `HEALTH_POLL_DEADLINE_SECONDS` elapses.
+def _poll_until_reachable(
+    sock_path: Path, *, deadline: float, child: subprocess.Popen[bytes]
+) -> tuple[socket.socket, Health]:
+    """Poll for a genuine `health()` answer, not merely a connect, until `deadline` — and stop at
+    once if `child` exits, because a service that cannot start would otherwise cost every message
+    the whole deadline. A child that exits because another service holds the store is the
+    exception: that service is the one to wait for, so the poll goes on.
 
-    Mirrors `zikaron.service.lifecycle._poll_until_reachable`'s own reasoning exactly: a freshly
-    spawned process can accept a connection before it is able to answer anything, so a poll that
-    stopped at `connect()` would hand the caller a socket the service is not yet serving on.
+    A freshly spawned process can accept a connection before it can answer anything, so a poll
+    that stopped at `connect()` would hand the caller a socket the service is not yet serving on.
     Answering `health()` is the readiness signal because it is the first thing that requires the
     store to be open.
 
@@ -271,29 +337,65 @@ def _poll_until_reachable(sock_path: Path) -> tuple[socket.socket, Health]:
     first embedding — the request after it may still block on the model.
 
     Returns:
-        The connected socket and the `Health` this function's own poll attempt already read from
-        it — the caller must not call `_health` a second time over this identical connection, since
-        a peer that answers one request per accepted connection would have nothing left to answer
-        with.
+        The socket and the `Health` already read from it. The caller must not ask `health()` again
+        over this connection: a peer that answers one request per connection has nothing left.
 
     Raises:
-        HookTransportError: the deadline elapsed with no genuine `health()` response.
+        HookTransportError: `child` failed — exited, for any reason but another service holding
+            the store, without anything answering — or, at `deadline`, it was still queued behind
+            another service's start that has stalled.
+        ServiceStartingError: `deadline` passed with a start still running.
     """
-    deadline = time.monotonic() + HEALTH_POLL_DEADLINE_SECONDS
-    while time.monotonic() < deadline:
+    while True:
         sock = _try_connect(sock_path)
-        if sock is None:
-            time.sleep(_HEALTH_POLL_INTERVAL_SECONDS)
-            continue
-        try:
-            health = _health(sock)
-        except (OSError, ConnectionError, KeyError, ValueError, TypeError):
-            sock.close()
-            time.sleep(_HEALTH_POLL_INTERVAL_SECONDS)
-            continue
-        else:
-            return sock, health
-    raise HookTransportError(f"no server became reachable at {sock_path} before the deadline")
+        if sock is not None:
+            try:
+                health = _health(sock)
+            except (OSError, ConnectionError, KeyError, ValueError, TypeError):
+                sock.close()
+            else:
+                return sock, health
+        exit_status = child.poll()
+        if exit_status is not None and exit_status != _ANOTHER_SERVICE_EXIT_STATUS:
+            raise HookTransportError(f"the service spawned for {sock_path} exited before answering")
+        if time.monotonic() >= deadline:
+            _raise_if_queued_behind_a_stalled_start(sock_path, child_pid=child.pid)
+            raise ServiceStartingError(
+                f"the service spawned for {sock_path} is still starting", waited_on="poll"
+            )
+        time.sleep(_POLL_INTERVAL_SECONDS)
+
+
+def _raise_if_queued_behind_a_stalled_start(sock_path: Path, *, child_pid: int) -> None:
+    """Refuse to call this wait a start when it is a queue behind one that has stalled.
+
+    A child that finds the store held waits for its holder, so a start that never binds would
+    otherwise turn every later message's push into one more calm `starting`. The holder names
+    itself in the service lock file, whose mtime is its last sign of life — stamped when it took
+    the store and renewed on every idle poll — and clears its name as its shutdown begins; one
+    still named, alive, not this push's own child, and silent past `_STALLED_START_SECONDS` has
+    stalled.
+
+    Raises:
+        HookTransportError: this push's start is queued behind a stalled one.
+    """
+    lock = paths.service_lock_path(sock_path)
+    try:
+        named = lock.read_text(encoding="ascii").strip()
+        held_for = time.time() - lock.stat().st_mtime
+    except (OSError, UnicodeDecodeError):
+        return
+    if not named.isdigit() or int(named) == child_pid or held_for <= _STALLED_START_SECONDS:
+        return
+    try:
+        os.kill(int(named), 0)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        pass  # Alive, under another uid.
+    raise HookTransportError(
+        f"another service holding the store at {sock_path} has shown no life for {held_for:.0f} s"
+    )
 
 
 def _health(sock: socket.socket) -> Health:
@@ -301,8 +403,12 @@ def _health(sock: socket.socket) -> Health:
     — mirrors `zikaron.service.lifecycle._health`'s own reasoning for rejecting a merely-truthy
     value rather than coercing one.
 
+    The whole exchange gets `_CONNECT_TIMEOUT_SECONDS`, not each socket call, so how far a connect
+    can run past its caller's deadline is bounded.
+
     Raises:
-        OSError: the socket failed during send or receive.
+        OSError: the socket failed during send or receive — `TimeoutError` when the exchange
+            outlasted `_CONNECT_TIMEOUT_SECONDS`.
         ConnectionError: the connection closed before a full line arrived, or the response was
             not the expected shape.
         KeyError: a required field (`store_path`, `store_id`, `ready`) was absent from the result.
@@ -310,9 +416,12 @@ def _health(sock: socket.socket) -> Health:
             JSON boolean `true`.
     """
     request = {"jsonrpc": "2.0", "id": 1, "method": "health", "params": {}}
+    answer_by = time.monotonic() + _CONNECT_TIMEOUT_SECONDS
+    rpc.time_out_at(sock, answer_by)
     sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
     buffer = b""
     while not buffer.endswith(b"\n"):
+        rpc.time_out_at(sock, answer_by)
         chunk = sock.recv(4096)
         if not chunk:
             raise ConnectionError("connection closed before a full response was read")
@@ -326,7 +435,18 @@ def _health(sock: socket.socket) -> Health:
     ready = result["ready"]
     if ready is not True:
         raise ConnectionError(f"health() reported ready={ready!r}, not the JSON boolean true")
-    return Health(store_path=str(result["store_path"]), store_id=str(result["store_id"]))
+    model_loaded = result.get("model_loaded", True)
+    uptime = result.get("uptime_seconds")
+    return Health(
+        store_path=str(result["store_path"]),
+        store_id=str(result["store_id"]),
+        model_loaded=model_loaded is not False,
+        uptime_seconds=(
+            float(uptime)
+            if isinstance(uptime, int | float) and not isinstance(uptime, bool)
+            else None
+        ),
+    )
 
 
 def default_server_command(sock_path: Path, store_dir: Path) -> list[str]:

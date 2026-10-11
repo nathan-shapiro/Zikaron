@@ -274,14 +274,17 @@ re-acquire down the path that verifies.)*
 fetch, the fill after an interrupted one, and the single forced re-fetch all verify; a warm start
 does five `stat` calls and nothing else. **This was measured into place, not reasoned into place.**
 
-The quantity that decides it is the margin left in the hook's 2.0 s budget, not the share of any
-latency: `push.py`'s `_DEADLINE_SECONDS` bounds connect *plus* the `surface` request, and a request
-that outlives it degrades — no memories injected, a `transport` line in `hook.log`, and a relay
-instruction the model reads out to the user. That is M17's defect.
+The quantity that decided it was the margin left in the push hook's deadline for a cold start, not the
+share of any latency: that deadline bounds connect *plus* the `surface` request, and a request that
+outlives it degrades. It was 2.0 s when this was decided, and a miss cost the first message after an
+idle stop its memories — M17's defect. **A push that finds the service absent now has the longer
+cold-start deadline** (`architecture.md` §"Degraded modes"), so verifying on every start would now cost
+that message the walk's time in waiting rather than its memories. The rule stands on the rest of the
+argument: a warm start's verification buys nothing the acquisition-time check does not.
 
-**Verifying on every start reintroduced it.** A/B on one machine under one load source, `load1`
-rising 8.01 → 12.25 across the arms, alternating — so each control ran heavier than the arm before
-it and the delta is conservative. The control empties the pin table so `pin_for` returns `None`:
+**Against the 2.0 s deadline, verifying on every start reintroduced it.** A/B on one machine under
+one load source, `load1` rising 8.01 → 12.25 across the arms, alternating — so each control ran
+heavier than the arm before it and the delta is conservative. The control empties the pin table so `pin_for` returns `None`:
 
 | arm | `surface` median | range | inside 2000 ms |
 |---|---|---|---|
@@ -315,15 +318,14 @@ re-links the same blob; this discards symlinks already proved not to be the arte
 nothing on the way out. If the removal itself fails, the refusal names the directory, because
 refusing while leaving those bytes where a warm start looks is worth more than a sentence.
 
-**Re-derive** with `experiments/m17_cold_start_ab.py` and `experiments/m17_hook_outcome.sh`, both of
-which read the deadlines from the shipped constants. The figure to watch is the worst-run spare
-against 2.0 s, and **compare it against the no-pin control in `research/m30-verify-cost.md` rather
-than against a constant**: `design/build-plan.md` §M17 names under ~300 ms as the threshold worth
-acting on, but sized it at `load1 0.55–1.10` and `7.0–8.9`, and at the `load1` 9–12 measured here
-*both* the fixed tree (214 ms) and the pre-M30 control (86 ms) are already under it. The baseline
-moves with load, so the control is the comparison that means something. The lever if it comes to
-that is the split connect deadline M17 left on the shelf; the marker file is spent, since a warm
-start no longer hashes.
+**Re-derive** with `experiments/m17_cold_start_ab.py`, which reads the cold-start deadline from the
+shipped constant, and `experiments/m17_hook_outcome.sh`, and **compare against the no-pin control in
+`research/m30-verify-cost.md` rather than against a constant**: `design/build-plan.md` §M17 named a
+spare under ~300 ms as the threshold worth acting on, but sized it at `load1 0.55–1.10` and
+`7.0–8.9`, and at the `load1` 9–12 measured here *both* the fixed tree (214 ms) and the pre-M30
+control (86 ms) were already under it against 2.0 s. The baseline moves with load, so the control is
+the comparison that means something. M17's shelved lever, the split deadline, has since been pulled;
+the marker file is spent, since a warm start no longer hashes.
 
 **The forced re-fetch is bounded to one per process per artefact**, so a lazily reconstructed encoder
 is not a fresh licence to download. The bound is deliberately not durable across processes: a source

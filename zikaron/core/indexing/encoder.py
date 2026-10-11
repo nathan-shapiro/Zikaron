@@ -408,6 +408,11 @@ class BackgroundLoadedEncoder:
             target=self._load_and_check, args=(load,), name="zikaron-encoder-load", daemon=True
         ).start()
 
+    @property
+    def settled(self) -> bool:
+        """Whether the load has finished, loaded or failed, answered without waiting for it."""
+        return self._loaded.is_set()
+
     def declare_dim(self, dim: int) -> None:
         """Declare the width the store recorded, releasing the loader to check the artifact.
 

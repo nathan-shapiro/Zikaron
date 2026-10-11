@@ -157,8 +157,14 @@ def lock_path(sock_path: Path) -> Path:
     return sock_path.with_name(sock_path.name + ".lock")
 
 
+def service_lock_path(sock_path: Path) -> Path:
+    """The `flock` one service holds for as long as it may open its store: `<sock>.service`."""
+    return sock_path.with_name(sock_path.name + ".service")
+
+
 def service_log_path(store_directory: Path) -> Path:
-    """The long-running service's own log — one file, this process only."""
+    """The long-running service's own log — one file, written by that process and by nothing else
+    but the one line a start that found its store held leaves there before exiting."""
     return store_directory / _SERVICE_LOG_FILENAME
 
 

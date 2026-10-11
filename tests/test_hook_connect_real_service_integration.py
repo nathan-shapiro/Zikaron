@@ -12,6 +12,7 @@ import json
 import os
 import signal
 import socket
+import subprocess
 import sys
 import time
 from contextlib import suppress
@@ -23,50 +24,18 @@ import pytest
 from zikaron.core.config.resolution import EffectiveConfig, resolve
 from zikaron.core.indexing.encoder import FastEmbedEncoder
 from zikaron.core.store.store import Store
-from zikaron.hook import connect as connect_module
 from zikaron.hook.connect import connect_once, default_server_command
+from zikaron.service import paths
 
 pytestmark = pytest.mark.integration
 
 
-#: Generous on purpose, and **not** the shipped value. See `_mechanism_not_the_shipped_deadline`.
+#: Generous on purpose, and past the shipped cold-start deadline: these tests assert that cold
+#: start-if-absent **works** — connect, spawn, poll, reuse — not that it beats the deadline a user
+#: waits on. Losing that race on a slow enough machine is a specified outcome, which
+#: `test_hook_connect_integration.py` covers against a fake service, so asserting a real cold start
+#: fits the shipped value would make these tests depend on the machine rather than the code.
 _MECHANISM_DEADLINE_SECONDS: Final = 30.0
-
-
-@pytest.fixture(autouse=True)
-def _mechanism_not_the_shipped_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests assert that cold start-if-absent **works**, not that it beats the user-facing
-    deadline — because the design says it may lose that race, on purpose.
-
-    `connect.HEALTH_POLL_DEADLINE_SECONDS` is 1.2 s and its own comment explains why it is short:
-    *"a cold spawn racing this deadline and losing is exactly the case that must degrade (log to
-    `hook.log`, relay on stdout) rather than make the user wait."* Losing is a **specified
-    outcome**, and `test_hook_connect_integration.py` covers it against a fake service that binds
-    5 s after spawn.
-
-    So asserting a real cold start finishes inside 1.2 s asserts a guarantee this project declines
-    to make, and whether it holds depends on the machine rather than the code. Measured on a loaded
-    developer box (load ~6, three concurrent agent sessions): a real service took **1184-1235 ms
-    merely to bind its socket** — before `health()` could answer at all — because startup waited
-    for the model load before binding anything. Both tests here failed deterministically, and had
-    passed all day at lower load.
-
-    The model load no longer precedes the bind on the open path, so those numbers describe a
-    startup this code does not have any more. The reasoning survives the change, which is why this
-    fixture does: what the bind now waits for is the *store*, and a machine slow enough to make
-    even that lose the race is still a machine on which losing is the specified outcome rather
-    than a defect. Asserting otherwise here would re-make the same wrong claim against a smaller
-    number.
-
-    The number they were calibrated against never described this peer: `spike-results.md` §"Cold
-    start" measured **~101 ms**, "dominated by Python interpreter start", against spike 3's toy
-    server — no store, no `fastembed`. The shipped constant is still right for the *user*; it was
-    simply never a claim about the real service's cold start.
-
-    Overriding it here keeps these tests about the mechanism — connect, spawn, poll, reuse — and
-    leaves the shipped value asserted where it belongs, in the fake-service timing tests.
-    """
-    monkeypatch.setattr(connect_module, "HEALTH_POLL_DEADLINE_SECONDS", _MECHANISM_DEADLINE_SECONDS)
 
 
 MODEL: Final = "BAAI/bge-small-en-v1.5"
@@ -136,15 +105,17 @@ def test_connects_to_a_cold_started_real_service(store: tuple[Path, str], socket
     store_dir, store_id = store
     sock_path = socket_dir / "test.sock"
     command = default_server_command(sock_path, store_dir)
-    sock = connect_once(
+    connection = connect_once(
         sock_path,
         store_db_path=store_dir / "memory.db",
         store_id=store_id,
         server_command=command,
+        poll_deadline=time.monotonic() + _MECHANISM_DEADLINE_SECONDS,
     )
-    health_pid = _read_health_pid(sock)
-    sock.close()
+    health_pid = _read_health_pid(connection.sock)
+    connection.sock.close()
     _kill_and_reap(health_pid)
+    assert connection.cold_start is True
 
 
 def test_connecting_to_an_already_warm_real_service_reuses_it(
@@ -158,19 +129,73 @@ def test_connecting_to_an_already_warm_real_service_reuses_it(
     command = default_server_command(sock_path, store_dir)
 
     first = connect_once(
-        sock_path, store_db_path=store_dir / "memory.db", store_id=store_id, server_command=command
+        sock_path,
+        store_db_path=store_dir / "memory.db",
+        store_id=store_id,
+        server_command=command,
+        poll_deadline=time.monotonic() + _MECHANISM_DEADLINE_SECONDS,
     )
-    first_pid = _read_health_pid(first)
-    first.close()
+    first_pid = _read_health_pid(first.sock)
+    first.sock.close()
     try:
         second = connect_once(
             sock_path,
             store_db_path=store_dir / "memory.db",
             store_id=store_id,
             server_command=[sys.executable, "-c", "raise SystemExit(1)"],  # must never run
+            poll_deadline=time.monotonic() + _MECHANISM_DEADLINE_SECONDS,
         )
-        second_pid = _read_health_pid(second)
-        second.close()
+        second_pid = _read_health_pid(second.sock)
+        second.sock.close()
         assert second_pid == first_pid
+        assert second.cold_start is False
     finally:
+        _kill_and_reap(first_pid)
+
+
+#: How long a second start is watched: past the moment it would have bound over the first had
+#: nothing stopped it, since a start over an existing store binds before its model loads.
+_TAKEOVER_WATCH_SECONDS: Final = 3.0
+
+
+def test_a_second_start_for_a_served_store_does_not_take_it_over(
+    store: tuple[Path, str], socket_dir: Path
+) -> None:
+    """The case start-if-absent's own lock cannot cover, since a client holds that only through its
+    poll: a start that outlived one client's poll is started again by the next. The second service
+    must wait for the store rather than open it beside the first — `asyncio.start_unix_server`
+    would remove the first one's socket file and bind its own in its place."""
+    store_dir, store_id = store
+    sock_path = socket_dir / "test.sock"
+    command = default_server_command(sock_path, store_dir)
+    first = connect_once(
+        sock_path,
+        store_db_path=store_dir / "memory.db",
+        store_id=store_id,
+        server_command=command,
+        poll_deadline=time.monotonic() + _MECHANISM_DEADLINE_SECONDS,
+    )
+    first_pid = _read_health_pid(first.sock)
+    first.sock.close()
+    second = subprocess.Popen(  # noqa: S603 — the service's own argv, built above.
+        command,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        watched_until = time.monotonic() + _TAKEOVER_WATCH_SECONDS
+        while time.monotonic() < watched_until:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(5.0)
+                probe.connect(str(sock_path))
+                assert _read_health_pid(probe) == first_pid
+            time.sleep(0.1)
+        assert second.poll() is None, "the second start should still be waiting for the store"
+        held_by = paths.service_lock_path(sock_path).read_text(encoding="ascii")
+        assert held_by == f"{first_pid}\n", "the first service should still hold the store"
+    finally:
+        second.kill()
+        second.wait(timeout=10.0)
         _kill_and_reap(first_pid)

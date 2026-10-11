@@ -24,10 +24,10 @@ from zikaron.harness.spec import KIRO
 
 #: The hook budget every shipped entry states, in **seconds**. Equal to kiro's own documented
 #: default, and stated anyway: the corpus recorded that default as 30 s for two milestones on the
-#: strength of the public docs, and a budget the hook's ~2 s internal deadline is sized against
-#: should not be a number a harness release can move underneath it. Five times the internal
-#: deadline, so our own failure path — which produces a `hook.log` line *and* a model-facing relay —
-#: always fires before the harness's kill, which produces neither.
+#: strength of the public docs, and a budget the hook's internal deadlines are sized against — the
+#: cold-start one is derived from it — should not be a number a harness release can move underneath
+#: it. Both expire first, so our own failure path — which produces a `hook.log` line *and* a
+#: model-facing relay — always fires before the harness's kill, which produces neither.
 #:
 #: It also has to clear the *tightest* default in the harness table, which is measured and is not
 #: the one a casual reading finds: Claude Code defaults `UserPromptSubmit` to **30 s** against 600 s

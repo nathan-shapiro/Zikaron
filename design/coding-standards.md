@@ -434,7 +434,8 @@ shape, and every raise site references the enum. Never a bare integer at a call 
 
 **Never swallow an exception silently** — except in the hook, where the design requires exit 0 on
 any failure. Even there the failure is never lost: it goes to `hook.log` verbatim, and a short
-relay instruction goes to stdout so the model can tell the operator something is wrong — measured
+notice goes to stdout — asking the model to tell the operator something is wrong, or, for a
+service still starting, saying that memories resume once it has started. Stdout was measured
 directly (a live spike against a real kiro session) to be the one channel that actually reaches
 the model on this build; stderr, tried first, was measured not to surface visibly at all.
 "prints nothing to the user" was the original design and no longer describes the failure path —

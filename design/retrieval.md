@@ -793,7 +793,9 @@ is degrading unevenly, in a way its own client cannot always tell apart from the
 now — the two above and every transport, startup, contention or identity failure that used to trigger the
 fallback — the hook logs one line to its own `hook.log` naming the failure and prints a short, model-facing
 relay instruction to stdout, so the model can tell the operator something is wrong (never the store itself, and
-never a synthesized answer). Full mechanism, including the measurement behind the exact channel split:
+never a synthesized answer). The one exception is a push that waited for the service to start and still
+missed, which says so without asking for a report. Full mechanism, including the measurement behind the
+exact channel split:
 `design/architecture.md` §"Degraded modes".
 
 ## What every number here is worth

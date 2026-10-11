@@ -9,17 +9,20 @@ on always exit 0 and relaying a failure through the one confirmed-working channe
 
 import json
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from zikaron.core.errors import ErrorCode
 from zikaron.core.store import ddl
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
-from zikaron.hook import connect, push, tripwire
+from zikaron.hook import connect, push, rpc, tripwire
 from zikaron.service import paths
 
 
@@ -34,9 +37,12 @@ class _FakeSurfaceService:
         store_db_path: Path,
         respond_with: dict[str, object],
         never_answers: str | None = None,
+        health_reports: dict[str, object] | None = None,
     ) -> None:
         self._store_db_path = store_db_path
         self._respond_with = respond_with
+        #: Fields `health()` answers beyond identity — none, as a service too old to report them.
+        self._health_reports = health_reports or {}
         #: A method this server reads and then never answers — a live loop behind a handler that
         #: hangs, for `memory_surface`; a listener that accepts and never answers, for `health`.
         self._never_answers = never_answers
@@ -96,6 +102,7 @@ class _FakeSurfaceService:
                     "ready": True,
                     "store_path": str(self._store_db_path),
                     "store_id": "test-store-id",
+                    **self._health_reports,
                 },
             }
         else:
@@ -122,13 +129,16 @@ def fake_service(
     store_db_path = store_dir / "memory.db"
 
     def _make(
-        respond_with: dict[str, object], never_answers: str | None = None
+        respond_with: dict[str, object],
+        never_answers: str | None = None,
+        health_reports: dict[str, object] | None = None,
     ) -> _FakeSurfaceService:
         service = _FakeSurfaceService(
             sock_path,
             store_db_path=store_db_path,
             respond_with=respond_with,
             never_answers=never_answers,
+            health_reports=health_reports,
         )
         monkeypatch.setattr(connect, "resolve_sock_path", lambda _store_dir: sock_path)
         return service
@@ -364,19 +374,18 @@ def test_no_service_at_all_is_logged_and_relayed_as_transport_failure(
 ) -> None:
     """The service is not merely rejecting — it never even answers, and the single-attempt
     contract means `push.run` must not retry a second start-if-absent sequence: this deliberately
-    points the spawn command at a script that does nothing, so the whole sequence exhausts its
-    own poll deadline exactly once."""
+    points the spawn command at a script that exits at once, which ends the one poll there is —
+    and a start that failed is a fault, not `starting`."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     (tmp_path / ".zikaron").mkdir()
     sock_path = socket_dir / "test.sock"
     monkeypatch.setattr(connect, "resolve_sock_path", lambda _store_dir: sock_path)
     monkeypatch.setattr(
-        connect, "default_server_command", lambda _sock, _store: ["python3", "-c", "pass"]
+        connect, "default_server_command", lambda _sock, _store: [sys.executable, "-c", "pass"]
     )
     output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
     assert output is not None
-    hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
-    assert "transport" in hook_log
+    assert _hook_log_entries(tmp_path) == ["transport"]
 
 
 def test_a_failure_output_names_hook_log_so_the_operator_can_verify_it(
@@ -529,8 +538,8 @@ def test_the_internal_deadline_expiring_after_a_slow_connect_degrades_without_ev
     monkeypatch: pytest.MonkeyPatch,
     fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
 ) -> None:
-    """`architecture.md`: "enforce an internal deadline of ~2 s" — this forces the deadline check
-    itself to fire by monkeypatching `time.monotonic` to report elapsed time far past
+    """The internal deadline for a running service (`architecture.md` §"Degraded modes") — forced to
+    fire by monkeypatching `time.monotonic` to report elapsed time far past
     `push._DEADLINE_SECONDS` immediately after `connect.connect_once` returns, rather than
     actually sleeping in the test.
     """
@@ -555,42 +564,277 @@ def test_the_internal_deadline_expiring_after_a_slow_connect_degrades_without_ev
         service.close()
 
 
+def _sent_deadline_at_ms(service: _FakeSurfaceService) -> object:
+    (sent,) = [one for one in service.requests if one.get("method") == "memory_surface"]
+    params = sent["params"]
+    assert isinstance(params, dict)
+    return params["deadline_at_ms"]
+
+
+def _hook_log_entries(tmp_path: Path) -> list[str]:
+    """Each `hook.log` line without its timestamp: the kind, its detail where it has one, and the
+    code where there is one."""
+    text = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
+    return [line.split(" ", 1)[1] for line in text.splitlines()]
+
+
+def _connect_cold(sock_path: Path, **_arguments: object) -> connect.Connection:
+    """`connect_once` as it returns once a service it found absent has answered `health()`."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(str(sock_path))
+    health = connect.Health(store_path="unused", store_id="unused")
+    return connect.Connection(sock=sock, cold_start=True, health=health)
+
+
 def test_the_hook_sends_the_deadline_it_enforces_as_a_wall_clock_instant(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fake_service: Callable[..., _FakeSurfaceService],
 ) -> None:
-    """Computed from the same instant the hook's own deadline starts at, so the two cannot drift:
+    """Computed beside the reading the hook's own timeout comes from, so the two cannot drift:
     asserted as the value sent for a known clock, not as a claim that two readings agree."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"result": {"text": ""}})
     try:
         monkeypatch.setattr(time, "time", lambda: 1_800_000_000.25)
+        monkeypatch.setattr(time, "monotonic", lambda: 100.0)
         push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
-        (sent,) = [one for one in service.requests if one.get("method") == "memory_surface"]
-        params = sent["params"]
-        assert isinstance(params, dict)
-        assert params["deadline_at_ms"] == int((1_800_000_000.25 + push._DEADLINE_SECONDS) * 1000)
+        assert _sent_deadline_at_ms(service) == int(
+            (1_800_000_000.25 + push._DEADLINE_SECONDS) * 1000
+        )
     finally:
         service.close()
 
 
-def test_a_push_sent_and_never_answered_is_logged_unanswered(
+@pytest.mark.parametrize(
+    ("start_took", "remaining"),
+    [
+        pytest.param(0.0, push._MAX_DEADLINE_AHEAD_SECONDS, id="started-at-once-capped"),
+        pytest.param(4.0, push._COLD_START_DEADLINE_SECONDS - 4.0, id="slow-start"),
+    ],
+)
+def test_a_cold_push_spends_the_cold_start_deadline_no_further_ahead_than_the_service_accepts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+    start_took: float,
+    remaining: float,
+) -> None:
+    """The poll for the service's start runs to the cold-start deadline, and the request after it
+    gets what is left of that deadline — but never a `deadline_at_ms` further ahead than the
+    service accepts, which it would refuse as `bounds`. A start that took longer than the running
+    service's whole deadline is still answered, which is the defect this deadline exists for."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    poll_deadlines: list[object] = []
+
+    def _record_and_connect_cold(sock_path: Path, **arguments: object) -> connect.Connection:
+        poll_deadlines.append(arguments["poll_deadline"])
+        return _connect_cold(sock_path)
+
+    monkeypatch.setattr(connect, "connect_once", _record_and_connect_cold)
+    service = fake_service({"result": {"text": "- a gist"}})
+    try:
+        readings = iter([100.0])
+        monkeypatch.setattr(time, "monotonic", lambda: next(readings, 100.0 + start_took))
+        monkeypatch.setattr(time, "time", lambda: 1_800_000_000.25)
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output == "- a gist"
+        assert poll_deadlines == [100.0 + push._COLD_START_DEADLINE_SECONDS]
+        assert _sent_deadline_at_ms(service) == int((1_800_000_000.25 + remaining) * 1000)
+    finally:
+        service.close()
+
+
+@dataclass(frozen=True)
+class _Late:
+    """One of the three ways a push is late: the fake service and the deadline that produce it,
+    and what a push to a service that was already running logs for it."""
+
+    respond_with: dict[str, object]
+    never_answers: str | None
+    deadline_seconds: float
+    logged: str
+
+
+_LATENESS = [
+    pytest.param(_Late({"result": {"text": ""}}, "memory_surface", 0.3, "unanswered"), id="sent"),
+    pytest.param(
+        _Late(
+            {"error": {"code": -32026, "message": "late", "data": {"verb": "memory_surface"}}},
+            None,
+            5.0,
+            "deadline_passed -32026",
+        ),
+        id="refused",
+    ),
+    pytest.param(_Late({"result": {"text": ""}}, None, 0.0, "deadline_exceeded"), id="never-sent"),
+]
+
+
+@pytest.mark.parametrize("late", _LATENESS)
+def test_a_late_push_to_a_service_it_found_absent_is_starting_and_raises_no_alarm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+    late: _Late,
+) -> None:
+    """To a push that found the service absent, lateness means the start is still running, not
+    that anything failed: `hook.log` says `starting`, followed by the lateness it would otherwise
+    have been, and the model is told memories resume rather than asked to alarm the operator."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_COLD_START_DEADLINE_SECONDS", late.deadline_seconds)
+    monkeypatch.setattr(connect, "connect_once", _connect_cold)
+    service = fake_service(late.respond_with, never_answers=late.never_answers)
+    try:
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output == push._STARTING_RELAY
+        assert "operator" not in output
+        assert _hook_log_entries(tmp_path) == [f"starting {late.logged}"]
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("late", _LATENESS)
+def test_the_same_lateness_from_a_running_service_keeps_its_kind_and_the_alarm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+    late: _Late,
+) -> None:
+    """A service that was already running, and reports no model load still under way, and still
+    answers late is the wedge case, which the operator has to hear about."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", late.deadline_seconds)
+    service = fake_service(late.respond_with, never_answers=late.never_answers)
+    try:
+        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert output is not None
+        assert "operator" in output
+        assert _hook_log_entries(tmp_path) == [late.logged]
+    finally:
+        service.close()
+
+
+def test_a_deadline_that_passes_before_the_send_is_deadline_exceeded_not_unanswered(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fake_service: Callable[..., _FakeSurfaceService],
 ) -> None:
-    """The service received it and could not answer in time — a handler that hangs behind a live
-    loop — which is a different fact from a service nobody could reach, and gets its own word."""
+    """`unanswered` says the service received the push; one that ran out of time between the
+    hook's last check and the send never reached it."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
-    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 0.5)
-    service = fake_service({"result": {"text": ""}}, never_answers="memory_surface")
+
+    def _not_sent(*_args: object, **_kwargs: object) -> str:
+        raise rpc.NotSentError("the deadline passed before the request was sent")
+
+    monkeypatch.setattr(rpc, "surface_once", _not_sent)
+    service = fake_service({"result": {"text": ""}})
+    try:
+        push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert _hook_log_entries(tmp_path) == ["deadline_exceeded"]
+    finally:
+        service.close()
+
+
+def test_a_cold_start_keeps_every_failure_that_is_not_lateness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+) -> None:
+    """Only lateness is the start still running. A refusal on its merits from a service that has
+    just started is the same fault it would be from one that had been up for an hour."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(connect, "connect_once", _connect_cold)
+    service = fake_service({"error": {"code": -32020, "message": "the store was locked"}})
     try:
         output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
         assert output is not None
-        hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
-        assert "unanswered" in hook_log
-        assert "transport" not in hook_log
+        assert "operator" in output
+        assert _hook_log_entries(tmp_path) == ["store_busy -32020"]
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("waited_on", ["lock", "poll"])
+def test_a_start_still_running_at_the_deadline_is_starting_and_says_what_it_waited_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waited_on: Literal["lock", "poll"]
+) -> None:
+    """Nothing was sent: at the cold-start deadline another client still held the lock while it
+    started the service, or the service this push spawned had not answered `health()` and was
+    still running."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    (tmp_path / ".zikaron").mkdir()
+
+    def _still_starting(*_args: object, **_kwargs: object) -> connect.Connection:
+        raise connect.ServiceStartingError("still starting", waited_on=waited_on)
+
+    monkeypatch.setattr(connect, "connect_once", _still_starting)
+    output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+    assert output == push._STARTING_RELAY
+    assert _hook_log_entries(tmp_path) == [f"starting {waited_on}"]
+
+
+@pytest.mark.parametrize(
+    ("uptime_seconds", "budget"),
+    [
+        pytest.param(0.1, 3.0, id="young-gets-the-cold-start-deadline"),
+        pytest.param(30.0, 1.0, id="stalled-gets-the-running-deadline"),
+    ],
+)
+def test_a_young_service_still_loading_gets_the_cold_start_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+    uptime_seconds: float,
+    budget: float,
+) -> None:
+    """Calling it a start is half of it; the other half is the time a start is given. Both
+    deadlines are patched under the cap, so the cap cannot be what the sent deadline shows."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(push, "_COLD_START_DEADLINE_SECONDS", 3.0)
+    service = fake_service(
+        {"result": {"text": ""}},
+        health_reports={"model_loaded": False, "uptime_seconds": uptime_seconds},
+    )
+    try:
+        monkeypatch.setattr(time, "monotonic", lambda: 100.0)
+        monkeypatch.setattr(time, "time", lambda: 1_800_000_000.25)
+        push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert _sent_deadline_at_ms(service) == int((1_800_000_000.25 + budget) * 1000)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("uptime_seconds", "logged"),
+    [
+        pytest.param(0.1, "starting unanswered", id="young"),
+        pytest.param(30.0, "unanswered", id="stalled"),
+    ],
+)
+def test_a_running_service_still_loading_its_model_is_a_start_only_while_young(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[..., _FakeSurfaceService],
+    uptime_seconds: float,
+    logged: str,
+) -> None:
+    """The session-start warm-up leaves a service that answers `health()` while its model is still
+    loading, so the first push finds it running and then waits on the load. Young, that is a start;
+    still loading long after a start should have finished, it has stalled and the operator has to
+    hear about it."""
+    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr(push, "_COLD_START_DEADLINE_SECONDS", 0.5)
+    service = fake_service(
+        {"result": {"text": ""}},
+        never_answers="memory_surface",
+        health_reports={"model_loaded": False, "uptime_seconds": uptime_seconds},
+    )
+    try:
+        push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
+        assert _hook_log_entries(tmp_path) == [logged]
     finally:
         service.close()
 
@@ -600,9 +844,9 @@ def test_a_listener_that_never_answers_health_is_still_a_transport_failure(
     monkeypatch: pytest.MonkeyPatch,
     fake_service: Callable[..., _FakeSurfaceService],
 ) -> None:
-    """A timeout inside `connect_once` is a blocked event loop's signature — the socket accepts and
-    nothing answers — and the push was never sent, so it is not `unanswered`. That word is scoped to
-    the `surface` call alone."""
+    """A timeout inside `connect_once` to a running service is a blocked event loop's signature —
+    the socket accepts and nothing answers — and the push was never sent, so it is not
+    `unanswered`. That word is scoped to the `surface` call alone."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
     service = fake_service({"result": {"text": ""}}, never_answers="health")
     try:
@@ -611,32 +855,6 @@ def test_a_listener_that_never_answers_health_is_still_a_transport_failure(
         hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
         assert "transport" in hook_log
         assert "unanswered" not in hook_log
-    finally:
-        service.close()
-
-
-def test_a_deadline_passed_answer_is_logged_with_its_code_and_relayed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    fake_service: Callable[..., _FakeSurfaceService],
-) -> None:
-    monkeypatch.setenv("KIRO_SESSION_ID", "s1")
-    service = fake_service(
-        {
-            "error": {
-                "code": -32026,
-                "message": "the caller's deadline passed",
-                "data": {"verb": "memory_surface"},
-            }
-        }
-    )
-    try:
-        output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)
-        assert output is not None
-        assert "operator" in output
-        hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
-        assert "deadline_passed" in hook_log
-        assert "-32026" in hook_log
     finally:
         service.close()
 
@@ -662,7 +880,7 @@ def test_every_rejection_kind_is_its_codes_own_wire_name() -> None:
 
 
 def test_the_hooks_own_deadline_is_always_a_valid_deadline_at_ms() -> None:
-    """`deadline_at_ms` more than the budget ahead is `bounds`. Raising the hook's deadline, or
+    """`deadline_at_ms` more than the budget ahead is `bounds`. Raising the hook's cap, or
     lowering the budget, would otherwise make the service refuse every push while every other test
     stayed green."""
-    assert push._DEADLINE_SECONDS * 1000 <= ddl.BUSY_TIMEOUT_MS
+    assert push._MAX_DEADLINE_AHEAD_SECONDS * 1000 < ddl.BUSY_TIMEOUT_MS

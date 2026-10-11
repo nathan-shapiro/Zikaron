@@ -20,13 +20,13 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.indexing.encoder import BackgroundLoadedEncoder
-from zikaron.service import diagnostics, log, security
+from zikaron.service import diagnostics, log, ownership, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.server import RunningServer
 
@@ -53,20 +53,37 @@ def _is_absent_server(error: OSError) -> bool:
     return error.errno in _ABSENT_SERVER_ERRNOS
 
 
+class StartFailedError(ConnectionError):
+    """The service this client spawned exited before it answered — a start that failed, which no
+    retry fixes until what `service.log` says is fixed, rather than one that was only slow."""
+
+
 async def idle_self_stop(
-    ctx: ServiceContext, server: RunningServer, sock_path: Path, *, original_store_inode: int
+    ctx: ServiceContext,
+    server: RunningServer,
+    sock_path: Path,
+    *,
+    original_store_inode: int,
+    still_here: Callable[[], None] = lambda: None,
 ) -> None:
-    """Poll until the store is idle past `idle_timeout` with nothing in flight, or until the
-    store this process has open is no longer the one currently on disk at its own path — then
-    stop, for whichever reason fired first.
+    """Poll until the store is idle past `idle_timeout` with nothing in flight, until the store
+    this process has open is no longer the one currently on disk at its own path, or until the
+    socket it bound is no longer at `sock_path` — then stop, for whichever reason fired first.
+    Every poll that does not stop calls `still_here`, the sign of life a client queued behind
+    this service's hold on its store reads (`service/ownership.py`).
+
+    **A lost socket stops the service because nothing else would.** The service holds its store
+    for its whole life (`service/ownership.py`), so a replacement started by the next client waits
+    for it and exits; a service nobody can reach would otherwise hold the store until its idle
+    clock — which no request can refresh — ran out, with every push in the meantime reporting it.
 
     Runs as a background task for the life of the process; cancel it to shut down without
-    triggering either exit condition, as `main.py`'s signal handler does. Unlinks `sock_path`
-    **before** closing the server, so no client's `connect()` can ever observe a socket file this
-    process is about to stop listening on without also finding it gone — a window there would be
-    exactly the "connect exactly as the server exits" race `architecture.md` requires the *client*
-    to survive, and closing that window here is strictly better than relying only on the client's
-    retry.
+    triggering any exit condition, as `main.py`'s signal handler does. Unlinks `sock_path`, while
+    it is still the socket `server` bound (`unlink_if_still_bound`), **before** closing the
+    server, so no client's `connect()` can ever observe a socket file this process is about to
+    stop listening on without also finding it gone — a window there would be exactly the "connect
+    exactly as the server exits" race `architecture.md` requires the *client* to survive, and
+    closing that window here is strictly better than relying only on the client's retry.
 
     `server.shut_down()` — not a bare `server.server.close(); await server.server.wait_closed()`
     — because a client that finished a request and kept its connection open (the documented norm:
@@ -101,23 +118,25 @@ async def idle_self_stop(
     while True:
         await asyncio.sleep(IDLE_POLL_INTERVAL_SECONDS)
         diagnostics.log_long_requests(ctx.activity, older_than=IDLE_POLL_INTERVAL_SECONDS)
-        # Bound to a name rather than left inline so the reason can be *named* in the log record
-        # below. The `or` still short-circuits, which is load-bearing rather than incidental:
-        # `_store_path_now_differs` stats the store on every poll it is reached on, and an idle
-        # service must not pay that.
-        idle = ctx.activity.may_stop(idle_timeout=idle_timeout)
-        if idle or _store_path_now_differs(ctx.store.path, from_inode=original_store_inode):
-            # Written *before* the socket is unlinked, so the record survives anything that goes
-            # wrong in the two steps after it. A stop nobody can see in the log is the state this
-            # line exists to end.
-            log.log_self_stop(
-                reason="idle" if idle else "store_replaced",
-                store_dir=ctx.store.path.parent,
-                idle_seconds=ctx.activity.idle_for(),
-            )
-            sock_path.unlink(missing_ok=True)
-            await server.shut_down()
-            return
+        # Checked in this order so an idle service stops without statting anything.
+        if ctx.activity.may_stop(idle_timeout=idle_timeout):
+            reason = "idle"
+        elif _path_now_differs(ctx.store.path, from_inode=original_store_inode):
+            reason = "store_replaced"
+        elif _path_now_differs(sock_path, from_inode=server.socket_inode):
+            reason = "socket_lost"
+        else:
+            still_here()
+            continue
+        # Written *before* the socket is unlinked, so the record survives anything that goes
+        # wrong in the two steps after it. A stop nobody can see in the log is the state this
+        # line exists to end.
+        log.log_self_stop(
+            reason=reason, store_dir=ctx.store.path.parent, idle_seconds=ctx.activity.idle_for()
+        )
+        unlink_if_still_bound(sock_path, socket_inode=server.socket_inode)
+        await server.shut_down()
+        return
 
 
 async def stop_on_encoder_failure(
@@ -181,26 +200,42 @@ async def stop_on_encoder_failure(
             store_dir=ctx.store.path.parent,
             idle_seconds=ctx.activity.idle_for(),
         )
-        sock_path.unlink(missing_ok=True)
+        unlink_if_still_bound(sock_path, socket_inode=server.socket_inode)
         await server.shut_down()
         return
     await asyncio.Event().wait()
 
 
-def _store_path_now_differs(store_path: Path, *, from_inode: int) -> bool:
-    """Whether `store_path` currently resolves to a different file than `from_inode` names.
+def unlink_if_still_bound(sock_path: Path, *, socket_inode: int) -> None:
+    """Remove `sock_path` only while it still names the socket this process bound: a path that is
+    gone, or names another file, is no longer this process's to remove. Every stop goes through
+    this, so none of them decides that differently (`architecture.md` §"Idle self-stop").
+
+    An inode number tells two files apart only while the first still holds it, since a freed one
+    can go straight to the next file made. The listener holds its socket's inode until it closes,
+    so the comparison is sound on the paths that unlink before the close — the idle poll, a signal
+    and a failed load. The forced exit and a failed setup's cleanup unlink after it, where a file
+    made at the path in between could be taken for this one.
+    """
+    if not _path_now_differs(sock_path, from_inode=socket_inode):
+        sock_path.unlink(missing_ok=True)
+
+
+def _path_now_differs(path: Path, *, from_inode: int) -> bool:
+    """Whether `path` currently resolves to a different file than `from_inode` names — the store
+    this process has open, or the socket it bound.
 
     Only `FileNotFoundError` is folded into "yes, differs" alongside a genuine inode mismatch —
-    the store being briefly absent (deleted, nothing recreated yet) is, like a changed inode,
-    "this process's own open store is not the one currently on disk at its path." Any *other*
-    `OSError` (`PermissionError`, `EIO`, a transient filesystem hiccup on an otherwise-untouched
-    path) is **not** treated as a replacement: it propagates, so a caller polling on a fixed
-    interval sees a genuine, unexpected stat failure rather than an unconditional, potentially
-    wrong shutdown decision made on its behalf. This mirrors `architecture.md` §"Idle self-stop",
-    which names only absence or a changed inode as the replacement signal.
+    the file being absent (deleted, nothing recreated yet) is, like a changed inode, "this
+    process's own file is not the one currently on disk at its path." Any *other* `OSError`
+    (`PermissionError`, `EIO`, a transient filesystem hiccup on an otherwise-untouched path) is
+    **not** treated as a replacement: it propagates, so a caller polling on a fixed interval sees a
+    genuine, unexpected stat failure rather than an unconditional, potentially wrong shutdown
+    decision made on its behalf. This mirrors `architecture.md` §"Idle self-stop", which names only
+    absence or a changed inode as the replacement signal.
     """
     try:
-        return store_path.stat().st_ino != from_inode
+        return path.stat().st_ino != from_inode
     except FileNotFoundError:
         return True
 
@@ -269,7 +304,9 @@ def _health(sock: socket.socket) -> HealthCheck:
     )
 
 
-def _spawn_detached(server_command: Sequence[str]) -> None:
+def _spawn_detached(server_command: Sequence[str]) -> subprocess.Popen[bytes]:
+    """Start the service detached, reaped by a daemon thread, and hand back its handle so the poll
+    can see a start that has already failed."""
     process = subprocess.Popen(  # noqa: S603 — `server_command` is caller-supplied and not built
         # from untrusted request data; it is the fixed argv this process's own caller decided to
         # spawn.
@@ -291,8 +328,10 @@ def _spawn_detached(server_command: Sequence[str]) -> None:
     # `Popen` handle already discarded and never `wait()`-ed on shows `State: Z` in
     # `/proc/<pid>/status` for as long as the parent keeps running. A daemon thread that blocks on
     # `wait()` reaps it without making this function itself block, and being a daemon thread means
-    # it does not keep the *client* process alive past whatever else it was doing.
+    # it does not keep the *client* process alive past whatever else it was doing. `poll()` still
+    # works beside it: it answers `None` while the thread waits and the exit status once it has.
     threading.Thread(target=process.wait, daemon=True).start()
+    return process
 
 
 def connect_start_if_absent(
@@ -349,6 +388,7 @@ def connect_start_if_absent(
         ZikaronError: `STORE_IDENTITY` — a server answered, but `store_db_path` disagreed, or
             `store_id` was given and disagreed — exactly `architecture.md`'s `{expected, actual}`
             payload shape for that code.
+        StartFailedError: the service this call spawned exited before it answered.
         ConnectionError: no server became reachable before the deadline.
     """
     sock, already_confirmed_health = _try_connect_twice_under_lock(
@@ -414,8 +454,8 @@ def _try_connect_twice_under_lock(
                 raise
             # Still dead once the lock was acquired — nobody else won the race either.
         _vet_and_clear_stale_socket(sock_path)
-        _spawn_detached(server_command)
-        return _poll_until_reachable(sock_path)
+        child = _spawn_detached(server_command)
+        return _poll_until_reachable(sock_path, child=child)
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
@@ -432,8 +472,13 @@ def _vet_and_clear_stale_socket(sock_path: Path) -> None:
         sock_path.unlink()
 
 
-def _poll_until_reachable(sock_path: Path) -> tuple[socket.socket, HealthCheck]:
-    """Poll until a **genuine `health()` response** comes back, not merely a connected socket.
+def _poll_until_reachable(
+    sock_path: Path, *, child: subprocess.Popen[bytes]
+) -> tuple[socket.socket, HealthCheck]:
+    """Poll until a **genuine `health()` response** comes back, not merely a connected socket —
+    or until `child` exits for any reason but another service holding its store, since a start
+    that has failed would otherwise hold the start-if-absent lock to the deadline, and every
+    client waiting on that lock with it.
 
     `architecture.md` §Lifecycle states this precisely as one step, "spawn... then poll
     `health()` until a deadline," with "release the lock" as the *next*, separate step — a bare
@@ -450,16 +495,19 @@ def _poll_until_reachable(sock_path: Path) -> tuple[socket.socket, HealthCheck]:
         try:
             sock = _connect(sock_path, timeout=_CONNECT_TIMEOUT_SECONDS)
         except OSError:
-            time.sleep(_HEALTH_POLL_INTERVAL_SECONDS)
-            continue
-        try:
-            return sock, _health(sock)
-        except (OSError, ConnectionError, KeyError, ValueError):
-            # Connected, but the process is not yet answering `health()` correctly — still
-            # starting up, or it accepted the connection and then died. Close this attempt's
-            # socket and keep polling rather than treating a connect alone as success.
-            sock.close()
-            time.sleep(_HEALTH_POLL_INTERVAL_SECONDS)
+            pass
+        else:
+            try:
+                return sock, _health(sock)
+            except (OSError, ConnectionError, KeyError, ValueError):
+                # Connected, but the process is not yet answering `health()` correctly — still
+                # starting up, or it accepted the connection and then died. Close this attempt's
+                # socket and keep polling rather than treating a connect alone as success.
+                sock.close()
+        exit_status = child.poll()
+        if exit_status is not None and exit_status != ownership.ANOTHER_SERVICE_EXIT_STATUS:
+            raise StartFailedError(f"the service spawned for {sock_path} exited before answering")
+        time.sleep(_HEALTH_POLL_INTERVAL_SECONDS)
     raise ConnectionError(f"no server became reachable at {sock_path} before the deadline")
 
 

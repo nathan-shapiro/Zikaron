@@ -19,12 +19,19 @@ it is captured).
 """
 
 import asyncio
+import json
+import os
+import socket
+import subprocess
+import threading
+import time
+import unittest.mock
 from pathlib import Path
 
 import pytest
 
 from tests.service_fixtures import open_context
-from zikaron.service import lifecycle, server
+from zikaron.service import lifecycle, ownership, server
 
 
 async def test_idle_self_stop_exits_on_a_genuine_store_replacement_even_while_active(
@@ -147,11 +154,146 @@ async def test_idle_self_stop_exits_when_the_store_is_deleted_with_nothing_recre
         assert not sock_path.exists()
 
 
+def test_a_child_that_defers_to_another_service_keeps_the_poll_going(socket_dir: Path) -> None:
+    """A spawned service that exits because another holds its store has not failed: the other is
+    the one to wait for. The other service here binds after the child has exited."""
+    sock_path = socket_dir / "test.sock"
+    deferred = unittest.mock.create_autospec(subprocess.Popen, instance=True)
+    deferred.poll.return_value = ownership.ANOTHER_SERVICE_EXIT_STATUS
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+    def _bind_late_and_answer() -> None:
+        time.sleep(0.3)
+        listener.bind(str(sock_path))
+        listener.listen(1)
+        listener.settimeout(5.0)
+        connection, _ = listener.accept()
+        connection.recv(4096)
+        result = {"ready": True, "store_path": "the-path", "store_id": "the-id"}
+        connection.sendall(
+            (json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}) + "\n").encode()
+        )
+        connection.close()
+
+    thread = threading.Thread(target=_bind_late_and_answer, daemon=True)
+    thread.start()
+    try:
+        sock, health = lifecycle._poll_until_reachable(sock_path, child=deferred)
+        sock.close()
+        assert health.store_path == "the-path"
+    finally:
+        thread.join(timeout=5.0)
+        listener.close()
+
+
+def test_a_child_still_alive_at_the_deadline_ends_the_poll_as_a_plain_connection_error(
+    socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deadline is the only bound on a start that neither answers nor exits, and it holds the
+    start-if-absent lock until then. It is told from a start that failed by the exception's type,
+    so `zikaron init` advises a retry for this one and the log for that one."""
+    monkeypatch.setattr(lifecycle, "_HEALTH_POLL_DEADLINE_SECONDS", 0.3)
+    alive = unittest.mock.create_autospec(subprocess.Popen, instance=True)
+    alive.poll.return_value = None
+    started = time.monotonic()
+    with pytest.raises(ConnectionError) as raised:
+        lifecycle._poll_until_reachable(socket_dir / "test.sock", child=alive)
+    assert not isinstance(raised.value, lifecycle.StartFailedError)
+    assert time.monotonic() - started < 2.0
+
+
+class TestOnlyTheSocketThisProcessBoundIsRemoved:
+    """Every stop removes the socket path through `unlink_if_still_bound`, so what decides whether
+    the path is still this process's is one comparison, made the same way on every path."""
+
+    def test_the_socket_it_bound_is_removed(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.sock"
+        path.touch()
+        lifecycle.unlink_if_still_bound(path, socket_inode=path.stat().st_ino)
+        assert not path.exists()
+
+    def test_another_file_at_the_path_is_left_alone(self, tmp_path: Path) -> None:
+        """The original is held open while the other file is made, as a bound listener holds its
+        socket's inode: a freed inode can be handed straight to the next file, and was on Linux
+        CI, which would make the two indistinguishable by a comparison production never faces."""
+        path = tmp_path / "test.sock"
+        path.touch()
+        with path.open("rb") as held:
+            bound = os.fstat(held.fileno()).st_ino
+            path.unlink()
+            path.write_text("someone else's", encoding="ascii")
+            lifecycle.unlink_if_still_bound(path, socket_inode=bound)
+        assert path.read_text(encoding="ascii") == "someone else's"
+
+    def test_a_path_already_gone_is_not_an_error(self, tmp_path: Path) -> None:
+        lifecycle.unlink_if_still_bound(tmp_path / "test.sock", socket_inode=1)
+
+
+async def test_every_poll_that_does_not_stop_shows_a_sign_of_life(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A push queued behind this service's hold on its store reads how long ago it last did, so a
+    service that is still polling must never read as one that has stalled."""
+    monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.02)
+    signs: list[None] = []
+    async with open_context(tmp_path) as ctx:
+        ctx.activity.begin_request("memory_search")  # never idle: nothing stops it.
+        sock_path = socket_dir / "server.sock"
+        running = await server.serve(ctx, str(sock_path))
+        polling = asyncio.create_task(
+            lifecycle.idle_self_stop(
+                ctx,
+                running,
+                sock_path,
+                original_store_inode=ctx.store.path.stat().st_ino,
+                still_here=lambda: signs.append(None),
+            )
+        )
+        try:
+            await asyncio.sleep(0.3)
+        finally:
+            polling.cancel()
+            await asyncio.gather(polling, return_exceptions=True)
+            await running.shut_down()
+    assert len(signs) >= 3
+
+
+async def test_a_service_whose_socket_is_taken_from_it_stops_and_leaves_the_path_alone(
+    tmp_path: Path,
+    socket_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nobody can reach a service whose socket file was removed, and a replacement waits for its
+    store rather than taking it, so the service has to be the one to go — while busy, and without
+    removing whatever now sits at the path, which is no longer its own."""
+    monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.05)
+    async with open_context(tmp_path) as ctx:
+        ctx.activity.begin_request("memory_search")  # never idle: only the lost socket can fire.
+        sock_path = socket_dir / "server.sock"
+        running = await server.serve(ctx, str(sock_path))
+        with caplog.at_level("INFO", logger="zikaron.service"):
+            idle_task = asyncio.create_task(
+                lifecycle.idle_self_stop(
+                    ctx, running, sock_path, original_store_inode=ctx.store.path.stat().st_ino
+                )
+            )
+            await asyncio.sleep(0)
+            sock_path.unlink()
+            sock_path.write_text("not this service's", encoding="utf-8")
+            await asyncio.wait_for(idle_task, timeout=5.0)
+        assert sock_path.read_text(encoding="utf-8") == "not this service's"
+
+    records = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stopping:")]
+    assert len(records) == 1, f"expected exactly one stop record, got {records}"
+    assert "reason=socket_lost" in records[0], records[0]
+
+
 async def test_idle_self_stop_propagates_a_genuine_unexpected_stat_failure_rather_than_exiting(
     tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only absence or a changed inode counts as "replaced". An earlier version of
-    `_store_path_now_differs` folded *every* `OSError` into an unconditional shutdown
+    `_path_now_differs` folded *every* `OSError` into an unconditional shutdown
     decision, which would make a genuine `PermissionError` (or any other unrelated stat failure)
     indistinguishable from an actual store replacement. Forced by monkeypatching `Path.stat` to
     raise a `PermissionError` deterministically, rather than trying to construct a real permission

@@ -39,10 +39,10 @@ class TransportFailureError(ToolError):
 
     Distinct from `ServiceRejectionError` because there is no `code`/`data` to carry: this covers
     `connect_start_if_absent`'s own `ConnectionError` (no server became reachable before its
-    deadline) and a `ZikaronError` raised while *establishing* the connection itself (a
-    `store_identity` mismatch, or whatever `Store.open`/`Store.create` raise on a store that
-    exists but will not open) — failures that happen before any request/response pair exists for
-    `ServiceRejection` to describe.
+    deadline, or the one it spawned exited first) and a `ZikaronError` raised while
+    *establishing* the connection itself (a `store_identity` mismatch, or whatever
+    `Store.open`/`Store.create` raise on a store that exists but will not open) — failures that
+    happen before any request/response pair exists for `ServiceRejection` to describe.
     """
 
 

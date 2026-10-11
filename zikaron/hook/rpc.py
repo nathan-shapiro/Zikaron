@@ -13,8 +13,13 @@ docstring gives.
 
 import json
 import socket
+import time
+from dataclasses import dataclass
+from typing import Self
 
 from zikaron.hook.envelope import HookEnvelope
+
+_MS_PER_SECOND = 1000
 
 
 class SurfaceRejectionError(Exception):
@@ -32,13 +37,37 @@ class SurfaceRejectionError(Exception):
         super().__init__(f"{code}: {message}")
 
 
+class NotSentError(TimeoutError):
+    """The deadline passed before the request was sent, so the service never received it."""
+
+
+@dataclass(frozen=True, slots=True)
+class PushDeadline:
+    """This process's one deadline for a push, read on two clocks.
+
+    `at_ms` is sent as `deadline_at_ms`, so the service answers `deadline_passed` rather than
+    committing a push nobody will read; it is wall-clock because the service shares only this
+    machine's realtime clock, and a monotonic reading means nothing in another process. `by` is
+    the same instant on this process's monotonic clock, which bounds its own socket waits.
+    """
+
+    at_ms: int
+    by: float
+
+    @classmethod
+    def after(cls, seconds: float, *, now: float) -> Self:
+        """`seconds` after `now`, a `time.monotonic()` reading; the wall clock is read beside it."""
+        return cls(at_ms=int((time.time() + seconds) * _MS_PER_SECOND), by=now + seconds)
+
+
 def surface_once(
-    sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope, deadline_at_ms: int
+    sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope, deadline: PushDeadline
 ) -> str:
     """Send one `memory_surface(prompt, limit, deadline_at_ms)` request and return its text.
 
-    `deadline_at_ms` is this process's own deadline as a wall-clock instant, so the service answers
-    `deadline_passed` rather than committing a push nobody will read.
+    `deadline` bounds the whole exchange. A socket timeout bounds one call, so it is re-armed from
+    `deadline.by` before the send and before every read, and an answer arriving in pieces cannot
+    outrun it.
 
     A single `sendall`/`recv`-until-newline round trip — this client makes exactly one request per
     process, so there is no held connection for a partial-send ambiguity to matter against: unlike
@@ -49,6 +78,8 @@ def surface_once(
     could get wrong.
 
     Raises:
+        NotSentError: the deadline had passed before the request could be sent.
+        TimeoutError: the deadline passed before the whole answer arrived.
         OSError: the socket failed during send or receive.
         ConnectionError: the connection closed before a full line arrived, or the response was
             not a well-formed JSON-RPC envelope.
@@ -61,13 +92,18 @@ def surface_once(
         "params": {
             "prompt": prompt,
             "limit": limit,
-            "deadline_at_ms": deadline_at_ms,
+            "deadline_at_ms": deadline.at_ms,
             "client": envelope.as_client_object(),
         },
     }
+    try:
+        time_out_at(sock, deadline.by)
+    except TimeoutError:
+        raise NotSentError("the deadline passed before the request was sent") from None
     sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
     buffer = b""
     while not buffer.endswith(b"\n"):
+        time_out_at(sock, deadline.by)
         chunk = sock.recv(4096)
         if not chunk:
             raise ConnectionError("connection closed before a full response was read")
@@ -89,3 +125,18 @@ def surface_once(
     if not isinstance(code, int) or not isinstance(message, str):
         raise ConnectionError(f"error object is missing code/message: {error!r}")
     raise SurfaceRejectionError(code, message)
+
+
+def time_out_at(sock: socket.socket, instant: float) -> None:
+    """Set `sock`'s timeout to what is left until `instant`, a `time.monotonic()` reading.
+
+    A socket timeout bounds one call, so an exchange of several calls re-arms it before each one
+    to bound the whole exchange.
+
+    Raises:
+        TimeoutError: `instant` has already passed.
+    """
+    remaining = instant - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("the deadline passed before the answer was complete")
+    sock.settimeout(remaining)

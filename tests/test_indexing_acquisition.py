@@ -172,10 +172,10 @@ class TestTheColdPath:
 
 
 class TestAWarmStartDoesNotHash:
-    """**The measured decision**: hashing on every start costs 331-396 ms under load and pushes the
-    cold-start sequence past `push._DEADLINE_SECONDS`, losing the user's first message
-    (`research/m30-verify-cost.md`). Nothing arrives from the network on a warm start, so nothing is
-    checked — and the trade is that on-disk corruption is `zikaron doctor`'s to find, not startup's.
+    """**The measured decision**: hashing on every start costs 331-396 ms under load, all of it
+    spent while the first message after an idle stop waits (`research/m30-verify-cost.md`).
+    Nothing arrives from the network on a warm start, so nothing is checked — and the trade is that
+    on-disk corruption is `zikaron doctor`'s to find, not startup's.
     """
 
     def test_a_complete_but_corrupt_cache_is_used_without_a_refetch(

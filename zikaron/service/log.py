@@ -3,7 +3,9 @@
 `coding-standards.md` §6: `zikaron-service` is off any latency-critical path once warm, so the
 ~15 ms `import logging` cost that rules it out of the hook is irrelevant here. `architecture.md`
 §Paths: `service.log` is this process's own file, never shared with `warmup.log` or `hook.log`,
-because `logging.FileHandler` has no cross-process append locking.
+because `logging.FileHandler` has no cross-process append locking. The one other writer is a start
+that found the store held, which adds a single line before it exits (`log_another_service`);
+§Paths has why that line is safe.
 """
 
 import logging
@@ -82,10 +84,11 @@ def log_self_stop(*, reason: str, store_dir: Path, idle_seconds: float) -> None:
     live service, and four `service.log` files whose last entry was the startup config dump, with
     no way to tell an idle stop from a crash or a kill.
 
-    `reason` distinguishes the two conditions `idle_self_stop` polls, because they carry different
+    `reason` distinguishes the conditions `idle_self_stop` polls, because they carry different
     diagnoses: `idle` is routine, while `store_replaced` means the file this process had open is
     no longer the one at its path — someone moved, deleted or restored the store underneath a
-    running service, which is worth seeing in a log rather than inferring from a restart.
+    running service, which is worth seeing in a log rather than inferring from a restart — and
+    `socket_lost` means the same of the socket it bound.
     """
     logger = logging.getLogger("zikaron.service")
     logger.info(
@@ -93,4 +96,15 @@ def log_self_stop(*, reason: str, store_dir: Path, idle_seconds: float) -> None:
         reason,
         store_dir,
         idle_seconds,
+    )
+
+
+def log_another_service(*, store_dir: Path) -> None:
+    """The line a start writes when another service already holds its store, and exits on.
+
+    Without it a start that found the store taken would leave nothing behind, and a `service.log`
+    whose last line is a startup could be read as a crash.
+    """
+    logging.getLogger("zikaron.service").info(
+        "not starting: reason=another_service store=%s", store_dir
     )

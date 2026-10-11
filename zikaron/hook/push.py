@@ -3,7 +3,8 @@
 `architecture.md` §"Degraded modes" is normative for the whole sequence, and §"Subagent sessions"
 for step 0. Every branch below reaches exactly one of three observable outcomes, and every one
 exits 0: print `surface`'s text; print nothing (a suppressed subagent turn — not a failure); or
-print a short, model-facing instruction asking the agent to relay the failure to the operator.
+print a short, model-facing notice — asking the agent to relay a failure to the operator, or, for
+a service still starting, saying that memories resume once it has started.
 Every path, including an exception this module did not anticipate, reaches one of those three
 rather than propagating: `run()` is the one function in this package that must never let an
 exception escape uncaught, because a caller (`main.py`) treats a raised exception here identically
@@ -24,25 +25,52 @@ from pathlib import Path
 from zikaron.core.errors import ZikaronError
 from zikaron.harness import detect
 from zikaron.hook import connect, envelope, failure, rpc, tripwire
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.service import paths
 
-#: `architecture.md`: "enforce an internal deadline of ~2 s, far under the `timeout_ms` the harness
-#: enforces on the whole hook command" — 10 s on this harness, and stated explicitly in the shipped
-#: hook entry rather than inherited (`architecture.md` §"The install contract").
-#: Budgets the *whole* sequence below — connect, spawn-if-absent, health poll, the `surface`
-#: request itself — not only the connect phase `connect.HEALTH_POLL_DEADLINE_SECONDS` bounds on
-#: its own. Checked once, right before the one blocking sequence that can exceed it, rather than
-#: interleaved through every step: the alternative (a fresh deadline check between each socket
-#: call) would not materially tighten the bound, since `connect.connect_once` and
-#: `rpc.surface_once` are each already individually bounded by socket timeouts, and a mid-sequence
-#: abort would still need to close whatever socket was open — no cheaper than letting the one
-#: attempt run to its own conclusion and discarding the result if it overran.
+#: The whole push — connect, `health()`, the `surface` request — to a service already running and
+#: done starting. Short, because failing fast beats being correct and late while the user waits
+#: (`architecture.md` §"Degraded modes").
 _DEADLINE_SECONDS = 2.0
+
+#: What a cold start's deadline leaves of the harness's kill. It pays for the connect's last
+#: attempt running past the deadline, then this process's own start before `run` and its print
+#: after: a miss has to reach `hook.log` and the relay, and a kill produces neither.
+_OUTSIDE_RUN_SECONDS = 2.0
+
+#: The whole push to a service that was starting when it began — absent, as on the first message
+#: after an idle stop, or still loading its model soon after it opened its store — which waits for
+#: the start as well as the answer.
+_COLD_START_DEADLINE_SECONDS = HOOK_TIMEOUT_SECONDS - _OUTSIDE_RUN_SECONDS
+
+#: How far ahead a `deadline_at_ms` may be: the service refuses one more than `ddl.BUSY_TIMEOUT_MS`
+#: ahead as `bounds`, and the two ends read the realtime clock at different instants, so this sits
+#: under that bound rather than on it. A literal, because this package is stdlib-only; a guard test
+#: holds it under the service's.
+_MAX_DEADLINE_AHEAD_SECONDS = 4.5
+
+#: The three ways a push is late (`architecture.md` §"A push the agent never saw is never recorded
+#: as shown"). To a push that found the service starting, each means the start is still running.
+_LATENESS_KINDS = frozenset({"deadline_exceeded", "unanswered", "deadline_passed"})
+
+#: What a push that found the service absent was still waiting on at its deadline, before it could
+#: send anything: another client's start, through the lock, or its own, through the poll.
+_START_WAITS = frozenset({"lock", "poll"})
+
+#: What `hook.log` records for a push that ran out of time while the service was starting, kept
+#: apart from every fault and followed by what it was waiting on — one of `_START_WAITS`, or the
+#: lateness it would otherwise have been — so where a slow start spends its time stays readable.
+_STARTING = "starting"
+
+_STARTING_RELAY = (
+    "The Zikaron memory service was still starting, so no project memories were surfaced for "
+    "this message. This is expected when the service was not yet running, or had only just "
+    "started, and needs no report; "
+    "memories are surfaced again once it has started, usually from the next message."
+)
 
 #: `architecture.md` §"MCP tool surface": `surface`'s own documented default limit.
 _SURFACE_LIMIT = 5
-
-_MS_PER_SECOND = 1000
 
 
 def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
@@ -53,17 +81,13 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
     Every failure this function detects is handled by exactly one `_degrade` call before
     returning — there is no path that returns silently for a reason `hook.log` does not also
     record, and no path that returns silently for a reason the return value itself does not also
-    carry as a model-facing relay instruction. That includes an exception this module did not
+    carry as a model-facing notice. That includes an exception this module did not
     anticipate: the degraded boundary below catches a genuine `Exception`, not a finite list of
     types, specifically so a defect in a dependency this function calls — or in this function's
     own future edits — degrades through the documented channel rather than escaping uncaught into
     `main.py`'s own outermost catch-all, which reports nothing on either channel.
     """
     started_at = time.monotonic()
-    # Read at the same instant as `started_at`, so the deadline the service is told and the one this
-    # process enforces are one deadline: the service shares this machine's realtime clock, and a
-    # monotonic reading means nothing in another process.
-    deadline_at_ms = int((time.time() + _DEADLINE_SECONDS) * _MS_PER_SECOND)
     spec = detect.current_spec()
     env_session_id = detect.session_label(spec)
     if envelope.is_subagent_session(
@@ -84,19 +108,26 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
     hook_log_path = paths.hook_log_path(store_dir)
 
     sock: socket.socket | None = None
+    cold_start = False
     try:
         sock_path = connect.resolve_sock_path(store_dir)
-        store_db_path = paths.store_db_path(store_dir)
-        sock = connect.connect_once(
+        connection = connect.connect_once(
             sock_path,
-            store_db_path=store_db_path,
+            store_db_path=paths.store_db_path(store_dir),
             store_id=None,
             server_command=connect.default_server_command(sock_path, store_dir),
+            poll_deadline=started_at + _COLD_START_DEADLINE_SECONDS,
         )
-        remaining = _DEADLINE_SECONDS - (time.monotonic() - started_at)
-        if remaining <= 0:
-            return _degrade(hook_log_path, "deadline_exceeded")
-        sock.settimeout(remaining)
+        sock = connection.sock
+        # A service that answered at once but is still loading its model, its store open for less
+        # than a cold start is allowed, is as much a start as one this push had to spawn — the
+        # session-start warm-up leaves exactly that behind.
+        cold_start = connection.cold_start or connection.health.still_loading_within(
+            _COLD_START_DEADLINE_SECONDS
+        )
+        budget = _COLD_START_DEADLINE_SECONDS if cold_start else _DEADLINE_SECONDS
+        now = time.monotonic()
+        remaining = min(budget - (now - started_at), _MAX_DEADLINE_AHEAD_SECONDS)
         client_envelope = envelope.build_envelope(session_id=env_session_id, pid=pid)
         try:
             return rpc.surface_once(
@@ -104,16 +135,20 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
                 prompt=prompt,
                 limit=_SURFACE_LIMIT,
                 envelope=client_envelope,
-                deadline_at_ms=deadline_at_ms,
+                deadline=rpc.PushDeadline.after(remaining, now=now),
             )
+        except rpc.NotSentError:
+            # Connecting spent the budget, or the moment left of it ran out before the send.
+            return _degrade(hook_log_path, "deadline_exceeded", cold_start=cold_start)
         except TimeoutError:
             # Sent, and not answered by the deadline: the service received this push. Scoped to
-            # this call alone, because a timeout inside `connect_once` is a listener that accepts
-            # and never answers `health` — a blocked event loop — which stays `transport`.
-            return _degrade(hook_log_path, "unanswered")
+            # this call alone, because a timeout inside `connect_once` to a running service is a
+            # listener that accepts and never answers `health` — a blocked event loop — which
+            # stays `transport`.
+            return _degrade(hook_log_path, "unanswered", cold_start=cold_start)
     except (connect.HookTransportError, rpc.SurfaceRejectionError, ZikaronError) as error:
         kind, code = _classify_failure(error)
-        return _degrade(hook_log_path, kind, code=code)
+        return _degrade(hook_log_path, kind, code=code, cold_start=cold_start)
     except Exception:
         # Anything else — a send/recv failure, a malformed response, a timeout before the send, or
         # a genuinely unanticipated defect in this function's own future edits. Never logs the
@@ -141,57 +176,49 @@ _REJECTION_KINDS: dict[int, str] = {
 
 
 def _classify_failure(error: Exception) -> tuple[str, int | None]:
-    """Every exception `run()` catches, as the `(kind, code)` pair `_degrade` needs — one small
-    dispatch rather than a `return _degrade(...)` per `except` clause, since the growing set of
-    exception types this function must treat identically (a `SurfaceRejectionError`'s wire code,
-    a `ZikaronError`'s own error code, a `StoreIdentityError`'s fixed `-32030`, or nothing more
-    specific than "transport" for everything else) was pushing `run()` itself past a plain
-    function's reasonable return-statement count — a lint signal worth heeding rather than
-    suppressing, since the *reason* it fired is that `run()` was starting to do this module's
-    classification work inline as well as its own control flow.
+    """Every exception `run()` catches, as the `(kind, code)` pair `_degrade` needs.
 
     A wire code the design's error table does not name (a programming error in the service, or a
     future addition neither side has been told about yet) still gets something identifiable
-    rather than an uninformative default — `_REJECTION_KINDS.get(code, f"rejected_{code}")`.
+    rather than an uninformative default — `rejected_<code>`.
     """
+    # Both subclasses are checked before the `HookTransportError` base they share, which is
+    # otherwise `transport`.
+    if isinstance(error, connect.ServiceStartingError):
+        return error.waited_on, None
     if isinstance(error, connect.StoreIdentityError):
-        # Checked before the plain `HookTransportError` base class it subclasses: an identity
-        # mismatch is `architecture.md`'s own named code `-32030 store_identity`, not the generic
-        # "transport" the base class's other cause (no server ever became reachable) collapses
-        # to. Reachable through the unconditional store-*path* comparison
-        # `connect._verify_identity` always runs — the hook has no persistent connection across
-        # invocations to have learned a real `store_id` from the way a long-running client could,
-        # so its own identity check stays path-only rather than reading the store file for one,
-        # which would violate `architecture.md`'s own "never a reader of the store, under any
-        # failure."
         return "store_identity", -32030
     if isinstance(error, rpc.SurfaceRejectionError):
         return _REJECTION_KINDS.get(error.code, f"rejected_{error.code}"), error.code
     if isinstance(error, ZikaronError):
-        # `connect.connect_once`'s own docstring: `security.ensure_runtime_dir`'s `ZikaronError`
-        # on a hostile runtime directory "propagates as itself, since this single attempt has no
-        # fallback path to degrade *through* a runtime directory it does not trust" — true about
-        # *retrying*, but every failure kind must still reach `hook.log` and the model-facing
-        # relay identically, **with its own numeric code**, not merely its name —
-        # `architecture.md` names both wherever one exists, and omitting the code here would
-        # leave `hook.log` naming, for example, `bad_config` with no accompanying `-32023`.
+        # A refused runtime directory or socket path. It keeps its numeric code beside its name,
+        # since `architecture.md` names both wherever one exists.
         return str(error.code.wire_name), int(error.code)
-    # `connect.HookTransportError`'s own "no server became reachable" case, and anything else the
-    # socket calls or JSON parsing can raise before the `surface` request is sent, or while it is
-    # — a send/recv failure, a malformed response. A timeout waiting for the answer is `unanswered`
-    # and is decided in `run()`, around that one call.
+    # No server became reachable: the one spawned for this push exited before answering, or the
+    # start it was queued behind has stalled. A timeout waiting for the `surface` answer is
+    # `unanswered`, decided in `run()` around that call.
     return "transport", None
 
 
-def _degrade(hook_log_path: Path, kind: str, *, code: int | None = None) -> str:
-    """Log the exact failure to `hook.log`, and return the model-facing relay instruction for it.
+def _degrade(
+    hook_log_path: Path, kind: str, *, code: int | None = None, cold_start: bool = False
+) -> str:
+    """Log the exact failure to `hook.log`, and return what the model is told about it.
 
-    The two channels carry different content on purpose: `hook.log`'s line names the machine
-    vocabulary (`kind`, `code`) a future grep or an operator reading it directly can act on, while
-    the returned instruction is prose aimed at a model that will paraphrase it — it names `kind`
-    too, for a curious model to quote back, but its real job is pointing at `hook.log` as the
-    place the exact detail lives, since the instruction itself is not the source of truth.
+    A push that found the service starting and ran out of time — `kind` is one of `_START_WAITS`,
+    or one of the lateness kinds with `cold_start` set — is logged as `starting`, followed by
+    `kind`, and told only that memories resume once it has started. That is not an alarm, and it
+    need not be, because how long one start can be called one is bounded: a spawned process that
+    fails ends the poll, a service still loading after the cold-start deadline is no longer
+    starting, and a holder that has shown no sign of life for too long is reported (`connect.py`).
+
+    Every other failure keeps its own kind and code, and asks the model to tell the operator. The
+    two channels differ on purpose: `hook.log`'s line is the machine vocabulary a grep can act on,
+    while the instruction is prose a model will paraphrase, so its job is to point at `hook.log`.
     """
+    if kind in _START_WAITS or (cold_start and kind in _LATENESS_KINDS):
+        failure.record_failure(hook_log_path, _STARTING, detail=kind, code=code)
+        return _STARTING_RELAY
     failure.record_failure(hook_log_path, kind, code=code)
     detail = f"{kind} ({code})" if code is not None else kind
     return (

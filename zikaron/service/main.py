@@ -25,7 +25,7 @@ from zikaron.core.config.resolution import (
     resolve,
 )
 from zikaron.core.store import permissions
-from zikaron.service import diagnostics, lifecycle, log, security
+from zikaron.service import diagnostics, lifecycle, log, ownership, security
 from zikaron.service.context import ServiceContext
 from zikaron.service.paths import service_log_path
 from zikaron.service.server import RunningServer, ShutdownTimeoutError, serve
@@ -158,14 +158,15 @@ def _self_stopping_tasks(
     sock_path: Path,
     *,
     original_store_inode: int,
+    hold: ownership.StoreHold,
 ) -> list[asyncio.Task[object]]:
     """The background tasks that stop this service on their own terms, rather than on a signal.
 
     Kept apart from the signal wait because the difference decides who unlinks the socket: each of
-    these unlinks before closing the server, to close the connect-during-exit race window, so
-    `run` must not unlink again after one of them has fired. Returning them as a list, rather than
-    letting `run` name each one, is also what keeps this set open to a third condition without
-    another branch appearing in the wait.
+    these unlinks before closing the server, to close the connect-during-exit race window, so `run`
+    must not unlink after one of them has fired. Returning them as a list, rather than letting
+    `run` name each one, is also what keeps this set open to a third condition without another
+    branch appearing in the wait.
 
     The load watch is created only when there is a deferred load to watch. A store this process
     created has already waited for its model, so a failure there was raised during assembly and
@@ -174,7 +175,11 @@ def _self_stopping_tasks(
     tasks: list[asyncio.Task[object]] = [
         asyncio.create_task(
             lifecycle.idle_self_stop(
-                ctx, server, sock_path, original_store_inode=original_store_inode
+                ctx,
+                server,
+                sock_path,
+                original_store_inode=original_store_inode,
+                still_here=hold.still_here,
             )
         )
     ]
@@ -192,13 +197,17 @@ async def run(sock_path: Path, store_dir: Path) -> None:
 
     The log is configured **before** config resolution or the store open, not after: either can
     raise, and the design's own degraded-modes chapter treats every startup failure as one
-    client-observable outcome — `health()` never becomes reachable, so a client's poll deadline
-    expires and it logs that fact to its own log and gives up (`architecture.md` §"Degraded
-    modes": "spawn failure, `health()` never ready... anything unexpected"). No richer channel
-    back through a socket that was never bound is owed to the client for that reason; what *is*
-    owed is that the failure be diagnosable from this process's own log rather than lost entirely
-    to a detached child's `/dev/null` stderr, which is why every startup failure is logged here
-    before it propagates.
+    client-observable outcome — `health()` never becomes reachable, so a client's poll ends, at
+    its deadline or when this process exits, and it logs that fact to its own log
+    (`architecture.md` §"Degraded modes": "spawn failure, `health()` never ready... anything
+    unexpected"). No richer channel back through a socket that was never bound is owed to the
+    client for that reason; what *is* owed is that the failure be diagnosable from this process's
+    own log rather than lost entirely to a detached child's `/dev/null` stderr, which is why every
+    startup failure is logged here before it propagates.
+
+    **The store is held through `ownership.holding_the_store` from before it is opened until after
+    it is closed**, so a second start for the same socket path waits for this one to let go and
+    otherwise exits, rather than opening the store beside it and binding over its socket.
 
     Every exit path converges on the same cleanup: whichever finishes first of `idle_self_stop`'s
     poll loop, the watch on a deferred model load, or a `SIGTERM`/`SIGINT` handler, and
@@ -217,10 +226,12 @@ async def run(sock_path: Path, store_dir: Path) -> None:
     a chance to run. Waiting only on `idle_task` and `signal_wait`, and calling `server.shut_down()`
     directly, removes the competing wait entirely rather than trying to sequence around it.
 
-    The socket is unlinked exactly once — by whichever self-stopping task fired (each unlinks
+    The socket is unlinked at most once — by whichever self-stopping task fired (each unlinks
     *before* closing the server, to close the connect-during-exit race window, per their own
-    docstrings) and by this function on the signal path, where no such race exists to close early.
-    **"Exactly once" is a claim about this process, and it holds only because `serve` says so**:
+    docstrings) and by this function on the signal path, where no such race exists to close early
+    — and every one of them through `lifecycle.unlink_if_still_bound`, so a path that no longer
+    names the socket `serve` bound is left alone.
+    **"At most once" is a claim about this process, and it holds only because `serve` says so**:
     from Python 3.13 a closing Unix server would remove the socket path itself, making a second
     unlinker whose timing is the close rather than the deliberate ordering above. `serve` switches
     that off wherever it exists, which is what keeps this sentence true on every supported version
@@ -231,14 +242,21 @@ async def run(sock_path: Path, store_dir: Path) -> None:
             `BAD_CONFIG`, `REINDEXING`, `SCHEMA_INCOMPATIBLE` — if the store cannot be opened at
             all. There is nothing useful to serve in that case, so the process exits with that
             exception rather than binding a socket for a store it could not open.
+        AnotherServiceError: another service still held the store at the end of the wait.
     """
     log.configure_service_log(service_log_path(_ensure_store_dir_exists(store_dir)))
     with diagnostics.thread_dump_on_signal():
-        await _open_and_serve(sock_path, store_dir)
+        try:
+            async with ownership.holding_the_store(sock_path) as hold:
+                await _open_and_serve(sock_path, store_dir, hold)
+        except ownership.AnotherServiceError:
+            log.log_another_service(store_dir=store_dir)
+            raise
 
 
-async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
-    """`run`'s work once `service.log` is open and the thread dump is armed: open, serve, stop."""
+async def _open_and_serve(sock_path: Path, store_dir: Path, hold: ownership.StoreHold) -> None:
+    """`run`'s work once `service.log` is open, the thread dump is armed and the store is held:
+    open, serve, stop — stepping down from the store as the server's shutdown begins."""
     ctx = await _assemble_or_log_and_raise(store_dir)
     # `ctx.store.opened_inode` — not a fresh `ctx.store.path.stat()` here — because a version
     # that re-`stat`ed the path at this point was measured wrong: `ServiceContext.assemble` opens
@@ -275,14 +293,18 @@ async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
             diagnostics.task_dump_on_signal(ctx.activity),
         ):
             security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
-            server = await serve(ctx, str(sock_path))
+            server = await serve(ctx, str(sock_path), on_shut_down=hold.stepping_down)
             try:
                 sock_path.chmod(0o600)
 
                 tasks: list[asyncio.Task[object]] = []
                 try:
                     self_stopping = _self_stopping_tasks(
-                        ctx, server, sock_path, original_store_inode=original_store_inode
+                        ctx,
+                        server,
+                        sock_path,
+                        original_store_inode=original_store_inode,
+                        hold=hold,
                     )
                     tasks.extend(self_stopping)
                     signal_wait = asyncio.create_task(stop.event.wait())
@@ -292,17 +314,17 @@ async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
                     )
                     _raise_if_any_task_genuinely_failed(done, ignoring=signal_wait)
                     if not done & set(self_stopping):
-                        # Both self-stopping tasks unlink before closing the server, to close the
-                        # connect-during-exit race window — see their own docstrings. A signal
-                        # exit has no such window to close early, so this path owns the
-                        # unlink instead, and the stop line, written first for the same reason
-                        # theirs is.
+                        # A self-stopping task that fired owns the unlink, made before closing the
+                        # server to close the connect-during-exit race window — see their own
+                        # docstrings. A signal exit has no such window to close early, so this
+                        # path owns the unlink instead, and the stop line, written first for the
+                        # same reason theirs is.
                         log.log_self_stop(
                             reason=stop.reason,
                             store_dir=ctx.store.path.parent,
                             idle_seconds=ctx.activity.idle_for(),
                         )
-                        sock_path.unlink(missing_ok=True)
+                        lifecycle.unlink_if_still_bound(sock_path, socket_inode=server.socket_inode)
                         await server.shut_down()
                 finally:
                     # Every task appended above must be cancelled and awaited whatever happened —
@@ -352,10 +374,15 @@ async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
                     # *when nothing else is already propagating*, rather than dropping either
                     # kind on the floor or masking whatever primary failure brought us here.
                     _surface_any_genuine_task_failure(
-                        outcomes, sock_path, primary_exception=primary_exception
+                        outcomes,
+                        sock_path,
+                        socket_inode=server.socket_inode,
+                        primary_exception=primary_exception,
                     )
             except ShutdownTimeoutError:
-                _force_exit_after_failed_graceful_shutdown(sock_path)
+                _force_exit_after_failed_graceful_shutdown(
+                    sock_path, socket_inode=server.socket_inode
+                )
             except BaseException:
                 # `server` is already a bound, listening socket the instant `serve()` returns — a
                 # failure in any setup step between here and the task-installation block above
@@ -397,12 +424,14 @@ async def _open_and_serve(sock_path: Path, store_dir: Path) -> None:
                     logging.getLogger("zikaron.service").exception(
                         "shutdown deadline expired while handling an earlier failure"
                     )
-                    _force_exit_after_failed_graceful_shutdown(sock_path)
+                    _force_exit_after_failed_graceful_shutdown(
+                        sock_path, socket_inode=server.socket_inode
+                    )
                 except BaseException:
                     logging.getLogger("zikaron.service").exception(
                         "shut_down() failed while handling an earlier failure"
                     )
-                sock_path.unlink(missing_ok=True)
+                lifecycle.unlink_if_still_bound(sock_path, socket_inode=server.socket_inode)
                 raise
     finally:
         await _close_context_preserving_any_active_failure(ctx)
@@ -436,23 +465,32 @@ def main() -> None:
     """The server entry point: `sys.argv[1:3]` are `sock_path` and `store_dir`, exactly as
     `lifecycle.default_server_command` constructs them.
 
-    Deliberately a plain `asyncio.run(...)` with no exception handling of its own: the
-    operator-directed hard-exit fallback for a graceful shutdown that has already tried and failed
-    lives **inside** `run()`, at the point the failure actually happens, not out here. Confirmed by
-    direct measurement why it cannot live here: `asyncio.run` cancels and awaits every remaining
-    task before re-raising anything, and the very task that made shutdown's deadline expire is by
-    definition one that did not finish cancelling — so `asyncio.run`'s own teardown hangs forever
-    and an `except` at this level is never reached at all. Every *other* failure — a startup
-    failure, a lifecycle crash, a store close failure — propagates from here normally, with its
-    real traceback and a non-zero exit status, which is what makes it diagnosable.
+    One failure is turned into an exit status rather than a traceback: another service holding
+    the store, which exits `ownership.ANOTHER_SERVICE_EXIT_STATUS` so a spawning client can tell
+    it from a start that failed. The operator-directed hard-exit fallback for a graceful shutdown
+    that has already tried and failed lives **inside** `run()`, at the point the failure actually
+    happens, not out here. Confirmed by direct measurement why it cannot live here: `asyncio.run`
+    cancels and awaits every remaining task before re-raising anything, and the very task that
+    made shutdown's deadline expire is by definition one that did not finish cancelling — so
+    `asyncio.run`'s own teardown hangs forever and an `except` at this level is never reached at
+    all. Every *other* failure — a startup failure, a lifecycle crash, a store close failure —
+    propagates from here normally, with its real traceback and a non-zero exit status, which is
+    what makes it diagnosable.
     """
     sock_path = Path(sys.argv[1])
     store_dir = Path(sys.argv[2])
-    asyncio.run(run(sock_path, store_dir))
+    try:
+        asyncio.run(run(sock_path, store_dir))
+    except ownership.AnotherServiceError:
+        raise SystemExit(ownership.ANOTHER_SERVICE_EXIT_STATUS) from None
 
 
 def _surface_any_genuine_task_failure(
-    outcomes: Sequence[object], sock_path: Path, *, primary_exception: BaseException | None
+    outcomes: Sequence[object],
+    sock_path: Path,
+    *,
+    socket_inode: int,
+    primary_exception: BaseException | None,
 ) -> None:
     """Route every genuine exception `gather(..., return_exceptions=True)` collected to somewhere
     that actually surfaces it, instead of letting any of them be silently discarded as a mere
@@ -500,7 +538,7 @@ def _surface_any_genuine_task_failure(
             logging.getLogger("zikaron.service").error(
                 "a lifecycle task's graceful shutdown exceeded its deadline: %s", outcome
             )
-            _force_exit_after_failed_graceful_shutdown(sock_path)
+            _force_exit_after_failed_graceful_shutdown(sock_path, socket_inode=socket_inode)
         elif (
             isinstance(outcome, BaseException)
             and not isinstance(outcome, asyncio.CancelledError)
@@ -516,7 +554,7 @@ def _surface_any_genuine_task_failure(
                 raise outcome
 
 
-def _force_exit_after_failed_graceful_shutdown(sock_path: Path) -> None:
+def _force_exit_after_failed_graceful_shutdown(sock_path: Path, *, socket_inode: int) -> None:
     """The one terminal path: graceful shutdown's own deadline expired, so end the process here.
 
     Called from inside the coroutine `asyncio.run` is running, **not** from `main()` outside it.
@@ -529,12 +567,12 @@ def _force_exit_after_failed_graceful_shutdown(sock_path: Path) -> None:
     `finally`'s `ctx.close()`: a second `shut_down()` with a fresh 5 s deadline and a store close
     are exactly the "keep asking the graceful path to try again" the operator's direction rules out
     once it has already failed once, and either could hang on the same stuck task. The socket is
-    unlinked first so no client can find a dead endpoint, then the log record is written — `log.py`
-    configures a plain `logging.FileHandler`, which flushes each record synchronously, so the
-    diagnostic survives `os._exit` skipping `logging`'s own atexit flush — and only then does the
-    process end.
+    unlinked first, while it is still this process's, so no client can find a dead endpoint, then
+    the log record is written — `log.py` configures a plain `logging.FileHandler`, which flushes
+    each record synchronously, so the diagnostic survives `os._exit` skipping `logging`'s own
+    atexit flush — and only then does the process end.
     """
-    sock_path.unlink(missing_ok=True)
+    lifecycle.unlink_if_still_bound(sock_path, socket_inode=socket_inode)
     logging.getLogger("zikaron.service").exception(
         "graceful shutdown did not complete in time — forcing process exit"
     )

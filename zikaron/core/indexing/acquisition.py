@@ -6,11 +6,9 @@ fetched the same repository can present a snapshot Zikaron never hashed. Same so
 revision, so the threat is unchanged.) A warm start
 checks only that the five files are *present*, which costs a `stat` each. The reason is measured:
 hashing them costs 331-396 ms under load — not the 185 ms an unloaded in-process timing suggests,
-because the walk is CPU-bound — and `push.py` gives the whole cold-start sequence 2.0 s before the
-hook degrades and the user's first message loses its memories. A/B at M17's load cell, four
-alternating arms: with the walk, 0 to 1 runs in 5 finished inside that budget; without it, 5/5
-(`research/m30-verify-cost.md`). Verifying on every start bought nothing the acquisition-time check
-does not, and cost the guarantee M17 exists to hold.
+because the walk is CPU-bound — and every millisecond of a start is spent while the first message
+after an idle stop waits (`research/m30-verify-cost.md`). Verifying on every start buys nothing the
+acquisition-time check does not; `design/distribution.md` §"Model acquisition" has the decision.
 
 **What that trades away, stated rather than implied.** Corruption *after* acquisition — disk rot, a
 file replaced on disk — is no longer caught at startup. `zikaron doctor` verifies the full digest

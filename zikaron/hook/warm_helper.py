@@ -37,7 +37,8 @@ _FILE_MODE: Final = 0o600
 #: afford to absorb a slow environment rather than declaring the service unreachable prematurely —
 #: `zikaron.service.lifecycle`'s own `_HEALTH_POLL_DEADLINE_SECONDS` (10 s) is exactly the budget
 #: this helper inherits by calling that function unmodified, so no separate constant is declared
-#: here to disagree with it.
+#: here to disagree with it. That poll also ends at once when the service it spawned exits, which
+#: is what keeps a failed start from holding the start-if-absent lock a push may be waiting on.
 
 
 def _configure_warmup_log(path: Path) -> logging.Logger:

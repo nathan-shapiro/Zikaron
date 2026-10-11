@@ -7,12 +7,15 @@ is exactly what `coding-standards.md` §4 reserves the `integration` marker for.
 import socket
 import subprocess
 import sys
+import time
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Final
 
 import pytest
 
-from zikaron.hook.connect import HookTransportError, connect_once
+from zikaron.hook import connect
+from zikaron.hook.connect import HookTransportError, ServiceStartingError, connect_once
 
 pytestmark = pytest.mark.integration
 
@@ -57,7 +60,26 @@ def delayed_server_script(tmp_path: Path) -> Path:
     return script
 
 
-def test_spawns_and_waits_for_a_slow_but_real_service(
+@pytest.fixture
+def spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[subprocess.Popen[bytes]]]:
+    """Every child `connect_once` spawns, killed and reaped afterwards: a service that never
+    answered is still running when the attempt gives up on it, by construction."""
+    children: list[subprocess.Popen[bytes]] = []
+    real_spawn = connect._spawn_detached
+
+    def _recording_spawn(server_command: Sequence[str]) -> subprocess.Popen[bytes]:
+        child = real_spawn(server_command)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(connect, "_spawn_detached", _recording_spawn)
+    yield children
+    for child in children:
+        child.kill()
+        child.wait(timeout=5.0)
+
+
+def test_spawns_and_waits_for_a_slow_but_real_service_and_calls_it_cold(
     tmp_path: Path, socket_dir: Path, delayed_server_script: Path
 ) -> None:
     sock_path = socket_dir / "test.sock"
@@ -66,43 +88,69 @@ def test_spawns_and_waits_for_a_slow_but_real_service(
         sys.executable,
         str(delayed_server_script),
         str(sock_path),
-        "200",  # bind 200ms after spawn — inside connect.HEALTH_POLL_DEADLINE_SECONDS
+        "200",  # bind 200ms after spawn — well inside the poll deadline below
         str(store_db_path),
         "the-store-id",
     ]
-    sock = connect_once(
-        sock_path, store_db_path=store_db_path, store_id="the-store-id", server_command=command
+    connection = connect_once(
+        sock_path,
+        store_db_path=store_db_path,
+        store_id="the-store-id",
+        server_command=command,
+        poll_deadline=time.monotonic() + 10.0,
     )
-    sock.close()
+    connection.sock.close()
+    assert connection.cold_start is True
 
 
-def test_a_spawn_too_slow_to_answer_before_the_deadline_raises(
-    tmp_path: Path, socket_dir: Path, delayed_server_script: Path
+def test_a_spawn_still_starting_at_the_deadline_is_service_starting_error(
+    tmp_path: Path,
+    socket_dir: Path,
+    delayed_server_script: Path,
+    spawned: list[subprocess.Popen[bytes]],
 ) -> None:
     """The single-attempt contract: this must raise rather than retry a second start-if-absent
-    sequence, per the user's explicit instruction that the hook makes exactly one attempt."""
+    sequence — and with the subclass that says the start is slow, since the child is alive."""
     sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
     command = [
         sys.executable,
         str(delayed_server_script),
         str(sock_path),
-        "5000",  # far longer than connect.HEALTH_POLL_DEADLINE_SECONDS
+        "5000",  # far longer than the poll deadline below
         str(store_db_path),
         "irrelevant",
     ]
-    process = subprocess.Popen(command)  # noqa: S603 — a fixed, test-constructed argv.
-    try:
-        with pytest.raises(HookTransportError):
-            connect_once(
-                sock_path,
-                store_db_path=store_db_path,
-                store_id=None,
-                server_command=["python3", "-c", "pass"],  # never invoked: process already spawned
-            )
-    finally:
-        process.kill()
-        process.wait(timeout=5.0)
+    with pytest.raises(ServiceStartingError):
+        connect_once(
+            sock_path,
+            store_db_path=store_db_path,
+            store_id=None,
+            server_command=command,
+            poll_deadline=time.monotonic() + 0.5,
+        )
+    assert len(spawned) == 1
+    assert spawned[0].poll() is None, "the child must still be running when the attempt gives up"
+
+
+def test_a_spawn_that_exits_ends_the_poll_before_its_deadline(
+    tmp_path: Path, socket_dir: Path, spawned: list[subprocess.Popen[bytes]]
+) -> None:
+    """A service that cannot start must not cost the caller its whole deadline, and must not read
+    as one still starting: the poll ends when its child exits."""
+    sock_path = socket_dir / "test.sock"
+    started = time.monotonic()
+    with pytest.raises(HookTransportError) as raised:
+        connect_once(
+            sock_path,
+            store_db_path=tmp_path / "memory.db",
+            store_id=None,
+            server_command=[sys.executable, "-c", "raise SystemExit(3)"],
+            poll_deadline=started + 60.0,
+        )
+    assert not isinstance(raised.value, ServiceStartingError)
+    assert time.monotonic() - started < 30.0, "the poll waited for its deadline, not its child"
+    assert spawned[0].returncode == 3
 
 
 def test_vets_and_clears_a_stale_socket_before_spawning(tmp_path: Path, socket_dir: Path) -> None:
@@ -127,7 +175,11 @@ def test_vets_and_clears_a_stale_socket_before_spawning(tmp_path: Path, socket_d
         str(store_db_path),
         "fresh-id",
     ]
-    sock = connect_once(
-        sock_path, store_db_path=store_db_path, store_id="fresh-id", server_command=command
+    connection = connect_once(
+        sock_path,
+        store_db_path=store_db_path,
+        store_id="fresh-id",
+        server_command=command,
+        poll_deadline=time.monotonic() + 10.0,
     )
-    sock.close()
+    connection.sock.close()

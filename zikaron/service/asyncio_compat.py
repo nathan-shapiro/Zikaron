@@ -9,9 +9,9 @@ for the service's shutdown path:
 * **Whether closing a Unix server unlinks its own socket file.** From 3.13, `create_unix_server`
   removes the socket path on close unless told not to. On its self-stop and signal paths this
   package unlinks the socket itself *before* closing the listener, so that a client arriving
-  mid-shutdown finds nothing to connect to; a second unlinker would make that ordering meaningless
-  wherever it holds. So the option is switched off wherever it exists. It does not exist on 3.12,
-  where passing it raises `TypeError`.
+  mid-shutdown finds nothing to connect to, and only while the path is still its socket; a second
+  unlinker would make that ordering meaningless wherever it holds. So the option is switched off
+  wherever it exists. It does not exist on 3.12, where passing it raises `TypeError`.
 
 Rows are keyed by the version that *introduced* a behaviour, not by every version supported, and a
 lookup takes the greatest key not above the version asked about. So a release that changed neither

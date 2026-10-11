@@ -1,6 +1,9 @@
 """`zikaron.service.dispatch` — the five primary-agent verbs plus `health`, against a real store."""
 
+import dataclasses
 import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,7 @@ from tests.fake_encoder import FakeEncoder, unit_at
 from tests.service_fixtures import envelope, open_context
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.indexing.chunking import PREFIX_SEPARATOR
+from zikaron.core.indexing.encoder import BackgroundLoadedEncoder, Encoder
 from zikaron.service import dispatch
 from zikaron.service.dispatch import ConflictResult, VersionResult
 
@@ -26,9 +30,8 @@ async def test_health_reports_store_identity(tmp_path: Path) -> None:
 
 
 async def test_health_json_shape_matches_architecture_mds_field_set(tmp_path: Path) -> None:
-    """The exact key set `health()` returns — `architecture.md`'s
-    `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}` — with no
-    `session_id`, since `health` resolves no label."""
+    """The exact key set `health()` returns — `architecture.md` §"Store identity is verified, not
+    assumed" — with no `session_id`, since `health` resolves no label."""
     async with open_context(tmp_path) as ctx:
         status = dispatch.health(ctx)
         assert set(status.as_json()) == {
@@ -39,7 +42,36 @@ async def test_health_json_shape_matches_architecture_mds_field_set(tmp_path: Pa
             "embed_dim",
             "schema_version",
             "pid",
+            "model_loaded",
+            "uptime_seconds",
         }
+
+
+async def test_health_says_whether_the_model_is_still_loading_and_how_long_the_store_is_open(
+    tmp_path: Path,
+) -> None:
+    """What lets a client tell a service still starting from one that has stalled: the push hook
+    gives the first kind a start's deadline and alarms on the second."""
+    release = threading.Event()
+
+    def _load_when_released(_model_name: str) -> Encoder:
+        release.wait(timeout=10.0)
+        return FakeEncoder()
+
+    async with open_context(tmp_path) as ctx:
+        assert dispatch.health(ctx).model_loaded is True
+        loading = BackgroundLoadedEncoder(model_name="a-model", load=_load_when_released)
+        starting = dataclasses.replace(
+            ctx, encoder_load=loading, assembled_at=time.monotonic() - 3.0
+        )
+        try:
+            status = dispatch.health(starting)
+            assert status.model_loaded is False
+            assert 3.0 <= status.uptime_seconds < 60.0
+        finally:
+            release.set()
+        loading.artifact()
+        assert dispatch.health(starting).model_loaded is True
 
 
 async def test_remember_returns_uuid_and_version_one(tmp_path: Path) -> None:
