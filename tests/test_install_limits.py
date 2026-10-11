@@ -34,8 +34,8 @@ from zikaron.core.records.memory import Tier
 from zikaron.core.retrieval.block import render
 from zikaron.core.retrieval.ranking import PoolRow, RankedMemory
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook import connect, push
 from zikaron.hook import limits as limits_module
-from zikaron.hook import push
 from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
 
@@ -264,11 +264,28 @@ def test_the_byte_worst_case_is_a_three_byte_bmp_character_not_a_four_byte_astra
     assert not KIRO.exceeds_injection_budget(widest)
 
 
+#: What the hook's own process start before `run` and its print after are allowed out of the
+#: margin. `hook/envelope.py` has the whole process measured at ~48-68 ms; a second is the room left
+#: for a host far more loaded than that measurement's.
+_PROCESS_START_AND_PRINT_SECONDS = 1.0
+
+
 def test_the_stated_timeout_leaves_the_hooks_own_deadline_room_to_fire_first() -> None:
-    """The internal deadline has to expire before the harness's does, because ours produces a
-    `hook.log` line and a model-facing relay while the harness's kill produces neither.
+    """Both internal deadlines have to expire before the harness's does, because ours produces a
+    `hook.log` line and a model-facing relay while the harness's kill produces neither — and the
+    cold-start one has to be the longer, or a service the push found absent gets no more time to
+    start than a running one gets to answer.
+
+    The cold-start deadline leaves the least room, and that room pays for what runs past it: the
+    connect's last attempt, a connect and a `health()` exchange each bounded by
+    `_CONNECT_TIMEOUT_SECONDS` and one poll interval before it, then this process's own start and
+    print.
     """
     assert push._DEADLINE_SECONDS * 2 <= TIMEOUT_MS / 1000
+    assert push._DEADLINE_SECONDS < push._COLD_START_DEADLINE_SECONDS
+    connect_overrun = 2 * connect._CONNECT_TIMEOUT_SECONDS + connect._POLL_INTERVAL_SECONDS
+    margin = TIMEOUT_MS / 1000 - push._COLD_START_DEADLINE_SECONDS
+    assert margin >= connect_overrun + _PROCESS_START_AND_PRINT_SECONDS
 
 
 def test_the_designs_stated_worst_case_block_matches_what_the_block_actually_renders() -> None:

@@ -2465,13 +2465,13 @@ which needs the embedding artifact — on a cold cache, a 64 MB fetch.
 `lifecycle._HEALTH_POLL_DEADLINE_SECONDS` gives that 10 s from spawn; measured in a container
 (`research/m30-docker-end-to-end.md` §"The fetch happens inside the cold start"), health answered
 **3.74 s** after the service's first log line with the fetch at most 3.30 s of it, so the margin is
-real but not large. Past it the client gives up while **the service keeps starting**, which
-is why the retry works — or while it has died inside that first start, which `service.log` in the
-store directory records and `init` names, since a retry alone would loop on that one. A fresh CI
-container is a cold cache by definition, so the `init` that opens
-a provisioning sequence is the call most likely to meet this. Whether the deadline should be longer
-here than on the hook's path — where it is 1.2 s and a miss costs only a skipped injection — or
-whether a script owes the retry, is open.
+real but not large. Past it the client gives up while **the service keeps starting**, which is
+why the retry works. A start that has died instead ends the poll as it happens — the client
+watches the process it spawned — and `init` then points at `service.log` in the store directory
+rather than a retry, which alone would loop on it. A fresh CI container is a cold cache by
+definition, so the `init` that opens a provisioning sequence is the call most likely to meet
+this. Whether the deadline should be longer here — a miss fails a command, where on the hook's
+path it costs only a skipped injection — or whether a script owes the retry, is open.
 
 *Spelled `python -m zikaron.knowledge …` until M30, which put these verbs behind the `zikaron`
 console script.* **That form still works and is not deprecated** — under a host-Python install with

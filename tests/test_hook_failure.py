@@ -41,6 +41,19 @@ def test_omits_any_code_marker_when_none_is_given(tmp_path: Path) -> None:
     assert line.split() == [line.split()[0], "reindexing"]
 
 
+def test_a_detail_follows_the_kind_and_precedes_the_code(tmp_path: Path) -> None:
+    """The order a reader greps by: the kind first, so `starting` finds every start whatever it
+    waited on, then the detail, then the code that detail carried."""
+    log_path = tmp_path / "hook.log"
+    record_failure(log_path, "starting", detail="deadline_passed", code=-32026)
+    record_failure(log_path, "starting", detail="lock")
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert [line.split()[1:] for line in lines] == [
+        ["starting", "deadline_passed", "-32026"],
+        ["starting", "lock"],
+    ]
+
+
 def test_two_calls_append_two_lines_rather_than_overwriting(tmp_path: Path) -> None:
     log_path = tmp_path / "hook.log"
     record_failure(log_path, "transport")

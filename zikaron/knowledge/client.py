@@ -116,7 +116,8 @@ async def connected(project: Path) -> AsyncIterator[KnowledgeClient]:
     The socket binds only once the context is built, building it creates the store, and creating one
     needs the embedding artifact — a 64 MB fetch when nothing has cached it. The poll deadline is
     `lifecycle._HEALTH_POLL_DEADLINE_SECONDS`; past it this client gives up while the service keeps
-    starting. `knowledge-index.md` §9 carries the measurement and what is still open about it.
+    starting. A start that exits instead ends the poll at once, as `lifecycle.StartFailedError`.
+    `knowledge-index.md` §9 carries the measurement and what is still open about it.
     """
     connection = ServiceConnection(project)
     try:

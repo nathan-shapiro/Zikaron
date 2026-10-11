@@ -90,6 +90,26 @@ async def test_shut_down_returns_promptly_even_with_an_idle_client_still_connect
             writer.close()
 
 
+async def test_shut_down_steps_down_before_it_stops_listening(
+    tmp_path: Path, socket_dir: Path
+) -> None:
+    """Every way the service stops goes through `shut_down`, so that is where it stops naming
+    itself as the store's holder — and first, before anything that can take the shutdown's own
+    deadline to finish."""
+    async with open_context(tmp_path) as ctx:
+        sock_path = socket_dir / "server.sock"
+        listening_when_stepped_down: list[bool] = []
+        running: server.RunningServer | None = None
+
+        def _step_down() -> None:
+            assert running is not None
+            listening_when_stepped_down.append(running.server.is_serving())
+
+        running = await server.serve(ctx, str(sock_path), on_shut_down=_step_down)
+        await asyncio.wait_for(running.shut_down(), timeout=5.0)
+        assert listening_when_stepped_down == [True]
+
+
 async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registered(
     socket_dir: Path,
 ) -> None:
@@ -137,7 +157,7 @@ async def test_shut_down_survives_a_connection_accepted_but_not_yet_self_registe
         await reader.readline()
 
     bare_server = await asyncio.start_unix_server(_on_connect, path=str(sock_path))
-    running = server.RunningServer(server=bare_server)
+    running = server.RunningServer(server=bare_server, socket_inode=sock_path.stat().st_ino)
 
     _reader, writer = await asyncio.open_unix_connection(str(sock_path))
     try:
@@ -265,7 +285,7 @@ async def test_close_all_connections_raises_loudly_rather_than_hanging_inside_ga
             writer.close()
 
     bare_server = await asyncio.start_unix_server(_on_connect, path=str(sock_path))
-    running = server.RunningServer(server=bare_server)
+    running = server.RunningServer(server=bare_server, socket_inode=sock_path.stat().st_ino)
 
     _reader, writer = await asyncio.open_unix_connection(str(sock_path))
     try:
@@ -294,9 +314,9 @@ async def test_health_response_is_valid_json_and_carries_no_session_id(tmp_path:
     """`health` takes no envelope and echoes no `session_id` — `architecture.md`'s one exemption
     from the resolution preamble, and the exact case whose `.__dict__` bug this test would have
     caught before the real socket ever ran. `pid` in the response is **this process's own**
-    `os.getpid()` — never anything a request can supply, per `architecture.md`'s
-    `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}` — so a request
-    naming `pid` in its own params (as this one deliberately does) must have no effect on it."""
+    `os.getpid()` — never anything a request can supply, per `architecture.md` §"Store identity
+    is verified, not assumed" — so a request naming `pid` in its own params (as this one
+    deliberately does) must have no effect on it."""
     async with open_context(tmp_path) as ctx:
         parsed = await _response_json(ctx, _line("health", {"pid": 4242}))
         result = parsed["result"]

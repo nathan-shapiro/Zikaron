@@ -10,8 +10,9 @@ a service and then checks what appeared.
 **The artifact is fetched on the creating run alone.** That run waits for it inside the poll
 deadline and can exit 1 past it while the service goes on fetching; a run against a store that is
 already there takes `Store.open`, where the encoder loads behind an already-bound socket, so a
-deadline miss there is never the fetch. `_after_the_deadline` says whichever is true, and
-`FINDINGS.md` Q17 is whether the budget is right.
+deadline miss there is never the fetch. A start that exited is a third case, told apart by the
+poll that watched it. `_what_to_try` says whichever is true, and `FINDINGS.md` Q17 is whether the
+budget is right.
 """
 
 import argparse
@@ -28,7 +29,7 @@ from zikaron.project.resolve import (
     nearest_store_above,
     resolve,
 )
-from zikaron.service import paths
+from zikaron.service import lifecycle, paths
 
 
 def main(argv: Sequence[str] | None = None, *, prog: str = MODULE_INITIALIZE) -> int:
@@ -91,8 +92,9 @@ async def _create(project: Project, *, prog: str, existed: bool) -> int:
         async with connected(project.directory) as client:
             await client.call("health", {})
     except ConnectionError as error:
+        exited = isinstance(error, lifecycle.StartFailedError)
         raise ConnectionError(
-            f"{error}; {_after_the_deadline(project, prog=prog, existed=existed)}"
+            f"{error}; {_what_to_try(project, prog=prog, existed=existed, exited=exited)}"
         ) from error
     if not project.has_store:
         stderr(f"failed: the service answered but no store is at {project.store_dir}")
@@ -101,17 +103,19 @@ async def _create(project: Project, *, prog: str, existed: bool) -> int:
     return 0
 
 
-def _after_the_deadline(project: Project, *, prog: str, existed: bool) -> str:
-    """What to try, given how far the service got and whether a store was already here.
+def _what_to_try(project: Project, *, prog: str, existed: bool, exited: bool) -> str:
+    """What to try, given how the start ended, how far the service got, and whether a store was
+    already here.
 
-    **A deadline miss has two causes no exception type separates**: a service still starting, and
-    one that died inside its first start — offline with a cold cache, an unreadable `config.toml`,
-    an extension that will not load. Advising a retry for both loops the second forever in the
-    provisioning script this command exists for, so every wording keeps the retry and points at the
-    log rather than claiming what is in it — a service that died before `configure_service_log` ran
-    writes nothing, and on the `existed` path an earlier start's log is there saying nothing about
-    this one. The log is on disk by the ordering `architecture.md` §"First run" chose so that a
-    first-start failure would be diagnosable from it.
+    **A start that exited is told apart from one that missed the deadline**, because the poll
+    watches the process it spawned: a service that died inside its start — offline with a cold
+    cache, an unreadable `config.toml`, an extension that will not load — is not helped by a bare
+    retry, which would loop forever in the provisioning script this command exists for, so it is
+    pointed at the log first. A deadline miss is then a start still running, and keeps the retry.
+    Every wording points at the log rather than claiming what is in it — a service that died before
+    `configure_service_log` ran writes nothing, and on the `existed` path an earlier start's log is
+    there saying nothing about this one. The log is on disk by the ordering `architecture.md`
+    §"First run" chose so that a first-start failure would be diagnosable from it.
     """
     log = paths.service_log_path(project.store_dir)
     if not log.is_file():
@@ -123,6 +127,8 @@ def _after_the_deadline(project: Project, *, prog: str, existed: bool) -> str:
             f"the service left no {log}, so it never reached its own logging — check that "
             f"{target} is writable and not a symlink — then run `{prog}` again"
         )
+    if exited:
+        return f"look in {log} for why, and run `{prog}` again once that is fixed"
     if existed:
         # **No fetch clause on this path.** A store already here means the service takes the
         # *open* path, where the encoder loads on a background thread behind a socket that is

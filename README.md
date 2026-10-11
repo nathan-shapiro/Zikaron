@@ -536,7 +536,7 @@ write policy goes into the model's context, not to your terminal. Then, from the
 # a service should be running for this project after your first message
 pgrep -af zikaron.service.main
 
-# one line per hook failure, write-policy-override note, or session/environment mismatch; absent means none happened
+# one line per hook failure, missed cold start, write-policy-override note, or session/environment mismatch; absent means none happened
 cat .zikaron/hook.log
 ```
 
@@ -727,9 +727,11 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   config.toml        your per-project overrides, if you wrote any
   service.log        the background service: startup, resolved config, errors, why it stopped,
                      any request running longer than 30 s, and the stack dumps below
-  hook.log           one line per hook failure, write-policy-override note, or session/environment
-                     mismatch. Absent means none happened. Not every line is a failure: an override
-                     that is used but exceeds the injection budget is printed anyway and logged
+  hook.log           one line per hook failure, missed cold start, write-policy-override note, or
+                     session/environment mismatch. Absent means none happened. Not every line is a
+                     failure: `starting` is a message that arrived while the service was still
+                     starting, and an override that is used but exceeds the injection budget is
+                     printed anyway and logged
   warmup.log         the small helper that warms the service when a session starts
   write-policy.md    your policy override, if you wrote one
 ```
@@ -742,19 +744,23 @@ shared by every project you use Zikaron in, under `$XDG_CACHE_HOME/zikaron/model
 A copy inside each project would duplicate it for bytes that are identical by construction, since the
 version fetched is pinned. Removing a project does not remove it; [Uninstall](#uninstall) says how.
 
-The second is the service's Unix socket, which with its lock file sits in
-`$XDG_RUNTIME_DIR/zikaron/` — or `/tmp/zikaron-<uid>/` where that variable is unset, which is every
-Mac — named by a hash of the store's path, `0600` inside a `0700` directory. A socket belongs on a
-runtime filesystem rather than in your project. **Under Claude
-Code**, an over-large consolidator result also spills to a file beside them, carrying that group's
-record prose verbatim and named by the same store hash; it is deleted when the consolidator asks for
-its next group — or, if that process is killed first, by the next one that starts. It is the one
-copy of memory text that lives outside `.zikaron/`, which is why the erasure procedure under
-[Secrets](#secrets) removes it by hand. Nothing spills under kiro.
+The second is the service's Unix socket. It sits in `$XDG_RUNTIME_DIR/zikaron/` — or
+`/tmp/zikaron-<uid>/` where that variable is unset, which is every Mac — named by a hash of the
+store's path, `0600` inside a `0700` directory, beside two lock files: one clients take while they
+start the service, and one the service holds while it has the store open. A socket belongs on a
+runtime filesystem rather than in your project. **Under Claude Code**, an over-large consolidator
+result also spills to a file beside them, carrying that group's record prose verbatim and named by
+the same store hash; it is deleted when the consolidator asks for its next group — or, if that
+process is killed first, by the next one that starts. It is the one copy of memory text that lives
+outside `.zikaron/`, which is why the erasure procedure under [Secrets](#secrets) removes it by hand.
+Nothing spills under kiro.
 
 **What `service.log` tells you about a service that stopped, or stopped answering.** A clean stop
-writes one `stopping: reason=…` line: `idle`, `store_replaced`, `encoder_failed`, or `sigterm` /
-`sigint` when it was asked to stop. A request still running after the 30 s idle poll is logged as
+writes one `stopping: reason=…` line: `idle`, `store_replaced`, `socket_lost` (its socket file was
+removed, so nothing could reach it), `encoder_failed`, or `sigterm` / `sigint` when it was asked to
+stop. A start that found another service already holding the store writes `not starting:
+reason=another_service` and exits, leaving that one to serve it. A request still running after the
+30 s idle poll is logged as
 `long request: method=… session=… age=…` on every poll until it ends — `session=unresolved` if it
 never got that far. Two signals write a dump without stopping the service: `kill -USR2 <pid>` writes
 the requests in flight and every asyncio task's stack, and `kill -USR1 <pid>` writes every thread's
@@ -763,8 +769,8 @@ raw text, without the timestamp and `pid=` every other line carries.
 
 Two notes on reading the rest. `memory.db` can look implausibly small while `memory.db-wal` is large —
 that is normal for a database held open by the service, since recent writes live in the log until a
-checkpoint; the files together are the store. And `hook.log` records only a fixed failure label and an
-error code, never your prompt or a memory's text, so it cannot hold a leaked secret.
+checkpoint; the files together are the store. And `hook.log` records only fixed labels and an error
+code, never your prompt or a memory's text, so it cannot hold a leaked secret.
 
 There is one more log that is not a file: an event table inside `memory.db`. It records what happened
 on every **memory** read and write — used to measure whether the write policy is working, and kept in
@@ -783,6 +789,16 @@ own file, byte and skip-reason counts.
 Zikaron is built to fail quietly rather than get in your way. A hook that cannot reach the service
 prints a short note asking the agent to tell you, writes one line to `hook.log`, and exits cleanly. It
 never blocks your message, and it never reads the store directly.
+
+The service stops itself after a stretch of idleness, and the next message starts it again. That
+message waits a few seconds longer — the hook allows a start more time than a running service — and
+if the start still is not finished, the message goes without memories and the agent is told so, without
+being asked to report it. `hook.log` records that as `starting`, followed by what the hook was still
+waiting on — `lock` or `poll` before the service answered, or the lateness of its answer after — and
+memories return once it has started, usually with the next message. A run of `starting` lines means
+starts are slower than the hook allows, not that the service is broken; a start that never finishes is
+reported as `transport` once it has gone a minute without a sign of life — which a first run still
+fetching its model over a slow link can also do, until it finishes.
 
 **Run `zikaron doctor` first for anything that smells environmental** — no search results at all, a
 service that will not start, an MCP server that dies on contact. It checks the things about this

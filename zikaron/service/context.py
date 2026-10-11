@@ -130,6 +130,14 @@ class ServiceContext:
     #: load or identity failure rather than wait to trip over it. `None` whenever `encoder` is
     #: already a loaded artifact — a directly-constructed context, or a store this process created.
     encoder_load: BackgroundLoadedEncoder | None = None
+    #: When this context was built, on the monotonic clock: the store is open from here, so
+    #: `health()` reports how long this service has been serving it.
+    assembled_at: float = field(default_factory=time.monotonic)
+
+    @property
+    def model_loaded(self) -> bool:
+        """Whether the embedding model has finished loading — answered without waiting for it."""
+        return self.encoder_load is None or self.encoder_load.settled
 
     @property
     def store_id(self) -> str:

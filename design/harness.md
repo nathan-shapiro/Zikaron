@@ -193,6 +193,14 @@ cheap and needs no new mechanism: the hook already holds the payload's `session_
 **whichever harness's variable actually equals it** and detect by agreement rather than by marker. It is
 recorded here so a future session does not have to rediscover it.
 
+**A hook run by hand from inside a Claude Code session is this case, and it is the only one observed.**
+The command inherits that session's `CLAUDE_CODE_SESSION_ID`, so a probe payload carrying any other
+`session_id` is suppressed — it prints nothing, which reads as an empty push — and leaves one
+`session_env_mismatch` line in the target project's `hook.log`. Both such lines on record came from an
+agent probing another project's hook this way. **A probe passes `"session_id"` as
+`$CLAUDE_CODE_SESSION_ID`**, and its push is then counted against the probing session in that store.
+Separate sessions in separate terminals each get their own variable and never meet this.
+
 ## Subagents
 
 **`UserPromptSubmit` does not fire for subagents** (§3). This closes, by the harness's own construction, the
@@ -629,8 +637,9 @@ across installs a 10,000-second budget — nearly three hours in which a wedged 
 with the harness doing exactly as told and nothing reporting a problem. The two kiro formats already disagree
 about this same field's unit between themselves. The value is stated rather than inherited for the reason
 `hook/limits.py` gives, sharpened by measurement: the `UserPromptSubmit` default is **30 s**, not the 600 s
-that applies to other events, so `push.py`'s ~2 s internal deadline clears the *tightest* default in the
-table by 15× rather than the 300× a reader who checked only the general figure would have recorded.
+that applies to other events, so the stated value sits inside the *tightest* default in the table and never
+raises a budget. `push.py`'s longest internal deadline — the one for a push that has to wait for the service
+to start — is derived from the stated value, not from either default.
 
 ### The flags, and what each refuses
 

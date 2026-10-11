@@ -72,109 +72,56 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M36 are built, reviewed and landed**, the last merged as `c22ad2b` (PR #15), and **`0.3.0` is
-released** — tagged `v0.3.0` on that commit and on PyPI (2026-09-30). M26 shipped **nothing** —
-neither the reranker nor any chunking change — and that is the result, not a stall. Each milestone's
-record is in `FINDINGS-archive.md`, M36's in §"Closed with `0.3.0`"; the briefs are in
-`design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md` and
-decoded in `research/injected-prose-log.md`.
+**M0–M37 are built, reviewed and landed**, the last as `028b4b2` (PR #23). M26 shipped
+**nothing** — neither the reranker nor any chunking change — and that is the result, not a stall.
+Each milestone's record is in `FINDINGS-archive.md`, M37's in §"Closed with `0.3.1`"; the briefs
+are in `design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md`
+and decoded in `research/injected-prose-log.md`.
 
-**`main` is `0.3.1.dev0`; M37's pull request sets `0.3.1`**, a patch, which the operator releases
-from its merge (operator, 2026-10-07), so the first commit after that tag returns the tree to
-`0.3.2.dev0`. PR #19 (`b2dd415`) carried the post-release bump, this archive pass and
-the `SIGUSR1` dump's move off `faulthandler.register` (`research/sigusr1-dump-crash.md`). Three
-runtime-library bumps landed beside it — `fastmcp` 4.0.10 (PR #17), `fastembed` 0.8.1 (PR #20) and
-`huggingface_hub` 1.33.0 (PR #21) — and each passed both live-harness tiers before it merged; 0.8.1
-embeds bit-identically to 0.8.0 for the pinned model.
+**`0.3.1` is released** — tagged `v0.3.1` on `028b4b2` and published by `release.yml`
+(2026-10-08). It is a patch: `design/distribution.md` §3's minor triggers — an artefact changing
+shape, a schema bump — fire for neither (`design/build-plan.md` §M37). `main` moves on to
+`0.3.2.dev0`.
 
-**M37, edit guards, is built and reviewed, not yet landed (operator, 2026-10-06).** These are
-deterministic, regex-only Claude Code hooks:
-- one denies a Bash command that edits an authored file by find-replace, unless every target is
-  scratch or the command carries `#ZIKARON-FORCE #Reason: <at least two words>`;
-- one nudges, after each edit, for one re-read once that file's editing is done;
-- a short start text rides `zikaron-hook`'s existing `SessionStart`/`SubagentStart` entry.
-
-This is the first, model-free class of the 2026-09-24 *evaluator with teeth* proposal
-(`FINDINGS-archive.md` §"The strongest M32 candidate, and why"); the async-watcher class stays
-unscoped. The installer offers the memory store, the guards, or both, with guards only on request.
-Kiro gets no guards. **This repository does not install the guards** (operator, 2026-10-07): its
-`.venv` runs the code under development, so a broken guard would cripple the agent building it.
-
-**The design is approved**: spec `design/edit-guards.md`, brief `design/build-plan.md` §M37,
-decision D38, trail `reviews/m37-edit-guards-brief-review.md`. **The build is in progress
-(2026-10-07); its plan, in the brief's order:**
-1. **done** — the prompt texts, by memory-reviewer, in `reviews/m37-edit-guards-review.md`;
-2. **done** — `zikaron/guard/`, at 100% coverage; `tests/test_guard_rule_table.py` reads §8,
-   which now also holds every §7 edge as a row;
-3. **done** — `HarnessSpec.edit_guards`, `zikaron-hook --components`, the installer's
-   `--components` (`tests/test_install_components.py` walks the perturbation table), the console
-   script and the gate's lists;
-4. **done** — the owed documents (item 6), the README's install, options and uninstall included;
-5. **done** — the replay, `research/m37-guard-transcript-replay.md`: 1,227 of 20,051 commands
-   would be denied, every false deny one-session or §7-stated. It found two recurring false denies,
-   and the operator took both §3.3 changes (2026-10-07): a variable bound earlier in the same
-   command, and a `cd` in the same command, are now followed;
-6. **done** — `tests/test_guard_claude_live.py` passes against Claude Code 2.1.285, and
-   `research/m37-guard-live-observation.md` records three sessions. In the two natural ones the
-   start text alone kept opus and sonnet off `sed -i`, so the deny was seen only where the prompt
-   left no choice;
-7. **done** — the build review, APPROVED (`reviews/m37-edit-guards-review.md`); `./check.sh`
-   and `./check-matrix.sh --parallel` green on `93615a0+3fb5dbc5c7e3`. Nothing is committed; a
-   pull request is the operator's to ask for, and its release is `0.3.1` (brief).
-8. **done (2026-10-07)** — the operator's interactive 2×2 of start text × deny-and-nudge,
-   `research/m37-guard-interactive-test.md`, its fixtures and scores in
-   `~/ZikaronTesting/story-key/`. The start text alone kept arms B and D off scripts; the deny
-   redirected C into reading every file first, and was then overridden with a true reason; the
-   nudge gave B its full re-read pass, through `git diff -U4`; C's overridden script rewrote all
-   fourteen files and no nudge reached any, which is step 10.
-9. **done (2026-10-07)** — **§3.2 row 6, a scratch script that is run** (operator, 2026-10-07:
-   make the change first, then re-run the arms). Round 3's arm A did its bulk edit with
-   `cat > <scratchpad>/fix.py <<'EOF'` … `python3 <scratchpad>/fix.py`, which passed two
-   exemptions at once. Measured (`research/m37-scratch-script-replay.md`): 231 runs of a `/tmp`
-   script in local transcripts, 85 staged by a heredoc in the same command; replayed through the
-   product, row 6 is the first deny on 54 of 33,069 calls — 47 authored rewrites, 2 golden files,
-   5 the stated argv false deny. The rule: a shell or row-4 interpreter whose script operand is
-   scratch has that script judged as a scanned heredoc body fed to the same word — its text a
-   body a `cat`/`tee` heredoc staged for that path earlier in the same unit, else **one bounded
-   read of the file**, the guard's one file read (§1), wired at `main` alone. The start text and
-   row 6's deny label are memory-reviewer's; the build review is APPROVED
-   (`reviews/m37-edit-guards-review.md`). **Row 4's script-flag test stays unchanged** (operator,
-   2026-10-07), so a Python `-W`/`-X` cluster ending in `e` keeps a run row 4's, a §7 miss.
-10. **done (2026-10-07) but the post-release install** — **the override's acknowledgement asks
-   for a re-read** (operator, 2026-10-07: implement it, re-run arm C, then the work is done),
-   since the nudge fires only after `Edit`/`Write`. Steps: (a) **done** — design §3.4; (b)
-   **done** — memory-reviewer's acknowledgement text; (c) **done** — the build, its review
-   rounds, `./check.sh` green; (d) **done** — arm C2 re-run and scored, in the note; (e) **done** —
-   `research/m37-guard-interactive-test.md`, and §7's count (d) now counts a `git diff` that shows
-   content, wherever after the last edit. **The landing** (operator, 2026-10-07: done means
-   documented, swept, version bumped, deployed, PR sent): (f) **done** — the sweep of every claim
-   this build changed; (g) **done** — `[project] version` is `0.3.1`, a patch, since neither of
-   §3's minor triggers fires (operator, 2026-10-07); (h) **PR #23**, branch `m37-edit-guards`, its CI
-   the matrix; (i) **after the operator's release** — the guards installed with
-   `--components both` into `~/Trading/LeibaTrader` and `~/Dividends`, and into `~/Memory` only
-   on the operator's say-so, since this agent treats it as read-only. Test debris lives in
-   `~/ZikaronTesting/` (operator, 2026-10-07).
+**The edit guards (M37, D38, `design/edit-guards.md`) are installed in `~/Trading/LeibaTrader`,
+`~/Dividends` and `~/Memory`** (operator, 2026-10-07), with `--components both`, and they replace
+every hand-written instruction about how to edit in those projects' `CLAUDE.md`, which were
+removed: a project that installs the guards instructs agents about edits not at all (operator,
+2026-10-07). **This repository does not install them** (operator, 2026-10-07): its `.venv` runs
+the code under development, so a broken guard would cripple the agent building it. **§3's rules
+change only on an observed command, never on a conceived edge**
+(`design/edit-guards.md` §7); after any §3 or §8 edit, run
+`.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`. **Claude Code runs a hook `command`
+through a shell** (`research/claude-code-hook-command-shell-probe.md`), so every hook path the
+installer writes is shell-quoted.
 
 **Open with the operator:** whether to commit the replay's full verbatim deny list, which this
-build keeps out of `research/` because it names private paths and other projects.
+build keeps out of `research/` because it names private paths and other projects. **Proposed:**
+keep it out — the research notes carry the counts and their readings, which is what the decisions
+cite; the verbatim list is re-derivable on this machine with `experiments/m37_guard_replay.py
+--dump`.
 
-**Claude Code runs a hook `command` through a shell** (measured,
-`research/claude-code-hook-command-shell-probe.md`), so every Claude Code hook path is now
-shell-quoted — the memory install's too, which wrote an unquoted path that a venv directory
-containing a space broke. `shlex.quote` leaves a safe path unchanged, so no default install moves.
-
-`experiments/m37_guard_prototype.py` is superseded by the package and fails §8's subscript-chain
-row by design: §3.3 says a chain containing `.stem` yields nothing, and the prototype stopped
-reading a chain at a subscript.
-
-**Operator direction for the build and its review (2026-10-07):** the approved design and the
-filtering rules are fixed — nothing new is invented and nothing existing is changed unless it
-breaks the product — and the product's rule logic follows the prototype's algorithm but is
-organised, documented from examples and referenced to the rules, rather than transcribed.
-
-After any §3 or §8 edit, run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`.
-**§3's rules change only on an observed command, never on a conceived edge**
-(`design/edit-guards.md` §7).
+**Built and approved, in review as PR #24 — the first push after an idle stop (operator go,
+2026-10-11).** A fix, not a milestone, as PR #19 was; the PR also carries the `0.3.2.dev0` bump
+and the post-`0.3.1` archive pass. The review (`reviews/cold-start-push-review.md`) is APPROVED,
+`./check.sh` is green, and the PR's CI is the matrix run the change needs; the operator merges.
+- **The defect.** The push hook's single ~2 s deadline also covered spawning the service after an
+  idle stop, and a cold start under load missed it: `~/Trading/LeibaTrader`'s two `unanswered`
+  lines on 2026-10-10/11 each land 1–3 s after a service start, and `_degrade` relayed them as an
+  outage. The 2 s was Zikaron's, not the harness's.
+- **What is built.** The split deadline `design/build-plan.md` §M17 shelved: a push that finds the
+  service starting — absent, or still loading its model soon after opening its store, which
+  `health()`'s `model_loaded` and `uptime_seconds` now report — gets `HOOK_TIMEOUT_SECONDS` less
+  2 s, and a start still running at its deadline logs `starting` plus what was waited on, with a
+  notice asking for no report; `design/architecture.md` §"Degraded modes" is normative. One
+  service per socket path is enforced by the service (`zikaron/service/ownership.py`), which also
+  stops when its socket is lost; §"Start-if-absent, without a thundering herd" and §"Idle
+  self-stop". Every client's poll ends when the process it spawned exits, unless it deferred to
+  another service — `lifecycle.StartFailedError` for `zikaron-mcp`, the warm helper and `zikaron
+  init`, which points such a start at `service.log` rather than a bare retry. The hook's lock wait
+  ends at its deadline, and the `surface` and `health()` exchanges are timed whole. **No
+  cold-start timing was measured** (operator): it is machine- and load-specific and decides
+  nothing.
 
 **The host is busy for days (operator, 2026-09-29)**, so no latency figure measured meanwhile is
 comparable with an idle-host budget.
@@ -286,6 +233,13 @@ proposed.
   147 ms once on a host at load 6–7. **Fix proposed:** bound it at `0.5 × budget`, which still tells
   "refused at the deadline" from "a whole budget late" — the property the test names. Outside M37's
   fence (the service), so for the next milestone that touches the writer.
+- **The edit guards' field counts — compute them 2026-10-21.** The guards went into three real
+  projects on 2026-10-07, so `design/edit-guards.md` §7's counts (a)–(d) can now be read from their
+  transcripts against each project's pre-install replay (`experiments/m37_guard_replay.py
+  --project <dir>`). This is the measurement the interactive test could not make: whether the start
+  text holds over a long session, whether overrides carry true reasons or boilerplate, and whether
+  agents route around a deny. What it would decide: a reflexive override rate argues for the reason
+  rule, a route-around for a new §3.2 row on the observed command.
 
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
@@ -460,8 +414,8 @@ normative and APPROVED; M19–M25 landed. What is still open:
   one command rather than about whichever verb a script happened to run first. A fresh CI container
   is a cold
   cache by definition, and `init` is what opens a provisioning sequence there. **What would close
-  it**: whether a script owes the retry, or this surface owes a longer deadline than the hook's
-  1.2 s — where a miss costs only a skipped injection, not a failed command. Measurement:
+  it**: whether a script owes the retry, or this surface owes a longer deadline — a miss here fails
+  a command, where on the hook's path it costs only a skipped injection. Measurement:
   `design/knowledge-index.md` §9.
 
 - **Q19** — **The corpus skews negative by construction, and the agent reads it as a verdict on its

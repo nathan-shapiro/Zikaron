@@ -30,7 +30,7 @@ from zikaron.project.resolve import (
     refusal,
     resolve,
 )
-from zikaron.service import paths
+from zikaron.service import lifecycle, paths
 
 
 class _AnsweringClient:
@@ -419,6 +419,23 @@ class TestTheCommandsThemselves:
         monkeypatch.setattr(initialize_module, "connected", _creating_nothing)
         assert initialize(["--project", str(tmp_path)]) == 1
         assert "no store is at" in capsys.readouterr().err
+
+    def test_a_start_that_exited_is_sent_to_its_log_rather_than_told_to_retry(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bare retry would loop a provisioning script on a start that cannot succeed. The start
+        exiting is what says so, and the advice changes with it."""
+        paths.service_log_path(tmp_path / _STORE).parent.mkdir()
+        paths.service_log_path(tmp_path / _STORE).touch()
+
+        def _exiting(_project: Path) -> object:
+            raise lifecycle.StartFailedError("the service spawned for it exited before answering")
+
+        monkeypatch.setattr(initialize_module, "connected", _exiting)
+        assert initialize(["--project", str(tmp_path)]) == 1
+        printed = capsys.readouterr().err
+        assert "exited before answering; look in" in printed
+        assert "may still be starting" not in printed
 
     def test_a_refused_start_is_rendered_by_its_codes_disposition(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch

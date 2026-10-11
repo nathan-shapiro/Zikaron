@@ -44,7 +44,7 @@ from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.indexing.encoder import FastEmbedEncoder
 from zikaron.core.store.store import Store
 from zikaron.service import security
-from zikaron.service.lifecycle import connect_start_if_absent
+from zikaron.service.lifecycle import StartFailedError, connect_start_if_absent
 
 pytestmark = pytest.mark.integration
 
@@ -860,3 +860,18 @@ async def test_a_signal_arriving_as_soon_as_the_socket_appears_still_unlinks_it(
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5.0)
+
+
+def test_a_spawn_that_fails_ends_start_if_absent_at_once(tmp_path: Path, socket_dir: Path) -> None:
+    """A service that exits at once must not hold the start-if-absent lock — and every client
+    queued on it, the push hook's included — to the full poll deadline, and must not read as a
+    start that was only slow."""
+    started = time.monotonic()
+    with pytest.raises(StartFailedError):
+        connect_start_if_absent(
+            socket_dir / "test.sock",
+            store_db_path=tmp_path / "memory.db",
+            store_id=None,
+            server_command=[sys.executable, "-c", "raise SystemExit(3)"],
+        )
+    assert time.monotonic() - started < 5.0, "the poll waited for its deadline, not its child"

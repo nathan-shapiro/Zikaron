@@ -36,6 +36,7 @@ since it speaks for the service rather than for either store, and it carries no 
 """
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Final
 
@@ -84,6 +85,8 @@ class HealthStatus(RpcResult):
     embed_dim: int
     schema_version: int
     pid: int
+    model_loaded: bool
+    uptime_seconds: float
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -94,16 +97,18 @@ class HealthStatus(RpcResult):
             "embed_dim": self.embed_dim,
             "schema_version": self.schema_version,
             "pid": self.pid,
+            "model_loaded": self.model_loaded,
+            "uptime_seconds": self.uptime_seconds,
         }
 
 
 def health(ctx: ServiceContext) -> HealthStatus:
     """`health()`: readiness and store identity, resolving no session label.
 
-    `pid` is **this process's own** `os.getpid()`, per `architecture.md`'s
-    `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}` — never a value a
-    caller supplies, which is what makes it useful for a client to log alongside `holder_pid`-style
-    diagnostics without trusting anything the caller said about itself. Never fails: a service that
+    `pid` is **this process's own** `os.getpid()`, per `architecture.md` §"Store identity is
+    verified, not assumed" — never a value a caller supplies, which is what makes it useful for a
+    client to log alongside `holder_pid`-style diagnostics without trusting anything the caller
+    said about itself. Never fails: a service that
     can answer at all has, by construction, already opened its store (`ServiceContext.assemble`
     raises before the socket is ever opened otherwise), so `ready` is always `True` here — the
     *unreachable* case a client's start-if-absent is polling for is a connection failure this
@@ -113,6 +118,8 @@ def health(ctx: ServiceContext) -> HealthStatus:
     service that answers here, and a load that fails does so after the socket is already bound. So
     this is not the place a broken embedder is reported: the request that needs the model is, and
     the service stops itself rather than going on answering `ready` it cannot honour.
+    `model_loaded` and `uptime_seconds` say whether that load is still running and how long the
+    store has been open, so a client can tell a service still starting from one that has stalled.
     """
     return HealthStatus(
         ready=True,
@@ -122,6 +129,8 @@ def health(ctx: ServiceContext) -> HealthStatus:
         embed_dim=ctx.store.meta.embed_dim,
         schema_version=ctx.store.meta.schema_version,
         pid=os.getpid(),
+        model_loaded=ctx.model_loaded,
+        uptime_seconds=time.monotonic() - ctx.assembled_at,
     )
 
 

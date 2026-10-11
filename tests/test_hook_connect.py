@@ -6,23 +6,37 @@ socket) rather than a real spawned `zikaron.service.main` subprocess — real en
 `test_hook_connect_integration.py` covers the real-spawn, real-subprocess path this file cannot.
 """
 
+import fcntl
 import json
+import os
 import socket
+import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.hook import connect
 from zikaron.hook.connect import (
     HookTransportError,
+    ServiceStartingError,
     StoreIdentityError,
     _try_connect,
     connect_once,
     default_server_command,
     resolve_sock_path,
 )
+from zikaron.service import paths
+
+#: A spawn command that exits at once and binds nothing.
+_EXITS_AT_ONCE = [sys.executable, "-c", "pass"]
+
+
+def _seconds_from_now(seconds: float) -> float:
+    return time.monotonic() + seconds
 
 
 class _FakeService:
@@ -81,17 +95,21 @@ def sock_path(socket_dir: Path) -> Path:
     return socket_dir / "test.sock"
 
 
-def test_connects_to_an_already_listening_service(sock_path: Path, tmp_path: Path) -> None:
+def test_connects_to_an_already_listening_service_and_calls_it_warm(
+    sock_path: Path, tmp_path: Path
+) -> None:
     store_db_path = tmp_path / "memory.db"
     service = _FakeService(sock_path, store_path=str(store_db_path), store_id="abc-123")
     try:
-        sock = connect_once(
+        connection = connect_once(
             sock_path,
             store_db_path=store_db_path,
             store_id="abc-123",
-            server_command=["python3", "-c", "pass"],  # never reached: already listening
+            server_command=_EXITS_AT_ONCE,  # never reached: already listening
+            poll_deadline=_seconds_from_now(5.0),
         )
-        sock.close()
+        connection.sock.close()
+        assert connection.cold_start is False
     finally:
         service.close()
 
@@ -106,13 +124,14 @@ def test_store_id_none_skips_the_id_comparison_but_still_checks_the_path(
     store_db_path = tmp_path / "memory.db"
     service = _FakeService(sock_path, store_path=str(store_db_path), store_id="whatever-it-is")
     try:
-        sock = connect_once(
+        connection = connect_once(
             sock_path,
             store_db_path=store_db_path,
             store_id=None,
-            server_command=["python3", "-c", "pass"],
+            server_command=_EXITS_AT_ONCE,
+            poll_deadline=_seconds_from_now(5.0),
         )
-        sock.close()
+        connection.sock.close()
     finally:
         service.close()
 
@@ -126,7 +145,8 @@ def test_raises_on_a_store_id_mismatch(sock_path: Path, tmp_path: Path) -> None:
                 sock_path,
                 store_db_path=store_db_path,
                 store_id="a-different-one",
-                server_command=["python3", "-c", "pass"],
+                server_command=_EXITS_AT_ONCE,
+                poll_deadline=_seconds_from_now(5.0),
             )
     finally:
         service.close()
@@ -135,7 +155,7 @@ def test_raises_on_a_store_id_mismatch(sock_path: Path, tmp_path: Path) -> None:
 def test_a_store_id_mismatch_raises_specifically_store_identity_error(
     sock_path: Path, tmp_path: Path
 ) -> None:
-    """`StoreIdentityError` is the one subclass of `HookTransportError` a caller can check for to
+    """`StoreIdentityError` is the subclass of `HookTransportError` a caller checks for to
     distinguish an identity mismatch from every other way this single attempt can fail — pinned
     at the exact type, not merely its base class, so `push.py`'s own classification (which checks
     for this subclass specifically before falling back to the generic base-class case) cannot
@@ -149,7 +169,8 @@ def test_a_store_id_mismatch_raises_specifically_store_identity_error(
                 sock_path,
                 store_db_path=store_db_path,
                 store_id="a-different-one",
-                server_command=["python3", "-c", "pass"],
+                server_command=_EXITS_AT_ONCE,
+                poll_deadline=_seconds_from_now(5.0),
             )
         assert excinfo.value.expected == "a-different-one"
         assert excinfo.value.actual == "the-real-one"
@@ -165,24 +186,61 @@ def test_raises_on_a_store_path_mismatch(sock_path: Path, tmp_path: Path) -> Non
                 sock_path,
                 store_db_path=tmp_path / "memory.db",
                 store_id="x",
-                server_command=["python3", "-c", "pass"],
+                server_command=_EXITS_AT_ONCE,
+                poll_deadline=_seconds_from_now(5.0),
             )
     finally:
         service.close()
 
 
-def test_raises_hook_transport_error_when_nothing_ever_answers(
+def test_a_spawned_service_that_exits_ends_the_attempt_as_a_transport_failure(
     sock_path: Path, tmp_path: Path
 ) -> None:
-    """No socket file at all, and a spawn command that does nothing — the single attempt must
-    exhaust its own poll deadline and raise rather than hang or retry."""
-    with pytest.raises(HookTransportError):
+    """No socket file at all, and a spawn command that exits at once. The poll must stop when its
+    child does rather than wait out a deadline nothing can meet, and must not call a start that
+    failed `ServiceStartingError` — that one is for a start still running."""
+    with pytest.raises(HookTransportError) as raised:
         connect_once(
             sock_path,
             store_db_path=tmp_path / "memory.db",
             store_id=None,
-            server_command=["python3", "-c", "pass"],  # exits immediately, binds nothing
+            server_command=_EXITS_AT_ONCE,
+            poll_deadline=_seconds_from_now(10.0),
         )
+    assert not isinstance(raised.value, ServiceStartingError)
+
+
+def test_a_lock_held_past_the_deadline_is_a_start_still_running(
+    sock_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another client holds the start-if-absent lock only while it starts the service, through a
+    poll that can outlast this caller's whole budget. Waiting on it past the deadline would leave
+    the harness to kill the hook, which records nothing. The holder here lets go after 3 s, so a
+    wait that ignores the deadline ends in a spawn rather than a hang."""
+
+    def _must_not_spawn(_server_command: object) -> object:
+        raise AssertionError(
+            "reached the spawn: the lock was ignored, or waited for past the deadline"
+        )
+
+    monkeypatch.setattr(connect, "_spawn_detached", _must_not_spawn)
+    holder = os.open(str(paths.lock_path(sock_path)), os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    letting_go = threading.Timer(3.0, fcntl.flock, args=(holder, fcntl.LOCK_UN))
+    letting_go.start()
+    try:
+        with pytest.raises(ServiceStartingError):
+            connect_once(
+                sock_path,
+                store_db_path=tmp_path / "memory.db",
+                store_id=None,
+                server_command=_EXITS_AT_ONCE,
+                poll_deadline=_seconds_from_now(0.3),
+            )
+    finally:
+        letting_go.cancel()
+        letting_go.join()
+        os.close(holder)
 
 
 def test_a_non_absent_oserror_on_the_first_connect_attempt_propagates() -> None:
@@ -248,7 +306,8 @@ def test_a_health_failure_on_an_already_listening_socket_closes_it_and_propagate
                 sock_path,
                 store_db_path=tmp_path / "memory.db",
                 store_id=None,
-                server_command=["python3", "-c", "pass"],
+                server_command=_EXITS_AT_ONCE,
+                poll_deadline=_seconds_from_now(5.0),
             )
     finally:
         thread.join(timeout=5.0)

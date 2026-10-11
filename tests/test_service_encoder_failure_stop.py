@@ -78,6 +78,26 @@ async def test_a_width_disagreement_stops_the_service_the_same_way(
         assert not sock_path.exists()
 
 
+async def test_a_failed_load_leaves_a_socket_path_that_is_no_longer_its_own(
+    tmp_path: Path, socket_dir: Path
+) -> None:
+    """The path is removed only while it still names the socket this service bound, on this stop
+    as on every other."""
+    async with open_context(tmp_path) as ctx:
+        sock_path = socket_dir / "server.sock"
+        running = await server.serve(ctx, str(sock_path))
+        sock_path.unlink()
+        sock_path.write_text("someone else's", encoding="ascii")
+        loading = BackgroundLoadedEncoder(model_name="m", load=_failing_load)
+        loading.declare_dim(384)
+
+        await asyncio.wait_for(
+            lifecycle.stop_on_encoder_failure(ctx, running, sock_path, loading), timeout=5.0
+        )
+
+        assert sock_path.read_text(encoding="ascii") == "someone else's"
+
+
 async def test_a_successful_load_never_completes_this_task(
     tmp_path: Path, socket_dir: Path
 ) -> None:

@@ -9,14 +9,20 @@ tier, applied here to a real socket pair instead of a real database.
 import json
 import socket
 import threading
+import time
 
 import pytest
 
 from zikaron.hook.envelope import HookEnvelope
-from zikaron.hook.rpc import SurfaceRejectionError, surface_once
+from zikaron.hook.rpc import NotSentError, PushDeadline, SurfaceRejectionError, surface_once
 
 _ENVELOPE = HookEnvelope(session_id="a-session", kind="hook", pid=1234, op_id=None)
 _DEADLINE = 1_900_000_000_000
+
+
+def _soon() -> PushDeadline:
+    """A deadline no test here reaches unless it means to, sent as `_DEADLINE`."""
+    return PushDeadline(at_ms=_DEADLINE, by=time.monotonic() + 5.0)
 
 
 def _respond(server: socket.socket, response: dict[str, object]) -> None:
@@ -28,7 +34,11 @@ def test_sends_a_well_formed_surface_request() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": "irrelevant"}})
         surface_once(
-            client, prompt="what failed", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE
+            client,
+            prompt="what failed",
+            limit=5,
+            envelope=_ENVELOPE,
+            deadline=_soon(),
         )
         sent = server.recv(65536).decode("utf-8")
         request = json.loads(sent)
@@ -53,7 +63,11 @@ def test_returns_the_text_on_a_successful_result() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": "gist one\ngist two"}})
         text = surface_once(
-            client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE
+            client,
+            prompt="p",
+            limit=5,
+            envelope=_ENVELOPE,
+            deadline=_soon(),
         )
         server.recv(65536)  # drain the request so the socket does not matter to the assertion
         assert text == "gist one\ngist two"
@@ -74,7 +88,13 @@ def test_raises_surface_rejection_on_an_error_response() -> None:
             },
         )
         with pytest.raises(SurfaceRejectionError) as excinfo:
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
         assert excinfo.value.code == -32020
         assert excinfo.value.message == "store busy"
     finally:
@@ -87,7 +107,13 @@ def test_raises_connection_error_when_the_response_is_not_a_json_object() -> Non
     try:
         server.sendall(b"[1, 2, 3]\n")
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
     finally:
         client.close()
         server.close()
@@ -98,7 +124,13 @@ def test_raises_connection_error_when_the_result_has_no_text_field() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"not_text": "x"}})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
     finally:
         client.close()
         server.close()
@@ -109,7 +141,13 @@ def test_raises_connection_error_when_neither_result_nor_error_is_present() -> N
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
     finally:
         client.close()
         server.close()
@@ -120,7 +158,13 @@ def test_raises_connection_error_when_the_error_object_is_malformed() -> None:
     try:
         _respond(server, {"jsonrpc": "2.0", "id": 1, "error": {"message": "no code"}})
         with pytest.raises(ConnectionError):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
     finally:
         client.close()
         server.close()
@@ -144,9 +188,69 @@ def test_raises_connection_error_when_the_socket_closes_before_a_full_line() -> 
     thread.start()
     try:
         with pytest.raises(ConnectionError, match="closed before a full response"):
-            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline_at_ms=_DEADLINE)
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=_soon(),
+            )
     finally:
         thread.join(timeout=5.0)
+        client.close()
+        server.close()
+
+
+def test_an_answer_arriving_in_pieces_cannot_outrun_the_deadline() -> None:
+    """A socket timeout bounds one call, not the exchange: a peer sending a byte at a time, each
+    well inside the timeout, would hold a timeout that is set once open for as long as it kept
+    sending. This one sends for 3 s, so a deadline that is not re-armed shows as the full 3 s."""
+    client, server = socket.socketpair()
+    stop = threading.Event()
+
+    def _dribble() -> None:
+        server.recv(65536)
+        until = time.monotonic() + 3.0
+        while time.monotonic() < until and not stop.wait(0.05):
+            server.sendall(b" ")
+
+    thread = threading.Thread(target=_dribble)
+    thread.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=PushDeadline(at_ms=_DEADLINE, by=started + 0.3),
+            )
+        assert time.monotonic() - started < 2.0
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+        client.close()
+        server.close()
+
+
+def test_a_deadline_already_past_times_out_without_sending() -> None:
+    """Its own subclass, because a push that never reached the service is `deadline_exceeded`,
+    not `unanswered` — which says the service received it."""
+    client, server = socket.socketpair()
+    try:
+        with pytest.raises(NotSentError):
+            surface_once(
+                client,
+                prompt="p",
+                limit=5,
+                envelope=_ENVELOPE,
+                deadline=PushDeadline(at_ms=_DEADLINE, by=time.monotonic() - 1.0),
+            )
+        server.setblocking(False)
+        with pytest.raises(BlockingIOError):
+            server.recv(65536)
+    finally:
         client.close()
         server.close()
 
@@ -156,7 +260,13 @@ def test_the_bootstrap_form_sends_a_null_session_id() -> None:
     try:
         bootstrap = HookEnvelope(session_id=None, kind="hook", pid=1, op_id=None)
         _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": ""}})
-        surface_once(client, prompt="p", limit=5, envelope=bootstrap, deadline_at_ms=_DEADLINE)
+        surface_once(
+            client,
+            prompt="p",
+            limit=5,
+            envelope=bootstrap,
+            deadline=_soon(),
+        )
         sent = json.loads(server.recv(65536).decode("utf-8"))
         assert sent["params"]["client"]["session_id"] is None
     finally:

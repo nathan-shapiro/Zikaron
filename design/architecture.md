@@ -381,7 +381,7 @@ rescuing, because the prefix test is the only test.
   clean. `$XDG_RUNTIME_DIR/zikaron/<h>.sock` when that is set (already user-private `0700`), else
   `/tmp/zikaron-<uid>/<h>.sock` with the directory created `0700`. `<h>` is the **first 32 hex characters
   (128 bits) of the sha256 of the `realpath`-resolved store path** — long enough that accidental collision
-  is not a design concern. One service per store.
+  is not a design concern. One service per socket path (§"Start-if-absent, without a thundering herd").
   **macOS sets no `$XDG_RUNTIME_DIR`, so it takes the fallback, and there is deliberately no platform
   branch for the default**: the `$TMPDIR/runtime-$UID` convention found in the wild on macOS is *longer*
   than `/tmp/zikaron-<uid>`, so it would buy nothing.
@@ -400,15 +400,19 @@ rescuing, because the prefix test is the only test.
   to `bind()`, so that no client spawns a service for a path it can never bind and then reports the spawn's
   failure instead of the path's. Silently substituting the `/tmp` fallback for a directory the user named
   is the repair §"Filesystem security" forbids.
-- **Logs: one file per process, never shared.** `<scope>/.zikaron/service.log` (the long-running service),
+- **Logs: one file per process.** `<scope>/.zikaron/service.log` (the long-running service),
   `<scope>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<scope>/.zikaron/hook.log` (the
   `userPromptSubmit` hook's own failure record). Three distinct processes, three distinct files, by design:
   Python's `logging.FileHandler` has no cross-process append locking, so two independent processes writing the
   same path through `logging` is a real corruption risk `logging`'s own documentation does not paper over —
   giving each process its own file removes the question entirely rather than requiring proof that concurrent
-  appends are safe. The service and the warm helper are both off any latency-critical path, so both use stdlib
-  `logging`. The `userPromptSubmit` hook is not — see §"Degraded modes" for why it does a direct file write
-  instead.
+  appends are safe. **One exception, admitted rather than avoided**: a start that finds its store held by
+  another service (§"Start-if-absent, without a thundering herd") writes a single `not starting` line into
+  that service's `service.log` before it exits. That line needs no general proof — `FileHandler` opens the file
+  `O_APPEND`, and a line that short reaches it in one `write()`, so the two writers interleave whole lines —
+  and it lands where an operator reading why a start did not happen already looks. The service and the warm
+  helper are both off any latency-critical path, so both use stdlib `logging`. The `userPromptSubmit` hook is
+  not — see §"Degraded modes" for why it does a direct file write instead.
 - **Config:** two layers, resolved per store — see §"Configuration" below.
 
 ## Configuration
@@ -576,8 +580,10 @@ the identity check rather than spellings; re-derive the premise with
 `echo "$CLAUDE_PROJECT_DIR"; pwd -P` in a session started from a symlinked path.
 
 - `meta.store_id` is a UUID minted when the store is created.
-- `health()` returns `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid}`. It carries
-  **no `client` envelope and resolves no session label** — see below.
+- `health()` returns `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid,
+  model_loaded, uptime_seconds}` — the last two whether the model is still loading and how long the store
+  has been open, so a client can tell a service still starting from one that has stalled
+  (§"Degraded modes"). It carries **no `client` envelope and resolves no session label** — see below.
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
   write.** A mismatch is not a retry: the client ~~logs it, treats~~ **treats** the socket as foreign,
   and — for the hook — goes through the same degraded path as any other failure (§"Degraded modes"):
@@ -628,13 +634,14 @@ draft of this document gave only to the socket.
 |---|---|---|
 | `<scope>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it ~~and logs~~ **silently — `permissions.py` imports no logger, and on the service's own path it could not: `ensure_store_dir` runs in `service/main.py` as the argument to `configure_service_log`, so the correction happens before any handler is attached** |
 | `memory.db`, `-wal`, `-shm` | **0600** | created under an explicit umask (`os.umask(0o077)`) around store creation, because SQLite creates the WAL/SHM itself and will otherwise inherit a permissive umask |
-| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). Each is written by exactly one process, never shared |
+| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
 | `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
 | `knowledge/<uuid4>.db`, `-wal`, `-shm` | **0600** | created under the same explicit umask as `memory.db`, for the same reason. **A knowledge base holds the verbatim text of every file indexed into it**, so it is at least as sensitive as the memory store and is named here rather than left implied — this table enumerated neither until 2026-09-22, while `knowledge-index.md` asserted the mode from a document that is not normative for it |
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
 | `<h>.sock` | 0600 | |
+| `<h>.sock.lock`, `<h>.sock.service` | 0600 | the start-if-absent lock clients hold, and the one the serving service holds; the second names its holder's pid and nothing else (§"Start-if-absent, without a thundering herd") |
 | `<store-hash>-<method>-<pid>-<random>.json` | **0600** | a consolidator tool result too large for the harness to deliver, written beside the socket, led by the same hash that names this store's socket so one store's files are findable among every store's, and named in a pointer the model reads back. Removed when the next group is requested, and any left by a dead process are swept when the next consolidator starts — **not** on this process's exit, which a harness terminating its MCP server never reaches. **Record prose verbatim, outside the store and outside the log rules** — so the erasure procedure names this directory, and the file is created through `os.open` with the mode supplied rather than written and then `chmod`-ed, since the window between those two is one in which that prose sits at the process umask |
 
 Rules that go with the modes:
@@ -666,10 +673,16 @@ Rules that go with the modes:
 Any two clients may race to start the service. Sequence:
 
 1. Try to connect.
-2. On `ENOENT` or `ECONNREFUSED`, take an exclusive `flock` on `<sock>.lock`.
+2. On `ENOENT` or `ECONNREFUSED`, take an exclusive `flock` on `<sock>.lock`. The holder keeps it through
+   step 4's poll, which can outlast the push hook's whole budget, so the hook waits for it no later than
+   its own deadline; a lock still held there is a start still running (§"Degraded modes").
 3. **Try to connect again** — another client may have won and already started it.
 4. Still dead: vet the runtime directory (§"Filesystem security"), unlink the stale socket if present, spawn
-   the service detached (`start_new_session=True`, stdio to the log), then poll `health()` until a deadline.
+   the service detached (`start_new_session=True`, stdio to `/dev/null` — the service opens its own
+   `service.log` before it resolves configuration or opens the store), then poll `health()` until a
+   deadline — or until the spawned process exits for any reason but another service holding the store,
+   which every client watches for, so that a start that has failed holds neither this lock nor anyone
+   queued on it to the deadline.
 5. Release the lock.
 6. **Verify `store_path` from `health()` unconditionally, and `store_id` too whenever this client has an
    independent one to compare against** (§"Store identity is verified, not assumed") — before the first real
@@ -677,6 +690,28 @@ Any two clients may race to start the service. Sequence:
 
 `ECONNREFUSED` on an existing socket file is the signature of a service that died without cleaning up —
 unlink and respawn rather than reporting an error.
+
+**One service per socket path — one per store within a runtime directory — is enforced by the service,
+because the clients' lock cannot do it.** A client holds `<sock>.lock` only through its own poll, so a start
+that outlasts the poll is started again by the next client — and `asyncio.start_unix_server` removes an
+existing socket file before it binds, so the later service would take the path from the earlier while both
+held the store. So before it opens the store, a service takes an exclusive `flock` on `<sock>.service`
+(`service/ownership.py`), names itself there by pid until its shutdown begins, and holds it until it has
+closed the store; a service that loses its socket stops (§"Idle self-stop"), since a replacement can no
+longer take its place. A start that finds the lock held waits a bounded time for a holder that is shutting
+down, and otherwise writes one `not starting` line to `service.log` and exits `EX_TEMPFAIL` (75).
+
+**That wait is longer than a push's whole deadline**, because it has to outlast a predecessor's shutdown.
+So a push whose own child is waiting is normally gone before the child exits, and what decides that push at
+its deadline is the holder's name in `<sock>.service` and the age of its last sign of life, the file's
+mtime, which the holder renews on every idle poll (§"Degraded modes") — a holder in shutdown names nobody,
+so a predecessor still closing is waited on as a start. The poll still reads a
+75 it does see as a start to keep waiting for, so a shorter wait could never turn a deferral into a failure.
+The cost is a process per message for as long as a start runs past the deadline — each imports, waits and
+exits, leaving one `not starting` line behind. A store reached through two runtime directories (a session
+with `$XDG_RUNTIME_DIR` set and one without) has two socket paths and can still be served twice, as before;
+SQLite's own file locking keeps that correct, and a lock beside the store instead would turn the harmless
+duplicate into a lockout, since neither runtime directory's clients can reach the other's socket.
 
 ### First run: the service creates the store itself if one is not there yet
 **Operator decision.** Nothing upstream of the service — no installer, no client, no separate bootstrap
@@ -737,18 +772,18 @@ safety is never traded away to get one.
 
 ### The model loads behind the socket
 
-**The measured problem.** A cold service takes about 1.2 s merely to bind its socket, and the push hook
-gives a freshly spawned one about the same before it gives up and degrades. Loading the embedding model is
-roughly 1.0 s of that — the great majority — and the socket bind depends on none of it. So the first user
-message after the service has idled out loses its injected memories, silently, every time: the service is
-working, it is simply not *ready* yet. The loss is bounded and self-healing, because the service the losing
-attempt spawned stays up, but it costs one push per idle gap indefinitely, and the message most likely to
-need memory is the first one after a break.
+**The measured problem.** A cold service took about 1.2 s merely to bind its socket while the model loaded
+first. Loading the embedding model is roughly 1.0 s of that — the great majority — and the socket bind
+depends on none of it. Every second of a start is paid by the first user message after the service has
+idled out, which is the message most likely to need memory, because it is the first one after a break.
 
 **So `ServiceContext.assemble` starts the load on a background thread and returns without waiting for it**,
 on the open path. The store opens, the socket binds, `health()` answers, and the model finishes loading
-behind all of it — inside the hook's own request budget rather than inside its readiness deadline, which is
-the boundary that decides whether the push is delivered at all.
+behind all of it — inside the push's `surface` request rather than before its first `health()` answer.
+`health()` says whether the load is still running and how long the store has been open, and the hook gives
+a push that found the service starting — absent, or still loading soon after it opened its store — a longer
+deadline than one to a running service, covering the start and the request together; a push that still
+misses it is reported as a start rather than an outage (§"Degraded modes").
 
 **Two properties answer immediately; five wait.** The encoder handed to the rest of the service reports the
 *declared* identity — the model the configuration named, and the width the store recorded — without the
@@ -794,15 +829,16 @@ it now happens behind a bound socket, on the far side of the same non-daemon-thr
 already records for store connections.
 
 **`health()` therefore speaks for the store and not for the encoder**, and both clients' readiness polls
-must be read that way: they bound the wait for an open store, never for the first embedding.
+must be read that way: they bound the wait for an open store, never for the first embedding. Its
+`model_loaded` says whether that embedding would still wait, without waiting itself.
 
 ### Idle self-stop
 
 **Only the service has this lifecycle, and the distinction is not obvious from `ps`.** `zikaron-mcp`
 is a client, not a server: the harness spawns it over stdio at session start and it lives exactly as
 long as that session, with no idle timeout and nothing to self-stop. So a machine running three
-Claude Code sessions shows **six** `zikaron-mcp` processes plus at most one service per store, and
-that is the design working rather than a leak — observed being mistaken for one. **Add to the
+Claude Code sessions shows **six** `zikaron-mcp` processes plus at most one service per store and runtime
+directory, and that is the design working rather than a leak — observed being mistaken for one. **Add to the
 census, while a knowledge base is building, a detached `python -m zikaron.knowledge.indexer` per
 in-flight build**, which outlives the caller that started it and will saturate a core until it
 finishes: the shape most easily misread as a runaway, in a paragraph whose entire purpose is to
@@ -813,7 +849,8 @@ requests in flight and time since the last one, never on open connections.
 
 `last_activity` is refreshed when each request completes. A background task polls every 30 s and exits
 when idle exceeds `idle_timeout` (**default 30 min**) **and** no requests are in flight. On exit the socket
-is unlinked before the process ends.
+is unlinked before the process ends, while the path still names the socket this process bound (the
+`socket_lost` paragraph below).
 
 **By this process alone, and that is a property the code has to assert rather than inherit.** From Python
 3.13 a closing `asyncio` Unix server removes the socket path itself, so the listener is opened with
@@ -821,9 +858,11 @@ is unlinked before the process ends.
 exist on 3.12 — and asyncio's own unlink-on-close never runs. That is what keeps the ordering this
 service chooses intact on every supported version: **on the self-stop and signal paths** the unlink
 comes *before* the close, so a client arriving mid-shutdown finds no socket and starts a fresh service
-rather than connecting to one that is draining. (`main.run`'s error path closes first and unlinks
-after; that is a recorded debt, not the intended ordering.) Two unlinkers would make the ordering
-unobservable wherever it holds, and which of them acted would depend on the interpreter.
+rather than connecting to one that is draining. Every path unlinks only while the path still names the
+socket `serve` bound, by inode, so none of them removes what is no longer this process's (the
+`socket_lost` paragraph below). (`main.run`'s error path closes first and unlinks after; that is a
+recorded debt, not the intended ordering.) Two unlinkers would make the ordering unobservable wherever
+it holds, and which of them acted would depend on the interpreter.
 
 **That holds for a signalled exit too, and it rests on an ordering worth stating: the `SIGTERM`/`SIGINT`
 handlers are installed *before* the socket is bound.** `serve()` publishes the socket the instant it binds,
@@ -885,6 +924,20 @@ the new file's inode immediately. A mismatch, **or the path stat-ing as absent e
 process is serving a store that is no longer the one currently on disk at its own path, and the correct
 response is identical to idle self-stop's own: unlink the socket, shut the server down, and exit — never
 attempt to somehow "catch up," since the store this process has open is not the current one to catch up *to*.
+
+**The same poll stops a service whose socket is gone — a third exit condition, `socket_lost`.** The
+service holds its store for its whole life (§"Start-if-absent, without a thundering herd"), so when its
+socket file is removed from under it — a human `rm`, a tool that unlinks sockets — a replacement started by
+the next client waits for the store instead of taking the path, and nothing else would end a service nobody
+can reach before its idle clock ran out, a clock no request can now refresh. The check is the same `stat`,
+against the socket inode `serve` recorded as it bound, which the listener keeps allocated, so no file made
+at the path while it listens can share it; absence or a different file stops the service, which leaves
+whatever now sits at the path alone, since it is no longer its own — as every other stop does too, the
+signal, encoder-failure and forced-exit paths included (`lifecycle.unlink_if_still_bound`). Until that
+poll, a push queued behind it reads it as a start rather than a stalled one, because every poll that does
+not stop renews its sign of life in `<sock>.service` (§"Degraded modes"). A runtime directory removed
+whole takes the lock file with it, so a successor locks a fresh one at once, and the orphan stops at its
+next poll.
 
 **Any other stat failure is not folded into this decision.** A genuine `PermissionError` or similar is not
 "replaced," and treating it as one would make an unconditional shutdown decision on behalf of a caller that
@@ -983,7 +1036,8 @@ holding a read snapshot, so no cycle can form.
 read's retry (`retrieval.md` §"One read is one transaction"). A deferred transaction that reads before it
 writes is refused at once with `SQLITE_BUSY_SNAPSHOT` when another connection commits between the two,
 and `busy_timeout` never retries that. Another connection can be another process — the detached indexer's
-build row, a second service, an operator's shell — so no in-process lock closes it; `IMMEDIATE` does, by
+build row, a second service on the same store through another runtime directory (§"Start-if-absent,
+without a thundering herd"), an operator's shell — so no in-process lock closes it; `IMMEDIATE` does, by
 taking the write lock before the first read. The indexer's own `memory.db` handle is a store's writer and
 opens `IMMEDIATE` the same way. The access log's connection and the corpus databases stay deferred; the one
 exception is a build's lock acquisition, `knowledge-index.md` §"6. The indexer process".
@@ -1057,7 +1111,8 @@ can fail: start-if-absent and `health()` polling to a deadline. It writes to its
 `logging` is irrelevant here — rather than to the hook's stdout, and its failure is invisible to the session.
 `warmup.log` is not `service.log`: the helper and the service are two independent processes, and two
 processes writing one file through `logging.FileHandler` with no cross-process locking is a corruption risk,
-not a convenience — see §"Paths". That way the service is already warm before the first `userPromptSubmit`,
+not a convenience — see §"Paths", which also has the one exception and why it is safe. That way the service
+is already warm before the first `userPromptSubmit`,
 and the first push of a session is not the slow one.
 
 **The split matters and blurring it was a real contradiction:** "the `agentSpawn` hook talks to the service" and
@@ -1177,8 +1232,12 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
    This is unrelated to the failure path below;
    it is not a failure at all.
 1. RPC `memory_surface(prompt, limit=5, deadline_at_ms)`. On success, print what the service returned.
-   `deadline_at_ms` is the hook's own deadline — the ~2 s internal deadline below — as an absolute
-   wall-clock instant, read at the same instant as the monotonic reading the hook enforces it from.
+   `deadline_at_ms` is the hook's own deadline — the internal deadline below — as an absolute wall-clock
+   instant, read beside the monotonic reading the hook enforces it from. The hook enforces it across the
+   send and every read rather than per socket call, so an answer arriving in pieces cannot outrun it. It
+   is kept just under `ddl.BUSY_TIMEOUT_MS` ahead, which the service refuses as `bounds`, so the two
+   ends' clock readings cannot straddle the bound — and a cold start's longer deadline is cut to that
+   from the moment the request is sent.
 2. **On any failure — transport, startup, contention, lateness, identity, or a store error** — `ENOENT`,
    `ECONNREFUSED`, spawn failure, `health()` never ready, the internal deadline passing before the request
    was sent (`deadline_exceeded`), a request sent and not answered by that deadline (`unanswered`), a
@@ -1186,14 +1245,16 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
    reindexing`, or anything unexpected: **append one line to its own
    `hook.log`** naming the failure kind and, where one exists, the error code, **and print a short,
    model-facing instruction to stdout** asking the agent to relay the failure to the operator, naming the same
-   kind and pointing at `hook.log` for the exact detail. Never open the store, never read it, never write to
-   stderr. `hook.log`'s own line is a **direct file write, not `logging`**: `open(path, "a")` and one
-   `.write()` call, then close — `logging`'s import cost is ~15 ms on this machine, measured directly against
-   the same interpreter-cost argument that keeps this client stdlib-thin in the first place, and a process that
-   writes exactly one line per invocation and then exits has no log lifecycle for `logging`'s formatters and
-   handlers to manage. `hook.log` is its own file, not `service.log` or `warmup.log` — three independent
-   processes, three files, so an operator checks all three rather than one, but none of them can corrupt
-   another by writing at the same instant (§"Paths").
+   kind and pointing at `hook.log` for the exact detail — except a start still running at the deadline on
+   a push that found the service starting, waited on through the lock, the poll, or lateness after them: one
+   `starting` line, and a notice that asks for no report (below). Never open the store, never read it,
+   never write to stderr. `hook.log`'s own line is a **direct file write, not `logging`**:
+   `open(path, "a")` and one `.write()` call, then close — `logging`'s import cost is ~15 ms on this
+   machine, measured directly against the same interpreter-cost argument that keeps this client stdlib-thin
+   in the first place, and a process that writes exactly one line per invocation and then exits has no log
+   lifecycle for `logging`'s formatters and handlers to manage. `hook.log` is its own file, not `service.log`
+   or `warmup.log` — three independent processes, three files, so an operator checks all three rather than
+   one, but none of them can corrupt another by writing at the same instant (§"Paths").
 
 There is no step 3 or 4. What made the removed fallback tempting is also why it is refused: a BM25-only read
 degrades gracefully in isolation, but the hook has no way to tell *which* failure it is looking at with any
@@ -1242,8 +1303,17 @@ gets relayed in its own response — while not visibly delivering on the channel
   push result — the model is told plainly that this is a notice to relay, not gists to reason
   about — but it uses the identical channel `surface`'s own successful output already uses, since
   that is the one channel this milestone measured actually reaching the model.
-- **Enforce an internal deadline of ~2 s**, far under the `timeout_ms` the harness enforces on the
-  whole hook command. Failing fast beats being correct and late, because the user is waiting.
+- **Enforce an internal deadline**, under the `timeout_ms` the harness enforces on the whole hook
+  command: **~2 s for a push to a service that was already running**, because failing fast beats
+  being correct and late while the user waits. **A push that found the service starting** — absent
+  at its first connect, as on the first message after an idle stop, or answering `health()` with its
+  model still loading and its store open for less than the cold-start deadline, which is what the
+  session-start warm-up leaves behind — waits for something known to be coming, so it gets
+  **`HOOK_TIMEOUT_SECONDS` less 2 s** for the start and the request together. The 2 s left over pays
+  for the connect's last attempt running past the deadline, then the hook's own interpreter start and
+  its print, so its failure path still fires before the harness's kill, which reports nothing. This is the split
+  deadline `build-plan.md` §M17 shelved "as the fallback if the measured end-to-end margin turns out
+  thin"; it was pulled when cold starts on a loaded host missed the single ~2 s deadline in production.
 
   **That harness figure is 10 s, not 30 s, and the correction is worth stating rather than quietly
   applying.** `research/kiro-cli-hooks-and-introspect.md` reported a 30 s default from the public
@@ -1255,6 +1325,33 @@ gets relayed in its own response — while not visibly delivering on the channel
   explicitly** (§"Distribution artefacts") rather than inheriting a default the corpus had recorded
   wrong, which is the whole reason the wrong figure was harmless here and would not have been
   somewhere the margin was thinner.
+- **A start still running at the deadline is `starting`, not a fault.** On a push that found the
+  service starting, all three kinds of lateness (§"A push the agent never saw is never recorded as
+  shown"), a poll that reached the deadline with the spawned process still running, and a
+  start-if-absent lock another client still held at the deadline are logged as `starting`, followed
+  by what was waited on — `lock`, `poll`, or the lateness kind with its code — so where a slow start
+  spends its time stays readable without a timing measurement. Stdout tells the model the service was
+  still starting and memories return once it has — usually from the next message — without asking it
+  to tell the operator. Every other failure on such a push keeps its own kind and the relay. Three
+  rules keep that notice honest, each by bounding how long one start may be called one. **Every
+  client's poll watches the process it spawned**, and one that exits before answering ends that poll
+  at once — as `transport`, for the push's own: a service that cannot start would otherwise cost every
+  message the whole cold-start deadline and read as one still starting. An exit because another
+  service holds the store is not a failure, and the poll goes on. It bounds the `lock` wait too,
+  since the lock is held only through the holder's poll: a failed start releases it at once, and the
+  push that was waiting then spawns its own and reads the exit.
+  **A service still loading its model once its store has been open longer than the cold-start deadline
+  is not starting**, so its lateness alarms: that phase is a load from the model cache, and it has had
+  the whole budget a push can spend on a start — though a push that found the service already bound
+  gives its request no more than step 1's cap. **And a push whose own start is queued behind another
+  holder that has shown no sign of life for over a minute, and has not begun shutting down, reports
+  `transport`**, rather than calling the same stalled start a start on every message after
+  (§"Start-if-absent, without a thundering herd"). A serving service renews its sign of life on every
+  idle poll, so one whose socket was removed reads as a start until it stops itself; a holder clears its
+  name as its shutdown begins, so a predecessor still closing is waited on as a start too. What is left
+  is a start that never reached its first poll — never bound, or bound and blocked. The minute is longer
+  than the bound above because the phase before the bind is where a first run fetches its model, which
+  over a slow link can run past the cold-start deadline.
 
 ### A push the agent never saw is never recorded as shown
 
@@ -1292,10 +1389,12 @@ just inside the margin whose answer is slower than the margin is still counted.
 **`hook.log` records three kinds of lateness, and they are different facts.** `deadline_exceeded` is a
 push abandoned *before* it was sent — connecting consumed the budget — which the service never received.
 `unanswered` is a push sent and not answered by the deadline, which the service did receive; it is decided
-around the `surface` call alone, so a timeout inside the connect — a listener that accepts and never answers
-`health`, a blocked event loop's signature — stays `transport`. `deadline_passed` is the service's own
-refusal, delivered in time. **What D30's denominator loses is the pushes the agent did not see**:
-`deadline_passed` plus `unanswered` in `hook.log`, less the margin race. The access log's `deadline_passed`
+around the `surface` call alone, so a timeout inside the connect to a running service — a listener that
+accepts and never answers `health`, a blocked event loop's signature — stays `transport`. `deadline_passed`
+is the service's own refusal, delivered in time. **On a push that found the service starting, each is
+logged as `starting` followed by its own word** (§"Degraded modes"), so the fact survives the fold.
+**What D30's denominator loses is the pushes the agent did not see**: the `deadline_passed` and
+`unanswered` lines in `hook.log`, whether bare or after `starting`, less the margin race. The access log's `deadline_passed`
 rows among `memory_surface` calls are a different population, and neither bounds the other — a refusal
 answered under a held writer reaches the hook and drops its `call` row, and one issued after a cold-load
 embed lands its row and reaches a hook that has already gone.
@@ -2486,7 +2585,8 @@ things and refuses rather than guesses when it cannot.
 - **`timeout_ms` and `max_output_size` are stated in every object-format entry**, from one declaration
   each in `zikaron/hook/limits.py` that the installer reads rather than transcribes. `timeout_ms` is
   **10000** — the same value as the documented default, stated so that a future change to that default
-  cannot silently move the budget the hook's ~2 s internal deadline was sized against. `max_output_size`
+  cannot silently move the budget the hook's internal deadlines are sized against, the cold-start one
+  derived from it with 2 s to spare (§"Degraded modes"). `max_output_size`
   is **65536**, deliberately well above the 10240 default, and what that margin does and does not buy is
   worth stating precisely, because an earlier version of this paragraph claimed more than was true.
 

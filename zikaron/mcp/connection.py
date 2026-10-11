@@ -286,10 +286,11 @@ class ServiceConnection:
         Raises:
             ZikaronError: whatever `_read_store_identity`/`connect_start_if_absent` raise while
                 establishing a connection — a missing or unhealthy store, a `store_identity`
-                mismatch, or the underlying transport never becoming reachable before the
-                deadline, reported as a plain `ConnectionError` from `connect_start_if_absent`
-                itself and left unwrapped, since this module has no more specific diagnosis to add
-                to it than the sequence that raised it already gives.
+                mismatch, or the underlying transport never becoming reachable — before the
+                deadline, or because the service it spawned exited first — reported as a
+                `ConnectionError` from `connect_start_if_absent` itself and left unwrapped, since
+                this module has no more specific diagnosis to add to it than the sequence that
+                raised it already gives.
             AmbiguousMutationError: the request was sent successfully but no response could be
                 read — the outcome of `method` on the service is genuinely unknown, and this is
                 never retried automatically for the reason above.

@@ -32,15 +32,19 @@ import signal
 import socket
 import sys
 import threading
+import time
 import unittest.mock
 from pathlib import Path
 from typing import Final
 
 import pytest
 
-from zikaron.hook.connect import connect_once
+from zikaron.hook.connect import Connection, connect_once
 
 pytestmark = pytest.mark.integration
+
+#: Generous: these tests are about the lock, not about how fast a spawn answers.
+_POLL_SECONDS: Final = 10.0
 
 #: A script that, before doing anything else, appends its own pid and start time to a marker
 #: file (so the test can count real spawn attempts regardless of whether the bind that follows
@@ -104,10 +108,10 @@ class _ThreadResults:
     clarity."""
 
     def __init__(self) -> None:
-        self._items: list[socket.socket | BaseException] = []
+        self._items: list[Connection | BaseException] = []
         self._lock = threading.Lock()
 
-    def record(self, outcome: socket.socket | BaseException) -> None:
+    def record(self, outcome: Connection | BaseException) -> None:
         with self._lock:
             self._items.append(outcome)
 
@@ -116,8 +120,8 @@ class _ThreadResults:
         return [item for item in self._items if isinstance(item, BaseException)]
 
     @property
-    def sockets(self) -> list[socket.socket]:
-        return [item for item in self._items if isinstance(item, socket.socket)]
+    def connections(self) -> list[Connection]:
+        return [item for item in self._items if isinstance(item, Connection)]
 
     def __len__(self) -> int:
         return len(self._items)
@@ -162,27 +166,28 @@ def _race_connect_once(
     store_id: str,
     server_command: list[str],
     thread_count: int,
-) -> list[socket.socket | BaseException]:
+) -> list[Connection | BaseException]:
     """Call `connect_once` from `thread_count` concurrent threads with identical arguments, and
-    return every thread's outcome — a real socket or the exception it raised — in the order the
+    return every thread's outcome — a connection or the exception it raised — in the order the
     threads happened to finish, not the order they started."""
-    results: list[socket.socket | BaseException] = []
+    results: list[Connection | BaseException] = []
     results_lock = threading.Lock()
 
     def _one_caller() -> None:
         try:
-            sock = connect_once(
+            connection = connect_once(
                 sock_path,
                 store_db_path=store_db_path,
                 store_id=store_id,
                 server_command=server_command,
+                poll_deadline=time.monotonic() + _POLL_SECONDS,
             )
         except BaseException as error:  # captured for the assertion below, not swallowed.
             with results_lock:
                 results.append(error)
         else:
             with results_lock:
-                results.append(sock)
+                results.append(connection)
 
     threads = [threading.Thread(target=_one_caller) for _ in range(thread_count)]
     for thread in threads:
@@ -217,24 +222,22 @@ def test_two_concurrent_callers_race_to_start_exactly_one_service(
     ]
 
     barrier = threading.Barrier(2)
-    results: list[socket.socket | BaseException] = []
-    results_lock = threading.Lock()
+    results = _ThreadResults()
 
     def _one_caller() -> None:
         barrier.wait(timeout=10.0)
         try:
-            sock = connect_once(
+            connection = connect_once(
                 sock_path,
                 store_db_path=store_db_path,
                 store_id="the-store-id",
                 server_command=command,
+                poll_deadline=time.monotonic() + _POLL_SECONDS,
             )
         except BaseException as error:
-            with results_lock:
-                results.append(error)
+            results.record(error)
         else:
-            with results_lock:
-                results.append(sock)
+            results.record(connection)
 
     threads = [threading.Thread(target=_one_caller) for _ in range(2)]
     try:
@@ -243,12 +246,13 @@ def test_two_concurrent_callers_race_to_start_exactly_one_service(
         for thread in threads:
             thread.join(timeout=10.0)
 
-        errors = [r for r in results if isinstance(r, BaseException)]
-        assert not errors, f"unexpected failures: {errors}"
-        sockets = [r for r in results if isinstance(r, socket.socket)]
-        assert len(sockets) == 2
-        for sock in sockets:
-            sock.close()
+        assert not results.errors, f"unexpected failures: {results.errors}"
+        assert len(results.connections) == 2
+        for connection in results.connections:
+            connection.sock.close()
+        # The loser found nothing at its first connect and waited out the winner's start under
+        # the lock, so its push is as cold as the winner's.
+        assert [connection.cold_start for connection in results.connections] == [True, True]
 
         spawns = _read_marker_lines(marker_path)
         assert len(spawns) == 1, (
@@ -275,18 +279,18 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
     whether the lock was present or removed, which is the exact tell that neither was actually
     pinning the mechanism).
 
-    The seam this version delays is the lock acquisition itself (`fcntl.flock(lock_fd,
-    fcntl.LOCK_EX)`, patched on the shared `fcntl` module itself — `connect.py`'s own call site
-    resolves `fcntl.flock` dynamically at call time, so patching the module's attribute affects
-    that resolution without needing to reach into `connect`'s own namespace for it), gated to
-    caller B's own thread only. With the real lock present, this reproduces exactly what the
-    OS-level `flock` already does — caller B blocks until caller A's own lock is released, by
-    which point caller A's socket is definitely live, so caller B's own recheck must find it.
-    With the lock's `LOCK_EX` call removed or replaced by anything that does not actually block
-    (the mutation this test is designed to catch), this patched wrapper is simply never reached
-    at all, so caller B proceeds straight into the vet-and-spawn branch while caller A may still
-    be mid-bind — exercising the real unguarded race rather than a race that happens to resolve
-    safely regardless of the lock's presence.
+    The seam this version delays is the lock acquisition itself (`connect.py`'s exclusive
+    `fcntl.flock`, non-blocking and retried to the caller's deadline, patched on the shared `fcntl`
+    module itself — `connect.py`'s own call site resolves `fcntl.flock` dynamically at call time,
+    so patching the module's attribute affects that resolution without needing to reach into
+    `connect`'s own namespace for it), gated to caller B's own thread only. With the real lock
+    present, this reproduces what the lock already does — caller B waits until caller A's own
+    lock is released, by which point caller A's socket is definitely live, so caller B's own
+    recheck must find it. With the exclusive acquisition removed (the mutation this test is
+    designed to catch), this patched wrapper is simply never reached at all, so caller B proceeds
+    straight into the vet-and-spawn branch while caller A may still be mid-bind — exercising the
+    real unguarded race rather than a race that happens to resolve safely regardless of the
+    lock's presence.
     """
     sock_path = socket_dir / "test.sock"
     store_db_path = tmp_path / "memory.db"
@@ -312,16 +316,17 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
 
     def _caller_a() -> None:
         try:
-            sock = connect_once(
+            connection = connect_once(
                 sock_path,
                 store_db_path=store_db_path,
                 store_id="the-store-id",
                 server_command=caller_a_command,
+                poll_deadline=time.monotonic() + _POLL_SECONDS,
             )
         except BaseException as error:
             results.record(error)
             return
-        results.record(sock)
+        results.record(connection)
         # Caller A has now completed its own sequence, which for the winner means a real, live,
         # bound socket exists at `sock_path` — the deterministic condition caller B's own release
         # below waits for.
@@ -330,11 +335,11 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
     def _flock_delayed_only_for_caller_bs_lock_acquisition(fd: int, operation: int) -> None:
         # `unittest.mock.patch.object` replaces `fcntl.flock` at module scope, so this wrapper is
         # what *every* call goes through, including caller A's own release (`LOCK_UN`) and its
-        # own acquisition. Gating the delay on both thread identity *and* the specific `LOCK_EX`
-        # operation is what keeps every other call passing straight through — delaying caller A's
+        # own acquisition. Gating the delay on both thread identity *and* an exclusive acquisition
+        # is what keeps every other call passing straight through — delaying caller A's
         # own `LOCK_UN` release, for instance, would prevent it from ever reaching the release
         # this test depends on, another self-deadlock shape found while building this test.
-        if threading.current_thread() is thread_b and operation == fcntl.LOCK_EX:
+        if threading.current_thread() is thread_b and operation & fcntl.LOCK_EX:
             caller_b_reached_its_lock_acquisition.set()
             release_caller_b.wait(timeout=10.0)
         real_flock(fd, operation)
@@ -344,16 +349,17 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
             fcntl, "flock", side_effect=_flock_delayed_only_for_caller_bs_lock_acquisition
         ):
             try:
-                sock = connect_once(
+                connection = connect_once(
                     sock_path,
                     store_db_path=store_db_path,
                     store_id="the-store-id",
                     server_command=caller_b_poison_command,
+                    poll_deadline=time.monotonic() + _POLL_SECONDS,
                 )
             except BaseException as error:
                 results.record(error)
             else:
-                results.record(sock)
+                results.record(connection)
 
     thread_a = threading.Thread(target=_caller_a)
     thread_b = threading.Thread(target=_caller_b)
@@ -371,9 +377,14 @@ def test_a_caller_that_finds_the_socket_absent_but_loses_the_lock_never_spawns(
         thread_b.join(timeout=10.0)
 
         assert not results.errors, f"unexpected failures: {results.errors}"
-        assert len(results.sockets) == 2, f"expected both callers to connect, got {len(results)}"
-        for sock in results.sockets:
-            sock.close()
+        assert len(results.connections) == 2, (
+            f"expected both callers to connect, got {len(results)}"
+        )
+        for connection in results.connections:
+            connection.sock.close()
+        assert all(connection.cold_start for connection in results.connections), (
+            "caller B found nothing at its first connect, so its push is cold although A spawned"
+        )
 
         spawns = _read_marker_lines(marker_path)
         assert len(spawns) == 1, (
@@ -446,8 +457,9 @@ def test_a_socket_already_bound_before_the_race_starts_is_never_unlinked(
 
         assert len(results) == 2
         for result in results:
-            assert isinstance(result, socket.socket), f"unexpected failure: {result}"
-            result.close()
+            assert isinstance(result, Connection), f"unexpected failure: {result}"
+            result.sock.close()
+            assert result.cold_start is False
         assert sock_path.exists(), "the pre-existing socket must never be unlinked"
         assert sock_path.stat().st_ino == original_inode, (
             "the pre-existing socket's own inode must survive — a different inode at the same "

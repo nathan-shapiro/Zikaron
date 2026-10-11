@@ -20,10 +20,14 @@ hermetically.
 """
 
 import asyncio
+import contextlib
+import fcntl
 import logging
 import os
 import signal
-from collections.abc import Callable
+import sys
+import unittest.mock
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -31,8 +35,22 @@ import pytest
 from tests.fake_encoder import FakeEncoder
 from zikaron.core.config.resolution import resolve
 from zikaron.core.store.store import Store
-from zikaron.service import main
-from zikaron.service.server import ShutdownTimeoutError
+from zikaron.service import lifecycle, main, ownership, paths
+from zikaron.service import server as service_server
+from zikaron.service.context import ServiceContext
+from zikaron.service.server import RunningServer, ShutdownTimeoutError
+
+
+@pytest.fixture(autouse=True)
+def _service_log_handlers_do_not_outlive_the_test() -> Iterator[None]:
+    """`main.run` attaches `service.log`'s handler to the process-wide logger, and a handler left
+    behind becomes the stream a later test's thread dump is written to."""
+    logger = logging.getLogger("zikaron.service")
+    before = list(logger.handlers)
+    yield
+    for handler in [handler for handler in logger.handlers if handler not in before]:
+        logger.removeHandler(handler)
+        handler.close()
 
 
 def _event_loop_class() -> type[asyncio.AbstractEventLoop]:
@@ -92,6 +110,114 @@ async def test_a_setup_failure_after_binding_closes_the_listener_and_unlinks_the
     # is the one externally observable fact a test with no reference to the closed
     # `asyncio.Server` object itself can still check directly.
     assert not sock_path.exists()
+
+
+async def test_a_start_that_finds_its_store_held_opens_nothing_and_says_why(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store is held before it is opened, so a start that cannot take it creates no store and
+    binds no socket — and leaves a line, or its `service.log` would read like a crash. Bounded,
+    because a start that ignored the holder would go on to serve and never return."""
+    monkeypatch.setattr(ownership, "PREDECESSOR_WAIT_SECONDS", 0.2)
+    store_dir = tmp_path / ".zikaron"
+    sock_path = socket_dir / "server.sock"
+    holder = os.open(str(paths.service_lock_path(sock_path)), os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(ownership.AnotherServiceError):
+            await asyncio.wait_for(main.run(sock_path, store_dir), timeout=10.0)
+    finally:
+        os.close(holder)
+    assert not (store_dir / "memory.db").exists()
+    assert not sock_path.exists()
+    service_log = paths.service_log_path(store_dir).read_text(encoding="utf-8")
+    assert "not starting: reason=another_service" in service_log
+
+
+async def test_the_store_this_run_holds_is_renewed_while_it_polls_and_let_go_at_shut_down(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`shut_down` steps down, and the idle poll renews the holder's stamp, through whatever each
+    was given; this pins that `run` gives both its own hold on the store, so a push queued behind
+    this service reads it as alive while it polls and as no holder once its shutdown begins."""
+    store_dir = tmp_path / ".zikaron"
+    store_dir.mkdir()
+    sock_path = socket_dir / "server.sock"
+    config = resolve(tmp_path / "system.toml", tmp_path / "project.toml")
+
+    class _FakeEmbedder:
+        model_name = config.get_str("embed_model")
+        dim = config.get_int("embed_dim")
+
+    async with await Store.create(store_dir, config, _FakeEmbedder()):
+        pass
+
+    def _load_fake_encoder(_model_name: str) -> FakeEncoder:
+        return FakeEncoder()
+
+    monkeypatch.setattr(
+        "zikaron.service.context.FastEmbedEncoder.load", staticmethod(_load_fake_encoder)
+    )
+    named_at_shut_down: list[str] = []
+    real_serve = service_server.serve
+
+    async def _recording_serve(
+        ctx: ServiceContext, path: str, *, on_shut_down: Callable[[], None]
+    ) -> RunningServer:
+        def _step_down_and_look() -> None:
+            on_shut_down()
+            lock = paths.service_lock_path(sock_path)
+            named_at_shut_down.append(lock.read_text(encoding="ascii"))
+
+        return await real_serve(ctx, path, on_shut_down=_step_down_and_look)
+
+    holds_given_to_the_poll: list[object] = []
+
+    def _record_the_hold_and_stop(*_args: object, **kwargs: object) -> None:
+        holds_given_to_the_poll.append(kwargs["hold"])
+        raise RuntimeError("stop here, after the bind")
+
+    monkeypatch.setattr(main, "serve", _recording_serve)
+    monkeypatch.setattr(main, "_self_stopping_tasks", _record_the_hold_and_stop)
+    with pytest.raises(RuntimeError, match="after the bind"):
+        await main.run(sock_path, store_dir)
+    assert named_at_shut_down == [""]
+    (hold,) = holds_given_to_the_poll
+    assert isinstance(hold, ownership.StoreHold)
+
+
+def test_the_idle_poll_is_given_the_holds_sign_of_life(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_self_stopping_tasks` hands the hold's `still_here` to the poll that calls it."""
+    given: dict[str, object] = {}
+
+    async def _idle_self_stop(*_args: object, **kwargs: object) -> None:
+        given.update(kwargs)
+
+    monkeypatch.setattr(lifecycle, "idle_self_stop", _idle_self_stop)
+    hold = ownership.StoreHold(-1)
+
+    async def _build_and_run() -> None:
+        ctx = unittest.mock.Mock(encoder_load=None)
+        tasks = main._self_stopping_tasks(
+            ctx, unittest.mock.Mock(), Path("/unused.sock"), original_store_inode=1, hold=hold
+        )
+        await asyncio.gather(*tasks)
+
+    asyncio.run(_build_and_run())
+    assert given["still_here"] == hold.still_here
+
+
+def test_a_start_that_finds_its_store_held_exits_with_the_status_a_spawning_client_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _store_held(_sock_path: Path, _store_dir: Path) -> None:
+        raise ownership.AnotherServiceError("held")
+
+    monkeypatch.setattr(main, "run", _store_held)
+    monkeypatch.setattr(sys, "argv", ["zikaron-service", "/unused.sock", "/unused"])
+    with pytest.raises(SystemExit) as exited:
+        main.main()
+    assert exited.value.code == ownership.ANOTHER_SERVICE_EXIT_STATUS
 
 
 async def test_the_signal_handlers_are_installed_before_the_socket_is_bound(
@@ -627,6 +753,32 @@ async def test_a_signal_with_an_idle_open_connection_still_returns_promptly(
             run_task.cancel()
 
 
+async def test_a_signal_leaves_a_socket_path_that_is_no_longer_its_own(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signal path removes the socket path only while it still names the socket this service
+    bound, as every other stop does."""
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
+    run_task = asyncio.create_task(main.run(sock_path, store_dir))
+    try:
+        for _ in range(500):
+            # `run` sets the mode only once `serve` has returned, which is when the inode is known.
+            with contextlib.suppress(FileNotFoundError):
+                if sock_path.stat().st_mode & 0o777 == 0o600:
+                    break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("the server never published its socket")
+        sock_path.unlink()
+        sock_path.write_text("someone else's", encoding="ascii")
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(run_task, timeout=5.0)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+    assert sock_path.read_text(encoding="ascii") == "someone else's"
+
+
 async def test_a_shutdown_timeout_forces_process_exit_from_inside_the_running_coroutine(
     tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -767,6 +919,65 @@ def _spy_on_force_exit(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     calls: list[None] = []
     monkeypatch.setattr(main, "_force_exit_after_shutdown_timeout", lambda: calls.append(None))
     return calls
+
+
+async def test_a_forced_exit_leaves_a_socket_path_that_is_no_longer_its_own(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The forced exit removes the socket path only while it still names this service's socket.
+    The signal path has already removed the socket by the time `shut_down` runs, so the file
+    planted there is someone else's."""
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
+    forced_exit_calls = _spy_on_force_exit(monkeypatch)
+
+    async def _shut_down_times_out_after_the_path_is_taken(_self: object) -> None:
+        sock_path.write_text("someone else's", encoding="ascii")
+        raise ShutdownTimeoutError("shutdown deadline expired, deliberately, for this test")
+
+    monkeypatch.setattr(
+        "zikaron.service.server.RunningServer.shut_down",
+        _shut_down_times_out_after_the_path_is_taken,
+    )
+    real_add_signal_handler = _event_loop_class().add_signal_handler
+
+    def _add_signal_handler_and_fire_sigterm(
+        loop: asyncio.AbstractEventLoop, sig: int, callback: Callable[..., object], *args: object
+    ) -> None:
+        real_add_signal_handler(loop, sig, callback, *args)
+        if sig == signal.SIGTERM:
+            callback(*args)
+
+    monkeypatch.setattr(
+        _event_loop_class(),
+        "add_signal_handler",
+        _add_signal_handler_and_fire_sigterm,
+        raising=False,
+    )
+
+    await main.run(sock_path, store_dir)
+
+    assert len(forced_exit_calls) >= 1
+    assert sock_path.read_text(encoding="ascii") == "someone else's"
+
+
+async def test_a_setup_failure_leaves_a_socket_path_that_is_no_longer_its_own(
+    tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cleanup after a failed setup removes the socket path only while it still names this
+    service's socket."""
+    sock_path, store_dir = await _prepared_store_and_paths(tmp_path, socket_dir, monkeypatch)
+
+    def _task_creation_fails_after_the_path_is_taken(*_args: object, **_kwargs: object) -> None:
+        sock_path.unlink()
+        sock_path.write_text("someone else's", encoding="ascii")
+        raise RuntimeError("task creation failed, deliberately, for this test")
+
+    monkeypatch.setattr(main, "_self_stopping_tasks", _task_creation_fails_after_the_path_is_taken)
+
+    with pytest.raises(RuntimeError, match="task creation failed"):
+        await main.run(sock_path, store_dir)
+
+    assert sock_path.read_text(encoding="ascii") == "someone else's"
 
 
 async def test_an_idle_path_shutdown_timeout_reaches_the_terminal_path(

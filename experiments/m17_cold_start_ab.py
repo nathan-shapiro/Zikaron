@@ -16,13 +16,12 @@ arm; measuring it in whichever arm happened to run first would be measuring the 
 Three timings per run, all from the instant the spawn was issued:
 
 - `socket`  — the first successful `connect()`. What the bind itself costs.
-- `health`  — the first `health()` answering `ready`. What a client's readiness poll waits for,
-              and the deadline the push hook actually enforces.
+- `health`  — the first `health()` answering `ready`. What a client's readiness poll waits for.
 - `surface` — a real retrieval answered. The whole sequence, and where a deferred load's remaining
               time is paid.
 
-The two deadlines printed alongside are read from the shipped constants rather than restated, so
-this cannot drift from what the hook enforces.
+The deadline printed alongside is read from the shipped constant rather than restated, so this
+cannot drift from the cold-start deadline the hook enforces.
 """
 
 import json
@@ -148,8 +147,7 @@ def main() -> None:
 
     load = Path("/proc/loadavg").read_text().split()[0]
     print(f"arm={label}  runs={runs}  store={STORE_DIR}  load1={load}")
-    print(f"deadlines: health poll {connect.HEALTH_POLL_DEADLINE_SECONDS * 1000:.0f} ms, "
-          f"hook total {push._DEADLINE_SECONDS * 1000:.0f} ms")
+    print(f"deadline: cold-start push {push._COLD_START_DEADLINE_SECONDS * 1000:.0f} ms")
 
     print("warm-up run (discarded) ...", flush=True)
     _one_run(sock_path)
@@ -171,10 +169,8 @@ def main() -> None:
             f"{key:>8}: median {statistics.median(values):7.0f} ms   "
             f"min {min(values):7.0f}   max {max(values):7.0f}"
         )
-    beat_poll = sum(1 for r in results if r["health"] < connect.HEALTH_POLL_DEADLINE_SECONDS * 1000)
-    beat_total = sum(1 for r in results if r["surface"] < push._DEADLINE_SECONDS * 1000)
-    print(f"health inside the poll deadline: {beat_poll}/{runs}")
-    print(f"surface inside the hook budget:  {beat_total}/{runs}")
+    beat_total = sum(1 for r in results if r["surface"] < push._COLD_START_DEADLINE_SECONDS * 1000)
+    print(f"surface inside the cold-start deadline: {beat_total}/{runs}")
 
 
 if __name__ == "__main__":

@@ -64,7 +64,8 @@ for index in range({pushes} + 3):
         store_db_path=paths.store_db_path(store_dir),
         store_id=None,
         server_command=command,
-    )
+        poll_deadline=time.monotonic() + 30,
+    ).sock
     try:
         sock.settimeout(30)
         rpc.surface_once(
@@ -72,7 +73,9 @@ for index in range({pushes} + 3):
             prompt=prompts[index % len(prompts)],
             limit=5,
             envelope=envelope.build_envelope(session_id="margin-probe", pid=1),
-            deadline_at_ms=int((time.time() + 4.0) * 1000),
+            deadline=rpc.PushDeadline(
+                at_ms=int((time.time() + 4.0) * 1000), by=time.monotonic() + 30
+            ),
         )
         print(f"{{time.time():.6f}}", flush=True)
     finally:

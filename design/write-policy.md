@@ -525,8 +525,9 @@ same direction:
    `reindexing` or contention it refuses before anything commits; and on `deadline_passed` it rolls back
    deliberately, because a `surface` row means *this session was shown this memory* and a push answered past
    the hook's own deadline was shown to nobody (`architecture.md` §"A push the agent never saw is never
-   recorded as shown"). The hook's response to all of them is identical: one line to its own `hook.log` plus
-   a model-facing relay on stdout, never a read (`architecture.md` §"Degraded modes"). So the rate is
+   recorded as shown"). The hook's response to all of them has one shape: one line to its own `hook.log`
+   plus a model-facing notice on stdout — a relay, or, for a start still running, a statement that memories
+   resume — never a read (`architecture.md` §"Degraded modes"). So the rate is
    conditional on the service having been reachable, **healthy, and answering within the hook's
    deadline**. Making the hook write would mean handing it a writable store handle, which is a worse trade
    than a stated caveat.

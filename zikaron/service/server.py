@@ -17,8 +17,9 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import aiosqlite
 
@@ -336,8 +337,8 @@ async def _handle_connection(
 
 @dataclass(slots=True)
 class RunningServer:
-    """`asyncio.Server` plus the one thing it does not track on its own: which connections are
-    currently open.
+    """`asyncio.Server` plus what it does not track on its own: which connections are currently
+    open, and which socket file it bound.
 
     `asyncio.Server.close()` stops *accepting new* connections; it does nothing to a connection
     already accepted, and `wait_closed()` explicitly documents waiting "until server is closed
@@ -361,7 +362,12 @@ class RunningServer:
     """
 
     server: asyncio.Server
+    #: The socket file `serve` bound, by inode: every stop removes the path only while it still
+    #: names this one (`lifecycle.unlink_if_still_bound`).
+    socket_inode: int
     _connections: set[asyncio.Task[None]] = field(default_factory=set)
+    #: Run first by `shut_down`, the one step every way this service stops passes through.
+    on_shut_down: Callable[[], None] = field(default=lambda: None)
 
     async def close_all_connections(self, deadline: float | None = None) -> None:
         """Cancel every connection's handler task and wait until none remain attached — the one
@@ -461,10 +467,10 @@ class RunningServer:
                 await asyncio.sleep(0)
 
     async def shut_down(self) -> None:
-        """Stop accepting new connections, close every connection it can observe, then wait for
-        the listener itself to release its socket — in that order, since closing connections first
-        is what makes the final `wait_closed()` resolve without depending on any client's own
-        behaviour.
+        """Run `on_shut_down`, stop accepting new connections, close every connection it can
+        observe, then wait for the listener itself to release its socket — in that order, since
+        closing connections first is what makes the final `wait_closed()` resolve without depending
+        on any client's own behaviour.
 
         **One absolute deadline spans this whole method**, not one per step:
         `_SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS` is the budget for *shutdown*, so it is computed
@@ -486,6 +492,7 @@ class RunningServer:
         does not resist being cancelled.
         """
         deadline = time.monotonic() + _SHUTDOWN_QUIESCENCE_DEADLINE_SECONDS
+        self.on_shut_down()
         self.server.close()
         await self.close_all_connections(deadline)
         remaining = deadline - time.monotonic()
@@ -503,8 +510,11 @@ class RunningServer:
             ) from None
 
 
-async def serve(ctx: ServiceContext, sock_path: str) -> RunningServer:
-    """Start listening on `sock_path`. The caller owns the socket file's own permissions."""
+async def serve(
+    ctx: ServiceContext, sock_path: str, *, on_shut_down: Callable[[], None] = lambda: None
+) -> RunningServer:
+    """Start listening on `sock_path`, running `on_shut_down` first whenever the server is shut
+    down. The caller owns the socket file's own permissions."""
     connections: set[asyncio.Task[None]] = set()
 
     async def _on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -523,11 +533,17 @@ async def serve(ctx: ServiceContext, sock_path: str) -> RunningServer:
     # From 3.13, closing a Unix server unlinks its own socket path unless told not to. On its
     # self-stop and signal paths this service unlinks the socket itself *before* closing the
     # listener, so a client arriving during shutdown finds nothing to connect to and starts a fresh
-    # server rather than reaching a dying one. (`run`'s error path closes first and unlinks after,
-    # which is a known and recorded debt.) A second unlinker would make that ordering meaningless
-    # wherever it holds, so the option is switched off — as keyword arguments, because on 3.12 it
-    # does not exist and passing it raises `TypeError`.
+    # server rather than reaching a dying one — and only while the path is still its socket.
+    # (`run`'s error path closes first and unlinks after, which is a known and recorded debt.) A
+    # second unlinker would make that ordering meaningless wherever it holds, so the option is
+    # switched off — as keyword arguments, because on 3.12 it does not exist and passing it raises
+    # `TypeError`.
     server = await asyncio.start_unix_server(
         _on_connect, path=sock_path, limit=_READ_LIMIT, **unix_server_kwargs()
     )
-    return RunningServer(server=server, _connections=connections)
+    return RunningServer(
+        server=server,
+        socket_inode=Path(sock_path).stat().st_ino,
+        _connections=connections,
+        on_shut_down=on_shut_down,
+    )
