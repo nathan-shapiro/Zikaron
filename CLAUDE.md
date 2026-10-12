@@ -15,6 +15,11 @@ amended; `design/knowledge-index.md` is normative for the second):
   nothing it writes becomes searchable text — so no write policy, no consolidation, and **no scope
   test**: it is whatever corpus somebody points it at.
 
+**And, on request, the guards** (D38, `design/guards.md` is normative): deterministic Claude Code
+hooks, independent of both stores, that refuse a find-replace edit to an authored file and a
+`pgrep -f`/`pkill -f` whose pattern matches the shell running it, and remind the agent to re-read
+what it edited. They hold no knowledge, and this repository does not install them.
+
 ## Project memory
 `FINDINGS.md` is this project's **living working memory** — the decision index, where the work stands, and
 what is still open. It is imported below, so it is in context every session. **Maintain it continuously**:
@@ -67,9 +72,9 @@ falsifies, in the one place nobody edits when adding one.
 | **`design/build-plan.md`** | **Per-milestone briefs: scope, normative sections, invariants, done-when, scope fence.** Read the brief for the milestone you are on |
 | **`design/coding-standards.md`** | **Binding.** Structure, domain model, typing, the test tiers, invariant tests, comment rules, dependency rules, the check gate, and the rules for bulk edits to prose in code |
 | **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, K1–K13 and 16 invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
-| **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, publication by trusted publishing, **the `zikaron` front door and what `doctor` checks**, **model acquisition — the durable cache, the pinned revision and digest set, when digests are checked and why not on every start**, the version scheme and its artefact-shape rule, **what CI asserts and what it provably cannot** |
+| **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, publication by trusted publishing, **the `zikaron` front door and what `doctor` checks**, **model acquisition — the durable cache, the pinned revision and digest set, when digests are checked and why not on every start**, the version scheme (a minor bump means a schema bump), **what CI asserts and what it provably cannot** |
 | **`design/harness.md`** | **The two supported harnesses as one table (D34)**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership, the consolidator's model, and **the installer's two targets** — the value/shape split, the flags and what each refuses |
-| **`design/edit-guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge — what Claude Code was measured to deliver, installation by selection, fail-open |
+| **`design/guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` — what Claude Code was measured to deliver, installation by selection, fail-open |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
 

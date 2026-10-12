@@ -5668,7 +5668,7 @@ installer writes** into either harness: the golden files under `.kiro/` and
 
 ## M37 — Edit guards: a find-replace edit is refused, and an edit asks to be re-read
 
-Normative: **`design/edit-guards.md`** (all of it); `design/harness.md` §"The installer's two
+Normative: **`design/guards.md`** (all of it); `design/harness.md` §"The installer's two
 targets" for where the guard selection's shape lives; `design/architecture.md` §"The install
 contract". Decision: D38.
 
@@ -5679,7 +5679,7 @@ that evaluating behaviour and reacting is the only way a rule has held in this p
 rules into deterministic synchronous predicates and an asynchronous watcher. M37 builds the first
 class with **no model at all**, for two rules `CLAUDE.md` already states. The watcher class is not
 scoped by this milestone and stays a proposal. The proposal's stated risks are answered in
-`design/edit-guards.md`: a false block (§3.4's override and §6's fail-open), per-call latency (no
+`design/guards.md`: a false block (§3.4's override and §6's fail-open), per-call latency (no
 model, stdlib only, operator: timing is not a constraint), and a fourth place rules live (two rules,
 both already in `CLAUDE.md`; the hook is enforcement, not a new source).
 
@@ -5691,7 +5691,7 @@ Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` 
 
 1. **`zikaron/guard/`, a new stdlib-only package, and the console script `zikaron-guard`.** It reads
    the hook payload from stdin and dispatches on `hook_event_name`: `PreToolUse` runs the
-   find-replace rule (`design/edit-guards.md` §3), `PostToolUse` the re-read nudge (§4). Pure
+   find-replace rule (`design/guards.md` §3), `PostToolUse` the re-read nudge (§4). Pure
    functions from a parsed payload to a decision, with a thin `main` that does the I/O, so the rule
    table is tested without a process. The new package joins `check.sh`'s coverage list, which
    `tests/test_check_gate.py` holds complete. The script joins `[project.scripts]`, which nothing
@@ -5704,7 +5704,7 @@ Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` 
    from that `None`, not written as a branch on the harness name. They do not enter `TRIGGERS`,
    which is `zikaron-hook`'s dispatch table. The field gets its row in `design/harness.md` §"The
    table" and its drift-guard test in `tests/test_harness_table.py`, as every differing value does.
-   The payload's own field names are **not** spec data (`design/edit-guards.md` §1).
+   The payload's own field names are **not** spec data (`design/guards.md` §1).
 3. **An installer selection, `--components {memory,guards,both}`, default `memory`.** Without the
    flag, an install writes byte-for-byte what it writes today. `guards` writes only the guard hook
    groups; `both` writes both. `--harness kiro` with `guards` or `both` is refused before anything is
@@ -5712,11 +5712,11 @@ Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` 
 4. **Ownership by selection.** The Claude Code target recognises a guard group by its command's
    file name, as it already recognises a memory group, and an install replaces or adds only the
    groups of the selection it was given. `Commands` gains the guard script, and `missing()` checks
-   only the scripts the selection needs. A guards-only install is exactly `design/edit-guards.md`
+   only the scripts the selection needs. A guards-only install is exactly `design/guards.md`
    §5's: the guard groups under `hooks` and nothing else — no `enabledMcpjsonServers`, no
    `permissions.allow` entry, no `.mcp.json`, neither the consolidator nor the skill, none of the
    memory install's notes — and `--no-trust-tools` is a no-op. Each guard entry states its
-   `timeout`. **The start text** (`design/edit-guards.md` §5) is carried by `zikaron-hook`'s
+   `timeout`. **The start text** (`design/guards.md` §5) is carried by `zikaron-hook`'s
    existing `SessionStart`/`SubagentStart` entries: `guards` and `both` write
    `zikaron-hook --components guards|both`, a `memory` install writes the entry unchanged, and a
    guards-only install therefore writes those two groups too, with `zikaron-hook` among the
@@ -5729,7 +5729,7 @@ Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` 
    They are exercised in throwaway projects outside every scratch root, as the live test does.
    `~/Trading/LeibaTrader`, which runs this `.venv`, is likewise unaffected: its
    `settings.local.json` names no guard.
-6. **Documents.** Written with this brief: `design/edit-guards.md`, D38 in `design/overview.md` and
+6. **Documents.** Written with this brief: `design/guards.md`, D38 in `design/overview.md` and
    `FINDINGS.md`, and the new document's rows in the design tables of `CLAUDE.md`,
    `design/README.md` and `design/overview.md` §5. Owed by the build: `design/harness.md` §"The
    table" (item 2), its artefact table, and §"Three flags, and what each refuses" gaining
@@ -5740,7 +5740,7 @@ Feasibility is measured, not assumed: `research/claude-code-tool-hook-probe.md` 
 7. **The prompt texts, written by memory-reviewer** (operator decision 2026-10-07). Before the
    code that emits them is final, memory-reviewer writes the final wording of the guard start
    text, the deny message, the invalid-marker message, the override acknowledgement and the nudge
-   into the M37 review file, against what `design/edit-guards.md` §3.4, §3.5, §4 and §5 say each
+   into the M37 review file, against what `design/guards.md` §3.4, §3.5, §4 and §5 say each
    must contain. The builder copies that wording verbatim and the tests assert it.
 
 **The release that carries M37 is a patch, `0.3.1`** (operator, 2026-10-07).
@@ -5756,11 +5756,11 @@ nothing an upgrade must refresh, which is the reason the rule exists. The tag is
 - **Determinism**: the same payload, `$TMPDIR` and contents of any scratch script the command runs
   always yield the same output. A property test over generated commands calls the decision
   function twice.
-- **The rule table**: every row of `design/edit-guards.md` §3.2, the command-position rule (§3.1),
+- **The rule table**: every row of `design/guards.md` §3.2, the command-position rule (§3.1),
   the heredoc rule (rows 1–4 scan a body only under a shell or interpreter opener; row 5 never
   looks inside one for its sink),
   line continuation, the per-form targets and exemptions (§3.3) and the "not denied" list, as a
-  parametrised table of commands with their expected decision. **`design/edit-guards.md` §8 is
+  parametrised table of commands with their expected decision. **`design/guards.md` §8 is
   the table's seed, and the one place its rows are listed**: the test table holds every row of
   §8 and every edge §7 names with the value §7 gives it, judged under §8's stated payload. The test pins `cwd` and `$TMPDIR` with `monkeypatch`, since on the
   macOS job `$TMPDIR` is set by the OS and a row judged under the runner's own value would differ
@@ -5769,7 +5769,7 @@ nothing an upgrade must refresh, which is the reason the rule exists. The tag is
 - **The override**: examined only after a form matched; a valid one returns **no
   `permissionDecision`**, only the acknowledging `additionalContext`, which names every authored
   target of every form that matched, each once, in command order, or the fixed clause where none
-  resolves (`design/edit-guards.md` §3.4, amended 2026-10-07); a bare marker, a one-word
+  resolves (`design/guards.md` §3.4, amended 2026-10-07); a bare marker, a one-word
   reason, or a marker glued to a preceding word (`f#ZIKARON-FORCE`) denies with the matching
   message; a marker on a command no form matches produces no output at all.
 - **`tool_name`**: a `PreToolUse` payload for any tool but `Bash`, and a `PostToolUse` payload for
@@ -5792,12 +5792,12 @@ nothing an upgrade must refresh, which is the reason the rule exists. The tag is
   carries no override syntax. A `memory` install's start entry is byte-identical to today's.
 - **A live test** (`integration_claude`): one real session under `--permission-mode
   bypassPermissions`, **in a project created outside every scratch root** of
-  `design/edit-guards.md` §3.3 — a nonce directory under `Path.home() / ".cache" /
+  `design/guards.md` §3.3 — a nonce directory under `Path.home() / ".cache" /
   "zikaron-live-tests"`, removed in teardown — because pytest's `tmp_path` lies under `/tmp` or
   `$TMPDIR`, where the guard would exempt the denied command and suppress the nudge; given the exact commands to run as the probe was, so that neither the edit nor
   the override is the model's choice, and asserted on what the harness recorded rather than on what
   the model chooses to say. In it a `sed -i` is denied with the deny reason as its tool result — the
-  deny holding under that mode is itself one of `design/edit-guards.md` §2's rows; the override
+  deny holding under that mode is itself one of `design/guards.md` §2's rows; the override
   runs, changes the file, and its acknowledgement reaches the model; and an `Edit` is followed by
   the nudge. **The mode is forced, and it hides one thing**: under headless `default` a
   no-decision command waits for an approval nobody can give, so the file would not change; and under
@@ -5807,7 +5807,7 @@ nothing an upgrade must refresh, which is the reason the rule exists. The tag is
   different places**: the deny reason is a `tool_result` in the `stream-json` output, while
   `additionalContext` never appears there and is found only in the session's own transcript under
   `~/.claude/projects/`, as an `attachment` rendered as `<system-reminder>PostToolUse:Edit hook
-  additional context: …` — the fragile half (`design/edit-guards.md` §2), so that is the record
+  additional context: …` — the fragile half (`design/guards.md` §2), so that is the record
   the test reads for the nudge and the acknowledgement.
   Hermetic equivalents stub the harness as the existing tiers do; nothing is covered only live.
 
@@ -5822,7 +5822,7 @@ install leaves `enabledMcpjsonServers` and `permissions.allow` byte-identical, a
 guards install leaves the guard groups byte-identical, and the shared start entry's flag is the
 union of what it carried and what the selection adds. Every cell's expected outcome is written
 into the test table before the code; any cell whose answer is not obvious from
-`design/edit-guards.md` §5 is a design question, raised before the first review round, not after a
+`design/guards.md` §5 is a design question, raised before the first review round, not after a
 blocker.
 
 ### Done when
@@ -5834,13 +5834,13 @@ blocker.
    and the machine's `$TMPDIR`. A note in `research/` reports the number of commands, how many a
    form matched, how many would have been denied, and every would-be deny verbatim with a reading
    of true or false. A false deny that recurs is a §3 change with its §8 row in this build; one
-   seen once is a §7 entry. The count is the denominator `design/edit-guards.md` §7's count (a) is
+   seen once is a §7 entry. The count is the denominator `design/guards.md` §7's count (a) is
    read against.
 3. In one session in a throwaway project with the guards installed, outside every scratch root,
    whose prompt names a task with exact commands that include a denied form — as the live test does
    — while saying nothing about the hooks, the session's own records show a deny as a `tool_result` and a nudge as a transcript
    `attachment`, and whether a re-read of the edited path followed the nudge is reported
-   (`design/edit-guards.md` §7's count (d), n=1, without a bar). The observation goes in
+   (`design/guards.md` §7's count (d), n=1, without a bar). The observation goes in
    `research/`.
 4. `./check.sh` is green. The pull request's CI is the version matrix.
 
@@ -5850,11 +5850,134 @@ blocker.
 2026-10-06). **Not** installed in this repository (item 5). **Not** the asynchronous watcher class, nor any model on any path. **Not** an uninstall
 or a removal of a selection that was not requested. **Not** a `doctor` row for the guards. **Not**
 an override log or any store event: the transcript is the record. **Not** a rule beyond the two in
-`design/edit-guards.md`; a third rule is a design change to that document first. **No change to
+`design/guards.md`; a third rule is a design change to that document first. **No change to
 what a `memory` install writes**: the golden files under `.kiro/` and `test_install_targets.py`'s
 artefacts for the default selection do not move. **Nothing in the service or the store**; the
 hook client changes only to read `--components` on its start triggers, and with no flag does
 exactly what it does today.
+
+## M38 — A `pkill` that killed the shell running it, and a `pgrep` that never saw a death
+
+Normative: **`design/guards.md` §9**, and §3.1 for the command position it reuses unchanged;
+§5 for where the matcher lives. Decision: D38, amended 2026-10-11 (operator: *write it as M38*). Evidence:
+`research/m38-selfmatch-replay.md`, `research/pgrep-ancestor-exclusion.md`.
+
+**What was found.** Claude Code runs each `Bash` and `Monitor` command inside a shell whose command
+line carries the command's text, alive until the command ends. On Linux a `pgrep -f`/`pkill -f`
+whose pattern matches that text matches the shell. Replayed over every local transcript, the rule
+catches 301 of 33,784 commands doing so, and 38 of them were recorded failing of it — 36 whose shell was killed
+(`Exit code 144`) and two liveness loops (`until ! pgrep -f …`, `if ! pgrep -f …`) that never
+ended; most of the rest are liveness checks that could only ever answer *running*. An agent in
+`~/Trading/LeibaTrader` made the mistake with the rule written in that project's `CLAUDE.md` and in
+a Zikaron memory record, which is the case `design/guards.md` §1 makes for a guard over a
+statement.
+
+**The rules come from the replay, not from conceived commands.** §9's rule table cites what the
+replay found, and its known gaps (§9.4) are values rather than open questions. A review finding
+moves a rule only by naming an observed command — §7's rule, applied to the brief as well as to the
+build.
+
+### What ships
+
+1. **The rule, in `zikaron/guard/`** — a module judging one parsed command as §9.1–§9.2 say, which
+   `decision.decide` runs after §3's rule, in the order §9.2 gives. `decide` gains a `platform`
+   argument, which `main` passes from `sys.platform` and the tests name; nothing else reads it.
+   **Amended 2026-10-11 (operator: *"Sure, let's do substitution"*)**: a pattern that is exactly a
+   variable the command binds is read as the bound value, as §9.1 now says, the binding read as
+   §3.3 reads one; the operator's probe `P=selfmatch-guard-probe; pgrep -af "$P"` is the observed
+   command.
+2. **`!` is skipped by this rule alone** (§9.1), in the new module, with §3.1's wrappers after it
+   skipped as before any command word. §3.1's grammar and §3's rule do not change, so `! sed -i …`
+   stays §7's stated miss (operator, 2026-10-11: no revisiting the existing guards).
+3. **`Monitor` is judged.** The spec field's `find_replace` hook is renamed `command`, since the
+   hook it names now carries two rules, and its matcher becomes `Bash|Monitor`; the guard already
+   reads its tool set by splitting the matcher (§5), so §3's rule judges `Monitor` commands too.
+   The field's row in `design/harness.md` §"The table" moves with it, held by
+   `tests/test_harness_table.py`.
+4. **The deny message, per platform** (§9.3), and on a call only this rule would deny that carries
+   an invalid marker, the same message with §3.4's marker clause appended (§9.2). **Its final
+   wording is memory-reviewer's**, written into the M38 review file before the code that emits it
+   is final, as §5 requires of every prompt text. The guard start text does not change: the deny
+   carries its own fix, at the cost of one retry.
+5. **The premise test** (§9.6), which runs on CI's linux and macOS jobs.
+6. **The replay, compared per command against the shipped function.**
+   `experiments/m38_selfmatch_replay.py` carries the prototype the brief's counts came from; the
+   build keeps it under another name, judges every command with both in one pass, and reports in
+   `research/m38-selfmatch-replay.md` each command on which they disagree, with both verdicts, and
+   the aggregate counts from that same pass — beside the count of commands carrying a `pgrep -f`
+   only inside a double-quoted `$(…)`, which neither judges (§9.4). A disagreement is a defect in
+   one of them, decided in the code review. **Agreement is evidence only about what the corpus
+   holds**: it has no `pkill` with an option letter that could be read as a signal, no option after
+   the pattern and no darwin transcript, so those rest on §9.5's rows alone.
+7. **Documents.** Written with this brief: `design/guards.md` §9 and its edits to §1, §3 (the
+   `Monitor` matcher, which §3's rule therefore also judges — a consequence of one shared matcher,
+   not a change to its rules) and §7's rule and counts; D38 in `design/overview.md` and
+   `FINDINGS.md`. Owed by the build: `design/harness.md` (item 3); `README.md`'s description of the
+   guards, which names one refusal; and, by the operator's direction of 2026-10-11, every document
+   that says what Zikaron ships — `README.md`'s opening, `CLAUDE.md` §"What Zikaron is", and
+   `design/overview.md` §1, §2 and §3.
+8. **The rename** (operator, 2026-10-11): with a rule that judges no edit, "edit guards" becomes
+   "guards". `design/edit-guards.md` becomes `design/guards.md`, `HarnessSpec.edit_guards` becomes
+   `guards` and its type `EditGuards` becomes `Guards`, and every live reference follows; `reviews/`
+   and the archive's moved blocks keep the old name, as records. The guard start text's heading,
+   which names the editing rules the text states, does not change (item 4).
+
+**What landing in this tree does.** `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory` run this
+repository's `.venv/bin/zikaron-guard`, so every edit to `zikaron/guard/` is live in all three at
+their next `Bash` call. **So the build is done in a git worktree, with its own `.venv`**, and
+reaches this tree only once its gate is green. From then the rule is live in those projects for
+`Bash`, and for `Monitor` only after `zikaron install --components both` is re-run there, since the
+matcher is written into their settings; that re-run is the operator's.
+
+**The release that carries M38 is `0.3.2`, a patch**: the schema does not move
+(`design/distribution.md` §3). Its release note says to re-run `install` to cover `Monitor`.
+
+### Invariants and properties to cover
+
+- **The rule table**: every row of `design/guards.md` §9.5, as a parametrised table judged
+  through the hook's I/O, as §8's is. A row found during the build goes into §9.5 in the same change
+  as its test.
+- **Determinism**: the property test of §1 holds with `platform` among its inputs, and a decision
+  is the same with warnings as errors as without (§9.2).
+- **The option grammar per platform**: each option §9.1's table lists as taking an argument, in a
+  cluster and alone, on its own platform; `pkill`'s signal list, so that no option letter is read
+  as a signal; an unlisted platform is silent.
+- **The exemption** (§9.2): `-a` and a `grep -v` whose literal pattern searches the command —
+  basic, `-E`, `-F`, `-i`, `-e` — silent on `linux` only; without `-a`, or with a `$$` filter, a
+  deny.
+- **Order and override** (§9.2): §3's deny first; a valid override silent with no acknowledgement
+  unless §3's rule would have denied; an invalid marker on a call only this rule would deny gets
+  §9.3's message with §3.4's marker clause.
+- **`tool_name`**: `Monitor` is judged by both rules; any other tool but `Bash` produces no output.
+- **Fail-open** (§6): an exception inside the new rule exits 0 with no output.
+- **Stdlib only**: the new module is covered by `tests/test_hook_stdlib_only.py`.
+- **The premise test** (§9.6), on `linux` and `darwin`.
+- **The installer**: a `guards` or `both` install writes `Bash|Monitor`; re-running it over an
+  older guards install replaces the group, and a `memory` install writes what it wrote before.
+
+### Done when
+
+1. Items 1–8 are in, every new test was **seen red** against the mutation it names, and the CI
+   macOS job ran the premise test green.
+2. The per-command comparison (item 6) lists no disagreement, or each is decided in the code
+   review.
+3. **One live session**, as M37's live test is run — a throwaway project outside every scratch
+   root, `--permission-mode bypassPermissions`, the exact commands given — shows a self-matching
+   `pkill -f` denied with this rule's message as its `tool_result`, the same command with `-A`
+   running, and a self-matching `pgrep -f` through `Monitor` denied with this rule's message. The
+   observation goes in `research/`.
+4. `./check.sh` is green. The pull request's CI is the version matrix.
+
+### Scope fence
+
+**Not** `ps … | grep … | kill`, `killall`, `pidof`, `pidwait`, or any quoted script (`bash -c`,
+`ssh host '…'`) — §9.4's gaps, each moved only by an observed command. **Not** a dynamic check: the
+guard never lists processes, so another session's shell or a sibling in the pipeline is out of
+reach. **Not** a change to the guard start text, to the nudge, to §3.1's grammar or §3's forms, or
+to the override's syntax — the existing guards' rules are not revisited (operator, 2026-10-11);
+item 8 renames them and changes none. **Not** kiro. **Not** installed in this repository (M37 item
+5), and not re-installed in the three projects that run it — that is the operator's. **Nothing in
+the service, the store or the memory hook.**
 
 ## Standing notes for whoever picks this up
 

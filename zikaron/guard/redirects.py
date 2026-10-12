@@ -1,9 +1,10 @@
-"""Sinks and redirect tokens (`design/edit-guards.md` §3.1).
+"""Sinks and redirect tokens (`design/guards.md` §3.1).
 
 A **sink** writes a file: an unquoted `>` or `>>` with its target in the next token, or glued to
 it. A **redirect token** is any token that is part of a redirection — a sink and its target,
 `<…`, `>&…`, `&>…`, a digit followed by `>` or `<`, and the word after a bare operator of those.
-Redirect tokens are never targets of rows 1 to 3 nor of `tee`.
+Redirect tokens are never targets of rows 1 to 3 nor of `tee`, nor operands of `pgrep`, `pkill` or
+§9.2's `grep` (`arguments`).
 
 | Command | Sinks | Redirect tokens |
 |---|---|---|
@@ -70,3 +71,19 @@ def find_redirects(tokens: Sequence[Token]) -> Redirects:
             if raw in _BARE_OPERATORS or _BARE_DIGIT_REDIRECT.fullmatch(raw):
                 redirect.add(index + 1)
     return Redirects(tuple(sinks), frozenset(redirect))
+
+
+def arguments(tokens: Sequence[Token], word: int) -> tuple[Token, ...]:
+    """The tokens after the command word at index `word`, its redirect tokens left out — what
+    the program itself is handed (§9.1).
+
+    >>> from zikaron.guard.chars import Char, Kind
+    >>> from zikaron.guard.grammar import parse
+    >>> (pipeline,) = parse([Char(c, Kind.CODE) for c in "pgrep -f 2>/dev/null > out x"])
+    >>> [token.raw for token in arguments(pipeline[0].tokens, 0)]
+    ['-f', 'x']
+    """
+    redirect = find_redirects(tokens).tokens
+    return tuple(
+        token for index, token in enumerate(tokens) if index > word and index not in redirect
+    )

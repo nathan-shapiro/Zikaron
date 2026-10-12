@@ -1,4 +1,4 @@
-"""The guard start text `zikaron-hook --components guards|both` emits (`design/edit-guards.md` §5).
+"""The guard start text `zikaron-hook --components guards|both` emits (`design/guards.md` §5).
 
 A module of its own, importing nothing, because the hook that emits it runs on every session and
 subagent start and must not load the rule engine to print a constant. Its wording is

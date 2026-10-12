@@ -1,4 +1,4 @@
-"""Row 5 of `design/edit-guards.md` §3.2: literal text written into a file.
+"""Row 5 of `design/guards.md` §3.2: literal text written into a file.
 
 | Command word | Matches when | Targets |
 |---|---|---|

@@ -1,4 +1,4 @@
-"""Which targets are scratch: `design/edit-guards.md` §3.3.
+"""Which targets are scratch: `design/guards.md` §3.3.
 
 A target is **scratch** when, with its quotes removed and a relative path joined to the payload's
 `cwd` and normalised as a string — no filesystem access — it is or lies under one of the scratch

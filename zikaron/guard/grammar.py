@@ -1,4 +1,4 @@
-"""Simple commands and pipelines: the part of shell grammar `design/edit-guards.md` §3.1 parses.
+"""Simple commands and pipelines: the part of shell grammar `design/guards.md` §3.1 parses.
 
 A **simple command** runs from a command position to the next unquoted `|`, `||`, `&&`, `;`, `&`,
 `)` or newline; its tokens split on whitespace, and a quoted string is one token. A **pipeline**

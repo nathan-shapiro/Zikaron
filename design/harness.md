@@ -73,7 +73,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
 | Hook `command` | a shell command line, measured, so the path is shell-quoted | a **shell command line** too — an unquoted path containing a space does not run at all, so the path is shell-quoted and a start entry's `--components` is its arguments (`hook-command-shell-probe`) |
-| Edit-guard hooks (`edit_guards`) | none — not offered: its post-edit hook has no documented path to the model, so the installer refuses the guards here (edit-guards §2) | `PreToolUse` matcher `Bash`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/edit-guards.md` §5) |
+| Guard hooks (`guards`) | none — not offered: its post-edit hook has no documented path to the model, so the installer refuses the guards here (guards §2) | `PreToolUse` matcher `Bash\|Monitor`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/guards.md` §5) |
 | MCP tool-call duration | a 330 s call **completed**, with no `timeout` on the server entry: kiro reported `status: Completed` and the model's reply carried the tool's own `slept 330.1s` (`spikes/m34_tool_call_duration_stub.py`, 2026-09-29) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
 | Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
@@ -594,7 +594,7 @@ contract" states the predicates and the merge.
 ### What a Claude Code install writes
 
 Four artefacts for the memory store, against kiro's two-plus-a-merge; `--components` selects the
-memory store, the edit guards (`design/edit-guards.md` §5), or both:
+memory store, the guards (`design/guards.md` §5), or both:
 
 | Artefact | Path | Selection | Notes |
 |---|---|---|---|
@@ -645,7 +645,7 @@ to start — is derived from the stated value, not from either default.
 
 - **`--components` is Claude Code's for the guards.** `memory` is the default and writes what an
   install wrote before the flag existed. `guards` and `both` are **refused** under kiro, before
-  anything is written, and the refusal is read from the seam — `HarnessSpec.edit_guards` is `None`
+  anything is written, and the refusal is read from the seam — `HarnessSpec.guards` is `None`
   there — never from the harness's name. `--model` under `guards` is refused too, since that
   selection ships no consolidator; `--no-trust-tools` asks nothing of the guards and is a no-op.
 - **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two

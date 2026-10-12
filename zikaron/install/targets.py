@@ -419,7 +419,7 @@ class ClaudeCodeTarget(HarnessTarget):
         key, which would have deleted a user's own hook and, worse, refused the install first on
         the grounds that it "differed".
 
-        **An install touches only its own selection** (`design/edit-guards.md` §5): triggers it does
+        **An install touches only its own selection** (`design/guards.md` §5): triggers it does
         not write are copied verbatim, so guards over a memory install keep every memory hook, and
         the reverse. The start entries both selections share take the union of what they carry and
         what is being installed.

@@ -66,9 +66,9 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 | D34 | Two harnesses, one implementation: kiro-cli and Claude Code, differences carried as data behind one seam |
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
-| D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x` with an artefact-shape rule |
+| D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x`, ~~with an artefact-shape rule~~ — **amended 2026-10-11**: a minor bump means a schema bump, nothing else |
 | D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back |
-| D38 | Edit guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read |
+| D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform |
 
 ## Current state — resume here
 
@@ -76,21 +76,26 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 **nothing** — neither the reranker nor any chunking change — and that is the result, not a stall.
 Each milestone's record is in `FINDINGS-archive.md`, M37's in §"Closed with `0.3.1`"; the briefs
 are in `design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md`
-and decoded in `research/injected-prose-log.md`.
+and decoded in `research/injected-prose-log.md`. **Since then, one fix has landed:** the first
+push after an idle stop, as `fe87d26` (PR #24) — the split cold-start deadline and `starting`,
+one service per store, and every client's poll ending when its spawned service exits; its record
+is in `FINDINGS-archive.md` §"The first push after an idle stop".
 
 **`0.3.1` is released** — tagged `v0.3.1` on `028b4b2` and published by `release.yml`
-(2026-10-08). It is a patch: `design/distribution.md` §3's minor triggers — an artefact changing
-shape, a schema bump — fire for neither (`design/build-plan.md` §M37). `main` moves on to
-`0.3.2.dev0`.
+(2026-10-08). It is a patch, since the schema did not move. `main` is `0.3.2.dev0`. **A minor bump
+means a `meta.schema_version` bump and nothing else** (operator, 2026-10-11; D36,
+`design/distribution.md` §3), so M38 ships as `0.3.2`, and its pull request's commit sets
+`version = "0.3.2"` (operator, 2026-10-11) — the commit to tag once merged; `main` then goes to
+`0.3.3.dev0`.
 
-**The edit guards (M37, D38, `design/edit-guards.md`) are installed in `~/Trading/LeibaTrader`,
+**The guards (M37, D38, `design/guards.md`) are installed in `~/Trading/LeibaTrader`,
 `~/Dividends` and `~/Memory`** (operator, 2026-10-07), with `--components both`, and they replace
 every hand-written instruction about how to edit in those projects' `CLAUDE.md`, which were
 removed: a project that installs the guards instructs agents about edits not at all (operator,
 2026-10-07). **This repository does not install them** (operator, 2026-10-07): its `.venv` runs
 the code under development, so a broken guard would cripple the agent building it. **§3's rules
 change only on an observed command, never on a conceived edge**
-(`design/edit-guards.md` §7); after any §3 or §8 edit, run
+(`design/guards.md` §7); after any §3 or §8 edit, run
 `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`. **Claude Code runs a hook `command`
 through a shell** (`research/claude-code-hook-command-shell-probe.md`), so every hook path the
 installer writes is shell-quoted.
@@ -101,30 +106,39 @@ keep it out — the research notes carry the counts and their readings, which is
 cite; the verbatim list is re-derivable on this machine with `experiments/m37_guard_replay.py
 --dump`.
 
-**Built and approved, in review as PR #24 — the first push after an idle stop (operator go,
-2026-10-11).** A fix, not a milestone, as PR #19 was; the PR also carries the `0.3.2.dev0` bump
-and the post-`0.3.1` archive pass. The review (`reviews/cold-start-push-review.md`) is APPROVED,
-`./check.sh` is green, and the PR's CI is the matrix run the change needs; the operator merges.
-- **The defect.** The push hook's single ~2 s deadline also covered spawning the service after an
-  idle stop, and a cold start under load missed it: `~/Trading/LeibaTrader`'s two `unanswered`
-  lines on 2026-10-10/11 each land 1–3 s after a service start, and `_degrade` relayed them as an
-  outage. The 2 s was Zikaron's, not the harness's.
-- **What is built.** The split deadline `design/build-plan.md` §M17 shelved: a push that finds the
-  service starting — absent, or still loading its model soon after opening its store, which
-  `health()`'s `model_loaded` and `uptime_seconds` now report — gets `HOOK_TIMEOUT_SECONDS` less
-  2 s, and a start still running at its deadline logs `starting` plus what was waited on, with a
-  notice asking for no report; `design/architecture.md` §"Degraded modes" is normative. One
-  service per socket path is enforced by the service (`zikaron/service/ownership.py`), which also
-  stops when its socket is lost; §"Start-if-absent, without a thundering herd" and §"Idle
-  self-stop". Every client's poll ends when the process it spawned exits, unless it deferred to
-  another service — `lifecycle.StartFailedError` for `zikaron-mcp`, the warm helper and `zikaron
-  init`, which points such a start at `service.log` rather than a bare retry. The hook's lock wait
-  ends at its deadline, and the `surface` and `health()` exchanges are timed whole. **No
-  cold-start timing was measured** (operator): it is machine- and load-specific and decides
-  nothing.
+**M38 is built and reviewed, not landed: a self-matching `pgrep -f`/`pkill -f` is refused, on
+`Bash` and `Monitor`.** The brief (`design/build-plan.md` §M38, `design/guards.md` §9) and the
+build are both APPROVED (`reviews/m38-selfmatch-guard-brief-review.md`,
+`reviews/m38-selfmatch-guard-review.md`, whose §"Prompt texts" is the deny's wording). It is in
+its pull request, branch `m38-selfmatch-guard`, whose CI is the version matrix and runs §9.6's
+premise test on macOS (done-when 1 and 4); it was built in the worktree
+`/home/nathan/Zikaron-m38`, which `git worktree remove` clears once it is no longer wanted.
+**"Edit guards" is now "guards"** (operator, 2026-10-11): `design/guards.md`,
+`HarnessSpec.guards`, `Guards.command`; `reviews/` and the archive keep the old name, as records.
+**What remains is the operator's**: the merge; the `0.3.2` tag and release, whose note says to
+re-run `install` so that `Monitor` is judged; and that
+re-run in `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory`, which run this tree's
+`zikaron-guard` and so judge `Bash` by the new rule now, and `Monitor` only after it. **Operator,
+2026-10-11, for any further M38 review round** — *"say that operator pushes back against idea of
+reviewer to go back and revisit actual edit guards (if reviewer does it)"*: a finding that reopens
+§3–§8's rules is declined with that reason, and the words go verbatim into the brief's
+`On the operator's authority:` line. **The build includes an amendment** (operator, 2026-10-11:
+*"Sure, let's do substitution"*), reviewed to APPROVED in the same file: a pattern that is exactly
+`$NAME` or `${NAME}`, bound earlier in the same command as §3.3 reads a binding and to a literal
+value, is judged on that value — so `P=selfmatch-guard-probe; pgrep -af "$P"` is denied (§9.1).
+**The operator's red line for any further round, verbatim into its brief**: *"I have no problem
+with you iterating till bare approval as long as we're not building a "mini shell". Like we
+should not evaluate variables which are output of other sub shell etc."* — a finding that asks
+the rule to evaluate more of the shell's semantics is declined with that reason; and if the
+reviewer runs out of capacity, stop, record where the loop stands here, and resume the review the
+next day at noon (operator, 2026-10-11).
 
-**The host is busy for days (operator, 2026-09-29)**, so no latency figure measured meanwhile is
-comparable with an idle-host budget.
+After M38, the next work is drawn from §"Owed work" below, the dated items first: the guards'
+field counts (2026-10-21), the `bounds`-on-first-call re-run (2026-10-29) and Q22's post-release
+measurement (2026-10-30).
+
+**The host is busy (operator, 2026-09-29, and again 2026-10-11)**, so no latency figure measured
+meanwhile is comparable with an idle-host budget.
 
 **The five queries the log exists for are in `experiments/m33_call_log_queries.py`**, verified against
 an exercised store rather than only a fresh one: per-method volume with its latency population, what
@@ -164,7 +178,7 @@ without a runner.** Point it at a directory as long as macOS's own `/var/folders
 Verified both ways: green as the tree stands, red with the `socket_dir` fixture pointed back at
 the default tempdir.
 
-**Nothing is installed into this repository**, deliberately — M37's edit guards included, since
+**Nothing is installed into this repository**, deliberately — M37's guards included, since
 the `.venv` runs the code under development. `python -m zikaron.install --project .
 --harness claude-code` would install the memory store; `--harness auto` refuses here because the repo carries both
 dotdirs. Until then the memory tools and the push hook are **not live in this session**.
@@ -233,8 +247,16 @@ proposed.
   147 ms once on a host at load 6–7. **Fix proposed:** bound it at `0.5 × budget`, which still tells
   "refused at the deadline" from "a whole budget late" — the property the test names. Outside M37's
   fence (the service), so for the next milestone that touches the writer.
-- **The edit guards' field counts — compute them 2026-10-21.** The guards went into three real
-  projects on 2026-10-07, so `design/edit-guards.md` §7's counts (a)–(d) can now be read from their
+- **`tests/test_knowledge_cli_integration.py::test_the_foreground_command_the_verb_prints_actually_builds_the_corpus`
+  failed once under `./check.sh` at load ~6.5** (2026-10-11): `refresh docs --wait` exited 1 with
+  *the build left it reindex_required*, so the detached build ended without completing a scan; it
+  passed 3 of 3 alone at the same load. The cause is not readable, because a detached build's output
+  is discarded by design. **Next measurement**: loop the test under a concurrent `./check.sh` and,
+  on a failure, run the foreground command the test captured, which prints why. Then fix what that
+  names — most likely a deadline the build's model load misses under load. For the next milestone
+  that touches the knowledge index; it does not block M38, whose code it does not reach.
+- **The guards' field counts — compute them 2026-10-21.** The guards went into three real
+  projects on 2026-10-07, so `design/guards.md` §7's counts (a)–(d) can now be read from their
   transcripts against each project's pre-install replay (`experiments/m37_guard_replay.py
   --project <dir>`). This is the measurement the interactive test could not make: whether the start
   text holds over a long session, whether overrides carry true reasons or boilerplate, and whether
@@ -455,9 +477,10 @@ normative and APPROVED; M19–M25 landed. What is still open:
 
 Both thin clients and the installer speak both harnesses. `.claude/` is the live crew; `.kiro/`
 stays as the reference for what the product still installs. Two fidelity losses from the move, both
-deliberate: memory-reviewer runs `fable` rather than a different family, so **cross-family
-independence is gone** and an APPROVED is weaker evidence wherever shared-family blind spots are
-plausible; and per-agent write scoping has no frontmatter equivalent, so it is stated in prompts and
+deliberate: memory-reviewer runs `fable`, a different model from the author's `opus` but from
+the same vendor, where under kiro it was GPT, so **cross-vendor independence is gone** and an
+APPROVED is weaker evidence wherever a blind spot shared by one vendor's models is plausible; and
+per-agent write scoping has no frontmatter equivalent, so it is stated in prompts and
 enforced by nothing.
 
 **The self-review loop has a single point of failure, observed failing twice** — the reviewer model

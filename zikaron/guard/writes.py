@@ -1,6 +1,6 @@
 """Row 4's write calls, and each one's target, in a script as the interpreter sees it.
 
-`design/edit-guards.md` §3.2 "Row 4's write calls" lists the patterns; §3.3 "Row 4" says which
+`design/guards.md` §3.2 "Row 4's write calls" lists the patterns; §3.3 "Row 4" says which
 expression of each is its target, how names are bound, and how a target is judged
 (`zikaron.guard.expression`). Each pattern allows `\\?` before a quote, so an escaped `\\"w\\"` is
 seen.

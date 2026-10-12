@@ -1,4 +1,4 @@
-"""The number every installed guard entry states (`design/edit-guards.md` §5)."""
+"""The number every installed guard entry states (`design/guards.md` §5)."""
 
 from typing import Final
 

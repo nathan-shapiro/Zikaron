@@ -1,4 +1,4 @@
-"""Row 4 of `design/edit-guards.md` §3.2: an interpreter given an inline script — and the script.
+"""Row 4 of `design/guards.md` §3.2: an interpreter given an inline script — and the script.
 
 The command word is `python[0-9.]*t?`, `pypy[0-9]*`, `node` or `nodejs`. It runs an **inline
 script** when one of these feeds it:

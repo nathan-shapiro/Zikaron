@@ -123,9 +123,9 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         "--components",
         choices=tuple(selection.value for selection in Components),
         default=Components.MEMORY.value,
-        help="what to install: the memory store (the default), the edit guards — deterministic "
-        "hooks that refuse a find-replace edit to an authored file and ask for a re-read after "
-        "each edit, Claude Code only — or both",
+        help="what to install: the memory store (the default), the guards — deterministic hooks "
+        "that refuse a find-replace edit to an authored file or a pgrep/pkill -f that matches its "
+        "own shell, and ask for a re-read after each edit, Claude Code only — or both",
     )
     return parser
 
@@ -354,14 +354,14 @@ def _refuse_agent_aliasing_a_shipped_target(
 
 
 def _refuse_unoffered_guards(components: Components, target: HarnessTarget) -> None:
-    """Refuse the edit guards where the harness offers none — read from the seam, where such a
-    harness's `edit_guards` is `None`, never from its name."""
-    if not components.guards or target.spec.edit_guards is not None:
+    """Refuse the guards where the harness offers none — read from the seam, where such a
+    harness's `guards` is `None`, never from its name."""
+    if not components.guards or target.spec.guards is not None:
         return
     raise InstallError(
-        f"--components {components.value} asks for the edit guards, which --harness {target.name} "
+        f"--components {components.value} asks for the guards, which --harness {target.name} "
         "does not offer: its post-edit hook has no documented path to the model "
-        "(design/edit-guards.md §2). Install --components memory there."
+        "(design/guards.md §2). Install --components memory there."
     )
 
 

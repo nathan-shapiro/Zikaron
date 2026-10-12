@@ -1,4 +1,4 @@
-"""The find-replace rule against every row of `design/edit-guards.md` §8, through the hook's I/O.
+"""The find-replace rule against every row of `design/guards.md` §8, through the hook's I/O.
 
 Each item is judged under §8's payload — `cwd` `/home/u/proj`, `$TMPDIR` unset, no
 `scratchpad_dir`, no file for row 6 to read — and asserted on what the hook emits: the decision,
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.edit_guard_table import Case, Expected, FileCase, cases, file_cases
+from tests.guard_table import Case, Expected, FileCase, cases, file_cases
 from zikaron.guard import messages
 from zikaron.guard.main import respond
 from zikaron.guard.scratch import normalise
@@ -38,9 +38,11 @@ def _emit(case: Case | FileCase, tmpdir: Path | None = None) -> dict[str, object
         "tool_input": {"command": case.command},
     }
     if tmpdir is None:
-        output = respond(json.dumps(payload), tmpdir=None, read=None)
+        output = respond(json.dumps(payload), tmpdir=None, platform="linux", read=None)
     else:
-        output = respond(json.dumps(payload), tmpdir=str(tmpdir), read=read_script)
+        output = respond(
+            json.dumps(payload), tmpdir=str(tmpdir), platform="linux", read=read_script
+        )
     if output is None:
         return None
     envelope = json.loads(output)["hookSpecificOutput"]

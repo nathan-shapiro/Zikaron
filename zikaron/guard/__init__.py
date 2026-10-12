@@ -1,1 +1,1 @@
-"""The edit guards: two deterministic Claude Code hooks. `design/edit-guards.md` is normative."""
+"""The guards: two deterministic Claude Code hooks. `design/guards.md` is normative."""

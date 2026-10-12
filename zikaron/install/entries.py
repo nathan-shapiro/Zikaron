@@ -90,10 +90,10 @@ _CLAUDE_TRIGGERS: Final = tuple(
 #: The two start triggers, whose shared entry carries the `--components` selection.
 CLAUDE_START_TRIGGERS: Final = (_CLAUDE_TRIGGERS[0], _CLAUDE_TRIGGERS[2])
 
-#: The edit guards' two hook groups, read from the seam for the same reason. The filter is a type
+#: The guards' two hook groups, read from the seam for the same reason. The filter is a type
 #: narrowing: Claude Code is the harness the guards are offered on.
 _CLAUDE_GUARD_HOOKS: Final = tuple(
-    hook for guards in (CLAUDE_CODE.edit_guards,) if guards is not None for hook in guards
+    hook for guards in (CLAUDE_CODE.guards,) if guards is not None for hook in guards
 )
 
 
@@ -300,7 +300,7 @@ def claude_hooks_value(
 
     Every selection writes the two start triggers, whose `zikaron-hook` command carries `start` —
     the selection those entries emit start text for, `components` unless the caller widens it to a
-    union with what is already installed (`design/edit-guards.md` §5). The memory store adds the
+    union with what is already installed (`design/guards.md` §5). The memory store adds the
     prompt trigger; the guards add their two groups, each with its matcher.
 
     The doubled nesting is the harness's own and was confirmed by running it: an event maps to a

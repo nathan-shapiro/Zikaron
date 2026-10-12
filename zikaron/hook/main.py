@@ -48,7 +48,7 @@ def main() -> None:
     module returns (if anything) on that event's own channel, and exit 0 unconditionally.
 
     `--components guards|both` on the command line selects what the start triggers emit
-    (`design/edit-guards.md` §5); without it this is exactly the memory hook.
+    (`design/guards.md` §5); without it this is exactly the memory hook.
     """
     with contextlib.suppress(Exception):
         _run(Components.from_arguments(sys.argv[1:]))

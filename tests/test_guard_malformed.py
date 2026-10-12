@@ -1,5 +1,5 @@
 """Malformed commands and scripts: what the rules give where brackets, quotes or delimiters do not
-close (`design/edit-guards.md` §3.3: a write whose target yields nothing is denied naming no
+close (`design/guards.md` §3.3: a write whose target yields nothing is denied naming no
 target).
 
 Each value below is what §3 gives the input, pinned so the defensive branches that produce it are
@@ -10,6 +10,7 @@ import pytest
 
 from zikaron.guard.decision import Deny, Silent, decide
 from zikaron.guard.expression import Judge, Source
+from zikaron.guard.forms import FormMatch
 from zikaron.guard.scratch import Location
 
 HERE = Location("/home/u/proj")
@@ -43,8 +44,9 @@ HERE = Location("/home/u/proj")
     ],
 )
 def test_a_seen_write_denies_naming_what_resolved(command: str, named: tuple[str, ...]) -> None:
-    decision = decide(command, HERE)
+    decision = decide(command, HERE, platform="linux")
     assert isinstance(decision, Deny)
+    assert isinstance(decision.match, FormMatch)
     assert decision.match.authored_paths == named
 
 
@@ -62,7 +64,7 @@ def test_a_seen_write_denies_naming_what_resolved(command: str, named: tuple[str
     ],
 )
 def test_an_unclosed_construct_hides_nothing_it_does_not_contain(command: str) -> None:
-    assert decide(command, HERE) == Silent()
+    assert decide(command, HERE, platform="linux") == Silent()
 
 
 def test_a_receiver_walk_stops_at_the_start_of_the_script() -> None:

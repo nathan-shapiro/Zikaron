@@ -1,4 +1,4 @@
-"""The override: `#ZIKARON-FORCE #Reason: <at least two words>` (`design/edit-guards.md` §3.4).
+"""The override: `#ZIKARON-FORCE #Reason: <at least two words>` (`design/guards.md` §3.4).
 
 It is examined only after a form matched with a target that is not scratch. It lives in a shell
 **comment** on a line of the command that is not a heredoc body, matched against that comment —

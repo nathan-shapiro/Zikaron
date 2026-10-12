@@ -1,4 +1,4 @@
-"""Command position: which words of a simple command are commands (`design/edit-guards.md` §3.1).
+"""Command position: which words of a simple command are commands (`design/guards.md` §3.1).
 
 A form's command word counts only in command position. A position opens at the start of a simple
 command, after a boundary (`(`, a standalone `{`, an unclosed `$(`), and after `find`'s `-exec`
@@ -87,7 +87,7 @@ def command_words(command: SimpleCommand) -> list[int]:
         for index, token in enumerate(command.tokens)
         if token.boundary is None and token.unquoted in ("-exec", "-execdir")
     )
-    found = {_skip_prefix(command.tokens, start) for start in starts}
+    found = {command_word_at(command.tokens, start) for start in starts}
     return sorted(index for index in found if index is not None and index < len(command.tokens))
 
 
@@ -127,9 +127,9 @@ def changed_directory(command: SimpleCommand) -> str | None:
             return None
 
 
-def _skip_prefix(tokens: Sequence[Token], index: int) -> int | None:
-    """The command word a position at `index` reaches, or `None` when a boundary or the end of the
-    command comes first."""
+def command_word_at(tokens: Sequence[Token], index: int) -> int | None:
+    """The command word a command position at `index` reaches, past its assignments, keywords and
+    wrappers, or `None` when a boundary or the end of the command comes first."""
     while index < len(tokens):
         token = tokens[index]
         if token.boundary is not None:

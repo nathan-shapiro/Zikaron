@@ -1,10 +1,10 @@
-"""`design/edit-guards.md` §8, the find-replace rule's test table, as commands and expectations.
+"""`design/guards.md` §8 and §9.5, the command rules' test tables, as commands and expectations.
 
-§8 is the one place the rule table's rows are listed, so the parametrised test reads it rather
-than holding a second copy. Each row's `Command` cell holds one or more items separated by ` · `;
-an item is one or more backticked spans, each a line of one command, separated by ` / `. A few
-items are written as prose that names a neighbour ("the same ending `f`"); each such phrasing is
-recognised here explicitly, and **any prose not recognised raises**, so a new row cannot be
+§8 is the one place the find-replace rule's rows are listed, so the parametrised test reads it
+rather than holding a second copy. Each row's `Command` cell holds one or more items separated by
+` · `; an item is one or more backticked spans, each a line of one command, separated by ` / `. A
+few items are written as prose that names a neighbour ("the same ending `f`"); each such phrasing
+is recognised here explicitly, and **any prose not recognised raises**, so a new row cannot be
 skipped silently.
 
 The `Expected` cell starts with the decision — *deny*, *silent* or *ack* — and may add what the
@@ -12,6 +12,10 @@ message says: which marker message, the placement clause, and what the deny name
 
 §8.1, row 6's file reads, adds a first column naming the files each row's `$TMPDIR` holds, in the
 forms its preamble lists; `file_cases` reads it, and any form not listed there raises.
+
+§9.5, the self-match rule's table, adds a first column naming the platform and the tool where they
+are not `linux` and `Bash`; its items are backticked lines only, and `selfmatch_cases` raises on
+any prose among them.
 """
 
 import enum
@@ -23,7 +27,7 @@ from typing import Final
 
 from tests.design_tables import DesignTableError, table_with_columns
 
-DOCUMENT: Final = "edit-guards.md"
+DOCUMENT: Final = "guards.md"
 HEADING: Final = "## 8. The test table's seed"
 FILE_READS_HEADING: Final = "### 8.1 Row 6's file reads"
 
@@ -304,3 +308,75 @@ def _padded(text: str, size: int) -> bytes:
     if rest:
         filler += b"#" * (rest - 1) + b"\n"
     return filler + tail
+
+
+SELF_MATCH_HEADING: Final = "### 9.5 The test table's seed"
+_DEFAULT_PLATFORM, _DEFAULT_TOOL = "linux", "Bash"
+
+
+@dataclass(frozen=True)
+class SelfMatchCase:
+    """One item of §9.5: the platform, the tool, the command and the raw `Expected` cell."""
+
+    row: int
+    platform: str
+    tool: str
+    command: str
+    expected: str
+
+    @property
+    def id(self) -> str:
+        return f"row9.5-{self.row}:{self.platform}:{self.tool}:{self.command[:50]}"
+
+
+@dataclass(frozen=True)
+class SelfMatchExpected:
+    """What a §9.5 `Expected` cell asserts: the decision and, for a deny, which message."""
+
+    decision: str
+    #: The find-replace rule's message, not the self-match rule's.
+    find_replace: bool
+    marker_clause: bool
+    placement: bool
+
+    @classmethod
+    def of(cls, cell: str) -> "SelfMatchExpected":
+        decision = cell.split(maxsplit=1)[0].strip(",")
+        if decision not in ("deny", "silent"):
+            raise DesignTableError(f"§9.5 Expected cell names no decision: {cell!r}")
+        return cls(
+            decision=decision,
+            find_replace="§3's message" in cell,
+            marker_clause="marker clause" in cell,
+            placement="placement clause" in cell,
+        )
+
+
+def selfmatch_cases() -> list[SelfMatchCase]:
+    """Every item of every row of §9.5, in order."""
+    found: list[SelfMatchCase] = []
+    rows = table_with_columns(
+        DOCUMENT, SELF_MATCH_HEADING, ("Platform, tool", "Command", "Expected")
+    )
+    for number, row in enumerate(rows, start=1):
+        platform, tool = _platform_and_tool(row["Platform, tool"])
+        for item in _items(row["Command"]):
+            spans, prose = _pieces(item)
+            if prose.replace("/", "").strip():
+                raise DesignTableError(f"§9.5 command {item!r} carries prose")
+            found.append(SelfMatchCase(number, platform, tool, "\n".join(spans), row["Expected"]))
+    return found
+
+
+def _platform_and_tool(cell: str) -> tuple[str, str]:
+    """A cell's platform and tool: a lowercase span names a platform, a capitalized one a tool."""
+    spans, prose = _pieces(cell)
+    if prose.replace(",", "").strip():
+        raise DesignTableError(f"§9.5 platform cell {cell!r} carries prose")
+    platform, tool = _DEFAULT_PLATFORM, _DEFAULT_TOOL
+    for span in spans:
+        if span.islower():
+            platform = span
+        else:
+            tool = span
+    return platform, tool
