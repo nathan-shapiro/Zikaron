@@ -1,6 +1,6 @@
 """How one line pairs its quotes, and where its comment starts.
 
-This is the reading `design/edit-guards.md` §3.1 step 1 gives a raw line: **a quote counts only
+This is the reading `design/guards.md` §3.1 step 1 gives a raw line: **a quote counts only
 if it pairs on its own line**. Step 1 uses it to decide which `<<` openers are inside a string,
 and row 4 (§3.2) uses it again to drop Python comments from a script.
 

@@ -1,4 +1,4 @@
-"""Row 6 of `design/edit-guards.md` §3.2: a scratch script, run — and the guard's one file read.
+"""Row 6 of `design/guards.md` §3.2: a scratch script, run — and the guard's one file read.
 
 A shell or row-4 interpreter whose **script operand** is scratch (§3.3) has that script judged as
 if it were the scanned body of a heredoc fed to the same word: an interpreter's text for row 4's
@@ -17,7 +17,7 @@ and none of the command's unexported variables — and inside its text row 6 rea
 
 >>> from zikaron.guard.decision import decide
 >>> staged = "cat > /tmp/fix.py <<'EOF'\\nopen('f','w')\\nEOF\\npython3 /tmp/fix.py"
->>> match = decide(staged, Location(cwd="/home/u/proj")).match
+>>> match = decide(staged, Location(cwd="/home/u/proj"), platform="linux").match
 >>> match.form.name, match.word, match.authored_paths
 ('SCRATCH_SCRIPT', 'python3', ('/home/u/proj/f',))
 """

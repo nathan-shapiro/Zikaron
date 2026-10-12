@@ -1,4 +1,4 @@
-"""Rows 1 to 3 of `design/edit-guards.md` §3.2 — in-place editors — and their targets (§3.3).
+"""Rows 1 to 3 of `design/guards.md` §3.2 — in-place editors — and their targets (§3.3).
 
 | Row | Command word | Matches on a token |
 |---|---|---|

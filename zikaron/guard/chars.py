@@ -1,6 +1,6 @@
 """The annotated character: every later stage of the find-replace rule reads one of these.
 
-`design/edit-guards.md` §3.1 parses a command in four steps. After steps 1 to 3 each character of a
+`design/guards.md` §3.1 parses a command in four steps. After steps 1 to 3 each character of a
 line outside a data heredoc body carries what the shell would make of it — code, inside a string,
 a quote delimiter, comment, or a line join — and step 4 tokenises that stream. Keeping the reading
 on the character, rather than re-deriving it per stage, is what keeps every stage agreeing about

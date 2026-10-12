@@ -1,6 +1,6 @@
 """Heredoc bodies: where each begins and ends, and whether anything executes it.
 
-`design/edit-guards.md` §3.1 step 1 and §3.2 "Heredoc bodies" are normative. Bodies are delimited
+`design/guards.md` §3.1 step 1 and §3.2 "Heredoc bodies" are normative. Bodies are delimited
 **before** anything else is read, so a quote inside a body can never close a string opened
 outside it. Each body is then one of two things:
 
@@ -24,7 +24,7 @@ under `<<-`). Two openers on one line take their bodies in turn.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, NamedTuple
 
@@ -70,6 +70,13 @@ class Unit:
     @property
     def bodies(self) -> tuple[Body, ...]:
         return tuple(opening.body for line in self.openings for opening in line)
+
+    def walk(self) -> Iterator["Unit"]:
+        """These lines, then each scanned body's, depth first."""
+        yield self
+        for body in self.bodies:
+            if body.unit is not None:
+                yield from body.unit.walk()
 
 
 class _Opener(NamedTuple):

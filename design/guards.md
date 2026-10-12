@@ -1,10 +1,12 @@
-# Edit guards
+# Guards
 
-**Normative for D38.** Two deterministic Claude Code hooks that hold an agent to two rules this
+**Normative for D38.** Two deterministic Claude Code hooks that hold an agent to three rules this
 project's own `CLAUDE.md` states and an agent routinely breaks: *edit authored files with the editing
-tools, never with a find-replace script*, and *re-read what you edited, with its surroundings, once
-you are done editing it*. Neither hook is part of the memory store or the knowledge index: a
-project may install the guards, Zikaron's memory, or both (§5).
+tools, never with a find-replace script*; *re-read what you edited, with its surroundings, once
+you are done editing it*; and *never aim `pgrep -f` or `pkill -f` at a pattern its own command
+contains* (§9), which the first hook judges beside the first rule. Neither hook is part of the
+memory store or the knowledge index: a project may install the guards, Zikaron's memory, or both
+(§5).
 
 ## 1. Why a hook, and why no model
 
@@ -25,7 +27,8 @@ behaviour is §7's count.
 - **Regular expressions over the tool call, and one file read.** No model, no network, no store,
   no service, and no filesystem query beyond the hook's own stdin except one: the text of a
   scratch script the command runs, read once and bounded (§3.2 row 6). The same payload, the same
-  `$TMPDIR` (§3.3) and the same contents of that script always give the same answer.
+  `$TMPDIR` (§3.3), the same platform (§9) and the same contents of that script always give the
+  same answer.
 - **Stdlib only**, held by `tests/test_hook_stdlib_only.py`, so the cost per call is one Python
   start.
 - **D2 is untouched**: no model at all, and nothing on Zikaron's write path.
@@ -70,12 +73,13 @@ a live test of both.
 model), but its `postToolUse` has no documented path to the model, and the guards are not offered
 there at all for now. The installer refuses them for kiro (§5).
 
-## 3. The find-replace guard — `PreToolUse`, matcher `Bash`
+## 3. The find-replace guard — `PreToolUse`, matcher `Bash|Monitor`
 
 In every table of this document, `\|` is Markdown's escape for a `|` in a command or a pattern;
 copy it as `|`.
 
-A payload whose `tool_name` is not `Bash` is allowed silently. Otherwise the guard reads
+A payload whose `tool_name` is neither `Bash` nor `Monitor` is allowed silently (§9.1 says why
+`Monitor` is judged). Otherwise the guard reads
 `tool_input.command` and decides in this order: does a form in §3.2 match; if so, are all its
 targets exempt (§3.3); if not, does the command carry a valid override (§3.4). It denies only when
 a form matches, a target is not exempt and there is no valid override.
@@ -559,7 +563,8 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
   for.
 - **Every prompt text's final wording is written by memory-reviewer at build time** (operator
   decision 2026-10-07). That covers the guard start text, the deny message (§3.5), the
-  invalid-marker message, the override acknowledgement (§3.4) and the nudge (§4). This document
+  invalid-marker message, the override acknowledgement (§3.4), the nudge (§4) and the self-match
+  rule's deny (§9.3). This document
   states what each text must contain; any wording quoted here is a content draft. The builder
   copies the reviewer's wording verbatim, and the tests assert it.
 - **Each guard entry states its `timeout`: 10 s**, a constant in `zikaron/guard/` the installer
@@ -746,10 +751,10 @@ defect.
 - **An edge listed nowhere here takes the value the rules above give.** The test table records each
   such edge as it is found; where the table and this document disagree, one of them is a defect,
   decided in the code review.
-- **After the build, §3's rules change on an observed command** — a false deny in the pre-install
-  replay or a transcript, a reflexive override or a route-around under count (c) — **never on a
-  conceived edge.** A conceived edge becomes a §8 row with the value the rules already give it,
-  and nothing else moves.
+- **After the build, §3's and §9's rules change on an observed command** — a false deny in the
+  pre-install replay or a transcript, a reflexive override or a route-around under count (c) or
+  (e) — **never on a conceived edge.** A conceived edge becomes a §8 or §9.5 row with the value
+  the rules already give it, and nothing else moves.
 - That the guards fire inside subagent sessions is documented, not measured.
 
 **The counts, without a bar** — they say whether any of the above needs acting on, and nothing is
@@ -757,7 +762,8 @@ gated on them. After some sessions with the guards installed, from the session t
 `~/.claude/projects/<project>/` — **including the subagents'**, at
 `<session>/subagents/agent-*.jsonl`, since in this repository most writes are made by subagents:
 
-- **(a) denies**: tool results beginning `PreToolUse:Bash hook error`, read against the
+- **(a) denies**: tool results beginning `PreToolUse:Bash hook error` or `PreToolUse:Monitor hook
+  error` (the latter measured, `research/m38-selfmatch-replay.md`), read against the
   pre-install replay the brief's done-when runs, which is the rate of the same forms before a deny
   existed.
 - **(b) overrides**: commands carrying `#ZIKARON-FORCE #Reason:` outside a heredoc body — or,
@@ -783,6 +789,11 @@ gated on them. After some sessions with the guards installed, from the session t
   re-read figures are this count). This repository does not install the guards (`design/build-plan.md`
   §M37 item 5). This is the one count that says the nudge changes behaviour rather than only
   arriving.
+- **(e) self-match denies** (§9): per session, against the pre-install rate
+  `experiments/m38_selfmatch_replay.py` gives, and what the next call does — adds `-A` or a
+  bracket, overrides, repeats the deny, or reaches the same process another way (`ps … | grep`,
+  §9.4). A repeat argues that the deny's fix does not land; a route-around, for a §9.5 row on the
+  observed command.
 
 ## 8. The test table's seed
 
@@ -1028,3 +1039,292 @@ preceded by `#` comment lines to make up the count), or the byte `0xFF` followed
 | `fix.py`: 262145 bytes ending in `open('f', 'w')` | `python3 "$TMPDIR/fix.py"` | silent (over 256 KiB, not read) |
 | `fix.py`: the byte `0xFF` followed by `open('f', 'w')` | `python3 "$TMPDIR/fix.py"` | deny, naming `f` (an undecodable byte is replaced) |
 | `fix.py`: `open('f', 'w')` | `cd "$TMPDIR" && python3 fix.py` | silent (stated miss, §7: §3.3 reads a `cd`'s `$TMPDIR` as a path) |
+
+## 9. The self-match rule — the same `PreToolUse` hook
+
+**Claude Code runs every `Bash` and `Monitor` command inside a shell whose own command line
+carries the command's text, and that shell lives until the command ends**
+(`research/m38-selfmatch-replay.md`). So on Linux a `pgrep -f` or `pkill -f` whose pattern matches
+the command's own text matches that shell: `pkill` kills it, and the call ends `Exit code 144`;
+`pgrep` always finds it, so a liveness check reports a dead process alive, a loop waiting for a
+death never ends, and a count is one high. The rule was written down — in two projects'
+`CLAUDE.md`, and in a Zikaron memory record — and broken anyway, which is §1's case for a guard.
+It is a second rule in §3's hook, under §6's failure behaviour.
+
+**The test is the match itself.** `pgrep -f` searches each process's command line for the
+pattern; the rule searches the command's text for it — the same search, over the string the shell
+carries — so no rule decides which spellings are safe. `[m]onth_monitor.py` and
+`month_monitor\.py` pass because neither matches its own spelling, and a bracketed pattern still
+denies when it matches text elsewhere in the command (`pgrep -af '[c]heck\.sh' || echo
+"check.sh: gone"`).
+
+**Whether the shell is matchable at all depends on the platform's `pgrep`**
+(`research/pgrep-ancestor-exclusion.md`). procps-ng and BusyBox exclude only the `pgrep` process
+itself, so the shell is matchable unless procps-ng's `-A` is given; macOS excludes the whole chain
+of ancestors unless `-a` is given, and has no `-A`. The guard takes the platform from
+`sys.platform`, passed to the decision as §3.3's location is, so a test can name either.
+
+### 9.1 What is judged
+
+- **A payload whose `tool_name` is `Bash` or `Monitor`**, its `tool_input.command`. A `Monitor`
+  call reaches a `PreToolUse` hook with that field and with every field a `Bash` payload carries,
+  `cwd` included, and a deny holds (`research/m38-selfmatch-replay.md`); so §6's silence on a
+  missing field applies to both tools and both rules alike. The tool names come from the spec field's matcher (§5), so
+  `Monitor` joins it — and §3's rule therefore judges a `Monitor` command too, which is intended: an
+  edit made inside a monitor is the same edit.
+- **The command words `pgrep` and `pkill`, in command position** as §3.1 defines it, wrappers
+  included, on the command's own lines and in every scanned heredoc body (§3.2) — a body fed to
+  `bash` is text the calling shell carries too. **This rule alone also skips a standalone `!`** at a
+  command position, and §3.1's wrappers after it as before any command word (`! timeout 30 pgrep
+  -f …`, `until ! sudo pkill -f …`); §3's rule does not read `!`. The replay's two liveness loops
+  that ran into their timeout were `until ! pgrep -f …` and `if ! pgrep -f …`.
+- **The call's options, read as the platform's `pgrep` reads them.** An option that takes an
+  argument consumes the rest of its cluster or, if it ends the cluster, the next token; a long
+  option's `=value` consumes nothing; `--` ends the options. **`pkill`'s signal is one token,
+  `-<digits>` or `-[SIG]<NAME>`**, wherever it stands, with `NAME` from a fixed list the module
+  carries for both platforms — `HUP INT QUIT ILL TRAP ABRT IOT EMT BUS FPE KILL USR1 SEGV USR2 PIPE
+  ALRM TERM STKFLT CHLD CONT STOP TSTP TTIN TTOU URG XCPU XFSZ VTALRM PROF WINCH IO POLL INFO PWR
+  SYS RTMIN RTMAX`, and `RTMIN+<n>`/`RTMAX-<n>` — matched without regard to case, and skipped;
+  every other `-<letters>` token is options. So `pkill -A` is the option, and `pkill -ABRT` and
+  `pkill -int` are signals, as procps-ng 4.0.4 reads them (measured,
+  `research/m38-selfmatch-replay.md`; macOS reads a signal only as the first argument, which
+  changes no verdict, since `darwin` needs `-a`). **The pattern is the first operand**, unquoted as
+  §3.1 tokenises; a redirect token (§3.1) is no operand, here or in §9.2's `grep`, since the shell
+  hands the program none of them.
+
+  | `sys.platform` | The rule applies when | Never when | Options taking an argument |
+  |---|---|---|---|
+  | `linux` (procps-ng 4.0.4; BusyBox is read as procps-ng) | `-f`/`--full` | `-x`/`--exact`, `-A`/`--ignore-ancestors`, `-v`/`--inverse` | `-d -g -G -O -P -s -t -u -U -F -r -q`; `--delimiter --pgroup --group --older --parent --session --signal --terminal --euid --uid --pidfile --runstates --cgroup --ns --nslist --queue` |
+  | `darwin` (adv_cmds-237) | `-f` **and** `-a` | `-x`, `-v` | `-F -G -P -U -c -d -g -t -u` |
+  | anything else | never | — | — |
+
+- **A pattern carrying `$` or a backtick outside single quotes is not literal**, and the rule is
+  silent: what it will hold is not in the text. **The one exception is a variable the command
+  binds** (operator, 2026-10-11): a pattern token that is exactly `$NAME` or `${NAME}`, bare or in
+  double quotes, is read as `NAME`'s value where a binding of it stands earlier in the same unit as
+  §3.3 reads one — a simple command made only of `NAME=value` words, the last such value — and
+  that value's own token is literal by this test. A prefix assignment binds nothing and a scanned
+  body starts with no bindings, as §3.3 has it, and what a same-line `$(…)`'s commands bind is not
+  read at all — not for the commands after it, which run in the calling shell, not the subshell,
+  and not for a `pgrep` inside the same `$(…)`, whose bindings the rule does not track — though a
+  `pgrep` inside a `$(…)` reads the bindings made before it, which the subshell inherits. So
+  `P=selfmatch-guard-probe; pgrep -af "$P"` is judged on `selfmatch-guard-probe`, which the command
+  contains, and is denied, while `P="month_mon""itor.py"; pkill -f "$P"` is judged on
+  `month_monitor.py`, which it does not.
+
+### 9.2 The decision
+
+- **The pattern is compiled by Python's `re`**, with `re.IGNORECASE` under `-i`/`--ignore-case`,
+  and searched over `tool_input.command` exactly as received: comments and heredoc bodies
+  included, since the shell's command line carries them too, so this is not the comment-stripped
+  text §3.1 tokenises. A pattern `re` cannot compile is silent (§6). **Warnings are ignored while
+  compiling**: `re` warns on a POSIX class such as `[[:alpha:]]`, and a warning the test suite
+  turns into an error would otherwise flip a deny into §6's silence.
+- **A match denies.** One exemption applies, on `linux` only: a `pgrep` with `-a`/`--list-full`
+  prints each process's command line, so a later simple command of its pipeline that is `grep`
+  with `-v`/`--invert-match` drops the shell's line whenever that `grep`'s own pattern searches the
+  command text; such a call is silent. The `grep`'s patterns are its first operand, or, where an
+  `-e`/`--regexp` or `-f`/`--file` is given anywhere, each `-e`/`--regexp`, every operand then
+  being a file; they are read as basic regular expressions unless `-E` or `-P` (read as `-E`) or
+  `-F` says otherwise, with `-i`/`--ignore-case` honored; `-A -B -C -m -d -D` consume the rest of
+  their cluster or, when last, the next token, as do the long `--max-count --context
+  --after-context --before-context --include --exclude --exclude-dir --label --devices
+  --directories --binary-files` unless written with `=value`; and `-f`/`--file` consumes it as a
+  file of patterns, which is not read, so that `grep` exempts nothing. A `grep` pattern that is
+  not literal by §9.1's test — a variable the command binds included, which §9.1 reads for the
+  `pgrep` pattern alone — or that `re` cannot compile, exempts nothing — so `grep -v $$` is
+  not read as the regular expression `$$`, which would match any text. The replay held 65 such
+  calls, every one already correct. The filter is sound wherever the `pgrep` runs, since a command
+  substitution's shell carries the same command line and is dropped with the calling one.
+- **A filter by `$$` is not exempt.** It removes the calling shell's id, but a `$(pgrep -f … |
+  …)` runs in a second shell with the same command line and its own id, which `$$` does not name
+  (measured, `research/m38-selfmatch-replay.md`), and the rule does not read which shape it is in.
+  `-A` excludes both.
+- **Order with §3.** Both rules judge every call. When §3's rule would deny, its message is the
+  deny; otherwise this rule's is. A valid override (§3.4) withdraws both; it is acknowledged only
+  when §3's rule would have denied, since the acknowledgement exists to ask for a re-read, and
+  otherwise the hook prints nothing. A present but invalid marker on a call only this rule would
+  deny gets §9.3's message with §3.4's marker clause — from *"It carries #ZIKARON-FORCE"* to its
+  example — appended; §3's invalid-marker message names a form and targets this rule has none of,
+  so only the clause is shared. A marker only in a heredoc body or a quoted string gets §9.3's
+  message with §3.5's placement clause, on §3.5's condition.
+
+### 9.3 The deny message
+
+`permissionDecisionReason`, in this order: that the `pgrep`/`pkill` pattern also matches the shell
+running this command, because Claude Code runs a command inside a shell whose command line contains
+the command's text; **the matched text with a little context**, so a match outside the pattern's
+own spelling shows; what follows — `pkill` kills that shell, and `pgrep` always finds it, so a
+liveness check never reports a death and a count is one high; the fix; and the override's syntax,
+as §3.5 shows it. One short paragraph; its final wording is memory-reviewer's (§5).
+
+**The fix is per platform.** On `linux`: `-A` (`--ignore-ancestors`), which removes every such
+match, where `pgrep` has it — procps-ng 4.0.1 and later, not 3.3.17 (Ubuntu 22.04, RHEL 9) nor
+BusyBox; otherwise a bracketed character (`[m]onth_monitor.py`) — written in the assignment where
+the pattern is a bound variable (§9.1), since a separate call would leave that variable empty —
+which fixes only the pattern's own spelling, so a match elsewhere in the command needs a separate
+call. On `darwin`: drop `-a`, which there means *include ancestors*, not *list the command line* —
+`-l` with `-f` lists the full argument list there.
+
+### 9.4 Known gaps
+
+Each is a value §9.5 holds, and none moves without an observed command (§7's rule).
+
+- **A quoted script** — `bash -c '…'`, `sh -c '…'`, `ssh host '…'` — is one token (§3.1) and is
+  not judged. The replay's two signalled calls this rule does not deny are of this shape, and
+  neither was a self-match. Nor is a data body (§3.2) that the same command then runs
+  (`cat > /tmp/k.sh <<'EOF'` … `bash /tmp/k.sh`), though the calling shell carries its text.
+- **A `pgrep`/`pkill` inside a double-quoted `$(…)`** — `echo "running: $(pgrep -cf …)"`,
+  `[ -z "$(pgrep -f …)" ]` — is part of one string token (§3.1) and is not judged. 21 replay
+  commands carry one and nothing this rule denies, none signalled, most of them counts and
+  `head -1` picks. Reading it would take a second reader for quoting nested inside a substitution,
+  new grammar for a class with no recorded harm; count (e)'s field data, or a signalled command,
+  is what would move it.
+- **A pattern from a variable the command does not bind, or from a substitution** — 6 of the 10
+  the brief's replay read as not literal; the other 4 are a variable the command binds, read as
+  §9.1 says, and none of the 4 matches its own command. A pattern that only begins with a bound
+  variable (`"$P.py"`) is not read either, nor a variable that `export P=…`, `declare`, `local`,
+  `for P in …` or `read P` sets, none of which is a binding as §3.3 reads one, nor one whose
+  assignment shares its simple command with a `(` or `{` opener (`(P=…; pkill -f "$P")`), the
+  opener being a token of that command (§3.1), nor one bound inside a same-line `$(…)`, for a call
+  inside it (`kill $(P=month_monitor.py; pgrep -f "$P")`) as for one after it: stated misses.
+- **A pattern that matches only the wrapper's own words** (`bash`, `eval`, `claude`): the wrapper
+  is the harness's and unversioned, and no replay pattern matched it alone.
+- **`ps … | grep PAT | … kill`**, which self-matches by the same mechanism: 425 replay calls carry
+  `ps … | grep` with no signalled self-kill, and its usual filter, `grep -v grep`, already drops
+  the shell's line, since the command contains `grep`.
+- **`killall`, `pidof`, `pidwait -f`** — one call between them in the replay.
+- **Another process the pattern matches** — a sibling in the same pipeline (`pgrep -f x | grep
+  x`), another session's shell, the harness itself (`pkill -f claude`). A text test proves only
+  the calling shell.
+- **Python's `re` stands in for POSIX ERE** — a POSIX class such as `[[:alpha:]]` means something
+  else to it, which can deny where `pgrep` would not match or let an exempting `grep -v` go unread —
+  and the command is searched as written, not as the wrapper rewrites a `'`; no replay pattern
+  contained a `'`.
+- **An anchored pattern** is searched over the command's text, whose ends are not the argv's —
+  the wrapper's command line begins `/bin/bash` and ends in its `pwd -P` — so `…$` or `^…` can be
+  denied without a self-match: a stated false deny. Two in the replay, both bracketed and silent.
+- **A hand filter the rule cannot read is denied**: a `$$` comparison (`| grep -v $$`,
+  `[ "$p" = "$$" ] && continue`), or a loop over `$(pgrep -f …)` that inspects each id's `comm` or
+  command line. The replay holds both kinds: filters that were correct, which are stated false
+  denies, and filters whose own words also occur in the shell's command line, so the shell passes
+  them. `-A` fixes all of them, and §9.2 says why a `$$` filter is not exempted.
+- **The exemption's edges** (§9.2), none in the replay: a `grep -v` after a command that has
+  already cut the shell's line down (`… | awk '{print $1}' | grep -v grep`) and a whole-line
+  `grep -vx` are exempt and are misses; so is a `grep -v` after `pgrep -acf`, whose count it
+  cannot change, and one after `pgrep -naf`, whose one line is the newest match — the shell
+  itself — so the filter leaves nothing and a running process reads as stopped;
+  `grep -v -f <file>`, whose patterns are not read, a `grep -v "$P"` whose `P` the command binds,
+  which §9.1 reads for the `pgrep` pattern alone, and a filter other than `grep` (`rg -v`,
+  `awk '!/pgrep/'`) are denied, stated false denies; and `pgrep -lf` on `linux` lists names, not
+  command lines, so a `grep -v` after it removes nothing and the call is denied.
+- **`-x` with a pattern that matches a whole command line** (`pgrep -xf '.*month_monitor.*'`) is
+  exempt, a miss: `-x` exempts because a pattern written for a process's exact command line cannot
+  equal the wrapper's, which this one can.
+- **A pattern whose search is slow in Python's `re`** (`(.*)*x` over a long command) costs up to
+  §5's timeout and then allows (§6); the same for a `grep -v` pattern the exemption reads. None in
+  the replay.
+- **An option after the pattern**, which getopt honours and this rule does not read
+  (`pgrep month_monitor.py -f`, a miss; `pgrep -f month_monitor.py -A`, a false deny); **a pattern
+  on stdin** (`… | xargs pkill -f`), a miss. None in the replay.
+- **`darwin`'s rows are read from its man page and source, not run**: no transcript in the replay
+  is from a Mac. §9.6's premise test is what checks them. **The exemption is `linux`-only.** On
+  `darwin` `-a` prints ids, so `pgrep -af X | grep -v grep` removes nothing and its deny stands on
+  the merits; with `-l` the filter would work (`pgrep -laf X | grep -v grep`), and that form is
+  withheld for want of a Mac transcript — a stated false deny.
+- **A `pgrep`/`pkill` inside an interpreter's body** (`python3 - <<'EOF'` …
+  `subprocess.run(["pkill", "-f", …])`) stands at no command position, though the calling shell
+  carries its text: a miss. None in the replay.
+
+### 9.5 The test table's seed
+
+Every row is judged as §8's are, with `tool_name` `Bash` unless the row says `Monitor`, under
+`sys.platform` `linux` unless it names another.
+
+| Platform, tool | Command | Expected |
+|---|---|---|
+| | `pkill -f 'month_monitor.py'` | deny |
+| | `for p in $(pgrep -f 'month_monitor.py'); do kill $p; done` | deny |
+| | `pgrep -f 'bash ./check.sh' >/dev/null && echo RUNNING \|\| echo FINISHED` | deny |
+| | `until ! pgrep -f day_panel.py >/dev/null; do sleep 15; done` · `if ! pgrep -f day_panel.py >/dev/null 2>&1; then break; fi` · `until ! timeout 5 pgrep -f day_panel.py >/dev/null; do sleep 15; done` | deny (`!` is skipped, §9.1) |
+| `Monitor` | `until ! pgrep -f day_panel.py >/dev/null; do sleep 15; done` | deny |
+| | `pgrep -cf month_monitor.py \|\| echo stopped` · `pgrep -f month_monitor.py \| wc -l` | deny |
+| | `pgrep --full month_monitor.py` · `pgrep -f -- month_monitor.py` · `pgrep --delimiter=, -f month_monitor.py` · `pgrep --delimiter , -f month_monitor.py` | deny |
+| | `pgrep -d, -f month_monitor.py` · `pgrep -P1 -f month_monitor.py` | deny (an attached argument ends the option's reach; the `-f` stands) |
+| | `pgrep -f -- '[m]onth_monitor.py'` · `pgrep --delimiter , -f '[m]onth_monitor.py'` · `pgrep -fu nathan '[m]onth_monitor.py'` · `pkill --signal TERM -f '[m]onth_monitor.py'` | silent (the option's argument is consumed; unconsumed, it would be the pattern and match) |
+| | `pgrep -xf '.*month_monitor.*'` | silent (stated miss, §9.4) |
+| | `pgrep --ignore-ancestors --full month_monitor.py` · `pgrep --exact --full month_monitor.py` | silent |
+| | `pkill -A -f month_monitor.py` | silent (`-A` is an option, not a signal) |
+| | `pkill -f -int month_monitor.py` | deny (a signal wherever it stands; read as options, `-t` would consume the pattern) |
+| | `echo month_monitor.py \| xargs -I{} pkill -f {}` | deny (`{}` is a literal pattern matching its own spelling) |
+| | `python3 - <<'EOF'` / `subprocess.run(["pkill", "-f", "month_monitor.py"])` / `EOF` | silent (stated miss, §9.4) |
+| | `pkill -ABRT -f month_monitor.py` · `pkill -SIGABRT -f month_monitor.py` · `pkill -KILL -f month_monitor.py` · `pkill -RTMIN+3 -f month_monitor.py` · `pkill -int -f month_monitor.py` · `pkill -cont -f month_monitor.py` · `pkill -xcpu -f month_monitor.py` | deny |
+| | `pkill -F /tmp/m.pid -f '[m]onth_monitor.py'` | silent (`-F` takes an argument) |
+| | `pgrep month_monitor.py -f` · `echo month_monitor.py \| xargs pkill -f` | silent (stated misses, §9.4) |
+| | `pgrep -f month_monitor.py -A` · `pgrep -f 'month_monitor.py$'; echo month_monitor.py` | deny (stated false denies, §9.4) |
+| | `pgrep -af '[c]heck\.sh' \|\| echo "check.sh: gone"` | deny (matches inside the `echo`) |
+| | `pgrep -af '[c]heck\.sh' \|\| echo "gate stopped"` | silent |
+| | `pgrep -f '[m]onth_monitor.py'` · `pgrep -f 'month_monitor\.py'` | silent |
+| | `pgrep -f '[m]onth_monitor' # is month_monitor up?` | deny (a comment is on the shell's command line too) |
+| | `bash <<'EOF'` / `pkill -f month_monitor.py` / `EOF` | deny (a scanned body) |
+| | `pgrep -A -f month_monitor.py` · `pgrep -x -f month_monitor.py` · `pgrep -vf month_monitor.py` | silent |
+| | `pgrep month_monitor.py` | silent (no `-f`) |
+| | `pkill -9 -f month_monitor.py` · `pkill --signal TERM -f month_monitor.py` · `pgrep -u nathan -f month_monitor.py` · `pgrep -fu nathan month_monitor.py` | deny |
+| | `pgrep -fi '[M]ONTH_MONITOR' && echo month_monitor alive` | deny (`-i`: matches inside the `echo`) |
+| | `pgrep -f '[M]ONTH_MONITOR' && echo month_monitor alive` | silent |
+| | `pgrep -af month_monitor \| grep -v grep` · `pgrep -fa month_monitor \| grep -v grep` · `pgrep -af month_monitor \| grep -v pgrep` · `pgrep -af month_monitor.py \| grep -v "pgrep\\|grep"` · `pgrep -af month_monitor.py \| grep -vE 'pgrep\|grep'` · `pgrep -af month_monitor.py \| grep -v -e pgrep -e grep` · `pgrep -af month_monitor.py \| grep -vF pgrep` · `pgrep -af month_monitor.py \| grep -v pgrep \| head -3` | silent (the filter drops the shell's line) |
+| | `pgrep -f month_monitor \| grep -v grep` | deny (process ids only) |
+| | `pgrep -af month_monitor.py \| grep -c pytest` | deny (no `-v`) |
+| | `pgrep -acf month_monitor.py \| grep -v grep` · `pgrep -naf month_monitor.py \| grep -v grep` | silent (stated misses, §9.4) |
+| | `pgrep -af month_monitor.py \| awk '{print $1}' \| grep -v grep` · `pgrep -af month_monitor.py \| grep -vx grep` | silent (stated misses, §9.4) |
+| | `pgrep -lf month_monitor.py \| grep -v grep` | deny (`-l` lists names) |
+| | `pgrep -af month_monitor.py \| rg -v pgrep` · `pgrep -af month_monitor.py \| grep -v -f /tmp/pats` · `P=grep; pgrep -af month_monitor.py \| grep -v "$P"` | deny (stated false denies, §9.4) |
+| | `pgrep -af month_monitor.py \| grep -v -m 1 grep` · `pgrep -af month_monitor.py \| grep -vP 'pgrep\|grep'` · `pgrep --list-full --full month_monitor \| grep -v grep` · `pgrep -af month_monitor.py \| grep -vi GREP` · `pgrep -af month_monitor.py \| grep --invert-match --regexp=grep` · `pgrep -af month_monitor.py \| grep -v 'grep('` · `pgrep -af month_monitor.py \| grep -vF 'x$y'` | silent |
+| | `pgrep -af month_monitor.py \| grep -v --max-count 1 '[z]zz'` | deny (`--max-count` consumes `1`) |
+| | `pgrep -af month_monitor.py \| grep -v -m 1 '[z]zz'` | deny (`-m` consumes `1`; the pattern does not search the text) |
+| | `pgrep -f 2>/dev/null '[m]onth_monitor.py'` · `pgrep -f >/dev/null '[m]onth_monitor.py'` | silent (a redirect token is no operand, §9.1) |
+| | `pkill -f 2>/dev/null month_monitor.py` | deny |
+| | `pgrep -af month_monitor.py \| grep -v 2>/dev/null '[z]zz'` · `pgrep -af month_monitor.py \| grep -v grep -e '[z]zz'` | deny (the `grep`'s one pattern is `[z]zz`, which does not search the text) |
+| | `pgrep -af month_monitor.py \| grep -vE 'pgrep('` | deny (`re` cannot compile it, so it exempts nothing) |
+| | `pgrep -af month_monitor.py \| grep -v '[[:alpha:]]grep'` | deny (stated false deny: `re` reads a POSIX class otherwise, §9.4) |
+| | `[ -z "$(pgrep -f month_monitor.py)" ] && echo none` · `kill "$(pgrep -f month_monitor.py)"` · `PIDS="$(pgrep -f month_monitor.py)"` | silent (stated miss, §9.4) |
+| | `cat > /tmp/k.sh <<'EOF'` / `pkill -f month_monitor.py` / `EOF` / `bash /tmp/k.sh` | silent (stated miss: a data body, §9.4) |
+| | `pgrep -f month_monitor.py \| grep -v $$ >/dev/null && echo RUNNING \|\| echo FINISHED` · `pgrep -af month_monitor.py \| grep -v $$` · `for p in $(pgrep -f month_monitor.py); do [ "$p" = "$$" ] && continue; kill $p; done` · `for p in $(pgrep -f month_monitor.py); do [ "$(cat /proc/$p/comm)" = python3 ] && kill $p; done` | deny (a hand filter, §9.4) |
+| | `pkill -f "$PAT"` · ``pkill -f `cat name` `` | silent (not literal) |
+| | `P=selfmatch-guard-probe; pgrep -af "$P"` · `P=month_monitor.py && pkill -f "${P}"` · `P='month_monitor.py'; pkill -f $P` · `P=month_monitor.py` / `pkill -f "$P"` · `P=month_monitor.py; for p in $(pgrep -f "$P"); do kill $p; done` | deny (the bound value is the pattern, §9.1; a `$(…)` reads the bindings made before it) |
+| | `P="month_mon""itor.py"; pkill -f "$P"` | silent (the value, `month_monitor.py`, is not in the command's text) |
+| | `P=month_monitor.py pkill -f "$P"` · `x=$(P=month_monitor.py); pkill -f "$P"` · `P=$(cat name); pkill -f "$P"` · `P=month_monitor.py; P=$1; pkill -f "$P"` · ``P=month_monitor`true`.py; pkill -f "$P"`` · `P=month_monitor.py; pkill -f "$P.x"` · `P=month_monitor.py` / `bash <<'EOF'` / `pkill -f "$P"` / `EOF` · `export P=month_monitor.py; pkill -f "$P"` · `kill $(P=month_monitor.py; pgrep -f "$P")` · `(P=month_monitor.py; pkill -f "$P")` · `{ P=month_monitor.py; pkill -f "$P"; }` | silent (no binding stands, or its value is not literal, §9.1; stated misses among them, §9.4) |
+| | `pgrep -f '('` | silent (`re.error`) |
+| | `grep -rn "pkill -f" .` | silent (`pkill` is an argument) |
+| | `bash -c 'pkill -f month_monitor.py'` · `ssh host 'pkill -f month_monitor.py'` | silent (stated miss, §9.4) |
+| | `pkill -f month_monitor.py #ZIKARON-FORCE #Reason: kill every copy` | silent (valid override, no acknowledgement) |
+| | `pkill -f month_monitor.py #ZIKARON-FORCE` | deny, §9.3's message with §3.4's marker clause |
+| | `bash <<'EOF'` / `pkill -f month_monitor.py #ZIKARON-FORCE #Reason: a b` / `EOF` · `echo 'x #ZIKARON-FORCE #Reason: a b'; pkill -f month_monitor.py` | deny, §9.3's message with §3.5's placement clause |
+| | `sed -i 's/a/b/' f; pkill -f x` | deny, §3's message |
+| `Monitor` | `sed -i 's/a/b/' f` | deny, §3's message |
+| `darwin` | `pkill -f month_monitor.py` · `pgrep -f month_monitor.py >/dev/null` · `pgrep -lf month_monitor.py` | silent (ancestors excluded) |
+| `darwin` | `pgrep -c cls -af '[m]onth_monitor.py'` | silent (`-c` consumes `cls`) |
+| `darwin` | `pgrep -af month_monitor.py` · `pkill -af month_monitor.py` | deny |
+| `darwin` | `pgrep -af month_monitor \| grep -v grep` | deny (`-a` prints ids only there; the filter removes nothing) |
+| `darwin` | `pgrep -laf month_monitor \| grep -v grep` | deny (stated false deny: the exemption is `linux`-only, §9.4) |
+| `darwin` | `pgrep -c cls -af month_monitor.py` | deny |
+| `win32` | `pkill -f month_monitor.py` | silent |
+
+### 9.6 The premise test
+
+The rule's whole justification is a platform fact, so the build pins it where CI can see it: a
+test runs `bash -c '<call> 2>"$err"; echo "rc=$?"; true'` for each `pgrep` call below, with a
+fresh nonce as its pattern — the trailing `true` keeps the shell alive, as the harness's wrapper
+does, and `pgrep`'s own exit code and stderr are read from the `rc=` line and `$err` — and asserts
+that on `linux` `pgrep -f <nonce>` finds its shell and, where `pgrep` accepts `-A`, `pgrep -A -f <nonce>`
+does not; and on `darwin` that `pgrep -f <nonce>` does not and `pgrep -a -f <nonce>` does.
+**`pgrep` lacks `-A`** when `pgrep -A -f <nonce>` exits non-zero and writes to stderr — a usage
+error, which procps-ng 4.0.4 gives for an unknown option as exit 2 and *invalid option* (measured)
+— and that skips this half and nothing else; a silent exit 1 is the accepted-and-nothing-found this
+half asserts, and exit 0 is the failure. **On `linux` it also pins the exemption's premise**: run
+from a two-line `bash -c` script, `pgrep -af <nonce>` prints that shell on one line (measured:
+procps-ng 4.0.4 prints the newline as a space), so a line filter drops all of it. **A machine without `pgrep` fails the
+test** rather than skipping it: a skip would report as checked a premise nobody checked, which
+`design/coding-standards.md` §"five tiers" refuses for the integration tiers on the same ground.
+CI's linux jobs and its macOS job (`design/distribution.md` §"What CI asserts") run it, so a
+platform whose `pgrep` behaves otherwise fails the gate rather than the guard.

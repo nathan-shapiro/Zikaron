@@ -1,6 +1,6 @@
 """Row 4's target expressions: what a write call in an inline script writes to.
 
-`design/edit-guards.md` §3.3, "Row 4", is normative. Each write call has one **target
+`design/guards.md` §3.3, "Row 4", is normative. Each write call has one **target
 expression** — the first argument of `open(` and its kin, the receiver of `.write_text(` and its
 kin — and **its head decides**. The head is the expression's first operand, before any
 `.name`/`.name(…)` chain; the six steps are tried in order:

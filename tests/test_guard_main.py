@@ -1,7 +1,8 @@
 """`zikaron-guard`'s dispatch, its override output, its tool filters and its fail-open rule.
 
-`design/edit-guards.md` §3.4 (the override withdraws the deny and grants nothing), §5 (the tool
-sets are the spec field's matchers) and §6 (every failure is an allow, silently).
+`design/guards.md` §3.4 (the override withdraws the deny and grants nothing), §5 (the tool
+sets are the spec field's matchers), §6 (every failure is an allow, silently) and §9 (the
+platform the self-match rule reads is the process's own).
 """
 
 import io
@@ -13,11 +14,13 @@ from pathlib import Path
 import pytest
 
 from zikaron.guard import decision, main, messages
+from zikaron.guard.forms import FormMatch
 from zikaron.guard.scratch import Location
-from zikaron.harness.spec import CLAUDE_CODE, EditGuards, GuardHook
+from zikaron.harness.spec import CLAUDE_CODE, GuardHook, Guards
 
-GUARDS = CLAUDE_CODE.edit_guards
+GUARDS = CLAUDE_CODE.guards
 DENIED = "sed -i 's/a/b/' f"
+SELF_MATCHING = "pkill -f month_monitor.py"
 
 
 def _pre_tool_use(command: object = DENIED, **overrides: object) -> dict[str, object]:
@@ -31,8 +34,8 @@ def _pre_tool_use(command: object = DENIED, **overrides: object) -> dict[str, ob
     return payload
 
 
-def _envelope(payload: object, guards: EditGuards | None = GUARDS) -> dict[str, object] | None:
-    output = main.respond(json.dumps(payload), tmpdir=None, guards=guards)
+def _envelope(payload: object, guards: Guards | None = GUARDS) -> dict[str, object] | None:
+    output = main.respond(json.dumps(payload), tmpdir=None, platform="linux", guards=guards)
     if output is None:
         return None
     envelope = json.loads(output)["hookSpecificOutput"]
@@ -52,8 +55,9 @@ def test_a_deny_carries_the_decision_and_the_message() -> None:
 
 def test_a_valid_override_returns_no_decision_only_the_acknowledgement() -> None:
     envelope = _envelope(_pre_tool_use(f"{DENIED} #ZIKARON-FORCE #Reason: regenerate golden file"))
-    denied = decision.decide(DENIED, Location("/home/u/proj"))
+    denied = decision.decide(DENIED, Location("/home/u/proj"), platform="linux")
     assert isinstance(denied, decision.Deny)
+    assert isinstance(denied.match, FormMatch)
     targets = denied.match.authored_paths
     assert envelope == {
         "hookEventName": "PreToolUse",
@@ -112,8 +116,16 @@ def test_a_marker_on_a_command_no_form_matches_produces_no_output() -> None:
 
 
 @pytest.mark.parametrize("tool", ["Edit", "Write", "Grep", "PowerShell", None])
-def test_pre_tool_use_judges_only_bash(tool: object) -> None:
-    assert _envelope(_pre_tool_use(tool_name=tool)) is None
+@pytest.mark.parametrize("command", [DENIED, SELF_MATCHING])
+def test_pre_tool_use_judges_only_bash_and_monitor(tool: object, command: str) -> None:
+    assert _envelope(_pre_tool_use(command, tool_name=tool)) is None
+
+
+@pytest.mark.parametrize("command", [DENIED, SELF_MATCHING])
+def test_a_monitor_command_is_judged_by_both_rules(command: str) -> None:
+    envelope = _envelope(_pre_tool_use(command, tool_name="Monitor"))
+    assert envelope is not None
+    assert envelope["permissionDecision"] == "deny"
 
 
 @pytest.mark.parametrize("tool", ["Bash", "Read", "Grep", None])
@@ -129,13 +141,13 @@ def test_post_tool_use_nudges_only_the_four_edit_tools(tool: object) -> None:
 
 def test_the_tool_sets_are_the_spec_fields_matchers() -> None:
     assert GUARDS is not None
-    assert GUARDS.find_replace.tools == frozenset({"Bash"})
+    assert GUARDS.command.tools == frozenset({"Bash", "Monitor"})
     assert GUARDS.reread.tools == frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
-    widened = GUARDS._replace(find_replace=GuardHook("PreToolUse", "Bash|Grep"))
+    widened = GUARDS._replace(command=GuardHook("PreToolUse", "Bash|Grep"))
     assert _envelope(_pre_tool_use(tool_name="Grep"), guards=widened) is not None
 
 
-@pytest.mark.parametrize("hook", [GUARDS.find_replace, GUARDS.reread] if GUARDS else [])
+@pytest.mark.parametrize("hook", [GUARDS.command, GUARDS.reread] if GUARDS else [])
 def test_each_matcher_is_a_bar_joined_list_of_bare_tool_names(hook: GuardHook) -> None:
     assert all(name.isalpha() and name[0].isupper() for name in hook.matcher.split("|"))
 
@@ -190,6 +202,28 @@ def test_an_exception_inside_a_rule_exits_zero_with_no_output(
     assert _run_main(json.dumps(_pre_tool_use()), capsys, monkeypatch) == ""
 
 
+def test_an_exception_inside_the_self_match_rule_exits_zero_with_no_output(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: object) -> None:
+        raise RuntimeError("a defect in the self-match rule")
+
+    monkeypatch.setattr(decision, "first_self_match", broken)
+    assert _run_main(json.dumps(_pre_tool_use(SELF_MATCHING)), capsys, monkeypatch) == ""
+
+
+@pytest.mark.parametrize(("platform", "denied"), [("linux", True), ("darwin", False)])
+def test_main_passes_the_processs_own_platform(
+    platform: str,
+    denied: bool,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    output = _run_main(json.dumps(_pre_tool_use(SELF_MATCHING)), capsys, monkeypatch)
+    assert bool(output) is denied
+
+
 def test_main_writes_the_rules_output_and_exits_zero(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -227,6 +261,13 @@ class TestTheRealProcess:
         assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert result.stderr == ""
 
+    def test_a_self_match_deny_reaches_stdout(self) -> None:
+        """`-af` matches its shell on both supported platforms, so this holds on either."""
+        result = self._run(json.dumps(_pre_tool_use("pgrep -af month_monitor.py")))
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert (result.returncode, result.stderr) == (0, "")
+        assert reason.startswith("Zikaron's self-match rule refused this command")
+
     @pytest.mark.parametrize("stdin", ["", "not json{{{"])
     def test_malformed_stdin_exits_zero_with_no_output(self, stdin: str) -> None:
         result = self._run(stdin)
@@ -236,7 +277,7 @@ class TestTheRealProcess:
         """Row 6's one read is wired at `main`, the hook's I/O edge, and nowhere else."""
         (tmp_path / "fix.py").write_text("open('f', 'w').write('x')\n", encoding="utf-8")
         payload = json.dumps(_pre_tool_use(f"python3 {tmp_path}/fix.py"))
-        assert main.respond(payload, tmpdir=None) is None
+        assert main.respond(payload, tmpdir=None, platform="linux") is None
         result = self._run(payload)
         decision = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"]
         assert (result.returncode, decision) == (0, "deny")

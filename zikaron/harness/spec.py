@@ -84,7 +84,7 @@ class BudgetUnit(enum.Enum):
 
 
 class GuardHook(NamedTuple):
-    """One edit-guard hook group: its trigger and its matcher (`design/edit-guards.md` §5).
+    """One guard hook group: its trigger and its matcher (`design/guards.md` §5).
 
     The matcher is a `|`-joined list of bare tool names, never a regex, because the guard reads the
     tools it judges by splitting it — so widening a matcher widens what the guard judges, and the
@@ -100,10 +100,11 @@ class GuardHook(NamedTuple):
         return frozenset(self.matcher.split("|"))
 
 
-class EditGuards(NamedTuple):
-    """The two edit-guard hook groups: the find-replace guard and the re-read nudge."""
+class Guards(NamedTuple):
+    """The two guard hook groups: the command hook, which carries the find-replace guard and the
+    self-match rule, and the re-read nudge."""
 
-    find_replace: GuardHook
+    command: GuardHook
     reread: GuardHook
 
 
@@ -137,9 +138,9 @@ class HarnessSpec(NamedTuple):
     #: stall this was built to end. Where this is false the client returns every payload inline,
     #: the consolidator config gains no tool, and its prompt gains no text about files.
     consolidator_can_read_files: bool
-    #: The edit guards' triggers and matchers, or `None` where the guards are not offered — which
-    #: is what the installer's refusal of them reads.
-    edit_guards: EditGuards | None
+    #: The guards' triggers and matchers, or `None` where the guards are not offered — which is
+    #: what the installer's refusal of them reads.
+    guards: Guards | None
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -267,7 +268,7 @@ KIRO: Final = HarnessSpec(
     # before, and the consolidator keeps the four verbs and nothing else.
     consolidator_can_read_files=False,
     # Not offered: this harness's `postToolUse` has no documented path to the model.
-    edit_guards=None,
+    guards=None,
 )
 
 #: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
@@ -298,8 +299,8 @@ CLAUDE_CODE: Final = HarnessSpec(
     # own spill file is one line of JSON that `Read` cannot paginate. A file this project writes
     # can be paginated, so the capability is real — `research/claude-code-mcp-result-truncation.md`.
     consolidator_can_read_files=True,
-    edit_guards=EditGuards(
-        find_replace=GuardHook(trigger="PreToolUse", matcher="Bash"),
+    guards=Guards(
+        command=GuardHook(trigger="PreToolUse", matcher="Bash|Monitor"),
         reread=GuardHook(trigger="PostToolUse", matcher="Edit|MultiEdit|NotebookEdit|Write"),
     ),
 )

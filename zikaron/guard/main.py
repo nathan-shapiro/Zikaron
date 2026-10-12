@@ -1,20 +1,21 @@
-"""`zikaron-guard`: the process Claude Code runs for both edit-guard hooks.
+"""`zikaron-guard`: the process Claude Code runs for both guard hooks.
 
 It reads one hook payload from stdin and dispatches on `hook_event_name`: the find-replace rule
-on `PreToolUse` (`design/edit-guards.md` §3), the re-read nudge on `PostToolUse` (§4). The trigger
-names and the tools each judges are `HarnessSpec.edit_guards`, read rather than spelled again.
+and the self-match rule on `PreToolUse` (`design/guards.md` §3, §9), the re-read nudge on
+`PostToolUse` (§4). The trigger names and the tools each judges are `HarnessSpec.guards`, read
+rather than spelled again; the platform the self-match rule reads is `sys.platform`, read here
+and passed down.
 
 **Every failure is an allow, silently** (§6): malformed JSON, an unknown event, a missing field or
 an exception inside a rule exits 0 with no output, and the tool call proceeds as if no guard were
 installed. A guard that blocks on its own defect stops work for a reason that is not the agent's.
 
->>> guards = CLAUDE_CODE.edit_guards
->>> payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/home/u/proj",
+>>> payload = {"hook_event_name": "PreToolUse", "tool_name": "Monitor", "cwd": "/home/u/proj",
 ...            "tool_input": {"command": "sed -i 's/a/b/' f"}}
->>> json.loads(respond(json.dumps(payload), tmpdir=None, guards=guards))["hookSpecificOutput"][
+>>> json.loads(respond(json.dumps(payload), tmpdir=None, platform="linux"))["hookSpecificOutput"][
 ...     "permissionDecision"]
 'deny'
->>> respond(json.dumps({**payload, "tool_name": "Grep"}), tmpdir=None, guards=guards) is None
+>>> respond(json.dumps({**payload, "tool_name": "Grep"}), tmpdir=None, platform="linux") is None
 True
 """
 
@@ -29,13 +30,18 @@ from zikaron.guard.messages import acknowledgement, deny_message
 from zikaron.guard.nudge import reread_text
 from zikaron.guard.scratch import Location
 from zikaron.guard.script_file import Reader, read_script
-from zikaron.harness.spec import CLAUDE_CODE, EditGuards
+from zikaron.harness.spec import CLAUDE_CODE, Guards
 
 
 def main() -> None:
     """Read the payload, write whatever the dispatched rule returns, and exit 0 unconditionally."""
     with contextlib.suppress(Exception):
-        output = respond(sys.stdin.read(), tmpdir=os.environ.get("TMPDIR"), read=read_script)
+        output = respond(
+            sys.stdin.read(),
+            tmpdir=os.environ.get("TMPDIR"),
+            platform=sys.platform,
+            read=read_script,
+        )
         if output is not None:
             sys.stdout.write(output)
     sys.exit(0)
@@ -45,11 +51,13 @@ def respond(
     raw: str,
     *,
     tmpdir: str | None,
-    guards: EditGuards | None = CLAUDE_CODE.edit_guards,
+    platform: str,
+    guards: Guards | None = CLAUDE_CODE.guards,
     read: Reader | None = None,
 ) -> str | None:
-    """The hook's stdout for one payload, or `None` for no output. `read` is row 6's file read,
-    none by default: `main` is where the hook's I/O is done, and passes `read_script`.
+    """The hook's stdout for one payload on `platform`, a `sys.platform` value, or `None` for no
+    output. `read` is row 6's file read, none by default: `main` is where the hook's I/O is done,
+    and passes `read_script`.
 
     Raises whatever a malformed payload or a rule defect raises; `main` turns that into silence.
     """
@@ -57,16 +65,17 @@ def respond(
     if guards is None or not isinstance(payload, dict):
         return None
     event = payload.get("hook_event_name")
-    if event == guards.find_replace.trigger:
-        return _find_replace(payload, tmpdir, tools=guards.find_replace.tools, read=read)
+    if event == guards.command.trigger:
+        return _command(payload, tmpdir, platform, tools=guards.command.tools, read=read)
     if event == guards.reread.trigger:
         return _reread(payload, tmpdir, tools=guards.reread.tools)
     return None
 
 
-def _find_replace(
+def _command(
     payload: Mapping[str, object],
     tmpdir: str | None,
+    platform: str,
     *,
     tools: frozenset[str],
     read: Reader | None,
@@ -75,7 +84,7 @@ def _find_replace(
     location = _location(payload, tmpdir)
     if payload.get("tool_name") not in tools or not isinstance(command, str) or location is None:
         return None
-    decision = decide(command, location, read=read)
+    decision = decide(command, location, platform=platform, read=read)
     if isinstance(decision, Deny):
         reason = deny_message(
             decision.match,

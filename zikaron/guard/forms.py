@@ -1,4 +1,4 @@
-"""The six forms of `design/edit-guards.md` §3.2, matched over one pipeline, with their targets.
+"""The six forms of `design/guards.md` §3.2, matched over one pipeline, with their targets.
 
 Every command word of every simple command is tried against the six rows; a row that matches
 yields a `FormMatch` naming its targets, each resolved and tested for scratch (§3.3). **A match is

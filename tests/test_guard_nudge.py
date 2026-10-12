@@ -1,4 +1,4 @@
-"""The re-read nudge, `design/edit-guards.md` §4, through the hook's I/O."""
+"""The re-read nudge, `design/guards.md` §4, through the hook's I/O."""
 
 import json
 
@@ -19,7 +19,7 @@ def _nudge(tool: str, tool_input: dict[str, object], **result: object) -> str | 
         "tool_input": tool_input,
         **result,
     }
-    output = respond(json.dumps(payload), tmpdir=None)
+    output = respond(json.dumps(payload), tmpdir=None, platform="linux")
     if output is None:
         return None
     envelope = json.loads(output)["hookSpecificOutput"]

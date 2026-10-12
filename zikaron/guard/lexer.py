@@ -1,4 +1,4 @@
-"""Strings, comments and continuations: `design/edit-guards.md` §3.1 steps 2 and 3.
+"""Strings, comments and continuations: `design/guards.md` §3.1 steps 2 and 3.
 
 One left-to-right pass over a unit's lines, where **the first thing met decides**:
 

@@ -1,6 +1,6 @@
-"""Which of Zikaron's two products a project installs: the memory store, the edit guards, or both.
+"""Which of Zikaron's two products a project installs: the memory store, the guards, or both.
 
-`design/edit-guards.md` §5 is normative. The installer takes the selection as `--components`, and
+`design/guards.md` §5 is normative. The installer takes the selection as `--components`, and
 writes it into `zikaron-hook`'s start entries as the same flag, so the hook can build its start
 text from the flag alone — no file read, no service query. A `memory` start entry carries no flag
 at all, which keeps a default install's entry byte-for-byte what it always was.

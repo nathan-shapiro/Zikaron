@@ -32,11 +32,12 @@ yes, it is out of scope. That store is for what cost somebody time to discover, 
 be discovered again by the next agent, at full price. A knowledge base has no such test — it is
 whatever corpus you point it at.
 
-**And, on request, two edit guards for Claude Code** — independent of both stores. One refuses a
-find-replace edit to an authored file (`sed -i`, an inline script, a heredoc into the file) and
-points the agent at `Read` and `Edit`; the other reminds it, after each edit, to re-read what it
-changed. See [Edit guards](#edit-guards-claude-code-on-request); a project may install the memory
-store, the guards, or both.
+**And, on request, guards for Claude Code** — two deterministic hooks, independent of both stores.
+One refuses two kinds of command: a find-replace edit to an authored file (`sed -i`, an inline
+script, a heredoc into the file), pointing the agent at `Read` and `Edit`, and a `pgrep -f` or
+`pkill -f` whose pattern matches the shell running it. The other reminds the agent, after each
+edit, to re-read what it changed. See [Guards](#guards-claude-code-on-request); a project may install the memory store, the
+guards, or both.
 
 It runs entirely on your machine: SQLite databases under `.zikaron/`, a local embedding model, and a
 small background service on a Unix socket. **Zikaron reaches the network for exactly one thing** —
@@ -101,7 +102,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **service** | A long-running process per project. Holds the embedding model in memory and the databases open, and answers requests over a Unix socket. Starts itself when needed and stops itself when idle. |
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
 | **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
-| **guard** | Claude Code only, installed on request: a single-shot executable the harness runs before each Bash call and after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
+| **guard** | Claude Code only, installed on request: a single-shot executable the harness runs before each `Bash` or `Monitor` call and after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
 | **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running the foreground command a build result prints. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
 The service exists for one measured reason: loading the embedding model costs about **780 ms**, and
@@ -213,7 +214,7 @@ cd /path/to/your/project
 zikaron install --project . --harness claude-code    # or: --harness kiro
 ```
 
-Under Claude Code, `--components` adds the [edit guards](#edit-guards-claude-code-on-request), or
+Under Claude Code, `--components` adds the [guards](#guards-claude-code-on-request), or
 installs them alone; without it you get the memory store only, exactly as before:
 
 ```bash
@@ -324,8 +325,8 @@ and under **Claude Code**:
 
 With `--components guards` the install writes `.claude/settings.local.json` alone, and in it only
 hooks: the session-start and per-subagent hooks, which carry a short note about the guards, and the
-two guard hooks — before each Bash call, after each edit. No server, no approval key, no
-consolidator. With `--components both` you get all of the above together, and the start hooks carry
+two guard hooks — before each `Bash` or `Monitor` call, after each edit. No server, no approval
+key, no consolidator. With `--components both` you get all of the above together, and the start hooks carry
 the write policy and the guards' note.
 
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
@@ -445,10 +446,10 @@ guard, the receipts and the lease are untouched — but an unauthorized consolid
 tokens and could write a poorly-judged long-term record. `permissions.deny` is **not** the fix: it is
 global and unregisters the tool, after which the consolidator itself refuses to start.
 
-### Edit guards (Claude Code, on request)
+### Guards (Claude Code, on request)
 
-`--components guards` (or `both`) installs two deterministic hooks that hold an agent to two rules,
-with no model and no store behind them (`design/edit-guards.md`):
+`--components guards` (or `both`) installs two deterministic hooks that hold an agent to three
+rules, with no model and no store behind them (`design/guards.md`):
 
 - **A find-replace edit to an authored file is refused** — `sed -i`, `perl -pi`, an inline Python
   or node script that writes a file, a heredoc or `echo` redirected into one, and a script under
@@ -460,6 +461,15 @@ with no model and no store behind them (`design/edit-guards.md`):
   re-read of the edited material once that file's editing is done. A Bash command gets no such
   reminder, so when the agent overrides a refusal, the guard's acknowledgement names what the
   command changes and asks for that re-read instead.
+- **A `pgrep -f` or `pkill -f` whose pattern matches its own command is refused.** Claude Code
+  runs each command inside a shell whose command line carries the command's text, so on Linux such
+  a pattern matches that shell: `pkill` kills it, and `pgrep` always finds it, so a check for a
+  process that has exited never sees it gone. The refusal shows where the pattern matched and gives
+  the fix: `-A`, where `pgrep` has it, or a bracketed character (`[m]onth_monitor.py`). On macOS,
+  whose `pgrep` already leaves out the shell, only `-a` brings it back.
+
+Both refusals judge `Bash` and `Monitor` commands alike. An install made by an earlier version
+judges `Bash` alone; re-running it with the same `--components` adds `Monitor`.
 
 They are not a security boundary: a script the guard reads is one run from a scratch directory,
 and a script anywhere else — one of the project's own programs — is never read, by design. A guard
@@ -489,7 +499,7 @@ usually shows something else: told the rule when its session starts, it reaches 
 | `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--components {memory,guards,both}` | what to install: the memory store (the default), the edit guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no consolidator |
+| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no consolidator |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
@@ -908,7 +918,7 @@ than deleted, because both hold settings that are not Zikaron's. **All three set
 the install writes three** — leaving `enabledMcpjsonServers` behind names two servers that no longer
 exist, which loads nothing and breaks nothing but is not an uninstall.
 
-**The edit guards** live only in `.claude/settings.local.json`: remove the `PreToolUse` and
+**The guards** live only in `.claude/settings.local.json`: remove the `PreToolUse` and
 `PostToolUse` hook groups whose command is `zikaron-guard`, and the `SessionStart` and
 `SubagentStart` groups whose command is `zikaron-hook`. To keep the memory store and drop only the
 guards, re-running the installer will not do it — an install never removes a selection — so delete

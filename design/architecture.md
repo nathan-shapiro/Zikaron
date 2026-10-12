@@ -2417,7 +2417,7 @@ given, and a corpus build by a `knowledge_build` row under a label the indexer m
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose
 allowlist is the only one carrying the four consolidation tools), the D10 skill that invokes it, the
 `agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text — and, for a Claude Code
-project that asks for them, the edit guards' two hook entries (`design/edit-guards.md` §5).
+project that asks for them, the guards' two hook entries (`design/guards.md` §5).
 
 ### Two hook formats, both inside the stable agent config
 
@@ -2506,7 +2506,7 @@ Three rules go with it, and each closes a way the measurement could be lost:
 > **Harness delta (D34).** This contract is kiro's. Claude Code writes four artefacts — two JSON (`.claude/settings.local.json`, `.mcp.json`)
 > and two YAML-frontmatter Markdown files and needs no
 > model-id validation; with `--components guards` it writes only hook groups, in
-> `settings.local.json` (`design/edit-guards.md` §5). The collision and backup discipline below is
+> `settings.local.json` (`design/guards.md` §5). The collision and backup discipline below is
 > harness-independent, **and so is
 > the refuse-on-difference rule: both targets refuse only on ownership** (`zikaron/install/ownership.py`)
 > — `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for a server entry, whether
@@ -2567,7 +2567,7 @@ things and refuses rather than guesses when it cannot.
     on everyone — accumulating `.bak.N` files in `.claude/agents/` — to protect a practice this
     document has just declared unsupported.
 - **`command` is an absolute path to the venv's own console script** — `<venv>/bin/zikaron-hook`,
-  `<venv>/bin/zikaron-mcp`, and for the edit guards `<venv>/bin/zikaron-guard` — resolved by the
+  `<venv>/bin/zikaron-mcp`, and for the guards `<venv>/bin/zikaron-guard` — resolved by the
   installer from its own interpreter rather than written by hand. Both harnesses run a hook's
   `command` through a shell (Claude Code's measured in
   `research/claude-code-hook-command-shell-probe.md`), so the path is shell-quoted in both, and a

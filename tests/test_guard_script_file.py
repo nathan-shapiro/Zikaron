@@ -1,4 +1,4 @@
-"""Row 6's one file read fails open where `design/edit-guards.md` §8.1 cannot reach.
+"""Row 6's one file read fails open where `design/guards.md` §8.1 cannot reach.
 
 §8.1 holds every reading edge a file on disk can show — a symlink, a FIFO, a directory, the size
 limit, an undecodable byte. Two more need the filesystem to misbehave between two calls, so they

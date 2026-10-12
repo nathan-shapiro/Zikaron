@@ -1,4 +1,4 @@
-"""Throwaway spike: design/edit-guards.md §3 implemented from its text, checked against §8.
+"""Throwaway spike: design/guards.md §3 implemented from its text, checked against §8.
 
 Not the product. It exists to find where §3 is ambiguous or self-contradictory, and where §8's
 expected value does not follow from §3. Run: .venv/bin/python experiments/m37_guard_prototype.py
@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DOC = Path(__file__).resolve().parent.parent / "design" / "edit-guards.md"
+DOC = Path(__file__).resolve().parent.parent / "design" / "guards.md"
 CWD = "/home/u/proj"
 
 # Readings the spec leaves open; research/m37-guard-prototype-run.md has the resolved ones.

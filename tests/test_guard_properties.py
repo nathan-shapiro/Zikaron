@@ -1,11 +1,14 @@
-"""The find-replace rule's two properties over generated commands (`design/edit-guards.md` §1).
+"""The command rules' two properties over generated commands (`design/guards.md` §1).
 
-**Determinism**: the same payload, `$TMPDIR` and scratch scripts always yield the same output. And
-**totality**: no command makes the rule raise — a raise would still be an allow, by §6, but a
-silent one that hides every form in the command. Row 6's file read is a stand-in answering one
-fixed script for every path, so a generated `bash /tmp/x` judges a script without touching the
-machine's own `/tmp`.
+**Determinism**: the same payload, `$TMPDIR`, platform and scratch scripts always yield the same
+output, and so does the same call with warnings turned into errors (§9.2). And **totality**: no
+command makes a rule raise — a raise would still be an allow, by §6, but a silent one that hides
+every form in the command. Row 6's file read is a stand-in answering one fixed script for every
+path, so a generated `bash /tmp/x` judges a script without touching the machine's own `/tmp`.
 """
+
+import re
+import warnings
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -20,8 +23,22 @@ def _one_script(path: str) -> str:
 
 
 #: Fragments that exercise every stage: quoting, heredocs, continuations, substitutions,
-#: separators, redirects, the override and each form's command word.
+#: separators, redirects, the override, each form's command word, and the self-match rule's
+#: programs, options, patterns and filters.
 _FRAGMENTS = (
+    "pgrep ",
+    "pkill ",
+    "-f ",
+    "-af ",
+    "-A ",
+    "-int ",
+    "--signal ",
+    "! ",
+    "grep -v ",
+    "-e ",
+    "[m]x",
+    "[[:alpha:]]",
+    "$$",
     "sed -i ",
     "perl -pi -e ",
     "gawk -i inplace ",
@@ -71,8 +88,17 @@ locations = st.builds(
 )
 
 
+platforms = st.sampled_from(["linux", "darwin", "win32"])
+
+
 @settings(max_examples=400, deadline=None)
-@given(command=commands, location=locations)
-def test_the_decision_is_deterministic_and_total(command: str, location: Location) -> None:
-    first = decide(command, location, read=_one_script)
-    assert first == decide(command, location, read=_one_script)
+@given(command=commands, location=locations, platform=platforms)
+def test_the_decision_is_deterministic_and_total(
+    command: str, location: Location, platform: str
+) -> None:
+    first = decide(command, location, platform=platform, read=_one_script)
+    assert first == decide(command, location, platform=platform, read=_one_script)
+    re.purge()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert first == decide(command, location, platform=platform, read=_one_script)

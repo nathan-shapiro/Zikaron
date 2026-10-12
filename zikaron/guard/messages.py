@@ -1,9 +1,11 @@
 """The texts the guard hooks put in front of a model; the start text is `start_text`'s.
 
-The wording is not this module's to choose: `design/edit-guards.md` §5 assigns it to
-memory-reviewer, whose final text is `reviews/m37-edit-guards-review.md` §"Prompt texts", and a
-test holds these constants to that file. The design states what each text must contain — the
-deny message §3.5, the invalid-marker message and the acknowledgement §3.4, the nudge §4.
+The wording is not this module's to choose: `design/guards.md` §5 assigns it to
+memory-reviewer, whose final text is `reviews/m37-edit-guards-review.md` §"Prompt texts" and, for
+the self-match rule's, `reviews/m38-selfmatch-guard-review.md` §"Prompt texts", and a test holds
+these constants to those files. The design states what each text must contain — the deny message
+§3.5, the invalid-marker message and the acknowledgement §3.4, the nudge §4, the self-match
+deny §9.3.
 
 >>> from zikaron.guard.forms import Form, FormMatch, Target
 >>> match = FormMatch(Form.LITERAL_TEXT, "tee", (Target("/home/u/proj/f", False),))
@@ -18,6 +20,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from zikaron.guard.forms import Form, FormMatch
+from zikaron.guard.selfmatch import Platform, SelfMatch
 
 DENY_TEMPLATE: Final = (
     "Zikaron's find-replace guard refused this command: `{word}` {form}; it names {targets}. "
@@ -29,14 +32,48 @@ DENY_TEMPLATE: Final = (
     "words on that line: #ZIKARON-FORCE #Reason: regenerate golden file."
 )
 
-INVALID_MARKER_TEMPLATE: Final = (
-    "Zikaron's find-replace guard refused this command: `{word}` {form}; it names {targets}. "
+#: What both rules' invalid-marker messages say about the marker (§3.4, §9.2).
+MARKER_CLAUSE: Final = (
     "It carries #ZIKARON-FORCE, but no comment in it is a valid override. A valid override is "
     "one shell comment in which the marker stands at the start of a line or after whitespace, "
     "#Reason: follows it with that spelling and capital R, and your own reason follows on the "
     "marker's line, at least two words outside angle brackets: "
     "#ZIKARON-FORCE #Reason: regenerate golden file."
 )
+
+INVALID_MARKER_TEMPLATE: Final = (
+    "Zikaron's find-replace guard refused this command: `{word}` {form}; it names {targets}. "
+    + MARKER_CLAUSE
+)
+
+SELF_MATCH_TEMPLATE: Final = (
+    "Zikaron's self-match rule refused this command: the `{word}` pattern also matches the shell "
+    "running this command, because Claude Code runs each command inside a shell whose command "
+    "line contains the command's text. The matched text, with a little of its line around it: "
+    "`{excerpt}`. So pkill kills this command's own shell, and pgrep always finds it: a check for "
+    "a running process always finds one, a wait for it to exit never ends, and a count is one "
+    "high. {fix} If the deny is mistaken and this command is right as written, run it again with "
+    "a shell comment of exactly this form, giving your own reason in at least two words on that "
+    "line: #ZIKARON-FORCE #Reason: regenerate golden file."
+)
+
+#: The self-match deny's `{fix}`, per platform (§9.3).
+SELF_MATCH_FIXES: Final[dict[Platform, str]] = {
+    Platform.LINUX: (
+        "Add -A (--ignore-ancestors), which excludes the shell running this command and every "
+        "other ancestor, including the second shell a $(...) substitution forks, which a filter "
+        "on $$ misses; procps-ng 4.0.1 and later have it, BusyBox and procps-ng 3.3.17 (Ubuntu "
+        "22.04, RHEL 9) do not. Where -A is rejected, bracket one character of the pattern "
+        "([m]onth_monitor.py) where its text is written, in the assignment if the pattern is a "
+        "variable, which only stops it matching its own spelling: where the match shown above is "
+        "not the pattern's text, reword that text or run it in a separate call."
+    ),
+    Platform.DARWIN: (
+        "Drop -a: on macOS it means include the ancestors, which puts the shell running this "
+        "command among the matches; without it pgrep and pkill leave out every ancestor, this "
+        "shell included. To list command lines there, use -l with -f."
+    ),
+}
 
 PLACEMENT_CLAUSE: Final = (
     "The #ZIKARON-FORCE in this command is inside a heredoc body or a quoted string, where it is "
@@ -78,11 +115,19 @@ FORM_LABELS: Final[dict[Form, str]] = {
 }
 
 
-def deny_message(match: FormMatch, *, invalid_marker: bool, marker_in_content: bool) -> str:
+def deny_message(
+    match: FormMatch | SelfMatch, *, invalid_marker: bool, marker_in_content: bool
+) -> str:
     """The `permissionDecisionReason` for a deny of `match`."""
-    template = INVALID_MARKER_TEMPLATE if invalid_marker else DENY_TEMPLATE
-    targets = _targets(match.authored_paths)
-    message = template.format(word=match.word, form=FORM_LABELS[match.form], targets=targets)
+    if isinstance(match, SelfMatch):
+        fix = SELF_MATCH_FIXES[match.platform]
+        message = SELF_MATCH_TEMPLATE.format(word=match.word, excerpt=match.excerpt, fix=fix)
+        if invalid_marker:
+            message = f"{message} {MARKER_CLAUSE}"
+    else:
+        template = INVALID_MARKER_TEMPLATE if invalid_marker else DENY_TEMPLATE
+        targets = _targets(match.authored_paths)
+        message = template.format(word=match.word, form=FORM_LABELS[match.form], targets=targets)
     return f"{message} {PLACEMENT_CLAUSE}" if marker_in_content else message
 
 

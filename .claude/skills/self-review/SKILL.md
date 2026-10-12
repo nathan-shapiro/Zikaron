@@ -44,7 +44,7 @@ Skip it for routine, low-stakes steps — each loop spends extra model cycles.
 ## Notes
 - The reviewer has no `Agent` tool, so it cannot delegate — it reviews only. That is fine.
 - **The reviewer's "writes only to `reviews/`" boundary is enforced by its prompt, not by the harness** — Claude Code has no per-subagent path rule. If you ever see the reviewer edit the artifact under review, treat it as a defect in the loop and say so — the protocol depends on all edits staying with you so changes remain coherent and validated.
-- The reviewer runs `fable` — a different model from the author but the same family, so there is no cross-family independence. Weigh an `APPROVED` accordingly wherever shared-family blind spots are plausible.
+- The reviewer runs `fable` and the author `opus`: two different models from one vendor. Under kiro the reviewer was GPT, another vendor's model, and that cross-vendor independence is what the move gave up. Weigh an `APPROVED` accordingly wherever a blind spot shared by one vendor's models is plausible.
 
 ## Reviewer brief template
 ```

@@ -166,7 +166,7 @@ than behind a run that resolves a socket path and loads an extension.
 **`zikaron-hook`, `zikaron-mcp` and `zikaron-guard` are deliberately not folded in.** Their absolute
 paths are written into harness configuration at install time — `architecture.md` §"The install
 contract" is normative — so absorbing them would rewrite every installed config to shorten command
-lines no human types. `zikaron-guard` is the edit guards' one process (`design/edit-guards.md` §5).
+lines no human types. `zikaron-guard` is the guards' one process (`design/guards.md` §5).
 The install contract is unchanged by M30, and `tests/test_install_targets.py`'s golden artefacts are
 what assert it rather than inspection.
 
@@ -351,36 +351,28 @@ corpus named the wrong repository's licence for the artefact it ships a fetcher 
 
 ## 3. The version scheme
 
-**Semver, `0.x` while the install contract may still change.** The install contract is the set of
-shapes and locations of the artefacts the installer writes into a harness's configuration.
+**Semver, `0.x`.** `0.1.0` is the first version with this scheme; everything before it was
+`0.0.0`, which was never a statement about anything.
 
-**The one rule that matters: a release whose installed artefacts differ in *shape* from the previous
-one is a minor bump, never a patch.** Those paths are written into harness configuration files that an
-upgrade must be able to refresh, and a patch bump tells a reader that nothing needs refreshing. A
-version number is the only signal an upgrading user gets before the harness reads a config that no
-longer matches what is installed.
+**A minor bump means one thing: `meta.schema_version` moved** (operator, 2026-09-29, and as the
+only trigger 2026-10-11). Every other change is a patch — a new artefact, a changed hook matcher, a
+new console script or flag. A release that cannot open a store an earlier one wrote is the change an
+upgrading user must be warned of before it bites: `0.1.0` declares `SUPPORTED_SCHEMA_VERSION = 1`
+and refuses every store `0.3.0` has opened. D37 governs a binary meeting a store, and this governs
+the number that warns them apart.
 
-`0.1.0` is the first version with this scheme; everything before it was `0.0.0`, which was never a
-statement about anything.
-
-**A `meta.schema_version` bump is a minor bump too, on its own, whether or not an artefact moves with
-it** (operator, 2026-09-29). A release that cannot open a store an earlier one wrote is at least as
-visible to an upgrading user as a changed config shape — `0.1.0` declares `SUPPORTED_SCHEMA_VERSION = 1`
-and refuses every store `0.3.0` has opened — and a patch bump would tell that reader nothing needs
-refreshing. So the rule has two triggers and the artefact one is not the only way in: D37 governs a
-binary meeting a store, and this governs the number that warns them apart.
+**A change to the installed artefacts is not a trigger, because "shape" has no definition that
+settles a release** (operator, 2026-10-11): whether a changed matcher value, a new hook group or a
+new flag in a hook command counted as one was reopened by every release that touched the installer.
+A release that needs an existing install refreshed says so in its release note.
 
 **`0.3.0` follows `0.1.0` directly, and that is arithmetic rather than a choice.** `0.1.0` shipped
 schema 1 and `0.3.0` ships schema 3; the `MIGRATIONS` steps between them — `to_version=2` at M31 and
-`to_version=3` at M33 — are each a minor bump, so no `0.2.0` was ever released. `.mcp.json` gaining
-`alwaysLoad` falls inside the second of them rather than adding a third: a release is one bump however
-many of the triggers it fires.
+`to_version=3` at M33 — are each a minor bump, so no `0.2.0` was ever released.
 
-**That `0.3.0`'s minor equals its schema version is a coincidence of this history, not an invariant,
-and must not be relied on.** It held because the two started aligned and neither bump between them was
-released. The first release carrying an artefact-shape change with no schema move breaks it, and that
-release is still correct — the number's job is to say *something needs refreshing*, not to encode
-which store version a build speaks. `store.CURRENT_SCHEMA_VERSION` is where that is written.
+**So far the minor equals the schema version, and nothing may read it as one.**
+`store.CURRENT_SCHEMA_VERSION` is where the store version a build speaks is written; the version
+number's job is to say a store-level change happened, not to name which.
 
 **Upgrading does not replace a running service, and since M31 that is visible.** A service is
 started by whichever build first needed one and keeps answering until `idle_timeout` passes with no

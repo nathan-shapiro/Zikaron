@@ -47,7 +47,7 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent.parent / "zikaron"
 #: what one added to `zikaron.hook` would — and the whole enforcement claim of this file is that a
 #: new module is covered by default rather than when someone remembers to list it. A seam that is
 #: stdlib-only by intent and unguarded in fact is the gap this closes. `zikaron.guard` runs on every
-#: Bash call and every edit (`design/edit-guards.md` §1).
+#: `Bash` or `Monitor` call and every edit (`design/guards.md` §1).
 _CRITICAL_PATH_PACKAGES = ("hook", "harness", "guard")
 
 

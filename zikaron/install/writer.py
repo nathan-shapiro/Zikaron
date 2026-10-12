@@ -119,7 +119,7 @@ class Plan:
     hook_format: HookFormat
     force: bool
     trust_tools: bool
-    #: What is being installed: the memory store, the edit guards, or both.
+    #: What is being installed: the memory store, the guards, or both.
     components: Components = Components.MEMORY
 
 

@@ -1,4 +1,4 @@
-"""The re-read nudge: `design/edit-guards.md` §4.
+"""The re-read nudge: `design/guards.md` §4.
 
 After each successful edit of an authored file, a statement that it has not been re-read, with
 the edited line ranges where the result carries them. It never blocks.

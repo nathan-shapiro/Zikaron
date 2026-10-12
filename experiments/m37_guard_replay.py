@@ -27,7 +27,7 @@ from zikaron.guard.heredoc import delimit
 from zikaron.guard.scratch import Location
 
 #: Write calls quoted inside a string literal, as a test of the guard itself writes them.
-_GUARD_UNDER_TEST = re.compile(r"m37_guard|zikaron\.guard|edit-guards")
+_GUARD_UNDER_TEST = re.compile(r"m37_guard|zikaron\.guard|edit-guards|guards\.md")
 _JOB_TMP = re.compile(r"/\.claude/jobs/[^/]+/tmp(?:/|$)")
 
 
@@ -108,7 +108,9 @@ def main() -> None:
         counts["commands"] += 1
         if all_matches(delimit(call["command"].split("\n")), location, read=written.get):
             counts["a form matched"] += 1
-        decision = decide(call["command"], location, read=written.get)
+        # The find-replace rule alone: a platform whose `pgrep` the self-match rule does not read
+        # leaves it silent, so these counts stay comparable with the ones taken before it existed.
+        decision = decide(call["command"], location, platform="", read=written.get)
         counts[type(decision).__name__] += 1
         if isinstance(decision, Deny):
             label = reading(call, decision)

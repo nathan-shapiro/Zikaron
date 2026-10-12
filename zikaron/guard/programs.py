@@ -1,6 +1,6 @@
 """The command words that execute text they are handed: shells and row 4's interpreters.
 
-`design/edit-guards.md` §3.2 decides three things by them: whether a heredoc body is scanned (its
+`design/guards.md` §3.2 decides three things by them: whether a heredoc body is scanned (its
 opener's pipeline has one), which commands row 4 judges, and where row 5's walk back from `tee`
 stops. Each is matched as the whole word, after `position.command_name` has removed quotes and
 the path prefix — so `ssh` is not `sh`, and `/bin/bash` is `bash`.

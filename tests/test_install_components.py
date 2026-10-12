@@ -1,4 +1,4 @@
-"""`--components`: the memory store, the edit guards, or both (`design/edit-guards.md` §5).
+"""`--components`: the memory store, the guards, or both (`design/guards.md` §5).
 
 `design/build-plan.md` §M37 names the axes: the prior state of `settings.local.json`, the
 selection, the mode, the harness and the other flags. The plane of prior state against selection
@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from zikaron.guard.limits import TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, EditGuards
+from zikaron.harness.spec import CLAUDE_CODE, Guards
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install import harness
@@ -26,13 +26,13 @@ from zikaron.install.entries import Commands, claude_hooks_value
 from zikaron.install.main import main
 
 
-def _edit_guards() -> EditGuards:
-    guards = CLAUDE_CODE.edit_guards
+def _guards() -> Guards:
+    guards = CLAUDE_CODE.guards
     assert guards is not None
     return guards
 
 
-GUARDS = _edit_guards()
+GUARDS = _guards()
 START_TRIGGERS = ("SessionStart", "SubagentStart")
 USER_PRE_TOOL_USE = {"matcher": "Bash", "hooks": [{"type": "command", "command": "/u/lint.sh"}]}
 USER_POST_TOOL_USE = {"hooks": [{"type": "command", "command": "/u/format.sh"}]}
@@ -105,7 +105,7 @@ def test_the_result_is_the_union_of_what_was_there_and_what_is_installed(
     expected_triggers = {
         *START_TRIGGERS,
         *(["UserPromptSubmit"] if installed.memory else []),
-        *([GUARDS.find_replace.trigger, GUARDS.reread.trigger] if installed.guards else []),
+        *([GUARDS.command.trigger, GUARDS.reread.trigger] if installed.guards else []),
     }
     assert set(hooks) == expected_triggers
     start = " ".join((shlex.quote(str(commands.hook)), *installed.arguments))
@@ -164,7 +164,7 @@ def test_each_guard_entry_states_its_timeout_and_its_matcher(
 
 
 def test_the_guard_timeout_is_the_one_the_design_states() -> None:
-    design = (Path(__file__).resolve().parent.parent / "design" / "edit-guards.md").read_text(
+    design = (Path(__file__).resolve().parent.parent / "design" / "guards.md").read_text(
         encoding="utf-8"
     )
     assert f"**Each guard entry states its `timeout`: {TIMEOUT_SECONDS} s**" in design
@@ -229,6 +229,23 @@ def test_an_older_memory_install_is_upgraded_on_the_start_entries_only(
         (group,) = hooks[trigger]
         assert group["hooks"][0]["timeout"] == HOOK_TIMEOUT_SECONDS
         assert group["hooks"][0]["command"].endswith("--components both")
+
+
+@pytest.mark.parametrize("selection", ["guards", "both"])
+def test_an_older_bash_only_guard_group_is_replaced_by_the_widened_matcher(
+    project: Path, commands: Commands, selection: str
+) -> None:
+    command = shlex.quote(str(commands.guard))
+    older = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": command, "timeout": TIMEOUT_SECONDS}],
+    }
+    path = project / ".claude" / "settings.local.json"
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [older]}}))
+    assert _install(project, "--components", selection) == 0
+    (group,) = _hooks(project)[GUARDS.command.trigger]
+    assert group == {**older, "matcher": GUARDS.command.matcher}
+    assert GUARDS.command.tools == frozenset({"Bash", "Monitor"})
 
 
 def test_an_unquoted_path_from_before_quoting_is_replaced_not_duplicated(

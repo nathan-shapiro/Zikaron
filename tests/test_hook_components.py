@@ -1,4 +1,4 @@
-"""`zikaron-hook --components`: the start text by selection (`design/edit-guards.md` §5).
+"""`zikaron-hook --components`: the start text by selection (`design/guards.md` §5).
 
 No flag is the memory hook exactly as it was. `guards` emits only the guard start text and makes
 no service connection; `both` emits the write policy, then the guard start text. The consolidator,

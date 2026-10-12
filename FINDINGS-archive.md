@@ -3250,6 +3250,15 @@ Plan:
 
 
 ## References
+- **M38's self-match rule (2026-10-11)** — `research/m38-selfmatch-replay.md` (the wrapper's argv,
+  `PreToolUse` on `Monitor`, `-A`, and the replay: 301 of 33,784 commands denied, 38 of 38
+  signalled self-kills caught) and `research/pgrep-ancestor-exclusion.md` (procps-ng excludes only
+  itself, `-A` since 4.0.1, absent from 3.3.17 and BusyBox; macOS and FreeBSD exclude every
+  ancestor by default, and their `-a` turns that off — man pages and source, no Mac run).
+  The brief's review trail, APPROVED: `reviews/m38-selfmatch-guard-brief-review.md`. The build's:
+  `reviews/m38-selfmatch-guard-review.md` — memory-reviewer's deny wording (§"Prompt texts"),
+  then the build rounds, APPROVED; the shipped rule against the prototype and the live session are
+  in the research note.
 - **M36** — `reviews/m36-brief-review.md` (the brief's trail, APPROVED, with the operator's narrowing
   of `doctor` to the `alwaysLoad` row) and `reviews/m36-review.md` (the implementation's, APPROVED).
 - **M35 brief** — `reviews/m35-brief-review.md` (the review trail, APPROVED) and
@@ -7186,3 +7195,29 @@ organised, documented from examples and referenced to the rules, rather than tra
 After any §3 or §8 edit, run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`.
 **§3's rules change only on an observed command, never on a conceived edge**
 (`design/edit-guards.md` §7).
+
+## The first push after an idle stop (moved out of FINDINGS 2026-10-11, once PR #24 landed as `fe87d26`)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
+
+**Built and approved, in review as PR #24 — the first push after an idle stop (operator go,
+2026-10-11).** A fix, not a milestone, as PR #19 was; the PR also carries the `0.3.2.dev0` bump
+and the post-`0.3.1` archive pass. The review (`reviews/cold-start-push-review.md`) is APPROVED,
+`./check.sh` is green, and the PR's CI is the matrix run the change needs; the operator merges.
+- **The defect.** The push hook's single ~2 s deadline also covered spawning the service after an
+  idle stop, and a cold start under load missed it: `~/Trading/LeibaTrader`'s two `unanswered`
+  lines on 2026-10-10/11 each land 1–3 s after a service start, and `_degrade` relayed them as an
+  outage. The 2 s was Zikaron's, not the harness's.
+- **What is built.** The split deadline `design/build-plan.md` §M17 shelved: a push that finds the
+  service starting — absent, or still loading its model soon after opening its store, which
+  `health()`'s `model_loaded` and `uptime_seconds` now report — gets `HOOK_TIMEOUT_SECONDS` less
+  2 s, and a start still running at its deadline logs `starting` plus what was waited on, with a
+  notice asking for no report; `design/architecture.md` §"Degraded modes" is normative. One
+  service per socket path is enforced by the service (`zikaron/service/ownership.py`), which also
+  stops when its socket is lost; §"Start-if-absent, without a thundering herd" and §"Idle
+  self-stop". Every client's poll ends when the process it spawned exits, unless it deferred to
+  another service — `lifecycle.StartFailedError` for `zikaron-mcp`, the warm helper and `zikaron
+  init`, which points such a start at `service.log` rather than a bare retry. The hook's lock wait
+  ends at its deadline, and the `surface` and `health()` exchanges are timed whole. **No
+  cold-start timing was measured** (operator): it is machine- and load-specific and decides
+  nothing.
