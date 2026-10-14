@@ -13,6 +13,9 @@ raises and a memory store does not:
 - **A result says whether it may be out of date**, because the file on disk is the authority and
   the index is a copy of it. `false` there means *no evidence of change* rather than a guarantee,
   and the two known gaps are stated rather than hidden.
+- **A result from a linked document says whether what the document describes has moved since it
+  was written** — a separate question from whether the document itself has (`knowledge-index.md`
+  §7.7).
 """
 
 import asyncio
@@ -23,7 +26,8 @@ from pathlib import Path
 
 import aiosqlite
 
-from zikaron.core.knowledge import arms, chunking
+from zikaron.core.knowledge import arms, chunking, link_store, source_hash
+from zikaron.core.knowledge.links import SourceLink
 from zikaron.core.knowledge.meta import KnowledgeMeta
 from zikaron.core.retrieval.arms import cosine_from_distance
 from zikaron.core.retrieval.query import PreparedQuery
@@ -45,8 +49,23 @@ class SearchSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ResultSource:
+    """What a linked result's document says it describes, and whether that has moved since.
+
+    `path` is the declared `zikaron-source`, relative to the Zikaron root and quoted on the same
+    terms as a snippet, or `None` where the declaration is malformed.
+    """
+
+    path: str | None
+    state: source_hash.SourceState
+
+
+@dataclass(frozen=True, slots=True)
 class Result:
-    """One fragment, with everything a reader needs in order to act on it or to distrust it."""
+    """One fragment, with everything a reader needs in order to act on it or to distrust it.
+
+    `source` is present exactly when the file's indexed bytes declare a link (invariant 17).
+    """
 
     path: str
     start_line: int
@@ -55,6 +74,16 @@ class Result:
     truncated: bool
     score: float
     stale: bool
+    source: ResultSource | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Links:
+    """What a search needs in order to check linked results: the directory the declared paths are
+    relative to, and the hashing budget the whole search shares."""
+
+    root: Path
+    budget: source_hash.HashBudget
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,12 +307,41 @@ async def _stale_paths(db: aiosqlite.Connection, paths: Sequence[str], *, root: 
     return pending | checked
 
 
+async def _sources(
+    db: aiosqlite.Connection, paths: Sequence[str], *, corpus: KnowledgeMeta, links: Links
+) -> dict[str, ResultSource]:
+    """The `source` of every one of `paths` whose indexed bytes declare a link.
+
+    One hashing call for the corpus, over every source its results name, under the search's
+    shared budget (`knowledge-index.md` §7.7).
+    """
+    declared = await link_store.declared_by(db, paths, stores_links=corpus.stores_links)
+    wanted = {
+        source_hash.Source(path=link.path, width=len(link.blob))
+        for link in declared.values()
+        if isinstance(link, SourceLink)
+    }
+    hashed = await source_hash.hash_sources(
+        links.root, sorted(wanted, key=lambda one: (one.path, one.width)), budget=links.budget
+    )
+    found: dict[str, ResultSource] = {}
+    for path, link in declared.items():
+        if isinstance(link, SourceLink):
+            source = source_hash.Source(path=link.path, width=len(link.blob))
+            state = source_hash.state_of(link.blob, hashed[source])
+            found[path] = ResultSource(path=link.path, state=state)
+        elif link is not None:
+            found[path] = ResultSource(path=None, state=source_hash.SourceState.UNVERIFIABLE)
+    return found
+
+
 async def search_one(
     db: aiosqlite.Connection,
     *,
     query: PreparedQuery,
     corpus: KnowledgeMeta,
     settings: SearchSettings,
+    links: Links,
 ) -> tuple[Result, ...]:
     """Search one knowledge base and return its results, best first.
 
@@ -294,6 +352,8 @@ async def search_one(
         corpus: this knowledge base's own `meta` — its `rrf_k`, its `fusion_depth`, and the root its
             paths are relative to.
         settings: the output limit, the per-file cap and the snippet cap.
+        links: where a linked result's source path is resolved from, and the budget its hashing
+            spends. Ranking does not read it.
 
     Returns:
         At most `limit_per_kb` results, ordered by fused rank. **`score` is deliberately not
@@ -315,6 +375,7 @@ async def search_one(
     # would mean two `stat` calls and a longer `IN` list for one answer.
     paths = sorted({stored[one.chunk_id].path for one in kept})
     stale = await _stale_paths(db, paths, root=Path(corpus.root_path))
+    sources = await _sources(db, paths, corpus=corpus, links=links)
     results: list[Result] = []
     for one in kept:
         chunk = stored[one.chunk_id]
@@ -341,6 +402,7 @@ async def search_one(
                 truncated=truncated,
                 score=score,
                 stale=chunk.path in stale,
+                source=sources.get(chunk.path),
             )
         )
     return tuple(results)

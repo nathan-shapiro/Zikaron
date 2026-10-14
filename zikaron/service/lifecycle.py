@@ -269,11 +269,17 @@ def _send_request(sock: socket.socket, method: str, params: dict[str, object]) -
 @dataclass(frozen=True, slots=True)
 class HealthCheck:
     """`health()`'s result, as the client needs it to verify store identity before its first
-    real request — the fields named in `architecture.md`'s handshake."""
+    real request — the fields named in `architecture.md`'s handshake.
+
+    `version` and `pid` are what a typed command compares and names when it refuses a service of
+    another version; `version` is `None` from a service older than that check, which sends none.
+    """
 
     ready: bool
     store_path: str
     store_id: str
+    version: str | None = None
+    pid: int | None = None
 
 
 def _health(sock: socket.socket) -> HealthCheck:
@@ -297,10 +303,14 @@ def _health(sock: socket.socket) -> HealthCheck:
     ready = result["ready"]
     if ready is not True:
         raise ConnectionError(f"health() reported ready={ready!r}, not the JSON boolean true")
+    version = result.get("version")
+    pid = result.get("pid")
     return HealthCheck(
         ready=True,
         store_path=str(result["store_path"]),
         store_id=str(result["store_id"]),
+        version=version if isinstance(version, str) else None,
+        pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
     )
 
 
@@ -512,5 +522,9 @@ def _poll_until_reachable(
 
 
 def default_server_command(sock_path: Path, store_dir: Path) -> list[str]:
-    """The argv `main.py` expects: this interpreter, the service module, the socket and store."""
-    return [sys.executable, "-m", "zikaron.service.main", str(sock_path), str(store_dir)]
+    """The argv `main.py` expects: this interpreter, the service module, the socket and store.
+
+    `-P` keeps the working directory off `sys.path`, so a `zikaron/` package in it — another
+    checkout's — cannot stand in for this install's.
+    """
+    return [sys.executable, "-P", "-m", "zikaron.service.main", str(sock_path), str(store_dir)]

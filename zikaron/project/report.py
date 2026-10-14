@@ -14,7 +14,7 @@ from typing import Any
 import aiosqlite
 
 from zikaron.core.errors import ERROR_SPECS, ZikaronError
-from zikaron.knowledge.client import ServiceRefusalError
+from zikaron.knowledge.client import ServiceRefusalError, ServiceVersionError
 from zikaron.mcp.connection import AmbiguousMutationError
 
 
@@ -40,13 +40,14 @@ def execute(work: Callable[[], Coroutine[Any, Any, int]]) -> int:
     """Run one command's asynchronous body, reporting anything predictable it raises.
 
     A refusal the service sent is rendered from its own code's declared disposition, so a typed
-    command and `zikaron-mcp` cannot disagree about whether a caller has a move. The remainder
+    command and `zikaron-mcp` cannot disagree about whether a caller has a move; a service of
+    another version is refused here with the remedies its own refusal names. The remainder
     arrives as an exception raised while *establishing* the connection, before any request existed
     — except `AmbiguousMutationError`, which is the service dying after one was sent.
     """
     try:
         return asyncio.run(work())
-    except ServiceRefusalError as refusal:
+    except (ServiceRefusalError, ServiceVersionError) as refusal:
         stderr(refusal.render())
     except ZikaronError as error:
         render(error)

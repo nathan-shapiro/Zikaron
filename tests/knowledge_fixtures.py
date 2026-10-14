@@ -8,7 +8,7 @@ in-process extension rather than a service.
 """
 
 import dataclasses
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,11 +24,33 @@ from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
+from zikaron.knowledge.indexer import detach
 
 #: A pid no process can have, so *not running* is a fact in a test rather than a race with the
 #: scheduler. Shared, because every suite that plants a dead build needs the same one and a second
 #: number chosen elsewhere could be a pid the machine running the suite has actually issued.
 DEAD_PID: Final = 2**22 + 7
+
+
+@dataclass(slots=True)
+class StubProcess:
+    """A spawned build's handle, whose exit a test decides rather than waits for.
+
+    Exited by default, under a pid no process can have, so a stubbed spawn reads as a build that
+    has already finished and the service's next call for that corpus is free to spawn again —
+    which is what a test that is not about spawning wants.
+    """
+
+    pid: int = DEAD_PID
+    returncode: int | None = 0
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+
+def stub_spawned(argv: Sequence[str], process: StubProcess | None = None) -> detach.Spawned:
+    """What `detach.spawn` returns, for a stub standing in for it."""
+    return detach.Spawned(argv=list(argv), process=StubProcess() if process is None else process)
 
 
 def config_for(tmp_path: Path) -> EffectiveConfig:
@@ -146,6 +168,7 @@ async def build_index(
         corpus.config,
         name=corpus.name,
         build=build_settings(corpus.config, encoder=encoder, full=full),
+        migrate=True,
     )
 
 
@@ -179,9 +202,12 @@ async def open_corpus(
 
 @asynccontextmanager
 async def open_index(corpus: Corpus) -> AsyncIterator[KnowledgeDatabase]:
-    """This corpus's own database, open, for a test that needs to read what a build wrote."""
+    """This corpus's own database, open, for a test that needs to read what a build wrote — as it
+    stands, never brought forward."""
     registered = await registry.require(corpus.db, corpus.name)
-    async with await KnowledgeDatabase.open(corpus.store_dir, registered.id) as opened:
+    async with await KnowledgeDatabase.open(
+        corpus.store_dir, registered.id, migrate=False
+    ) as opened:
         yield opened
 
 

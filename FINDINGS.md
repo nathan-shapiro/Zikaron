@@ -61,35 +61,32 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D28 | Chunk the dense side, parameterized; FTS5 stays unchunked; `max` rollup |
 | D29 | Consolidation groups topically using retrieval as the adjacency function, mutual-K plus a cohesion pass; session grouping rejected |
 | D30 | Write policy v0 drafted, to be experimented against; six signals instrumented |
-| D31 | ~~Four~~ **Five** components: core / service / mcp / hook, plus the detached knowledge indexer (D1's amendment), over a Unix-socket JSON-RPC — **amended at M31**: the typed `zikaron` commands are clients, not store-openers, and `init` alone creates a store |
+| D31 | ~~Four~~ **Five** components: core / service / mcp / hook, plus the detached knowledge indexer (D1's amendment), over a Unix-socket JSON-RPC — **amended at M31**: the typed `zikaron` commands are clients, not store-openers, and `init` alone creates a store — **amended 2026-10-13 (M39)**: `health()` reports the service's package version, and a typed command refuses a service of any other version |
 | D32 | Two tool sets: ~~five for the primary agent~~ — **five memory verbs plus the knowledge index's seven, twelve in all** (D1's amendment) — and four for the consolidator |
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 | D34 | Two harnesses, one implementation: kiro-cli and Claude Code, differences carried as data behind one seam |
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x`, ~~with an artefact-shape rule~~ — **amended 2026-10-11**: a minor bump means a schema bump, nothing else |
-| D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back |
+| D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back — **amended 2026-10-13 (M39)**: a corpus database is brought forward by whichever process opens it with `memory.db` at version 4 or later, and a corpus schema move moves `memory.db`'s too; a corpus schema version is the `memory.db` version that introduced its shape (corpora go 1 → 4), so a corpus is never ahead of its store |
 | D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform |
 
 ## Current state — resume here
 
-**M0–M37 are built, reviewed and landed**, the last as `028b4b2` (PR #23). M26 shipped
+**M0–M38 are built, reviewed and landed**, the last as `e7b91c4` (PR #25). M26 shipped
 **nothing** — neither the reranker nor any chunking change — and that is the result, not a stall.
-Each milestone's record is in `FINDINGS-archive.md`, M37's in §"Closed with `0.3.1`"; the briefs
+Each milestone's record is in `FINDINGS-archive.md`, M38's in §"Closed with `0.3.2`"; the briefs
 are in `design/build-plan.md`; M32's shipped prose surfaces are normative in `design/retrieval.md`
-and decoded in `research/injected-prose-log.md`. **Since then, one fix has landed:** the first
-push after an idle stop, as `fe87d26` (PR #24) — the split cold-start deadline and `starting`,
-one service per store, and every client's poll ending when its spawned service exits; its record
-is in `FINDINGS-archive.md` §"The first push after an idle stop".
+and decoded in `research/injected-prose-log.md`.
 
-**`0.3.1` is released** — tagged `v0.3.1` on `028b4b2` and published by `release.yml`
-(2026-10-08). It is a patch, since the schema did not move. `main` is `0.3.2.dev0`. **A minor bump
-means a `meta.schema_version` bump and nothing else** (operator, 2026-10-11; D36,
-`design/distribution.md` §3), so M38 ships as `0.3.2`, and its pull request's commit sets
-`version = "0.3.2"` (operator, 2026-10-11) — the commit to tag once merged; `main` then goes to
-`0.3.3.dev0`.
+**`0.3.2` is released** — tag `v0.3.2` on `e7b91c4`, on PyPI since 2026-10-12; its note says
+to re-run `install` so that `Monitor` is judged. **M39 carries `0.4.0.dev0`** (operator,
+2026-10-13), since it moves the schema. **A minor bump means a
+`meta.schema_version` bump and nothing else** (operator, 2026-10-11; D36,
+`design/distribution.md` §3).
 
-**The guards (M37, D38, `design/guards.md`) are installed in `~/Trading/LeibaTrader`,
-`~/Dividends` and `~/Memory`** (operator, 2026-10-07), with `--components both`, and they replace
+**The guards (M37, M38, D38, `design/guards.md`) are installed in `~/Trading/LeibaTrader`,
+`~/Dividends` and `~/Memory`** (operator, 2026-10-07), with `--components both`, re-run on
+2026-10-11 so that each routes `Bash|Monitor` to the guard, and they replace
 every hand-written instruction about how to edit in those projects' `CLAUDE.md`, which were
 removed: a project that installs the guards instructs agents about edits not at all (operator,
 2026-10-07). **This repository does not install them** (operator, 2026-10-07): its `.venv` runs
@@ -106,35 +103,47 @@ keep it out — the research notes carry the counts and their readings, which is
 cite; the verbatim list is re-derivable on this machine with `experiments/m37_guard_replay.py
 --dump`.
 
-**M38 is built and reviewed, not landed: a self-matching `pgrep -f`/`pkill -f` is refused, on
-`Bash` and `Monitor`.** The brief (`design/build-plan.md` §M38, `design/guards.md` §9) and the
-build are both APPROVED (`reviews/m38-selfmatch-guard-brief-review.md`,
-`reviews/m38-selfmatch-guard-review.md`, whose §"Prompt texts" is the deny's wording). It is in
-its pull request, branch `m38-selfmatch-guard`, whose CI is the version matrix and runs §9.6's
-premise test on macOS (done-when 1 and 4); it was built in the worktree
-`/home/nathan/Zikaron-m38`, which `git worktree remove` clears once it is no longer wanted.
-**"Edit guards" is now "guards"** (operator, 2026-10-11): `design/guards.md`,
-`HarnessSpec.guards`, `Guards.command`; `reviews/` and the archive keep the old name, as records.
-**What remains is the operator's**: the merge; the `0.3.2` tag and release, whose note says to
-re-run `install` so that `Monitor` is judged; and that
-re-run in `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory`, which run this tree's
-`zikaron-guard` and so judge `Bash` by the new rule now, and `Monitor` only after it. **Operator,
-2026-10-11, for any further M38 review round** — *"say that operator pushes back against idea of
-reviewer to go back and revisit actual edit guards (if reviewer does it)"*: a finding that reopens
-§3–§8's rules is declined with that reason, and the words go verbatim into the brief's
-`On the operator's authority:` line. **The build includes an amendment** (operator, 2026-10-11:
-*"Sure, let's do substitution"*), reviewed to APPROVED in the same file: a pattern that is exactly
-`$NAME` or `${NAME}`, bound earlier in the same command as §3.3 reads a binding and to a literal
-value, is judged on that value — so `P=selfmatch-guard-probe; pgrep -af "$P"` is denied (§9.1).
-**The operator's red line for any further round, verbatim into its brief**: *"I have no problem
-with you iterating till bare approval as long as we're not building a "mini shell". Like we
-should not evaluate variables which are output of other sub shell etc."* — a finding that asks
-the rule to evaluate more of the shell's semantics is declined with that reason; and if the
-reviewer runs out of capacity, stop, record where the loop stands here, and resume the review the
-next day at noon (operator, 2026-10-11).
+**The self-match rule (M38, `design/guards.md` §9) moves only on an observed command, and never
+toward evaluating the shell** — the operator's line against a "mini shell" is stated in §9.4,
+where a review brief can cite it.
 
-After M38, the next work is drawn from §"Owed work" below, the dated items first: the guards'
-field counts (2026-10-21), the `bounds`-on-first-call re-run (2026-10-29) and Q22's post-release
+**The next milestones: code knowledge** (operator, 2026-10-13) — agents that write
+per-source-file documentation into a knowledge base, and a search that says whether each result's
+source has moved since it was documented. **K14** (linked knowledge) is settled in
+`design/knowledge-index.md` §7.7 and its §14 index; **D39** (the producer and the consumer) is
+proposed in `design/code-knowledge.md`, not normative, and joins §"Settled decisions" above when
+M40's brief is approved. **Each milestone is brainstormed with the operator before its brief
+is written** (operator, 2026-10-13). The plan, in order:
+
+1. **M39 — linked knowledge, under way** (operator, 2026-10-13: *"start working on M39"*). Built
+   in the worktree **`/home/nathan/Zikaron-m39`, branch `m39-linked-knowledge`, whose `FINDINGS.md`
+   is the live one**: `~/Trading/LeibaTrader` runs `/home/nathan/Zikaron`'s tree and M39 bumps the
+   store's schema. The main tree's uncommitted changes were carried into the worktree byte for byte
+   on 2026-10-13 and are frozen there; once M39 merges they are a subset of its commit. The steps:
+   1. **Brief — APPROVED** (`reviews/m39-linked-knowledge-brief-review.md`): K14 in
+      `design/knowledge-index.md` §7.7–§7.7.1, the version amendments, and §M39 in
+      `design/build-plan.md`. Its "Invariants and properties to cover" list is the test plan.
+   2. **Build — done, uncommitted, review APPROVED** (`reviews/m39-linked-knowledge-review.md`):
+      every item of §M39's "What ships", item 13's `-P` included (operator, 2026-10-13); every new
+      test seen red against its mutation; every line the build adds under `zikaron/` executed by a
+      test. The migration bar is met (`research/m39-migration-bar.md`) and done-when 2 is observed
+      (`research/m39-linked-corpus-observation.md`).
+   3. **Closed**: `./check.sh` and `./check-matrix.sh --parallel` green on one tree (2026-10-13),
+      and **the pull request is open** against `main` from `m39-linked-knowledge` (operator,
+      2026-10-13; `gh pr list --head m39-linked-knowledge` names it). The operator merges.
+
+   **What the operator will see once M39 merges into `/home/nathan/Zikaron`**: every typed command
+   in `~/Trading/LeibaTrader` refuses its still-running service, whose `health()` carries no
+   `version`, until that service is restarted; until then an MCP `refresh` there can still spawn a
+   second build. The restart ends both and migrates the store to version 4 — and every agent session
+   open across it loses its memory and knowledge tools at its next reconnect, refused
+   `schema_incompatible` by its own old `zikaron-mcp`, until that session restarts its MCP server.
+2. **Before M40's brainstorm**, a memory-assistant brief on prior art for generated repository
+   documentation and on code-localization benchmarks, the dependent variable proposed for M40.
+3. **M40 — the producer**: brainstorm → brief → self-review → build.
+
+The dated measurements in §"Owed work" below run on their dates regardless: the guards' field
+counts (2026-10-21), the `bounds`-on-first-call re-run (2026-10-29) and Q22's post-release
 measurement (2026-10-30).
 
 **The host is busy (operator, 2026-09-29, and again 2026-10-11)**, so no latency figure measured
@@ -242,26 +251,18 @@ proposed.
   the baseline says the write-side description does not bind and the consolidator is the only
   enforcement; that would argue for the corpus repair pass below before anything else.
 
-- **`tests/test_service_writer.py::test_the_wait_for_the_write_lock_ends_at_the_deadline` is
-  load-sensitive.** It asserts an overrun under `0.25 × budget` (125 ms) of wall clock, and measured
-  147 ms once on a host at load 6–7. **Fix proposed:** bound it at `0.5 × budget`, which still tells
-  "refused at the deadline" from "a whole budget late" — the property the test names. Outside M37's
-  fence (the service), so for the next milestone that touches the writer.
-- **`tests/test_knowledge_cli_integration.py::test_the_foreground_command_the_verb_prints_actually_builds_the_corpus`
-  failed once under `./check.sh` at load ~6.5** (2026-10-11): `refresh docs --wait` exited 1 with
-  *the build left it reindex_required*, so the detached build ended without completing a scan; it
-  passed 3 of 3 alone at the same load. The cause is not readable, because a detached build's output
-  is discarded by design. **Next measurement**: loop the test under a concurrent `./check.sh` and,
-  on a failure, run the foreground command the test captured, which prints why. Then fix what that
-  names — most likely a deadline the build's model load misses under load. For the next milestone
-  that touches the knowledge index; it does not block M38, whose code it does not reach.
 - **The guards' field counts — compute them 2026-10-21.** The guards went into three real
   projects on 2026-10-07, so `design/guards.md` §7's counts (a)–(d) can now be read from their
   transcripts against each project's pre-install replay (`experiments/m37_guard_replay.py
   --project <dir>`). This is the measurement the interactive test could not make: whether the start
   text holds over a long session, whether overrides carry true reasons or boilerplate, and whether
   agents route around a deny. What it would decide: a reflexive override rate argues for the reason
-  rule, a route-around for a new §3.2 row on the observed command.
+  rule, a route-around for a new §3.2 row on the observed command. **Count (e), the self-match
+  rule's denies, runs from 2026-10-11** — live on `Bash` from the build's landing in this tree and
+  on `Monitor` from the re-install that day — against the pre-landing replay's rate
+  (`research/m38-selfmatch-replay.md`, which reads every project at once). What it would decide:
+  whether a deny is followed by `-A`, a bracket, an override or a route-around, and so whether
+  §9.3's fix text works.
 
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
@@ -349,6 +350,13 @@ design change cites. Wording, provenance detail, methodological polish and arith
 decision are declined with that reason, not applied. Past milestones spent tens of review rounds
 polishing research notes. Put this decision in the brief's `On the operator's authority:` line as
 recorded here, and decline such findings when a round returns them anyway.
+
+**A finding is weighed by how likely its case is against what its fix costs** (operator,
+2026-10-13: *"Reviewer tends to find crazy edge cases (and stuck network drive sounds like that).
+Please escalate to me if reviewer continues pushing for over-engineered solutions against unlikely to
+happen situations."*). A rare case with a cheap fix is applied; a rare case with a heavy one is
+declined with its reason in the review file, or brought to the operator if the reviewer presses it.
+Those words go verbatim into the brief's `On the operator's authority:` line.
 
 ### Live design questions
 
@@ -472,6 +480,27 @@ normative and APPROVED; M19–M25 landed. What is still open:
   condition or scope dropped**, and **severity reduced**, the last being the one that should fail the
   feature outright. The harness is reusable: any future change to how records are written can be
   replayed through it, which is machinery Q12 and Q19 also lack.
+
+**The knowledge index's own open questions, from M25's dogfooding** — evidence in
+`FINDINGS-archive.md` §"M25, and the last three pre-knowledge-index milestones"; field use in
+`research/code-knowledge-sizing.md` §3. M39 settled none of them; each is settled in M40 where it
+touches it, and stays here otherwise.
+- **Nothing owns refreshing a corpus**, and a file never indexed is invisible to search with no
+  `stale` signal. In the field refreshes outnumber searches 26 to 9, because the project's
+  `CLAUDE.md` asks for one after every write. **Proposed:** the producer refreshes its own corpus at
+  the end of a run (M40); for hand-written corpora, give `knowledge_scan_on_session_start`
+  (`design/knowledge-index.md` §16, item 6) to the session-start warm helper, once a no-change
+  refresh is measured.
+- **The `git_mode` default, `tracked`, hides a document until it is committed**, and the one real
+  user overrode it on both corpora. **Proposed:** settle in M40's brainstorm, since the producer's
+  documentation is uncommitted at exactly the moment it is written.
+- **Intra-document supersession has no representation**: a chunk carrying a withdrawn claim is as
+  findable as its correction. **Proposed:** no product change; the steering caveat stands until a
+  withdrawn claim is observed quoted as current.
+- **`rrf_k` and `fusion_depth` are frozen in each corpus's `meta` at creation**, with no path to
+  change them, though they describe one response rather than how the index was built.
+  **Proposed:** stop seeding them at creation, and read configuration at search time wherever a
+  corpus's `meta` does not already carry a value.
 
 ### Harness
 

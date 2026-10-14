@@ -28,7 +28,16 @@ import aiosqlite
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ZikaronError
 from zikaron.core.indexing.encoder import Encoder
-from zikaron.core.knowledge import arms, counters, database, paths, registry, reporting, search
+from zikaron.core.knowledge import (
+    arms,
+    counters,
+    database,
+    paths,
+    registry,
+    reporting,
+    search,
+    source_hash,
+)
 from zikaron.core.knowledge import state as corpus_state
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.errors import InvalidNameError
@@ -179,7 +188,7 @@ class SearchResponse:
 
 
 def _result_payload(result: search.Result) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "path": result.path,
         "start_line": result.start_line,
         "end_line": result.end_line,
@@ -188,6 +197,9 @@ def _result_payload(result: search.Result) -> dict[str, object]:
         "score": result.score,
         "stale": result.stale,
     }
+    if result.source is not None:
+        payload["source"] = {"path": result.source.path, "state": result.source.state.value}
+    return payload
 
 
 def clamp_limit(limit: int) -> int:
@@ -271,13 +283,19 @@ def _ordered(groups: Sequence[AnyGroup]) -> tuple[AnyGroup, ...]:
     return tuple(sorted(groups, key=lambda group: (-group.order_key, group.knowledge_base)))
 
 
+@dataclass(frozen=True, slots=True)
+class _Pass:
+    """What every corpus one search reaches is searched with: the query, the bounds, what linked
+    results are checked against, and whether a corpus may be brought forward on opening."""
+
+    query: PreparedQuery
+    settings: search.SearchSettings
+    links: search.Links
+    migrate: bool
+
+
 async def _open_group(
-    store_dir: Path,
-    registered: KnowledgeBase,
-    config: EffectiveConfig,
-    *,
-    query: PreparedQuery,
-    settings: search.SearchSettings,
+    store_dir: Path, registered: KnowledgeBase, config: EffectiveConfig, searching: _Pass
 ) -> Group:
     """One corpus's group: its state, its progress, and its results if it can serve any.
 
@@ -291,12 +309,12 @@ async def _open_group(
     if not db_path.is_file():
         return _barren(registered, KnowledgeState.REINDEX_REQUIRED)
     try:
-        opened = await KnowledgeDatabase.open(store_dir, registered.id)
+        opened = await KnowledgeDatabase.open(store_dir, registered.id, migrate=searching.migrate)
     except (aiosqlite.Error, ZikaronError, OSError):
         return _barren(registered, KnowledgeState.ERROR)
     try:
         async with opened:
-            return await _serve(opened, registered, config, query=query, settings=settings)
+            return await _serve(opened, registered, config, searching)
     except (aiosqlite.Error, OSError):
         # The corpus opened and then could not be read — a file truncated under us, a vector table
         # that will not answer. Reported as this corpus's own state rather than as a failed call,
@@ -305,12 +323,7 @@ async def _open_group(
 
 
 async def _serve(
-    opened: KnowledgeDatabase,
-    registered: KnowledgeBase,
-    config: EffectiveConfig,
-    *,
-    query: PreparedQuery,
-    settings: search.SearchSettings,
+    opened: KnowledgeDatabase, registered: KnowledgeBase, config: EffectiveConfig, searching: _Pass
 ) -> Group:
     """Read one open corpus's state and search it if that state allows.
 
@@ -326,21 +339,32 @@ async def _serve(
     results: tuple[search.Result, ...] = ()
     if state in _SERVING:
         results = await search.search_one(
-            opened.connection, query=query, corpus=opened.meta, settings=settings
-        )
-        await counters.record_search(
             opened.connection,
-            counters.SearchTally(
-                results=len(results),
-                stale=sum(1 for result in results if result.stale),
-            ),
+            query=searching.query,
+            corpus=opened.meta,
+            settings=searching.settings,
+            links=searching.links,
         )
+        await counters.record_search(opened.connection, _tally(results))
     return Group(
         knowledge_base=registered.name,
         description=registered.description,
         state=state,
         files_remaining=remaining,
         results=results,
+    )
+
+
+def _tally(results: Sequence[search.Result]) -> counters.SearchTally:
+    """What one corpus's results add to its counters."""
+    states = [result.source.state for result in results if result.source is not None]
+    return counters.SearchTally(
+        results=len(results),
+        stale=sum(1 for result in results if result.stale),
+        linked=len(states),
+        source_changed=states.count(source_hash.SourceState.CHANGED),
+        source_missing=states.count(source_hash.SourceState.MISSING),
+        source_unverifiable=states.count(source_hash.SourceState.UNVERIFIABLE),
     )
 
 
@@ -397,22 +421,25 @@ def _requested(
     return tuple(found.values()), tuple(unknown)
 
 
-async def search_all(
+async def search_all(  # noqa: PLR0913 — `migrate` is the opener's, not part of the search.
     store_dir: Path,
     db: aiosqlite.Connection,
     config: EffectiveConfig,
     request: SearchRequest,
     *,
     encoder: Encoder,
+    migrate: bool,
 ) -> SearchResponse:
     """Search every named corpus and assemble one answer.
 
     Args:
-        store_dir: the `.zikaron` directory this store lives in.
+        store_dir: the `.zikaron` directory this store lives in. Its parent is the Zikaron root
+            a linked result's source path is relative to.
         db: an open connection to `memory.db`, which carries the registry.
         config: the effective configuration, for the query prefix and the two output bounds.
         request: the query, which corpora to search, and how many results each may return.
         encoder: the artifact that embeds the query. Blocking, so it is used off the event loop.
+        migrate: whether a corpus may be brought forward when this search opens it.
 
     Returns:
         A response with one group per named corpus, ordered by best cosine, within the byte cap.
@@ -442,8 +469,13 @@ async def search_all(
             prefix=config.get_str("embed_prefix_query"),
             max_terms=config.get_int("fts_query_max_terms"),
         )
+        searching = _Pass(
+            query=query.prepared,
+            settings=settings,
+            # One hashing budget for every corpus this search reaches.
+            links=search.Links(root=store_dir.parent, budget=source_hash.HashBudget()),
+            migrate=migrate,
+        )
         for base in wanted:
-            groups.append(
-                await _open_group(store_dir, base, config, query=query.prepared, settings=settings)
-            )
+            groups.append(await _open_group(store_dir, base, config, searching))
     return _fit_to_cap(_ordered(groups), known=known, max_bytes=RESPONSE_MAX_BYTES)

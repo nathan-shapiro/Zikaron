@@ -5979,6 +5979,292 @@ item 8 renames them and changes none. **Not** kiro. **Not** installed in this re
 5), and not re-installed in the three projects that run it — that is the operator's. **Nothing in
 the service, the store or the memory hook.**
 
+## M39 — A build a search could kill, a second build nobody asked for, and documents that say what they describe
+
+Normative: **`design/knowledge-index.md` §7.7 and §7.7.1** (K14), **§6.2** for the build's
+transactions, **§8.4** for `already_indexing` and **§9** for `--wait`; §3.2's DDL and `meta` keys,
+§8.3 and §8.5 for what search and `status` return, §11's schema-1 row, §12's counters, §13's
+invariants 17–19 and §15's rejected alternatives. `design/schema.md` §"When the version moves" and
+D37 as amended in `design/overview.md`. Decisions: K14 and D37's amendment (operator, 2026-10-13).
+Evidence: `research/build-transaction-upgrade-race.md`, `research/code-knowledge-sizing.md`,
+`spikes/sqlite_deferred_upgrade_busy.py`. Origin: `design/code-knowledge.md`, a proposal; M40 is
+the producer that writes the documents this milestone reads.
+
+**What was found.** A flaky test — `refresh --wait` after `add` once ended with the corpus
+`reindex_required` — is two product defects, and anyone running those two commands meets both.
+**A build's per-file transaction reads before it writes and opens deferred**, so SQLite refuses its
+upgrade at once whenever another connection holds the corpus's write lock, whatever `busy_timeout`
+says; a second build's lock acquisition and a search's counter commit are each such a connection,
+so a search during a build could end the build. **And `refresh` spawns a second build** whenever it
+arrives in the ~1.2 s a first spends loading its model before taking the lock — 25 runs of 25 —
+which sets up the first defect and lets `--wait` return before its own build began. Separately, the
+operator's pattern of agent-written per-file documentation (`design/code-knowledge.md`) needs each
+document to say which file and which version of it it describes, and search to say when that file
+has since moved — which is K14.
+
+### What ships
+
+1. **Every transaction a build opens on its corpus database is `BEGIN IMMEDIATE`** (§6.2), set
+   once on the build's connection rather than at each call site, and waiting for the write lock
+   under that connection's `busy_timeout`. The connection's holder (`core/store/holders.py`) opens
+   `IMMEDIATE` and does **not** poll — `hold()` as it stands polls and requires `busy_timeout = 0`,
+   which a corpus connection is not at — so `hold` gains the parameter or the build sets the holder
+   directly. The lock acquisition keeps its lock-free first read, so a build meeting a live holder
+   still refuses at once. The lock's clearing opens `IMMEDIATE` too. `design/architecture.md`
+   §"The service's connections" is amended with this brief.
+2. **The service keeps, per corpus id, the process it last spawned and the corpus's
+   `last_scan_started_at` as its own observation read it, and answers `already_indexing` while that
+   process is alive and the mark has not moved** (§8.4, invariant 19) — the check, the spawn and
+   the record in one step with nothing awaited between them. Liveness is the process handle's own
+   `poll()`, never a probe of its pid, so `detach.spawn` returns the handle beside the argv. The
+   table is a mutable field on `ServiceContext`, built by `assemble` and empty in a context a test
+   constructs, never module state. `remove` refuses `knowledge_base_busy` on the same test — the
+   check is `dispatch_knowledge`'s, on the confirmed path before `lifecycle.remove`, naming the
+   spawned process as the holder; the unconfirmed preview is unchanged. The holder the service
+   builds for a spawned build — its pid, this host, the spawn instant — feeds both that refusal and
+   the `already_indexing` entry's `reason`, so the pid is read from a plain `refresh`.
+   **Every `add` and `refresh` entry carries `last_scan_started_at` as that call's observation read
+   it, and an `already_indexing` entry also carries `lock` as `status` reports it, `null` for a
+   spawned build not yet at its lock; `--wait` keys on the entry alone** (§9): the entry's mark is
+   its baseline — `null` for a corpus never scanned — so `_scan_marks` and the command's own pre-call
+   `status` read are removed; and `live: true` takes the lock half of its predicate alone, `live:
+   null` fails at once, and `live: false` or `lock: null` takes both halves, bounded by the
+   appearance deadline. The test's docstring, which calls the race "not a defect in either", is
+   corrected.
+3. **The link reader** — one function from a file's decoded text to *no link*, *well-formed*
+   `(path, blob)`, or *declared and malformed*, exactly as §7.7's grammar says — called by the
+   build on the text it decoded, and by the migration and search's fallback on the stored chunks'
+   concatenation. Its bound is `LINK_PREFIX_CHARS`; it and §7.7's other two constants are
+   implementation constants at the values §7.7 gives.
+4. **Corpus schema 4** (§3.2, §7.7.1): `files` gains `link_read_from`, `link_declared`,
+   `source_path` and `source_blob`; `meta` gains `results_linked`, `results_source_changed`,
+   `results_source_missing` and `results_source_unverifiable`; the corpus's
+   `SUPPORTED_SCHEMA_VERSIONS` becomes `(1, 4)` and a created corpus records 4 — the corpus gets a
+   `CURRENT_SCHEMA_VERSION` distinct from its supported list, as `store.py` has. **A corpus schema
+   version is the `memory.db` version that introduced its shape** (operator, 2026-10-13), so no
+   corpus has a 2 or a 3, and a database claiming one is refused `schema_incompatible` as a newer
+   one is. A database at schema 1 is migrated by a process
+   whose `memory.db` is at version 4 or later, when it opens the corpus to read or write it — every
+   `core/knowledge` entry point that opens a corpus takes `migrate`, supplied by
+   `dispatch_knowledge` from the service's store version and by the indexer from
+   `OpenStore.schema_version`, and `open` re-reads `meta` after migrating — in one `BEGIN IMMEDIATE`
+   transaction that re-reads the version, adds the columns at the end of `files` so a migrated table
+   and a created one have the same columns in the same order, seeds the counters at zero, backfills
+   every row's link from its stored chunks with `link_read_from` set to its `content_hash`, and
+   writes `schema_version = 4`. The step's statements are frozen in it, on `schema.md` §"Migration
+   posture"'s rule for `memory.db`'s. A build whose store is below version 4 builds a schema-1 corpus
+   at schema 1, writing no link columns, and nothing reads a link column of a schema-1 corpus.
+   `remove`, its unconfirmed preview and `rename` open without migrating (§7.7.1); `status` takes
+   `migrate` as every other opener does, and the preview, which reaches the corpus through it, passes
+   `False`.
+   **The migration's write-lock hold is measured against §7.7.1's bar** — p95 at most 1 s, over at
+   least 20 migrations of fresh copies, on a schema-1 corpus of at least 7,000 `files` rows with
+   chunks to match, built synthetically to the row count rather than the chunk count, reported per
+   row; `~/Trading/LeibaTrader`'s `arcs` is the real-store case beside it, not the measurement. If it misses, the backfill leaves the step as §7.7.1 says.
+   The figures go in `research/`.
+5. **`memory.db` schema 4**: a step that changes nothing but the version (`schema.md` §"When the
+   version moves"); `CURRENT_SCHEMA_VERSION` becomes 4 in this milestone. In
+   `tests/test_store_migration.py` version 4's `event` maps to version 3's text, and the test pinning
+   the newest step's frozen `event` keeps pointing at `_V3_EVENT`, the newest step that rebuilds
+   anything. The release number that
+   schema move forces — `0.4.0` — is the operator's to set, in the commit that gets tagged
+   (`CLAUDE.md` §"How this project works").
+6. **The build writes the link** in the file's own transaction (K9), with `link_read_from` equal to
+   the `content_hash` it writes beside it, for every file it indexes — linked or not — and, against
+   a schema-4 corpus once it holds the lock, re-reads from the stored chunks the link of every row
+   whose `link_read_from` is null or differs from its `content_hash` (§7.7.1).
+7. **The hash** (§7.7, "The hash"): one function, `git hash-object -- <path>…` run with the
+   Zikaron root as its working directory, each source an argument by its absolute real path —
+   **never `--stdin-paths`**, which resolves relative paths against the repository's top, and never
+   the declared `..` form, which walks git's attribute stack through the wrong directories — once
+   per corpus with a linked result, over the sources its results name; the in-process blob form
+   only when git is not installed, reading through a non-blocking descriptor it checks rather than
+   the path; one `LINK_HASH_TIMEOUT_SECONDS` budget per search across its corpora, which bounds the
+   resolution, the check and the in-process read as well as git — each step on a daemon thread of
+   its own, never a pool, abandoned past the budget, its hand-back guarded against a search no
+   longer waiting and a closed loop; and when git refuses a batch, the source it stopped at is
+   `unverifiable` and git runs again over the sources after it. Only regular files this process may
+   read, under `LINK_SOURCE_MAX_BYTES`, reach it — checked first on that same real path; a source
+   swapped for a FIFO between the two is what the timeout is for. Any `OSError` from starting git —
+   not found, not executable — takes the in-process form; a timeout is the budget and never a
+   fallback — so the function does not reuse `git._run`, whose one exception covers both — and
+   nothing raised on the hash path leaves the corpus's search. The function is
+   specified for a search-sized batch and lives where M40's planner can call it.
+8. **Search** adds `source: {path, state}` to a result whose indexed bytes declare a link and to no
+   other, computes `state` by §7.7's table inside that corpus's own search, trusts the persisted
+   link only where `link_read_from` equals the row's `content_hash` and reads it from the stored
+   chunks otherwise (invariant 17), and raises the four link counters in the same best-effort write
+   as the corpus's others (§12). Ranking is untouched.
+9. **`status` reports `files_linked` and the four new counters** (§8.5), and `zikaron knowledge
+   status` prints them where it prints the others; `list` does not change.
+10. **The tool description's paragraph on `source`**, wording memory-reviewer's, written into the
+    M39 review file before the code that ships it is final, and quoted into §8.3 with it. It says
+    nothing about code (operator, 2026-10-13), and it says that `source.path` is quoted from the
+    document's front matter on the same terms as a snippet.
+11. **The typed commands refuse a service of another version** (operator, 2026-10-13; D31 as
+    amended; `design/distribution.md` §3). `health()` gains `version`, the package version the
+    service runs, **read once at its startup into the service's context, never per call from the
+    installed metadata** (`design/architecture.md` §"Store identity is verified, not assumed");
+    `init` and every `knowledge` verb compare it with their own before sending anything else, and on
+    any difference refuse with both versions, the service's pid and both remedies, exiting non-zero;
+    the command orders no versions (`design/distribution.md` §3). A service sending no `version` is
+    older by construction and is refused with the one remedy that applies, stopping it. The hook and `zikaron-mcp` do not check.
+    **Where the comparison lives**: `HealthCheck` gains `version: str | None`, and
+    `ServiceConnection` exposes the handshake's `health()` and refuses nothing on it — refusing
+    there would refuse in `zikaron-mcp` too — so the comparison is `knowledge/client.py`'s, in
+    `connected`, which every verb and `init` already pass through, at no extra round trip.
+    `connected` establishes the socket before it yields and compares then — so a refusal a verb can
+    make without the service, such as a nameless `--force-unlock`, moves in front of `connected` and
+    starts no service; a socket re-established
+    after a death mid-command is compared again through the same accessor, after the request that
+    reconnected — which for `refresh --wait` is one read-only `status` poll — so a service replaced
+    during a long `--wait` is refused as one met at the start would be. The number both sides read
+    comes from one function in `zikaron/core/`, moved out of `cli/main.py`, so the service reaches
+    into nothing of the CLI's.
+12. **Documents.** Written with this brief: `design/knowledge-index.md` §1.1, §2, §3.2, §5.4, §6.2,
+    §7.5, §7.7, §8.3–§8.5, §9, §11–§16; `design/architecture.md` §"The service's connections" and
+    `health()`'s fields; `design/distribution.md` §3's paragraph on a running service;
+    `design/schema.md` §"When the version moves"; D31 and D37 in `design/overview.md` and
+    `FINDINGS.md`; and `design/code-knowledge.md`, whose K14 and M39 sections are now pointers here.
+    Owed by the build: `README.md`'s account of the knowledge index, which gains the front-matter
+    format a writer needs, `LINK_PREFIX_CHARS` and `LINK_PATH_MAX_CHARS` included, and its account of
+    upgrading, which gains the refusal and the consequence `design/distribution.md` §3 names for a
+    session whose `.mcp.json` points at an older install; `design/schema.md`'s version table and every passage naming
+    version 3 as current;
+    `design/distribution.md` §3's arithmetic, which names the versions so far; two descriptions a
+    test quotes from the shipped code — `zikaron_knowledge_refresh`'s, whose `already_indexing`
+    clause prices it as "one lock check" and becomes *"one already was — running, or started by an
+    earlier call and still loading — so this call queued nothing"*, and `zikaron_knowledge_remove`'s,
+    which becomes *"Refuses while a build is running against this corpus — holding its lock, or
+    started and still loading — rather than unlinking a database a writer may still hold; retry once
+    it has finished"*; and `CLAUDE.md` §"What Zikaron is" if its account of the index stops being
+    true.
+13. **Every process Zikaron spawns starts its interpreter with `-P`** (operator, 2026-10-13) — the
+    service from either client, a build, and the hook's warm helper — so the working directory it
+    inherits is not on `sys.path` and a `zikaron/` package there, another checkout's, cannot stand
+    in for the install's (`design/architecture.md` §"The install contract"). A test runs each
+    spawn's interpreter options from such a directory and asserts which `zikaron` it imports.
+
+**What landing in this tree does.** `~/Trading/LeibaTrader` runs `/home/nathan/Zikaron`'s tree. Once
+M39 reaches that tree, every typed command there refuses the still-running service, whose `health()`
+carries no `version`, and says so, until the service is restarted. Until then an MCP `refresh`
+still spawns a second build in the model-load window, and a build that service spawns runs the new
+code against a version-3 store, so it migrates nothing but already opens its own transactions
+`IMMEDIATE`. The first restart ends both: it migrates the store to version 4, and each corpus moves
+to schema 4 when a request or a build next opens it. **And every agent session open across that
+restart loses its memory and knowledge tools at its next reconnect** — its `zikaron-mcp` is old code
+in memory, reads the store at version 4 and is refused `schema_incompatible` — until the session
+restarts its MCP server. A checkout of anything older there then refuses the store. **So the build is
+done in the worktree `/home/nathan/Zikaron-m39`, with its own `.venv`**, and reaches the main tree
+only by the operator's merge.
+
+### Invariants and properties to cover
+
+- **Invariants 17, 18 and 19**, each with a test that fails when it is violated.
+- **The race, as a behaviour**: a second connection holding the corpus's write lock across a
+  build's entry into its index phase, for less than `busy_timeout`, and a counter commit between a
+  build's read and its first write — each asserting the scan completes. Both fail deterministically
+  against today's code.
+- **Every `BEGIN` a build issues is `BEGIN IMMEDIATE`**, observed on the connection over a scan that
+  indexes, deletes and skips a file.
+- **One spawn**:
+  - `add` then `refresh` while the first build is alive and lockless answers `already_indexing` and
+    spawns nothing, and `refresh --wait` in that state returns only after the build's mark has
+    advanced and its lock is gone;
+  - a spawned build that has released its lock and is still exiting answers the next `refresh` with
+    `started`;
+  - a `remove` while it loads is refused `knowledge_base_busy`, and a `rename` between the spawn and
+    the `refresh` changes none of this;
+  - two `knowledge_refresh` calls for one corpus dispatched concurrently spawn one build and answer
+    one `started` and one `already_indexing`;
+  - an `already_indexing` whose `lock` is `null`, or present with `live: false` beside a spawned
+    build, is waited for until its mark advances and its lock is gone, and one whose `lock` is live
+    until its lock is gone;
+  - a spawned build that dies before taking its lock, with a `refresh --wait` waiting on its
+    `lock: null` entry, ends that wait with exit 1 after the appearance deadline rather than hanging;
+  - a build that takes its lock and completes between the command's call and the service's
+    observation does not end a `refresh --wait` whose own build has not yet begun;
+  - a dead spawned process is seen as dead even where its pid is live — driven by a handle whose
+    `poll()` has answered beside a holder naming a live pid, the test's own — so the check is shown
+    to read the handle and not to probe the number;
+  - the `already_indexing` an `add`-spawned build earns names that build's pid in `reason`.
+- **The gate**: a build against a version-3 store leaves a schema-1 corpus at schema 1, builds it,
+  and its own `status` observation of that corpus names no link column; the same corpus opened by a
+  version-4 service migrates, and the request that migrated it serves `source` from the link
+  columns and reports `files_linked` as a number; and `remove` of a schema-1 corpus, previewed or
+  confirmed, and `rename` of one, migrate nothing.
+- **The record is made exact**: a schema-4 corpus holding one row whose `link_read_from` differs
+  from its `content_hash` and one whose link columns are null, after a build that reindexes
+  neither, has both rows' link columns equal to what their chunks declare with `link_read_from =
+  content_hash`, and `files_linked` counts the linked one.
+- **The counters**: a search returning one linked result in each of the four states raises
+  `results_linked` by four and each of the three state counters by one; a search over unlinked
+  results raises none of them; `status` reports the four under their `meta` names beside
+  `files_linked`; and `zikaron knowledge status` prints them where it prints the others.
+- **The grammar**, as a table: no front matter; front matter without the keys; both keys
+  well-formed, quoted and unquoted, with a byte-order mark and `\r\n`; a `---` line carrying other
+  whitespace; each malformation §7.7 lists; a block closing just inside and just past
+  `LINK_PREFIX_CHARS`; a path just inside and just past `LINK_PATH_MAX_CHARS`; another `zikaron-`
+  key; and `Zikaron-Source`, which is neither a key nor reserved.
+- **The batch**: a source removed between its check and the call, and one that is a FIFO when it is
+  checked, each leave the corpus's other linked results with their own states; so does a regular
+  file this process cannot read, ranked first; a git that refuses everything leaves every linked
+  result `unverifiable`, and git absent from `PATH` or not executable gives the in-process form; a
+  hash step that raises leaves that corpus's linked results `unverifiable` and the search answering;
+  a root git declines
+  for its ownership answers in the raw blob form; a search over several corpora spends one hashing
+  budget; a source whose resolution or read blocks past the budget leaves that corpus's linked
+  results `unverifiable`, the other corpora's with their states, and the service answering other
+  requests; the thread a hashing call runs on is a daemon thread, asserted on the
+  thread object; and a source whose required clean filter fails (`filter.x.clean=false`,
+  `filter.x.required=true`, `*.bin filter=x`), ranked first, is `unverifiable` and leaves the
+  corpus's other sources hashed through git.
+- **Every `state` of §7.7's table**, on a real source in a real `git init` repository with a
+  `.gitattributes` that rewrites line endings, outside any repository, and with git absent from
+  `PATH`; and the hash function's answer equal to what `git add` stores in each case where git is
+  there — including **a store rooted below its repository's top**, with a top-level attribute
+  anchored to that subdirectory and a file of the same name at the top, and a source reached by
+  `..` from such a root, with a `.gitattributes` in the root's own directory; and a path through a
+  directory that does not exist, followed by `..`, reports `missing` rather than the state of the
+  file a lexical collapse would name.
+- **The version check**: `init` and a `knowledge` verb against a service reporting another version
+  refuse naming both, with both remedies, and send nothing else; against one whose `health()` has
+  no `version` they refuse with the one remedy, stopping it; a nameless `--force-unlock` refuses
+  without starting a service; the hook and an MCP tool call against the same service proceed; and a service still reports the version it started with after
+  a `zikaron-<other>.dist-info` is put first on `sys.path` — which is what an in-place upgrade does
+  to the lookup — never by writing into the virtualenv.
+- **The migration**: a schema-1 database, made by the schema-1 DDL frozen in the test, migrates to one
+  whose `files` columns, `meta` keys and `schema_version` value equal a created schema-4 database's;
+  its backfill equals what a build would have written; running it twice changes nothing;
+  interrupted, it leaves schema 1.
+- **The fallback**: a row whose `link_read_from` differs from its `content_hash`, and one whose link
+  columns are null, both report the link their stored chunks declare.
+- **`memory.db`**: a version-3 store migrates to 4 and nothing else in it changes; this build refuses
+  a version-5 store; the existing migration tests hold at the new range.
+- **The link reader is total**: a property test that it returns one of its three answers for any
+  text, and the same answer for a file's decoded text and its stored chunks' concatenation.
+
+### Done when
+
+1. Every item of "What ships" is in, and every new test was **seen red** against the mutation it
+   names — for the race, against today's deferred transactions and today's spawn, which is the
+   reproduction the flaky test could only hit by chance.
+2. A real corpus of linked documents — a handful written by hand over this repository's own
+   sources, one of each `state` — is built through the real service, and an MCP search shows each
+   result's `source` as §7.7 says; the observation goes in `research/`.
+3. `./check.sh` is green, and so is `./check-matrix.sh --parallel` on one tree. The pull request's
+   CI is the version matrix.
+
+### Scope fence
+
+**Not** the producer: no planner, no generator skill, no documenter agent, no document format
+beyond the two keys — M40. **Not** a link from one document to several sources (§16, item 14).
+**Not** a `check` command, a ranking change, or a change to `list`. **Not** the `git_mode` default
+or the frozen `rrf_k`/`fusion_depth` (`FINDINGS.md` §"Live design questions"). **Not** a change to
+how a corpus is chunked, embedded or fused. **Not** a migration of `memory.db` beyond the version.
+**Not** kiro-specific — both harnesses reach this through the same MCP server — and nothing in the
+memory hook but item 13's flag.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

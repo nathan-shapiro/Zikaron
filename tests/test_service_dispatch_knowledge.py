@@ -35,6 +35,7 @@ async def _with_corpus(ctx: ServiceContext, tmp_path: Path, name: str = "docs") 
         ctx.config,
         name=name,
         build=build_settings(ctx.config, encoder=FakeEncoder()),
+        migrate=True,
     )
 
 
@@ -121,6 +122,7 @@ async def test_the_limit_defaults_without_the_caller_naming_it(tmp_path: Path) -
             ctx.config,
             name="docs",
             build=build_settings(ctx.config, encoder=FakeEncoder()),
+            migrate=True,
         )
         payload = await _search(ctx, {"query": "protobuf"})
         groups = payload["groups"]

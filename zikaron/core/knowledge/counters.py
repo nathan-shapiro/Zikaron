@@ -51,14 +51,29 @@ SEARCHES_EMPTY_KEY: Final = "searches_empty"
 RESULTS_RETURNED_KEY: Final = "results_returned"
 RESULTS_STALE_KEY: Final = "results_stale"
 
-#: The four a search raises, in the order they are reported: is this corpus used at all, how often
-#: it is searched and has nothing, the mean yield of a search against it, and how often what it
-#: returns is flagged as possibly out of date.
+#: The four every search raises, in the order they are reported: is this corpus used at all, how
+#: often it is searched and has nothing, the mean yield of a search against it, and how often what
+#: it returns is flagged as possibly out of date.
 SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = (
     SEARCHES_KEY,
     SEARCHES_EMPTY_KEY,
     RESULTS_RETURNED_KEY,
     RESULTS_STALE_KEY,
+)
+
+RESULTS_LINKED_KEY: Final = "results_linked"
+RESULTS_SOURCE_CHANGED_KEY: Final = "results_source_changed"
+RESULTS_SOURCE_MISSING_KEY: Final = "results_source_missing"
+RESULTS_SOURCE_UNVERIFIABLE_KEY: Final = "results_source_unverifiable"
+
+#: The four a search raises about linked documents (`knowledge-index.md` §7.7), in the order they
+#: are reported: how many results carried a `source`, and how many of those had a source that
+#: moved, had gone, or could not be checked. A corpus at schema 1 has none of them.
+LINK_COUNTER_KEYS: Final[tuple[str, ...]] = (
+    RESULTS_LINKED_KEY,
+    RESULTS_SOURCE_CHANGED_KEY,
+    RESULTS_SOURCE_MISSING_KEY,
+    RESULTS_SOURCE_UNVERIFIABLE_KEY,
 )
 
 
@@ -165,23 +180,34 @@ _INCREMENT: Final = "UPDATE meta SET value = CAST(value AS INTEGER) + ? WHERE ke
 
 @dataclass(frozen=True, slots=True)
 class SearchTally:
-    """What one corpus's search contributed to the four counters it keeps.
+    """What one corpus's search contributed to the counters it keeps.
 
-    A value rather than four arguments, because the four move together and are written in one
-    transaction: a caller holding three of them has not finished describing a search.
+    A value rather than a list of arguments, because the counts move together and are written in
+    one transaction: a caller holding some of them has not finished describing a search. `linked`
+    counts results carrying a `source`, and the three after it those whose state was other than
+    `fresh`.
     """
 
     results: int
     stale: int
+    linked: int = 0
+    source_changed: int = 0
+    source_missing: int = 0
+    source_unverifiable: int = 0
 
     def as_increments(self) -> Mapping[str, int]:
         """How much each counter goes up. Every key every time, including the zeroes, so the write
-        is one statement shape regardless of what the search found."""
+        is one statement shape regardless of what the search found. A link counter a schema-1
+        corpus does not have matches no row and moves nothing."""
         return {
             SEARCHES_KEY: 1,
             SEARCHES_EMPTY_KEY: 1 if self.results == 0 else 0,
             RESULTS_RETURNED_KEY: self.results,
             RESULTS_STALE_KEY: self.stale,
+            RESULTS_LINKED_KEY: self.linked,
+            RESULTS_SOURCE_CHANGED_KEY: self.source_changed,
+            RESULTS_SOURCE_MISSING_KEY: self.source_missing,
+            RESULTS_SOURCE_UNVERIFIABLE_KEY: self.source_unverifiable,
         }
 
 
@@ -195,7 +221,7 @@ async def record_search(db: aiosqlite.Connection, tally: SearchTally) -> bool:
     put back whatever happens, because the connection is the caller's and every other statement on
     it expects to wait.
 
-    **Contention is swallowed and nothing else is.** A knowledge base that refuses a four-row
+    **Contention is swallowed and nothing else is.** A knowledge base that refuses a counter
     `UPDATE` for any other reason is one this process should stop claiming to serve, and its
     caller already reports such a failure as that corpus's own `error` rather than as a failed
     call — so the failure reaches a reader instead of being dropped with the count.
@@ -203,8 +229,9 @@ async def record_search(db: aiosqlite.Connection, tally: SearchTally) -> bool:
     **A dropped count is recorded nowhere**, so what these counters hold is a lower bound rather
     than a tally, and by how much is unmeasured. That matters to whoever reads them: the drops
     happen while a build holds the writer lock, so a corpus searched during a long rebuild reports
-    less use than the same corpus searched at the same rate while idle. Ratios between the four
-    survive it — one abandoned transaction drops all four together — and absolute counts do not.
+    less use than the same corpus searched at the same rate while idle. Ratios between the
+    counters survive it — one abandoned transaction drops them all together — and absolute counts
+    do not.
 
     Returns:
         Whether the counters were actually written. `False` means the lock was busy.

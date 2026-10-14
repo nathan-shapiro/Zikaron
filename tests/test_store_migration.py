@@ -7,6 +7,7 @@ pass with the migration deleted.
 
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import Final
 
@@ -14,6 +15,7 @@ import aiosqlite
 import pytest
 
 from zikaron.core.config.resolution import EffectiveConfig, resolve
+from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.events import ClientKind, EventKind
 from zikaron.core.store import ddl, meta, migration
 from zikaron.core.store.embedder import FakeEmbedder
@@ -42,11 +44,13 @@ _NARROW_EVENT = (
 
 #: What a build at each older version left `event` as. Version 2's is its own step's frozen text
 #: under the table's final name rather than a second copy: that text is already frozen once, and a
-#: transcription of it here could drift from the thing it is meant to reproduce.
+#: transcription of it here could drift from the thing it is meant to reproduce. Version 4 changed
+#: nothing in `memory.db`, so its `event` is version 3's.
 _EVENT_AT_VERSION: Final[Mapping[int, str]] = {
     1: _NARROW_EVENT,
     2: migration._V2_EVENT.replace("event_migrated", "event"),
     3: migration._V3_EVENT.replace("event_migrated", "event"),
+    4: migration._V3_EVENT.replace("event_migrated", "event"),
 }
 
 
@@ -153,6 +157,43 @@ async def test_migrating_a_version_two_store_admits_both_new_kinds(tmp_path: Pat
         await _record(store.connection, ClientKind.INDEXER, EventKind.KNOWLEDGE_BUILD)
         written = await _count(store.connection, "SELECT count(*) FROM event")
     assert written == 2
+
+
+def _schema_and_rows(db_path: Path) -> tuple[list[tuple[object, ...]], list[tuple[object, ...]]]:
+    """Every schema object's text and every `meta` row but the version, read without migrating."""
+    with closing(sqlite3.connect(db_path)) as db:
+        schema = db.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name"
+        ).fetchall()
+        rows = db.execute(
+            "SELECT key, value FROM meta WHERE key != ? ORDER BY key", (meta.SCHEMA_VERSION_KEY,)
+        ).fetchall()
+    return schema, rows
+
+
+async def test_the_step_to_version_four_changes_nothing_but_the_version(tmp_path: Path) -> None:
+    store_dir = tmp_path / ".zikaron"
+    config = _config(tmp_path)
+    db_path = await _store_at_version(store_dir, config, 3)
+    before = _schema_and_rows(db_path)
+    async with await Store.open(store_dir, config, migrate=True) as store:
+        assert store.meta.schema_version == 4
+    assert _schema_and_rows(db_path) == before
+
+
+async def test_a_store_newer_than_this_build_is_refused(tmp_path: Path) -> None:
+    store_dir = tmp_path / ".zikaron"
+    config = _config(tmp_path)
+    db_path = await _store_at_version(store_dir, config, CURRENT_SCHEMA_VERSION)
+    with closing(sqlite3.connect(db_path)) as db:
+        db.execute(
+            "UPDATE meta SET value = ? WHERE key = ?",
+            (str(CURRENT_SCHEMA_VERSION + 1), meta.SCHEMA_VERSION_KEY),
+        )
+        db.commit()
+    with pytest.raises(ZikaronError) as refused:
+        await Store.open(store_dir, config, migrate=True)
+    assert refused.value.code is ErrorCode.SCHEMA_INCOMPATIBLE
 
 
 async def test_opening_with_migrate_brings_a_version_one_store_forward(tmp_path: Path) -> None:
@@ -309,7 +350,8 @@ async def test_a_second_opener_that_read_the_old_version_does_no_work(
     config = _config(tmp_path)
     db_path = await _store_at_version_one(store_dir, config)
     runs = 0
-    step = migration.MIGRATIONS[-1]
+    # The newest step that rebuilds `event`, since a rebuild is the work the re-read saves.
+    step = next(one for one in migration.MIGRATIONS if one.to_version == 3)
 
     async def _counted(db: aiosqlite.Connection) -> None:
         nonlocal runs
@@ -323,8 +365,8 @@ async def test_a_second_opener_that_read_the_old_version_does_no_work(
     )
     db = await aiosqlite.connect(db_path)
     try:
-        assert await migration.migrate(db, from_version=1) == CURRENT_SCHEMA_VERSION
-        assert await migration.migrate(db, from_version=1) == CURRENT_SCHEMA_VERSION
+        assert await migration.migrate(db, from_version=1) == step.to_version
+        assert await migration.migrate(db, from_version=1) == step.to_version
         indexes = await _count(
             db,
             "SELECT count(*) FROM sqlite_schema WHERE type='index' AND tbl_name='event' "
@@ -368,8 +410,9 @@ async def test_the_version_a_build_waits_for_is_the_first_that_admits_its_row(
 def test_the_newest_steps_frozen_event_is_still_what_this_build_creates() -> None:
     """A step's DDL is a historical artifact, and this is the alarm on it moving.
 
-    A step must produce the schema of the version it names, so only the **newest** step's text can
-    agree with what `ddl` creates; every earlier one is frozen at a shape `ddl` has moved past.
+    A step must produce the schema of the version it names, so only the **newest** step that
+    rebuilds `event` can agree with what `ddl` creates; every earlier one is frozen at a shape `ddl`
+    has moved past.
     **The day this fails is the day `event` moved again**, and the answer is to leave the literal
     alone, write the next step with its own frozen copy, and re-point this test at it: editing the
     old text would make that step build the newer table and then fail copying an older store's rows

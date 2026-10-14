@@ -40,7 +40,11 @@ from zikaron.core.store.store import Store
 from zikaron.harness import detect
 from zikaron.service import paths
 from zikaron.service.envelope import ClientEnvelope
-from zikaron.service.lifecycle import connect_start_if_absent, default_server_command
+from zikaron.service.lifecycle import (
+    HealthCheck,
+    connect_start_if_absent,
+    default_server_command,
+)
 
 #: How many times a request already in flight against a connection this module believed was live
 #: may be retried, once, through a fresh `connect_start_if_absent` — `architecture.md`'s own
@@ -194,6 +198,7 @@ class ServiceConnection:
     def __init__(self, scope_dir: Path) -> None:
         self._location = StoreLocation.resolve(scope_dir)
         self._sock: socket.socket | None = None
+        self._health: HealthCheck | None = None
         # Resolved through the harness seam, which is what makes this client and `zikaron-hook`
         # speak as one session: each reads whichever variable the harness it detected actually
         # exports, so the two arrive at an identical label under either harness rather than one
@@ -215,6 +220,26 @@ class ServiceConnection:
     def location(self) -> StoreLocation:
         """Where this connection's store, socket and runtime directory are."""
         return self._location
+
+    @property
+    def health(self) -> HealthCheck | None:
+        """What the service answered when the current connection was established, or `None` before
+        the first. A new object each time a connection is established, so a caller can tell a
+        reconnect from the connection it already looked at. Nothing here refuses on it."""
+        return self._health
+
+    async def handshake(self) -> HealthCheck:
+        """Establish the connection now, without sending a request, and return what the service
+        answered — starting one if none is listening, as the first request would.
+
+        Raises:
+            ZikaronError | ConnectionError | OSError: as `request` does while establishing one.
+        """
+        async with self._lock:
+            await self._connected_socket()
+        if self._health is None:  # pragma: no cover — set by every connection established.
+            raise RuntimeError("a connection was established with no health() answer recorded")
+        return self._health
 
     def envelope(self, *, kind: str) -> ClientEnvelope:
         """This process's own `client` envelope for one request: the adopted session label (if
@@ -448,7 +473,7 @@ class ServiceConnection:
             )
         )
         try:
-            sock, _health = await asyncio.shield(connect_task)
+            sock, health = await asyncio.shield(connect_task)
         except asyncio.CancelledError:
             # This coroutine was cancelled, not the underlying thread — `connect_task` keeps
             # running regardless, per this method's own docstring, so its eventual result must
@@ -476,6 +501,7 @@ class ServiceConnection:
             raise
         sock.settimeout(REQUEST_TIMEOUT_SECONDS)
         self._sock = sock
+        self._health = health
         return sock
 
     def close(self) -> None:

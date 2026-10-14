@@ -90,7 +90,7 @@ class TestTheFilesTable:
         self, knowledge_db: aiosqlite.Connection
     ) -> None:
         written = _row(path="a.md", git_blob_hash="b" * 40, chunk_count=3)
-        await files.record(knowledge_db, written)
+        await files.record(knowledge_db, written, link=None)
         assert await files.load_all(knowledge_db) == {"a.md": written}
 
     async def test_writing_the_same_path_twice_replaces_it(
@@ -98,20 +98,20 @@ class TestTheFilesTable:
     ) -> None:
         """Both cases arrive down one path — a file the corpus has never seen and a file whose
         content moved — and the row that results is identical either way."""
-        await files.record(knowledge_db, _row(path="a.md", size=1))
-        await files.record(knowledge_db, _row(path="a.md", size=2))
+        await files.record(knowledge_db, _row(path="a.md", size=1), link=None)
+        await files.record(knowledge_db, _row(path="a.md", size=2), link=None)
         assert (await files.load_all(knowledge_db))["a.md"].size == 2
 
     async def test_forgetting_a_path_removes_it(self, knowledge_db: aiosqlite.Connection) -> None:
-        await files.record(knowledge_db, _row(path="a.md"))
+        await files.record(knowledge_db, _row(path="a.md"), link=None)
         await files.forget(knowledge_db, "a.md")
         assert await files.load_all(knowledge_db) == {}
 
     async def test_the_count_and_the_byte_total_describe_the_rows(
         self, knowledge_db: aiosqlite.Connection
     ) -> None:
-        await files.record(knowledge_db, _row(path="a.md", size=10))
-        await files.record(knowledge_db, _row(path="b.md", size=32))
+        await files.record(knowledge_db, _row(path="a.md", size=10), link=None)
+        await files.record(knowledge_db, _row(path="b.md", size=32), link=None)
         assert await files.count(knowledge_db) == 2
         assert await files.total_size(knowledge_db) == 42
 
@@ -125,7 +125,7 @@ class TestTheFilesTable:
     ) -> None:
         """A file committed after it was indexed keeps a null blob hash, and without writing the
         new one it is read and hashed on every scan for the rest of its life."""
-        await files.record(knowledge_db, _row(path="a.md", indexed_at=_NOW))
+        await files.record(knowledge_db, _row(path="a.md", indexed_at=_NOW), link=None)
         await files.record_git_blob_hash(knowledge_db, "a.md", "c" * 40)
         row = (await files.load_all(knowledge_db))["a.md"]
         assert row.git_blob_hash == "c" * 40
@@ -138,7 +138,7 @@ class TestTheFilesTable:
         """Constraints rather than conventions: a row with a negative size or an empty path reads
         back as an ordinary row and points at nothing."""
         with pytest.raises(aiosqlite.IntegrityError):
-            await files.record(knowledge_db, _row(**({"path": "a.md"} | bad)))
+            await files.record(knowledge_db, _row(**({"path": "a.md"} | bad)), link=None)
 
 
 class TestTheGitFastPath:

@@ -66,7 +66,7 @@ class _FakePopen:
 class TestTheCommandAChildIsGiven:
     def test_it_runs_this_interpreter_and_the_indexer_module(self) -> None:
         argv = detach.command("docs", project=Path("/projects/one"), full=False)
-        assert argv[:3] == [sys.executable, "-m", _MODULE]
+        assert argv[:4] == [sys.executable, "-P", "-m", _MODULE]
 
     def test_the_project_is_passed_rather_than_left_to_be_resolved_again(self) -> None:
         """The parent has already decided which store it means, and a child re-deriving it could
@@ -111,7 +111,13 @@ class TestHowTheChildIsStarted:
     def test_it_is_started_with_the_argv_this_module_builds(self) -> None:
         started = detach.spawn("docs", project=Path("/p"), full=True)
         assert _FakePopen.started == detach.command("docs", project=Path("/p"), full=True)
-        assert started == _FakePopen.started, "what is reported must be what was started"
+        assert started.argv == _FakePopen.started, "what is reported must be what was started"
+
+    def test_it_hands_back_the_childs_own_handle(self) -> None:
+        """The handle, not the pid, is what says whether the child still runs: a recycled number
+        answers a probe, and a handle to an exited child does not."""
+        started = detach.spawn("docs", project=Path("/p"))
+        assert isinstance(started.process, _FakePopen)
 
     def test_the_caller_is_not_the_one_that_waits(self) -> None:
         """A long-lived caller that never waited would accumulate a zombie per build, and a caller

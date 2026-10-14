@@ -56,7 +56,9 @@ class TestADatabaseThatWillNotOpen:
             created = await _add(tmp_path, store_dir, db)
             created.database_path.write_bytes(b"this is not a SQLite database")
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.state is KnowledgeState.ERROR
             assert report.details is None
             assert report.summary.name == "docs"
@@ -76,7 +78,9 @@ class TestADatabaseThatWillNotOpen:
             finally:
                 await dropped.close()
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.state is KnowledgeState.ERROR
 
     async def test_the_reason_travels_with_the_state(self, tmp_path: Path) -> None:
@@ -88,7 +92,9 @@ class TestADatabaseThatWillNotOpen:
             created = await _add(tmp_path, store_dir, db)
             created.database_path.write_bytes(b"this is not a SQLite database")
 
-            observed = await reporting.observe(store_dir, created.knowledge_base, config)
+            observed = await reporting.observe(
+                store_dir, created.knowledge_base, config, migrate=True
+            )
             assert observed.status.summary.state is KnowledgeState.ERROR
             assert observed.unreadable_because is not None
 
@@ -142,7 +148,9 @@ class TestAMissingRoot:
                 child.unlink()
             root.rmdir()
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.state is KnowledgeState.ROOT_MISSING
             assert created.database_path.is_file(), "the index is retained, not deleted"
 
@@ -158,7 +166,9 @@ class TestAnEncoderThatNoLongerAgrees:
             created = await _add(tmp_path, store_dir, db)
             await write_meta(created.database_path, embed_model="some/other-model")
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
 
     async def test_a_changed_tuning_key_does_not(self, tmp_path: Path) -> None:
@@ -174,7 +184,9 @@ class TestAnEncoderThatNoLongerAgrees:
                 last_scan_completed_at="2026-01-01T00:00:00+00:00",
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.state is KnowledgeState.OK
 
 
@@ -231,7 +243,9 @@ class TestHowManyFilesAreLeft:
             if rows:
                 await write_meta(created.database_path, **rows)
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.files_remaining == expected
 
 
@@ -245,12 +259,16 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             created = await _add(tmp_path, store_dir, db)
 
-            (before,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (before,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert before.details is not None
             assert before.details.git_mode_effective is None
 
             await write_meta(created.database_path, last_scan_git_mode_effective="off")
-            (after,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (after,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert after.details is not None
             assert after.details.git_mode_effective is meta.GitMode.OFF
 
@@ -262,7 +280,9 @@ class TestTheDiagnosticFields:
             created = await _add(tmp_path, store_dir, db)
             await write_meta(created.database_path, last_scan_git_mode_effective="sideways")
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.git_mode_effective is None
 
@@ -277,7 +297,9 @@ class TestTheDiagnosticFields:
             created = await _add(tmp_path, store_dir, db)
             await write_meta(created.database_path, files_indexed="not a number")
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.files_indexed == 0
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
 
@@ -290,7 +312,9 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             await _add(tmp_path, store_dir, db)
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert set(report.details.skipped) == {
                 key.removeprefix("skipped_") for key in meta.SKIP_REASON_KEYS
@@ -306,9 +330,11 @@ class TestTheDiagnosticFields:
             config = config_for(tmp_path)
             await _add(tmp_path, store_dir, db)
 
-            (listed,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (listed,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             (detailed,) = (
-                await reporting.status(store_dir, db, config, name="docs")
+                await reporting.status(store_dir, db, config, name="docs", migrate=True)
             ).knowledge_bases
             assert listed.summary == detailed.summary
 
@@ -335,7 +361,9 @@ class TestWhoIsBuildingThisCorpus:
             config = config_for(tmp_path)
             await _add(tmp_path, store_dir, db)
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is None
 
@@ -350,7 +378,9 @@ class TestWhoIsBuildingThisCorpus:
                 lock_started_at=timestamp(),
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is not None
             assert report.details.lock.live is True
@@ -370,7 +400,9 @@ class TestWhoIsBuildingThisCorpus:
                 lock_started_at=timestamp(),
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is not None
             assert report.details.lock.live is False
@@ -390,7 +422,9 @@ class TestWhoIsBuildingThisCorpus:
                 lock_started_at=timestamp(),
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is not None
             assert report.details.lock.live is None
@@ -409,7 +443,9 @@ class TestWhoIsBuildingThisCorpus:
                 lock_started_at="the other day",
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is not None
             assert report.details.lock.age_seconds is None
@@ -427,7 +463,9 @@ class TestWhoIsBuildingThisCorpus:
                 lock_started_at=timestamp(),
             )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.details is not None
             assert report.details.lock is not None
             assert report.details.lock.pid is None
@@ -452,7 +490,9 @@ class TestWhatCountsAsABuildInFlight:
                 last_scan_completed_at="2026-01-03T00:00:00+00:00",
                 **rows,
             )
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             return report
 
     async def test_a_live_local_build_is_a_build_in_flight(self, tmp_path: Path) -> None:
@@ -501,18 +541,14 @@ class TestWhatCountsAsABuildInFlight:
 def test_the_diagnostic_field_count_is_what_the_prose_about_it_says() -> None:
     """`Details`, its serialized form and two prose sites have to agree on one number.
 
-    **Two of the four said twenty; it is eighteen.** `serialize_knowledge.py`'s docstring for the
-    diagnostic half and `design/knowledge-index.md` §8.5's rationale both carried "twenty
-    diagnostic fields", while `_details_payload` emits one key per `Details` field and §8.5's *own
-    enumeration* lists eighteen. A number explaining why a surface is shaped the way it is,
-    disagreeing by two with the dataclass that shapes it.
-
+    `_details_payload` emits one key per `Details` field, and a number explaining why a surface is
+    shaped the way it is is worth nothing once it disagrees with the dataclass that shapes it.
     Pinned against the dataclass rather than by a third copy of the literal. A *whole* `status`
     entry is a different number — the summary fields plus these — and no shipped prose states it,
     so nothing here covers one.
     """
     declared = len(dataclasses.fields(reporting.Details))
-    spelled = {18: "eighteen", 20: "twenty"}.get(declared, str(declared))
+    spelled = {23: "twenty-three"}.get(declared, str(declared))
     repo = Path(__file__).resolve().parent.parent
     for relative, phrase in (
         ("zikaron/service/serialize_knowledge.py", f"The {spelled} diagnostic fields"),

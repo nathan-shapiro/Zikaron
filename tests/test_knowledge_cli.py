@@ -12,7 +12,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +21,7 @@ from typing import Final
 import aiosqlite
 import pytest
 
-from tests.knowledge_fixtures import config_for, corpus_root
+from tests.knowledge_fixtures import StubProcess, config_for, corpus_root, stub_spawned
 from tests.service_fixtures import context_over, envelope
 from zikaron.core.errors import Disposition, ErrorCode, ZikaronError
 from zikaron.core.knowledge import lock, registry, reporting
@@ -35,6 +35,7 @@ from zikaron.knowledge import main as cli
 from zikaron.knowledge.indexer import detach
 from zikaron.knowledge.main import _age, main
 from zikaron.service import dispatch_knowledge
+from zikaron.service.spawned_builds import SpawnedBuilds
 
 #: A pid no process can have, so *not running* is a fact rather than a race with the scheduler.
 _DEAD_PID: Final = 2**22 + 7
@@ -81,12 +82,12 @@ def started(monkeypatch: pytest.MonkeyPatch) -> list[_Started]:
 
     def _record(
         name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> list[str]:
+    ) -> detach.Spawned:
         del (
             spawned_by_op_id
         )  # An attribution the child records; this command's tests read the argv.
         asked.append(_Started(name=name, project=project, full=full))
-        return detach.command(name, project=project, full=full)
+        return stub_spawned(detach.command(name, project=project, full=full))
 
     monkeypatch.setattr(detach, "spawn", _record)
     return asked
@@ -105,11 +106,14 @@ def in_process_service(monkeypatch: pytest.MonkeyPatch) -> None:
     A `ZikaronError` a handler raises becomes a `ServiceRefusalError` here, as `server.py`'s
     `encode_error` and the client's own parse would together make it — that translation is what
     the command's refusal rendering is written against.
+
+    One table of spawned builds serves every call in a test, as one long-lived service would.
     """
+    spawned_builds = SpawnedBuilds()
 
     @asynccontextmanager
     async def _connected(project: Path) -> AsyncIterator[client.KnowledgeClient]:
-        yield _InProcessClient(project)
+        yield _InProcessClient(project, spawned_builds)
 
     monkeypatch.setattr(cli, "connected", _connected)
 
@@ -132,6 +136,8 @@ class _Answering:
 
     def __init__(self, response: dict[str, object]) -> None:
         self._response = response
+        #: No handshake recorded, so the client has no connection of another version to refuse.
+        self.health = None
 
     def envelope(self, *, kind: str) -> object:  # noqa: ARG002 — the signature is the contract.
         return object()
@@ -147,11 +153,14 @@ class _InProcessClient(client.KnowledgeClient):
     point, and `call` is overridden so nothing ever reads one.
     """
 
-    def __init__(self, project: Path) -> None:
+    def __init__(self, project: Path, spawned_builds: SpawnedBuilds | None = None) -> None:
         self.project = project
+        self._spawned_builds = SpawnedBuilds() if spawned_builds is None else spawned_builds
 
     async def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
-        async with context_over(self.project / ".zikaron", self.project) as ctx:
+        async with context_over(
+            self.project / ".zikaron", self.project, self._spawned_builds
+        ) as ctx:
             try:
                 result = await dispatch_knowledge.KNOWLEDGE_METHODS[method].handler(
                     ctx.store.connection, ctx, envelope(kind="cli"), params
@@ -258,20 +267,34 @@ def _release_the_lock(database: Path) -> None:
         db.commit()
 
 
-def _mark_scan_complete(database: Path) -> None:
-    """Write what a completed scan writes, without running one.
+def _hand_the_lock_to_another_host(database: Path) -> None:
+    """Rewrite the lock's host to one this machine cannot probe, synchronously, as above."""
+    with closing(sqlite3.connect(database)) as db:
+        db.execute("UPDATE meta SET value = 'another-machine' WHERE key = 'lock_host'")
+        db.commit()
 
-    Plain `sqlite3`, because the one caller is a `detach.spawn` stub that runs **inside** the
-    command's own event loop — `asyncio.run` there raises rather than reentering it.
+
+def _mark_scan_complete(database: Path, *, at: str = "2026-09-24T12:00:00+00:00") -> None:
+    """Write what a completed scan that started `at` writes, without running one.
+
+    Plain `sqlite3`, because every caller runs **inside** the command's own event loop — a
+    `detach.spawn` stub, or a wrapper around a call — where `asyncio.run` raises rather than
+    reentering it.
     """
     with closing(sqlite3.connect(database)) as db:
         for key in ("last_scan_started_at", "last_scan_completed_at"):
             db.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (key, "2026-09-24T12:00:00+00:00"),
+                (key, at),
             )
         db.commit()
+
+
+def _finish_the_build(database: Path) -> None:
+    """What the end of a build leaves: no lock, and a completed scan."""
+    _release_the_lock(database)
+    _mark_scan_complete(database)
 
 
 def _hold_the_lock(project_dir: Path, *, pid: int, host: str) -> None:
@@ -288,7 +311,9 @@ def _hold_the_lock(project_dir: Path, *, pid: int, host: str) -> None:
         config = config_for(project_dir)
         async with await Store.open(store_dir, config) as store:
             registered = await registry.require(store.connection, "docs")
-            async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+            async with await KnowledgeDatabase.open(
+                store_dir, registered.id, migrate=True
+            ) as opened:
 
                 async def _work(connection: aiosqlite.Connection) -> None:
                     await lock.acquire(
@@ -908,6 +933,19 @@ class TestClearingALockFromTheCommandLine:
         assert started == [_Started(name="docs", project=project, full=False)]
 
 
+def test_status_prints_the_link_counts_beside_the_search_counters(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+    capsys.readouterr()
+    assert _run(project, "status", "docs") == 0
+    lines = capsys.readouterr().out.splitlines()
+    searches = next(index for index, line in enumerate(lines) if line.startswith("  searches"))
+    assert lines[searches + 1] == (
+        "  linked    0 files, results 0 (0 source changed, 0 missing, 0 unverifiable)"
+    )
+
+
 class TestWhatStatusSaysAboutABuild:
     def test_a_running_build_on_this_host_is_reported_as_running(
         self, project: Path, capsys: pytest.CaptureFixture[str]
@@ -1178,9 +1216,9 @@ class TestWaitingForABuild:
         capsys.readouterr()
         database = _database_of(project, "docs")
 
-        def _finish(name: str, **_spawned: object) -> list[str]:
+        def _finish(name: str, **_spawned: object) -> detach.Spawned:
             _mark_scan_complete(database)
-            return ["python", "-m", "zikaron.knowledge.indexer", name]
+            return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", name])
 
         monkeypatch.setattr(detach, "spawn", _finish)
         assert _run(project, "refresh", "docs", "--wait") == 0
@@ -1248,10 +1286,10 @@ class TestASweepWhereOnlySomeBuildsStart:
 
         building = _database_of(project, "docs")
 
-        def _only_docs_starts(name: str, **_spawned: object) -> list[str]:
+        def _only_docs_starts(name: str, **_spawned: object) -> detach.Spawned:
             if name == "docs":
                 _mark_scan_complete(building)
-            return ["python", "-m", "zikaron.knowledge.indexer", name]
+            return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", name])
 
         monkeypatch.setattr(detach, "spawn", _only_docs_starts)
         assert _run(project, "refresh", "--wait") == 1
@@ -1298,10 +1336,10 @@ class TestASweepWhereOnlySomeBuildsStart:
                     _mark_scan_complete(building)
             return await real_call(self, method, params)
 
-        def _only_docs_starts(name: str, **_spawned: object) -> list[str]:
+        def _only_docs_starts(name: str, **_spawned: object) -> detach.Spawned:
             if name == "docs":
                 _begin_a_build(building, pid=os.getpid(), host=lock.this_host())
-            return ["python", "-m", "x", name]
+            return stub_spawned(["python", "-m", "x", name])
 
         monkeypatch.setattr(_InProcessClient, "call", _counted)
         monkeypatch.setattr(detach, "spawn", _only_docs_starts)
@@ -1373,6 +1411,34 @@ class TestWaitingForABuildSomebodyElseStarted:
             "leaves the person nothing to add"
         )
 
+    def test_a_lock_that_becomes_unprobeable_mid_wait_fails_rather_than_waiting_forever(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(cli, "_POLL_SECONDS", 0.02)
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+        database = _database_of(project, "docs")
+        _hold_the_lock(project, pid=os.getpid(), host=lock.this_host())
+
+        polls = 0
+        real_call = _InProcessClient.call
+
+        async def _counted(
+            self: _InProcessClient, method: str, params: dict[str, object]
+        ) -> dict[str, object]:
+            nonlocal polls
+            if method == "knowledge_status":
+                polls += 1
+                if polls == 2:
+                    _hand_the_lock_to_another_host(database)
+            return await real_call(self, method, params)
+
+        monkeypatch.setattr(_InProcessClient, "call", _counted)
+
+        assert _run(project, "refresh", "docs", "--wait") == 1
+        assert "cannot probe" in capsys.readouterr().err
+        assert polls >= 2, "the wait began on a lock it could probe"
+
     def test_a_build_that_ran_and_left_the_corpus_unusable_fails(
         self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1384,9 +1450,9 @@ class TestWaitingForABuildSomebodyElseStarted:
         capsys.readouterr()
         database = _database_of(project, "docs")
 
-        def _dies_mid_build(name: str, **_spawned: object) -> list[str]:
+        def _dies_mid_build(name: str, **_spawned: object) -> detach.Spawned:
             _begin_a_build(database, pid=_DEAD_PID, host=lock.this_host())
-            return ["python", "-m", "x", name]
+            return stub_spawned(["python", "-m", "x", name])
 
         monkeypatch.setattr(detach, "spawn", _dies_mid_build)
         assert _run(project, "refresh", "docs", "--wait") == 1
@@ -1474,6 +1540,139 @@ class TestWaitingForABuildSomebodyElseStarted:
             "the note points at a line printed only for a build this call started, and this one "
             "was found already running — pointing at it would send a reader looking for nothing"
         )
+
+
+class TestWaitingForABuildTheServiceSpawnedEarlier:
+    """`add` spawns a build and the service answers a `refresh` that finds it still loading with
+    `already_indexing` and no lock. The entry's own mark is the wait's baseline, so the command
+    waits for the build to begin and end rather than for a lock that is not there yet."""
+
+    @pytest.fixture
+    def alive(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Spawns whose processes stay alive, as builds loading their model do; each is recorded."""
+        asked: list[str] = []
+
+        def _spawn_alive(name: str, **_spawned: object) -> detach.Spawned:
+            asked.append(name)
+            return stub_spawned(["python", "-m", "x", name], StubProcess(returncode=None))
+
+        monkeypatch.setattr(detach, "spawn", _spawn_alive)
+        return asked
+
+    @staticmethod
+    def _counting(
+        monkeypatch: pytest.MonkeyPatch,
+        on_poll: Mapping[int, Callable[[], None]],
+        limit: int = 50,
+    ) -> list[int]:
+        """Count status polls, running `on_poll[n]` before the n-th, and fail a wait that hangs."""
+        polls = [0]
+        real_call = _InProcessClient.call
+
+        async def _counted(
+            self: _InProcessClient, method: str, params: dict[str, object]
+        ) -> dict[str, object]:
+            if method == "knowledge_status":
+                polls[0] += 1
+                step = on_poll.get(polls[0])
+                if step is not None:
+                    step()
+                if polls[0] > limit:
+                    raise AssertionError("the wait did not end")
+            return await real_call(self, method, params)
+
+        monkeypatch.setattr(_InProcessClient, "call", _counted)
+        return polls
+
+    def test_a_loading_build_is_waited_for_until_it_has_begun_and_ended(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        alive: list[str],
+    ) -> None:
+        monkeypatch.setattr(cli, "_POLL_SECONDS", 0.02)
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+        database = _database_of(project, "docs")
+        polls = self._counting(
+            monkeypatch,
+            {
+                3: lambda: _begin_a_build(database, pid=os.getpid(), host=lock.this_host()),
+                5: lambda: _finish_the_build(database),
+            },
+        )
+
+        assert _run(project, "refresh", "docs", "--wait") == 0
+        printed = capsys.readouterr().out
+        assert "already being built" in printed
+        assert "built     'docs' is ok" in printed
+        assert polls[0] >= 5, "it waited through the load and the build alike"
+        assert alive == ["docs"], "the refresh spawned nothing beside the build add started"
+
+    @pytest.mark.usefixtures("alive")
+    def test_beside_a_crashed_builds_dead_lock_the_wait_takes_both_halves(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(cli, "_POLL_SECONDS", 0.02)
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+        database = _database_of(project, "docs")
+        _hold_the_lock(project, pid=_DEAD_PID, host=lock.this_host())
+        polls = self._counting(
+            monkeypatch,
+            {3: lambda: _finish_the_build(database)},
+        )
+
+        assert _run(project, "refresh", "docs", "--wait") == 0
+        assert "built     'docs' is ok" in capsys.readouterr().out
+        assert polls[0] >= 3
+
+    @pytest.mark.usefixtures("alive")
+    def test_a_loading_build_that_dies_ends_the_wait_at_the_appearance_deadline(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The service's report that a process is alive is not a lock, and a spawn that dies
+        loading leaves nothing that will ever change."""
+        monkeypatch.setattr(cli, "_APPEARANCE_DEADLINE_SECONDS", 0.2)
+        monkeypatch.setattr(cli, "_POLL_SECONDS", 0.02)
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+        self._counting(monkeypatch, {})
+
+        assert _run(project, "refresh", "docs", "--wait") == 1
+        assert "no build started" in capsys.readouterr().err
+
+    def test_a_build_ending_before_the_services_observation_does_not_end_the_wait(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Another build takes its lock and completes after the command calls and before the
+        service reads the corpus. Its mark is the baseline the entry carries, so the wait goes on
+        until the build this call started has written one of its own."""
+        monkeypatch.setattr(cli, "_POLL_SECONDS", 0.02)
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+        database = _database_of(project, "docs")
+        real_call = _InProcessClient.call
+        polls = 0
+
+        async def _racing(
+            self: _InProcessClient, method: str, params: dict[str, object]
+        ) -> dict[str, object]:
+            nonlocal polls
+            if method == "knowledge_refresh":
+                _mark_scan_complete(database, at="2026-09-24T12:00:00+00:00")
+            if method == "knowledge_status":
+                polls += 1
+                if polls == 3:
+                    _mark_scan_complete(database, at="2026-09-24T13:00:00+00:00")
+                if polls > 50:
+                    raise AssertionError("the wait did not end")
+            return await real_call(self, method, params)
+
+        monkeypatch.setattr(_InProcessClient, "call", _racing)
+        assert _run(project, "refresh", "docs", "--wait") == 0
+        assert polls >= 3, "the wait outlasted the build that ended before the call was served"
 
 
 class TestTheProjectHandedToTheService:

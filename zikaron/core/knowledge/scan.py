@@ -79,6 +79,7 @@ from zikaron.core.knowledge import (
     database,
     disposal,
     files,
+    link_store,
     lock,
     meta,
     pending,
@@ -92,6 +93,7 @@ from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.disposal import BuildSettings, Disposals
 from zikaron.core.knowledge.errors import CorpusRootMissingError
 from zikaron.core.knowledge.meta import GitMode, KnowledgeMeta
+from zikaron.core.store import holders
 from zikaron.core.store.transactions import in_one_transaction, propagate
 
 #: How many walked entries are pulled per hop onto a worker thread. The walk is blocking work and
@@ -203,7 +205,7 @@ async def _begin(
             await database.stored_vector_width(connection)
         )
 
-    return await in_one_transaction(db, _work, failure=propagate, immediate=True)
+    return await in_one_transaction(db, _work, failure=propagate)
 
 
 async def _walk_tree(
@@ -324,6 +326,21 @@ async def _walk_phase(
     return answers, comparison, len(deletions)
 
 
+async def _make_link_records_exact(db: aiosqlite.Connection) -> None:
+    """Read again, from its stored chunks, the link of every row whose record was not read from the
+    bytes it names — what a build of the previous schema writes — one transaction per row, as every
+    per-file write is (`knowledge-index.md` §7.7.1)."""
+
+    async def _one(path: str) -> None:
+        async def _work(connection: aiosqlite.Connection) -> None:
+            await link_store.make_exact(connection, path)
+
+        await in_one_transaction(db, _work, failure=propagate)
+
+    for path in await link_store.paths_with_inexact_records(db):
+        await _one(path)
+
+
 async def _complete(db: aiosqlite.Connection) -> None:
     """Record that this scan finished.
 
@@ -365,6 +382,10 @@ async def run(
 ) -> ScanResult:
     """Build this knowledge base's index, holding its lock for as long as it takes.
 
+    **Every transaction this opens on `opened`'s connection is `BEGIN IMMEDIATE`**, waiting for the
+    write lock under the connection's own `busy_timeout`, and the connection keeps that mode
+    afterwards (`knowledge-index.md` §6.2).
+
     **`on_completion` runs once the lock is held and before it is released**, so whatever it records
     has landed by the time a watcher of the lock sees it go. It never runs for a refusal before the
     lock — nothing was taken — nor for `CancelledError` or `KeyboardInterrupt`, which release the
@@ -390,6 +411,11 @@ async def run(
             to whoever holds it.
     """
     db = opened.connection
+    # Each of a build's transactions reads before it writes, and SQLite refuses a deferred one at
+    # its first write whenever another connection holds the write lock, without consulting
+    # `busy_timeout`. A search's counter write is such a connection, so deferred, searching a
+    # corpus could end its build.
+    holders.hold(db, immediate=True, polls_for_lock=False)
     # The root and the git mode are settled when a knowledge base is created and nothing rewrites
     # them, so the two checks that need a subprocess or a filesystem call are made here, before the
     # lock, where a refusal costs nobody the lock.
@@ -420,6 +446,8 @@ async def run(
                 bypass=build.full,
             ),
         )
+        if corpus.stores_links:
+            await _make_link_records_exact(db)
         deleted += await disposal.run(
             db,
             comparison,

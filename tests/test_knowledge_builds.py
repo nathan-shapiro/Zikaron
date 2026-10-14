@@ -62,7 +62,9 @@ class TestWhatStopsABuild:
     async def test_an_ordinary_corpus_may_start(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
             await _planted(tmp_path, store_dir, db)
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.may_start
             assert planned.obstacle is None
             assert planned.refusal is None
@@ -74,7 +76,9 @@ class TestWhatStopsABuild:
             db_path = await _planted(tmp_path, store_dir, db)
             await _hold_the_lock(db_path, pid=os.getpid())
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.ALREADY_INDEXING
             assert isinstance(planned.refusal, IndexerBusyError)
 
@@ -85,7 +89,9 @@ class TestWhatStopsABuild:
             db_path = await _planted(tmp_path, store_dir, db)
             await _hold_the_lock(db_path, pid=DEAD_PID)
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.may_start
 
     async def test_a_missing_database_is_no_database(self, tmp_path: Path) -> None:
@@ -95,7 +101,9 @@ class TestWhatStopsABuild:
             db_path = await _planted(tmp_path, store_dir, db)
             db_path.unlink()
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.NO_DATABASE
             assert isinstance(planned.refusal, DanglingKnowledgeBaseError)
 
@@ -104,7 +112,9 @@ class TestWhatStopsABuild:
             await _planted(tmp_path, store_dir, db)
             _remove_tree(corpus_root(tmp_path))
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.ROOT_MISSING
             assert isinstance(planned.refusal, CorpusRootMissingError)
 
@@ -116,7 +126,9 @@ class TestWhatStopsABuild:
             db_path = await _planted(tmp_path, store_dir, db)
             db_path.write_bytes(b"this is not a SQLite database")
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.UNREADABLE
             assert planned.refusal is not None
             assert not isinstance(planned.refusal, DanglingKnowledgeBaseError)
@@ -129,7 +141,9 @@ class TestWhatStopsABuild:
             db_path = await _planted(tmp_path, store_dir, db)
             await write_meta(db_path, embed_model="some/other-model")
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.status.summary.state is KnowledgeState.REINDEX_REQUIRED
             assert planned.may_start
 
@@ -144,7 +158,9 @@ class TestTheOrderTwoConditionsAreResolvedIn:
             await _hold_the_lock(db_path, pid=os.getpid())
             _remove_tree(corpus_root(tmp_path))
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.ROOT_MISSING
 
     async def test_an_unreadable_database_outranks_a_missing_root(self, tmp_path: Path) -> None:
@@ -155,7 +171,9 @@ class TestTheOrderTwoConditionsAreResolvedIn:
             _remove_tree(corpus_root(tmp_path))
             db_path.write_bytes(b"this is not a SQLite database")
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             assert planned.obstacle is BuildObstacle.UNREADABLE
 
 
@@ -165,12 +183,17 @@ class TestWhichCorporaAreAnsweredFor:
             await _planted(tmp_path, store_dir, db, name="docs")
             await _planted(tmp_path, store_dir, db, name="runbooks")
 
-            planned = await builds.plan(store_dir, db, config_for(tmp_path), names=None)
+            planned = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=None, migrate=True
+            )
             assert {entry.knowledge_base.name for entry in planned} == {"docs", "runbooks"}
 
     async def test_no_names_over_an_empty_store_plans_nothing(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
-            assert await builds.plan(store_dir, db, config_for(tmp_path), names=None) == ()
+            assert (
+                await builds.plan(store_dir, db, config_for(tmp_path), names=None, migrate=True)
+                == ()
+            )
 
     async def test_names_are_answered_in_the_order_given(self, tmp_path: Path) -> None:
         """So a caller can line the answers up against what it asked for without matching on
@@ -180,7 +203,7 @@ class TestWhichCorporaAreAnsweredFor:
             await _planted(tmp_path, store_dir, db, name="runbooks")
 
             planned = await builds.plan(
-                store_dir, db, config_for(tmp_path), names=["runbooks", "docs"]
+                store_dir, db, config_for(tmp_path), names=["runbooks", "docs"], migrate=True
             )
             assert [entry.knowledge_base.name for entry in planned] == ["runbooks", "docs"]
 
@@ -192,7 +215,9 @@ class TestWhichCorporaAreAnsweredFor:
             await _planted(tmp_path, store_dir, db, name="runbooks")
             broken.unlink()
 
-            planned = await builds.plan(store_dir, db, config_for(tmp_path), names=None)
+            planned = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=None, migrate=True
+            )
             by_name = {entry.knowledge_base.name: entry for entry in planned}
             assert by_name["docs"].obstacle is BuildObstacle.NO_DATABASE
             assert by_name["runbooks"].may_start
@@ -212,7 +237,9 @@ class TestWhichCorporaAreAnsweredFor:
         async with open_store(tmp_path) as (store_dir, db):
             await _planted(tmp_path, store_dir, db)
             with pytest.raises(expected):
-                await builds.plan(store_dir, db, config_for(tmp_path), names=list(names))
+                await builds.plan(
+                    store_dir, db, config_for(tmp_path), names=list(names), migrate=True
+                )
 
 
 class TestPrepare:
@@ -221,7 +248,9 @@ class TestPrepare:
     async def test_it_returns_the_corpus_when_nothing_stops_a_build(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
             await _planted(tmp_path, store_dir, db)
-            registered = await builds.prepare(store_dir, db, config_for(tmp_path), name="DOCS")
+            registered = await builds.prepare(
+                store_dir, db, config_for(tmp_path), name="DOCS", migrate=True
+            )
             assert registered.name == "docs"
 
     @pytest.mark.parametrize(
@@ -244,9 +273,11 @@ class TestPrepare:
             else:
                 await _hold_the_lock(db_path, pid=os.getpid())
 
-            (planned,) = await builds.plan(store_dir, db, config_for(tmp_path), names=["docs"])
+            (planned,) = await builds.plan(
+                store_dir, db, config_for(tmp_path), names=["docs"], migrate=True
+            )
             with pytest.raises(expected) as raised:
-                await builds.prepare(store_dir, db, config_for(tmp_path), name="docs")
+                await builds.prepare(store_dir, db, config_for(tmp_path), name="docs", migrate=True)
             assert str(raised.value) == str(planned.refusal), (
                 "the raised message and the reported one are built once, from the same decision"
             )

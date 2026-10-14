@@ -232,12 +232,11 @@ def test_the_foreground_command_the_verb_prints_actually_builds_the_corpus(
     a line that did not reproduce the build would be worse than no line at all.
 
     **`--wait` is what makes the *run* deterministic rather than a race.** `add` starts a detached
-    build, so running the printed command straight afterwards puts two builds on one corpus and the
-    second is refused for the lock the first holds — not a defect in either, but an accurate account
-    of what such a test asked for. Waiting first exercises the argv against a corpus nothing is
-    building. It does **not** make which lines get printed deterministic: whether the `refresh`
-    starts a build of its own or finds `add`'s already under way depends on that same window, which
-    is why the argv is taken from `add`.
+    build, so the printed command run straight afterwards would be a second build of one corpus,
+    refused for the lock the first holds. Waiting first exercises the argv against a corpus nothing
+    is building. It does **not** make which lines get printed deterministic: the `refresh` finds
+    `add`'s build under way unless that build has already finished, which is why the argv is taken
+    from `add`.
     """
     corpus = initialized / "docs"
     corpus.mkdir()
@@ -259,9 +258,8 @@ def test_the_foreground_command_the_verb_prints_actually_builds_the_corpus(
     )
     # **Taken from `add`, not from the `refresh`.** A fresh corpus always answers `started`, so
     # `add` always prints this line; the `refresh` prints one only if it started a build of its
-    # own, and when `add`'s indexer has already taken the lock it answers `already_indexing` and
-    # prints none. That outcome is correct — and waited for — but it would leave nothing here to
-    # unpack.
+    # own, and while `add`'s indexer is still running it answers `already_indexing` and prints
+    # none. That outcome is correct — and waited for — but it would leave nothing here to unpack.
     added = capsys.readouterr().out
 
     assert main(["--project", str(initialized), "refresh", "docs", "--wait"]) == 0
@@ -286,8 +284,8 @@ def test_rename_and_remove_reach_a_real_service(
     service at all — and a corpus that was renamed and then removed by name proves both did.
 
     **The `refresh --wait` between them is not incidental.** `add` starts a detached build, and
-    `lifecycle.remove` refuses while a lock is held by a holder this host cannot show is dead — a
-    live local indexer is one — so without the wait this test races that build and fails whenever it
+    `remove` refuses while that build is running — still loading, or holding a lock this host
+    cannot show is dead — so without the wait this test races that build and fails whenever it
     loses. It costs the build `add` was going to run anyway.
     """
     corpus = initialized / "docs"

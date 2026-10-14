@@ -1965,7 +1965,9 @@ downgrading.
 **Exactly one opener migrates: the service.** `Store.open` takes `migrate`, and `service/context.py` is the
 only call site that passes it — the one opener holding the store at startup with write intent, before the
 socket is bound, so no client can be mid-call while the schema moves. The indexer and the MCP identity read
-open an older store at the version it is and **never move it**.
+open an older store at the version it is and **never move it**. A knowledge base's own database is a
+separate file, brought forward on other terms (`knowledge-index.md` §"7.7.1 The corpus database moves to
+schema 4").
 
 **So the indexer can meet a store whose `CHECK` refuses `knowledge_build`, and a build must not fail
 for it.** A build reached through `zikaron knowledge` is spawned by the service, which has therefore
@@ -2007,7 +2009,7 @@ both are binding:
   meaning of an existing key, or a new invariant it would violate by writing.
 - **A new binary over an old store** — anything it will write that the old store's constraints refuse.
 
-**The second direction is easy to read past, and every version so far is entirely that case.** Each widens a
+**The second direction is easy to read past, and versions 2 and 3 are entirely that case.** Each widens a
 `CHECK` on `event`: version 2 admits `client_kind = 'cli'`, version 3 admits the `call` and
 `knowledge_build` kinds and `client_kind = 'indexer'`. An old binary reading a widened store reads every row
 correctly and would never write the new values, so on the first direction alone none of this qualifies — and
@@ -2020,6 +2022,23 @@ how a binary knows which shape it is holding.**
 worse, it makes *has this store been brought forward* a derived fact with no record: a migration that was
 never applied and one that was applied and then partly undone look identical. A recorded version is a
 statement the store makes about itself.
+
+**A knowledge-base database's schema moving moves this version too** (operator, 2026-10-13), and
+version 4 is entirely that case: it changes nothing in `memory.db`, and marks a store last opened by
+a service that brings corpus databases to schema 4 (`knowledge-index.md` §"7.7.1 The corpus database
+moves to schema 4"). The store is one unit to a binary — `memory.db` and the corpora its registry
+names live in one directory and are served by one service — so a binary that cannot read the corpora
+refuses the store whole, at its version, rather than opening it and failing on its corpora one at a
+time. **The two are one version line: a corpus schema version is the version of this store that
+introduced its shape** (operator, 2026-10-13), so corpora have only the versions their shape changed
+at — 1, then 4 — and **a corpus is never ahead of its store**, because a step to corpus version N
+runs only for an opener whose `memory.db` is at N or later. So a version-3 store never holds a
+schema-4 corpus — even when an old service, still running after an upgrade, spawns a build from the
+new code. It also keeps `design/distribution.md` §3's rule literal: a minor release is exactly a
+move of this number. **A corpus database still carries its own `schema_version`**, because it is a
+separate file migrated on its own terms — when something next opens it, not when the service starts
+— so a version-4 store can hold schema-1 corpora for a while, and only each file can say which shape
+it is. A store version that changes nothing in the corpora moves no corpus.
 
 **Adding a table still does not move the version, and §"The knowledge-base registry" carries that rule.** A
 table no older code path reads or writes leaves every older read and write exactly as correct as it was, so

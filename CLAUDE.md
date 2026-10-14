@@ -71,12 +71,13 @@ falsifies, in the one place nobody edits when adding one.
 | `design/write-policy.md` | the `agentSpawn` prompt text, its rationale, the secrets and poisoning boundary, the operator erasure procedure, six instrumented signals, known gaps |
 | **`design/build-plan.md`** | **Per-milestone briefs: scope, normative sections, invariants, done-when, scope fence.** Read the brief for the milestone you are on |
 | **`design/coding-standards.md`** | **Binding.** Structure, domain model, typing, the test tiers, invariant tests, comment rules, dependency rules, the check gate, and the rules for bulk edits to prose in code |
-| **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, K1–K13 and 16 invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
+| **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, linked documents, and its K-decisions and invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
 | **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, publication by trusted publishing, **the `zikaron` front door and what `doctor` checks**, **model acquisition — the durable cache, the pinned revision and digest set, when digests are checked and why not on every start**, the version scheme (a minor bump means a schema bump), **what CI asserts and what it provably cannot** |
 | **`design/harness.md`** | **The two supported harnesses as one table (D34)**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership, the consolidator's model, and **the installer's two targets** — the value/shape split, the flags and what each refuses |
 | **`design/guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` — what Claude Code was measured to deliver, installation by selection, fail-open |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
+| `design/code-knowledge.md` | **Proposal, not normative.** Agents that write per-source-file documentation into a knowledge base: the proposed D39, and what M40's brainstorm must settle. K14, which lets a search say whether a result's source has moved, is specified in `design/knowledge-index.md` §7.7 |
 
 Evidence is separated by kind and stays that way: **`research/`** measured results and literature notes,
 **`reviews/`** review rounds, **`experiments/`** re-runnable harnesses, **`spikes/`** throwaway probes.
@@ -261,7 +262,9 @@ format .`, not adjusting the code by hand to satisfy it.
   that gets tagged, which is the operator's act. A PR that bumps `0.1.0` to `0.1.1` claims a release
   that does not exist, and a `git+` or checkout install then reports a version indistinguishable
   from a published one. When user-facing change lands and the next number is not yet decided, the
-  `.dev` suffix is already doing its job and nothing needs bumping. `design/distribution.md` §3 is
+  `.dev` suffix is already doing its job and nothing needs bumping. **A change that moves
+  `meta.schema_version` has decided it**: the next release is a minor, so the same commit moves the
+  `.dev` there — `0.3.3.dev0` becomes `0.4.0.dev0`. `design/distribution.md` §3 is
   normative, and `release.yml`'s tag check refuses to build while the suffix is present, so it
   cannot survive a release by accident.
 - **Never run a git command that discards uncommitted work.** Not `git checkout -- <path>`, not
@@ -282,8 +285,11 @@ format .`, not adjusting the code by hand to satisfy it.
   still ends in a green gate and a tidy summary. Before spawning: grep every claim you changed **in
   all of its phrasings**, not the one you just edited; re-read every file you touched, at the scope
   the re-reading bullet below sets; mutation-verify every guard added since the last round — by
-  running the mutation, not by describing it; and when a defect turns up in one caller of a shared
-  helper, audit its **other** callers for the same class.
+  running the mutation, not by describing it; after a green `./check.sh`, run
+  `.venv/bin/python experiments/new_line_coverage.py`, which names every line the change adds under
+  `zikaron/` that no test executes, since the coverage floor is a total and such a line passes it;
+  and when a defect turns up in one caller of a shared helper, audit its **other** callers for the
+  same class.
   **Grep locates candidates. It does not decide coverage.** A string search only finds sentences
   that resemble the one you edited, and the sentences that go stale are the ones that *followed
   from* it, which share none of its words. The check that works: **state the change as a

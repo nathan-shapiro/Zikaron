@@ -4055,6 +4055,13 @@ of this file) and it is worth re-running whenever either directory grows.
 | `research/m37-scratch-script-replay.md` | why §3.2 row 6 exists: the live test's vanilla agent edited through a staged scratch script, 231 such runs in local transcripts, and the product's 54 row-6 denies over 33,069 calls read by hand — 47 authored rewrites, 2 golden files, 5 the stated argv false deny |
 | `reviews/m37-edit-guards-review.md` | the M37 build's trail: memory-reviewer's prompt texts, then the build review rounds |
 | `reviews/cold-start-push-review.md` | the first-push-after-an-idle-stop fix's trail, approved: the split deadline and `starting`, one service per socket path, every client watching the process it spawned, and every unlink through one inode check |
+| `research/code-knowledge-sizing.md` | for `design/code-knowledge.md`: the search-time cost of hashing a linked result's source, the producer's corpus size and regeneration churn here, and the knowledge index's field use — refreshes outnumbering searches 26 to 9 |
+| `reviews/m39-linked-knowledge-brief-review.md` | the M39 brief and the spec it cites — the build's transactions, one spawn, K14's linked documents and corpus schema 2, and the version check — reviewed to APPROVED |
+| `research/build-transaction-upgrade-race.md` | the flaky `refresh --wait` test diagnosed: a build's deferred per-file transaction refused at once by a brief concurrent writer, a second build spawned during the first's model load, and the fix — with `spikes/sqlite_deferred_upgrade_busy.py`, the SQLite probe behind it |
+| `research/m39-migration-bar.md` | the corpus migration's write-lock hold against M39's bar — p95 0.752 s on 7,000 rows, met — with `experiments/m39_migration_bar.py` to re-derive it |
+| `research/m39-linked-corpus-observation.md` | a real linked corpus built by the real service and searched over MCP, every `source.state` as §7.7 says; the spawn dedup and the version check seen live |
+| `research/m39-manual-integration.md` | linked documents through real `claude -p` turns, indexed once by the CLI and once by the agent itself: `changed` sent the agent to the code 2 of 2, `fresh` let it stop at the document 1 of 2 |
+| `reviews/m39-linked-knowledge-review.md` | the M39 build's trail: memory-reviewer's `source` paragraph for the search description, fitted under its cap, then the build review rounds |
 
 ## M25, and the last three pre-knowledge-index milestones (moved out of FINDINGS 2026-09-20)
 
@@ -7221,3 +7228,47 @@ and the post-`0.3.1` archive pass. The review (`reviews/cold-start-push-review.m
   ends at its deadline, and the `surface` and `health()` exchanges are timed whole. **No
   cold-start timing was measured** (operator): it is machine- and load-specific and decides
   nothing.
+
+## Closed with `0.3.2` (moved out of FINDINGS 2026-10-11, once M38 landed as `e7b91c4`)
+
+Moved byte-for-byte; "this file" inside them means `FINDINGS.md`.
+
+**`0.3.1` is released** — tagged `v0.3.1` on `028b4b2` and published by `release.yml`
+(2026-10-08). It is a patch, since the schema did not move. `main` is `0.3.2.dev0`. **A minor bump
+means a `meta.schema_version` bump and nothing else** (operator, 2026-10-11; D36,
+`design/distribution.md` §3), so M38 ships as `0.3.2`, and its pull request's commit sets
+`version = "0.3.2"` (operator, 2026-10-11) — the commit to tag once merged; `main` then goes to
+`0.3.3.dev0`.
+
+**M38 is built and reviewed, not landed: a self-matching `pgrep -f`/`pkill -f` is refused, on
+`Bash` and `Monitor`.** The brief (`design/build-plan.md` §M38, `design/guards.md` §9) and the
+build are both APPROVED (`reviews/m38-selfmatch-guard-brief-review.md`,
+`reviews/m38-selfmatch-guard-review.md`, whose §"Prompt texts" is the deny's wording). It is in
+its pull request, branch `m38-selfmatch-guard`, whose CI is the version matrix and runs §9.6's
+premise test on macOS (done-when 1 and 4); it was built in the worktree
+`/home/nathan/Zikaron-m38`, which `git worktree remove` clears once it is no longer wanted.
+**"Edit guards" is now "guards"** (operator, 2026-10-11): `design/guards.md`,
+`HarnessSpec.guards`, `Guards.command`; `reviews/` and the archive keep the old name, as records.
+**What remains is the operator's**: the merge; the `0.3.2` tag and release, whose note says to
+re-run `install` so that `Monitor` is judged; and that
+re-run in `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory`, which run this tree's
+`zikaron-guard` and so judge `Bash` by the new rule now, and `Monitor` only after it. **Operator,
+2026-10-11, for any further M38 review round** — *"say that operator pushes back against idea of
+reviewer to go back and revisit actual edit guards (if reviewer does it)"*: a finding that reopens
+§3–§8's rules is declined with that reason, and the words go verbatim into the brief's
+`On the operator's authority:` line. **The build includes an amendment** (operator, 2026-10-11:
+*"Sure, let's do substitution"*), reviewed to APPROVED in the same file: a pattern that is exactly
+`$NAME` or `${NAME}`, bound earlier in the same command as §3.3 reads a binding and to a literal
+value, is judged on that value — so `P=selfmatch-guard-probe; pgrep -af "$P"` is denied (§9.1).
+**The operator's red line for any further round, verbatim into its brief**: *"I have no problem
+with you iterating till bare approval as long as we're not building a "mini shell". Like we
+should not evaluate variables which are output of other sub shell etc."* — a finding that asks
+the rule to evaluate more of the shell's semantics is declined with that reason; and if the
+reviewer runs out of capacity, stop, record where the loop stands here, and resume the review the
+next day at noon (operator, 2026-10-11).
+
+**How it closed.** PR #25 merged as `e7b91c4` with its CI green on all four jobs, the macOS job
+running §9.6's darwin premise; the worktree was removed and the branch deleted; the install was
+re-run with `--components both` in all three projects (2026-10-11), each now routing
+`Bash|Monitor` to the guard; and `v0.3.2` was released on `e7b91c4` and published to PyPI by
+`release.yml` (2026-10-12).

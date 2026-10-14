@@ -53,7 +53,7 @@ class TestTheKeysMatchTheDesign:
         assert list(meta.PROGRESS_KEYS) == _keys_in_group("scan progress")
 
     def test_the_search_counters_are_exactly_what_the_design_lists(self) -> None:
-        assert list(meta.SEARCH_COUNTER_KEYS) == _keys_in_group("counters")
+        assert [*meta.SEARCH_COUNTER_KEYS, *meta.LINK_COUNTER_KEYS] == _keys_in_group("counters")
 
     def test_every_reason_names_its_own_key_and_the_directory_count_is_not_one(self) -> None:
         """Pruning is not a skip reason: it excludes directories, and the total the reasons
@@ -122,12 +122,16 @@ async def _open_corpus_db(tmp_path: Path) -> tuple[Path, aiosqlite.Connection]:
 
 class TestWhatOneSearchContributes:
     def test_a_search_that_found_something_is_not_an_empty_one(self) -> None:
-        increments = SearchTally(results=3, stale=1).as_increments()
+        increments = SearchTally(results=3, stale=1, linked=2, source_missing=1).as_increments()
         assert increments == {
             "searches": 1,
             "searches_empty": 0,
             "results_returned": 3,
             "results_stale": 1,
+            "results_linked": 2,
+            "results_source_changed": 0,
+            "results_source_missing": 1,
+            "results_source_unverifiable": 0,
         }
 
     def test_a_search_that_found_nothing_raises_the_abstention_count(self) -> None:
@@ -138,7 +142,10 @@ class TestWhatOneSearchContributes:
     def test_every_counter_is_written_even_at_zero(self) -> None:
         """One statement shape regardless of what the search found, so the write is the same
         transaction every time."""
-        assert set(SearchTally(results=0, stale=0).as_increments()) == set(meta.SEARCH_COUNTER_KEYS)
+        assert set(SearchTally(results=0, stale=0).as_increments()) == {
+            *meta.SEARCH_COUNTER_KEYS,
+            *meta.LINK_COUNTER_KEYS,
+        }
 
 
 class TestRecordingASearch:

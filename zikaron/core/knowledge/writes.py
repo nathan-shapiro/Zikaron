@@ -23,6 +23,7 @@ import aiosqlite
 from zikaron.core.errors import ErrorCode, IndexStage, ZikaronError
 from zikaron.core.knowledge import files, lexical, vectors
 from zikaron.core.knowledge.chunking import FileChunkPlan
+from zikaron.core.knowledge.links import LinkRecord
 
 _CHUNK_COLUMNS = "path, part_index, start_line, end_line, text"
 
@@ -80,6 +81,7 @@ async def index_file(
     indexed: files.IndexedFile,
     plan: FileChunkPlan,
     embeddings: Sequence[bytes],
+    link: LinkRecord | None,
 ) -> None:
     """Replace everything the index holds for one file with this plan and these vectors.
 
@@ -93,6 +95,8 @@ async def index_file(
             match is the one inconsistency no later reader can detect.
         plan: the chunks to store, in `part_index` order.
         embeddings: one serialized vector per chunk, in the same order.
+        link: what the file's bytes declare, read from the same text the chunks were made of, or
+            `None` for a corpus at schema 1.
 
     Raises:
         ZikaronError: `INDEX_FAILED` at stage `index_write` if the vectors, the plan and the row's
@@ -113,7 +117,7 @@ async def index_file(
         document = lexical.Document(text=chunk.text, path=indexed.path)
         await lexical.insert(db, chunk_id=chunk_id, document=document)
         await vectors.insert(db, chunk_id=chunk_id, vector=vector)
-    await files.record(db, indexed)
+    await files.record(db, indexed, link=link)
 
 
 async def forget_file(db: aiosqlite.Connection, *, path: str) -> None:

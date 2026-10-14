@@ -27,7 +27,9 @@ from zikaron.core.indexing.encoder import BackgroundLoadedEncoder, Encoder, Fast
 from zikaron.core.indexing.writes import IndexingContext
 from zikaron.core.retrieval.retrieve import RetrievalSettings
 from zikaron.core.store.store import Store
+from zikaron.core.version import package_version
 from zikaron.service.access_log import AccessLog
+from zikaron.service.spawned_builds import SpawnedBuilds
 
 
 @dataclass(eq=False, slots=True)
@@ -133,6 +135,14 @@ class ServiceContext:
     #: When this context was built, on the monotonic clock: the store is open from here, so
     #: `health()` reports how long this service has been serving it.
     assembled_at: float = field(default_factory=time.monotonic)
+    #: The builds this service spawned that have not yet taken their corpus's lock. Mutable, and
+    #: empty however the context is built, because it records what this process has done rather
+    #: than any state of the store.
+    spawned_builds: SpawnedBuilds = field(default_factory=SpawnedBuilds)
+    #: The package version this process runs, read when the context is built and never again: an
+    #: in-place upgrade replaces the metadata the lookup reads while this process keeps running the
+    #: old code, which is the case `health()` reports it for (`distribution.md` §3).
+    version: str = field(default_factory=package_version)
 
     @property
     def model_loaded(self) -> bool:

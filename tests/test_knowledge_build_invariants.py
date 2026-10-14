@@ -49,7 +49,16 @@ from tests.knowledge_fixtures import (
 from tests.test_knowledge_search import read_lines
 from zikaron.core.clock import timestamp
 from zikaron.core.errors import ZikaronError
-from zikaron.core.knowledge import database, disposal, files, lexical, lifecycle, lock, pending
+from zikaron.core.knowledge import (
+    database,
+    disposal,
+    files,
+    lexical,
+    lifecycle,
+    links,
+    lock,
+    pending,
+)
 from zikaron.core.knowledge.errors import IndexerBusyError
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.core.store.transactions import in_one_transaction, propagate
@@ -222,9 +231,12 @@ class TestAFilesRowsMoveInOneTransaction:
             real = files.record
 
             async def _fail_on_the_second(
-                db: aiosqlite.Connection, indexed: files.IndexedFile
+                db: aiosqlite.Connection,
+                indexed: files.IndexedFile,
+                *,
+                link: links.LinkRecord | None,
             ) -> None:
-                await real(db, indexed)
+                await real(db, indexed, link=link)
                 if indexed.path == "b.md":
                     raise RuntimeError("the indexer died mid-transaction")
 

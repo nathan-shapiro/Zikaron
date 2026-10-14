@@ -13,7 +13,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
@@ -41,13 +41,21 @@ def _seconds_from_now(seconds: float) -> float:
 
 class _FakeService:
     """A UDS server, on a background thread, answering exactly one `health()` per connection
-    with a fixed `{store_path, store_id}` — enough for `connect_once`'s identity check without
-    the cost of a real `zikaron-service` process.
+    with a fixed `{store_path, store_id}`, plus whatever `also` adds — enough for `connect_once`'s
+    identity check without the cost of a real `zikaron-service` process.
     """
 
-    def __init__(self, sock_path: Path, *, store_path: str, store_id: str) -> None:
+    def __init__(
+        self,
+        sock_path: Path,
+        *,
+        store_path: str,
+        store_id: str,
+        also: Mapping[str, object] | None = None,
+    ) -> None:
         self._store_path = store_path
         self._store_id = store_id
+        self._also = dict(also or {})
         self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server.bind(str(sock_path))
         self._server.listen(4)
@@ -80,6 +88,7 @@ class _FakeService:
                 "ready": True,
                 "store_path": self._store_path,
                 "store_id": self._store_id,
+                **self._also,
             },
         }
         connection.sendall((json.dumps(response) + "\n").encode("utf-8"))
@@ -318,7 +327,7 @@ def test_default_server_command_uses_this_interpreter_and_the_service_module(
     tmp_path: Path,
 ) -> None:
     command = default_server_command(tmp_path / "s.sock", tmp_path / "store")
-    assert command[1:3] == ["-m", "zikaron.service.main"]
+    assert command[1:4] == ["-P", "-m", "zikaron.service.main"]
 
 
 def test_resolve_sock_path_is_a_pure_function_of_store_dir(

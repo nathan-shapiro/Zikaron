@@ -368,23 +368,55 @@ A release that needs an existing install refreshed says so in its release note.
 
 **`0.3.0` follows `0.1.0` directly, and that is arithmetic rather than a choice.** `0.1.0` shipped
 schema 1 and `0.3.0` ships schema 3; the `MIGRATIONS` steps between them — `to_version=2` at M31 and
-`to_version=3` at M33 — are each a minor bump, so no `0.2.0` was ever released.
+`to_version=3` at M33 — are each a minor bump, so no `0.2.0` was ever released. M39's
+`to_version=4`, which moves nothing in `memory.db` and marks a store whose corpora may be at
+schema 4 (`schema.md` §"When the version moves"), is the next: the release that ships it is a minor.
 
 **So far the minor equals the schema version, and nothing may read it as one.**
 `store.CURRENT_SCHEMA_VERSION` is where the store version a build speaks is written; the version
 number's job is to say a store-level change happened, not to name which.
 
-**Upgrading does not replace a running service, and since M31 that is visible.** A service is
-started by whichever build first needed one and keeps answering until `idle_timeout` passes with no
-calls — reset by every call, so an agent session in use holds it open for as long as it runs. An
-upgraded `zikaron knowledge` therefore talks to the older process, which validates `client.kind`
-against the kinds *it* knew and refuses `cli` with `bounds` on a field the reader never typed.
-`init`, the hook and `zikaron-mcp` are unaffected: `health` takes no envelope, and the other two
-send kinds every shipped build knows. **Nothing detects this** — `health()` carries no build
-version — so the remedy is the one §"Lifecycle" already gives for a config change: let it idle out,
-or `SIGTERM` it. **The schema range (D37) does not cover this**: it governs a binary meeting a
-store of another version, and a client meeting a *service* of another version is governed by
-nothing. A version handshake would be a design change rather than a fix, and is not taken.
+**Upgrading does not replace a running service, and the typed commands refuse one of another
+version** (operator, 2026-10-13; D31 as amended). A service is started by whichever build first
+needed one and keeps answering until `idle_timeout` passes with no calls — reset by every call, so
+an agent session in use holds it open for as long as it runs. An upgraded `zikaron` therefore meets
+the older process, and what an older service means by an answer can differ from what the newer
+command reads it as — `refresh --wait` is the case that forced this (`knowledge-index.md` §9). **So
+`health()` reports the package version the service runs — read once, at its startup, never from the
+installed metadata per call**, since an in-place upgrade replaces the metadata that lookup reads
+while the old process keeps running, which is the very case the comparison is for — **and every
+typed command that connects — `init` and the `knowledge` verbs — compares it with its own before
+sending anything else, and refuses on any difference.** A service whose `health()` carries no
+version is older than this rule by construction, and is refused with the one remedy that then
+applies: stop that process.
+
+**The refusal names both versions and the service's pid, and gives both remedies**, since which one
+applies depends on which side is newer and the command does not order versions — that would need a
+version parser this project does not depend on, and one side may be a source tree's stand-in. If the
+command is the newer install, stop that process — the one `architecture.md` §"Read once, at service
+startup" gives for a config change — and the next command starts one that matches. If the service is
+newer, run the command from the install that started it, the one the project's hook and `.mcp.json`
+name, rather than stopping a service other sessions are using: stopping it would let the older
+command start an older service, which refuses the newer store. **The check presumes one install
+per project**; with two, whichever client starts the service decides its version, and the refusal
+recurs on every idle-out until the one the project is configured for is the one on `PATH`.
+
+**Equality, not a compatibility range**: restarting the service costs a model load, and a range
+would be a rule to maintain and review in every release. **The hook and `zikaron-mcp` do not refuse**:
+they send only what every shipped service understands, and refusing there would take an agent's
+memory away until a service other sessions keep alive idles out. **That is about the service, not
+the store**: an older `zikaron-mcp` still opens the store itself to read its identity, so once a
+release moves the store's version, every session whose `.mcp.json` names an older install is refused
+there with `schema_incompatible` (D37) until that install moves — only the hook, which reads no
+store, keeps working. **The schema range (D37) is a different question**: it governs a binary meeting
+a store of another version, this a command
+meeting a service of another version. **The limit, stated**: an editable install reports one `.dev`
+version for every commit until the next bump, so the check admits older code at the same number —
+the case `~/Trading/LeibaTrader` is in, running this repository's tree, where whoever changed the
+tree knows to restart it — and two checkouts with no installed distribution both report the same
+stand-in and pass as well. Nothing that ships with the check depends on that, since every service it
+admits already sends what the command reads; but a later change to what a response carries must not
+assume the check protects it.
 
 **A release is tagged `v<version>`, and `pyproject.toml` is what the version *is*.** The tag is a
 label on a commit and the file is the thing PyPI receives, so they can disagree — tagging `v0.2.0`

@@ -1168,7 +1168,11 @@ call. On `darwin`: drop `-a`, which there means *include ancestors*, not *list t
 
 ### 9.4 Known gaps
 
-Each is a value §9.5 holds, and none moves without an observed command (§7's rule).
+Each is a value §9.5 holds, and none moves without an observed command (§7's rule). **Nor does
+any move toward evaluating the shell** (operator, 2026-10-11: *"we're not building a "mini
+shell". Like we should not evaluate variables which are output of other sub shell etc."*): a
+variable bound by a literal assignment is as far as §9.1 reads, and a value produced by a
+substitution, another shell, control flow or a builtin stays unread.
 
 - **A quoted script** — `bash -c '…'`, `sh -c '…'`, `ssh host '…'` — is one token (§3.1) and is
   not judged. The replay's two signalled calls this rule does not deny are of this shape, and

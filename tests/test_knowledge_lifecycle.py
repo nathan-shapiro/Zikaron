@@ -73,7 +73,7 @@ class TestTheWholeLifecycle:
             assert renamed.summary.name == "design records"
             assert created.database_path.is_file(), "a rename must touch no file"
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             (listed,) = listing.knowledge_bases
             assert listed.summary.name == "design records"
             assert listed.summary.description == "records"
@@ -81,7 +81,9 @@ class TestTheWholeLifecycle:
             removed = await lifecycle.remove(store_dir, db, config, name="design records")
             assert removed.knowledge_base.name == "design records"
             assert not created.database_path.exists()
-            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases == ()
 
     async def test_remove_leaves_no_file_of_that_knowledge_base_behind(
         self, tmp_path: Path
@@ -157,7 +159,7 @@ class TestTheInterruptedStates:
                 await lifecycle.add(store_dir, db, config, request)
             monkeypatch.undo()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             (report,) = listing.knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
             assert report.summary.files_indexed == 0
@@ -189,7 +191,7 @@ class TestTheInterruptedStates:
                 )
             monkeypatch.undo()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             (report,) = listing.knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED, (
                 "a failed create must not leave a knowledge base reporting an unreadable index"
@@ -216,7 +218,7 @@ class TestTheInterruptedStates:
 
             await in_one_transaction(db, _work, failure=lambda _error: None)
 
-            listing = await reporting.status(store_dir, db, config)
+            listing = await reporting.status(store_dir, db, config, migrate=True)
             assert listing.knowledge_bases == ()
             (orphan,) = listing.orphans
             assert orphan.path == created.database_path
@@ -256,7 +258,7 @@ class TestTheInterruptedStates:
             assert created.database_path.is_file(), "the file survives as an orphan"
 
             monkeypatch.undo()
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             assert listing.knowledge_bases == ()
             assert [orphan.path for orphan in listing.orphans] == [created.database_path]
 
@@ -274,8 +276,10 @@ class TestTheInterruptedStates:
             stray = paths.knowledge_dir(store_dir) / f"{uuid.uuid4()}.db"
             stray.write_bytes(b"")
 
-            assert (await reporting.status(store_dir, db, config, name="docs")).orphans == ()
-            assert len((await reporting.status(store_dir, db, config)).orphans) == 1
+            assert (
+                await reporting.status(store_dir, db, config, name="docs", migrate=True)
+            ).orphans == ()
+            assert len((await reporting.status(store_dir, db, config, migrate=True)).orphans) == 1
 
 
 class TestRefusals:
@@ -318,7 +322,9 @@ class TestRefusals:
                     ),
                 )
 
-            (report,) = (await reporting.list_bases(store_dir, db, config)).knowledge_bases
+            (report,) = (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases
             assert report.summary.description == "first"
             assert report.details is not None
             assert report.details.root_path == str(corpus_root(tmp_path, "three").parent / "one")
@@ -352,7 +358,9 @@ class TestRefusals:
                         name="docs", root=tmp_path / "nothing-here", description="a"
                     ),
                 )
-            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases == ()
 
     async def test_a_file_as_a_root_is_refused(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
@@ -398,7 +406,9 @@ class TestRefusals:
             assert caught.value.bounds.expected == expected, (
                 "one phrasing of the range, shared with the stored-value path"
             )
-            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases == ()
 
     async def test_rename_refuses_a_name_that_is_taken(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
@@ -424,7 +434,9 @@ class TestRefusals:
                 "rename": lambda: lifecycle.rename(
                     store_dir, db, config, name="absent", new_name="x"
                 ),
-                "status": lambda: reporting.status(store_dir, db, config, name="absent"),
+                "status": lambda: reporting.status(
+                    store_dir, db, config, name="absent", migrate=True
+                ),
             }
             with pytest.raises(UnknownKnowledgeBaseError):
                 await calls[verb]()
@@ -448,7 +460,7 @@ class TestRefusals:
                 await lifecycle.remove(store_dir, db, config, name="docs")
 
             assert created.database_path.is_file()
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             assert len(listing.knowledge_bases) == 1
 
     async def test_remove_is_not_stopped_by_a_lock_a_crashed_build_left(
@@ -470,7 +482,9 @@ class TestRefusals:
             await lifecycle.remove(store_dir, db, config, name="docs")
 
             assert not created.database_path.exists()
-            assert (await reporting.list_bases(store_dir, db, config)).knowledge_bases == ()
+            assert (
+                await reporting.list_bases(store_dir, db, config, migrate=True)
+            ).knowledge_bases == ()
 
 
 class TestTheMigrationIsAdditive:
@@ -492,7 +506,9 @@ class TestTheMigrationIsAdditive:
             with pytest.raises(sqlite3.OperationalError):
                 await reopened.connection.execute_fetchall("SELECT 1 FROM knowledge_bases")
 
-            listing = await reporting.list_bases(store_dir, reopened.connection, config)
+            listing = await reporting.list_bases(
+                store_dir, reopened.connection, config, migrate=True
+            )
             assert listing.knowledge_bases == ()
             created = await add_base(
                 store_dir,
@@ -533,7 +549,8 @@ class TestTheMigrationIsAdditive:
                 lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
             )
             await registry.ensure(db)
-            assert len((await reporting.list_bases(store_dir, db, config)).knowledge_bases) == 1
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
+            assert len(listing.knowledge_bases) == 1
 
 
 class TestClearingALockByHand:
@@ -552,11 +569,12 @@ class TestClearingALockByHand:
             )
             await _write_lock(created.database_path)
 
-            cleared = await lifecycle.unlock(store_dir, db, name="docs")
+            cleared = await lifecycle.unlock(store_dir, db, name="docs", migrate=True)
 
             assert cleared is not None
             assert cleared.host == "somehost"
-            assert (await builds.prepare(store_dir, db, config, name="docs")).name == "docs"
+            prepared = await builds.prepare(store_dir, db, config, name="docs", migrate=True)
+            assert prepared.name == "docs"
 
     async def test_a_running_local_build_is_refused(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
@@ -570,7 +588,7 @@ class TestClearingALockByHand:
             await _write_lock(created.database_path, pid=os.getpid(), host=lock.this_host())
 
             with pytest.raises(IndexerBusyError, match="still answers to the lock"):
-                await lifecycle.unlock(store_dir, db, name="docs")
+                await lifecycle.unlock(store_dir, db, name="docs", migrate=True)
 
     async def test_a_corpus_with_no_lock_answers_that_rather_than_refusing(
         self, tmp_path: Path
@@ -584,12 +602,12 @@ class TestClearingALockByHand:
                 lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
             )
 
-            assert await lifecycle.unlock(store_dir, db, name="docs") is None
+            assert await lifecycle.unlock(store_dir, db, name="docs", migrate=True) is None
 
     async def test_an_unregistered_name_is_refused(self, tmp_path: Path) -> None:
         async with open_store(tmp_path) as (store_dir, db):
             with pytest.raises(UnknownKnowledgeBaseError):
-                await lifecycle.unlock(store_dir, db, name="absent")
+                await lifecycle.unlock(store_dir, db, name="absent", migrate=True)
 
     async def test_a_corpus_with_no_database_is_refused(self, tmp_path: Path) -> None:
         """There is no lock to clear, and nothing that could have taken one."""
@@ -604,7 +622,7 @@ class TestClearingALockByHand:
             created.database_path.unlink()
 
             with pytest.raises(DanglingKnowledgeBaseError):
-                await lifecycle.unlock(store_dir, db, name="docs")
+                await lifecycle.unlock(store_dir, db, name="docs", migrate=True)
 
 
 async def _write_lock(db_path: Path, *, pid: int = 4242, host: str = "somehost") -> None:

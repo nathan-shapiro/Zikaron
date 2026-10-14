@@ -22,6 +22,8 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Final, NamedTuple, Protocol
 
+from zikaron.core.version import package_version
+
 NAME: Final = "zikaron"
 
 
@@ -77,21 +79,6 @@ _SUBCOMMANDS: Final[dict[str, _Subcommand]] = {
 }
 
 
-def _installed_version() -> str:
-    """The installed distribution's version, or a stand-in when there is no distribution metadata.
-
-    A source tree that was never installed has none, and raising there would make `--version` fail
-    in the one situation it exists for: establishing what is being run. It identifies a *build* only
-    for a released install — a `git+` one reports whatever `pyproject.toml` said at that commit.
-    """
-    from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
-
-    try:
-        return version(NAME)
-    except PackageNotFoundError:
-        return "unknown — no installed distribution, so this is a source tree"
-
-
 def _usage() -> str:
     width = max(len(name) for name in _SUBCOMMANDS)
     listed = [f"  {name:<{width}}  {command.summary}" for name, command in _SUBCOMMANDS.items()]
@@ -126,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(_usage())
         return 0
     if name == "--version":
-        print(f"{NAME} {_installed_version()}")
+        print(f"{NAME} {package_version()}")
         return 0
     command = _SUBCOMMANDS.get(name)
     if command is None:

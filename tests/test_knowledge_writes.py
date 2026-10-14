@@ -184,7 +184,11 @@ class TestTheGuardsOnWhatIsWritten:
 
         async def _work(db: aiosqlite.Connection) -> None:
             await writes.index_file(
-                db, indexed=indexed, plan=plan, embeddings=[b"" for _ in range(embeddings)]
+                db,
+                indexed=indexed,
+                plan=plan,
+                embeddings=[b"" for _ in range(embeddings)],
+                link=None,
             )
 
         await in_one_transaction(opened.connection, _work, failure=propagate)

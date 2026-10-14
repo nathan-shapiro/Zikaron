@@ -27,7 +27,17 @@ import aiosqlite
 from zikaron.core import clock
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ZikaronError
-from zikaron.core.knowledge import counters, database, lock, meta, paths, pending, registry, state
+from zikaron.core.knowledge import (
+    counters,
+    database,
+    link_store,
+    lock,
+    meta,
+    paths,
+    pending,
+    registry,
+    state,
+)
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.store.connection import join_abandoned_worker
 
@@ -90,6 +100,9 @@ class Details:
     `git_mode_effective` is `None` until a build has recorded one. It is read from what the last
     build actually used rather than recomputed now, because the value that explains an indexed
     corpus is the one that shaped it, not whatever the environment happens to say today.
+
+    `files_linked` and the four link counters are `None` for a corpus at schema 1, which has never
+    counted them — a confident `0` there would be a number no stored value backs.
     """
 
     root_path: str
@@ -102,11 +115,16 @@ class Details:
     bytes_indexed: int
     files_seen: int
     files_skipped: int
+    files_linked: int | None
     skipped: Mapping[str, int]
     searches: int
     searches_empty: int
     results_returned: int
     results_stale: int
+    results_linked: int | None
+    results_source_changed: int | None
+    results_source_missing: int | None
+    results_source_unverifiable: int | None
     last_scan_started_at: str | None
     last_scan_completed_at: str | None
     lock: LockReport | None
@@ -122,6 +140,12 @@ class Status:
 
     summary: Summary
     details: Details | None
+
+    @property
+    def scan_mark(self) -> str | None:
+        """`last_scan_started_at` as this observation read it, `None` where the corpus has none or
+        no database could be read."""
+        return None if self.details is None else self.details.last_scan_started_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +232,11 @@ def _counter(raw: Mapping[str, str], key: str) -> int:
         return 0
 
 
+def _link_counter(raw: Mapping[str, str], key: str, counted: bool) -> int | None:
+    """One link counter, or `None` for a corpus that has never counted it."""
+    return _counter(raw, key) if counted else None
+
+
 def _git_mode_or_none(value: str | None) -> meta.GitMode | None:
     if value is None:
         return None
@@ -274,6 +303,7 @@ async def gather(
     registry owns them, and a report preferring the copy would be authoritative about the wrong
     one of two values that are allowed to disagree.
     """
+    links_counted = current_meta.stores_links
     return Status(
         summary=Summary(
             name=registered.name,
@@ -293,6 +323,7 @@ async def gather(
             bytes_indexed=_counter(raw, "bytes_indexed"),
             files_seen=_counter(raw, "files_seen"),
             files_skipped=_counter(raw, "files_skipped"),
+            files_linked=await link_store.count_linked(db) if links_counted else None,
             skipped=MappingProxyType(
                 {_reported_skip_name(key): _counter(raw, key) for key in meta.SKIP_REASON_KEYS}
             ),
@@ -300,6 +331,16 @@ async def gather(
             searches_empty=_counter(raw, "searches_empty"),
             results_returned=_counter(raw, "results_returned"),
             results_stale=_counter(raw, "results_stale"),
+            results_linked=_link_counter(raw, counters.RESULTS_LINKED_KEY, links_counted),
+            results_source_changed=_link_counter(
+                raw, counters.RESULTS_SOURCE_CHANGED_KEY, links_counted
+            ),
+            results_source_missing=_link_counter(
+                raw, counters.RESULTS_SOURCE_MISSING_KEY, links_counted
+            ),
+            results_source_unverifiable=_link_counter(
+                raw, counters.RESULTS_SOURCE_UNVERIFIABLE_KEY, links_counted
+            ),
             last_scan_started_at=raw.get(meta.LAST_SCAN_STARTED_AT_KEY),
             last_scan_completed_at=raw.get(meta.LAST_SCAN_COMPLETED_AT_KEY),
             lock=_lock_report(raw),
@@ -327,14 +368,21 @@ def without_details(registered: KnowledgeBase, corpus_state: state.KnowledgeStat
     )
 
 
-async def observe(store_dir: Path, registered: KnowledgeBase, config: EffectiveConfig) -> Observed:
-    """One corpus's whole report, including the case where there is no corpus to read."""
+async def observe(
+    store_dir: Path, registered: KnowledgeBase, config: EffectiveConfig, *, migrate: bool
+) -> Observed:
+    """One corpus's whole report, including the case where there is no corpus to read.
+
+    `migrate` is whether this opener may bring the corpus's database forward
+    (`KnowledgeDatabase.open`); a migration that does not complete is reported as a database that
+    will not open.
+    """
     db_path = paths.knowledge_db_path(store_dir, registered.id)
     if not db_path.is_file():
         absent = without_details(registered, state.KnowledgeState.REINDEX_REQUIRED)
         return Observed(status=absent, blocker=None)
     try:
-        opened = await database.KnowledgeDatabase.open(store_dir, registered.id)
+        opened = await database.KnowledgeDatabase.open(store_dir, registered.id, migrate=migrate)
     except (aiosqlite.Error, ZikaronError, OSError) as error:
         broken = without_details(registered, state.KnowledgeState.ERROR)
         # No lock can be read out of a database that will not open, and reporting one anyway would
@@ -405,15 +453,28 @@ async def _orphans(store_dir: Path, registered: Sequence[KnowledgeBase]) -> tupl
     return tuple(found)
 
 
-async def list_bases(store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig) -> Listing:
-    """Every registered corpus with its state, plus every database no registry row points at."""
+async def list_bases(
+    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, migrate: bool
+) -> Listing:
+    """Every registered corpus with its state, plus every database no registry row points at.
+
+    `migrate` is `observe`'s, for every corpus. Each migration is its own transaction, so a call
+    abandoned partway leaves the corpora it reached migrated.
+    """
     registered = await registry.lookup_all(db)
-    reports = [(await observe(store_dir, base, config)).status for base in registered]
+    reports = [
+        (await observe(store_dir, base, config, migrate=migrate)).status for base in registered
+    ]
     return Listing(knowledge_bases=tuple(reports), orphans=await _orphans(store_dir, registered))
 
 
 async def status(
-    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str | None = None
+    store_dir: Path,
+    db: aiosqlite.Connection,
+    config: EffectiveConfig,
+    *,
+    name: str | None = None,
+    migrate: bool,
 ) -> Listing:
     """One corpus's full report, or every corpus's.
 
@@ -428,7 +489,7 @@ async def status(
         UnknownKnowledgeBaseError: `name` names nothing.
     """
     if name is None:
-        return await list_bases(store_dir, db, config)
+        return await list_bases(store_dir, db, config, migrate=migrate)
     registered = await registry.lookup(db, name)
-    observed = await observe(store_dir, registered, config)
+    observed = await observe(store_dir, registered, config, migrate=migrate)
     return Listing(knowledge_bases=(observed.status,), orphans=())

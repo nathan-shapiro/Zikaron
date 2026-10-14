@@ -45,6 +45,10 @@ CREATE TABLE files (
   git_blob_hash   TEXT,
   chunk_count     INTEGER NOT NULL,
   indexed_at      TEXT    NOT NULL,
+  link_read_from  TEXT,
+  link_declared   INTEGER CHECK (link_declared IN (0, 1)),
+  source_path     TEXT,
+  source_blob     TEXT,
 
   CHECK (length(path) > 0),
   CHECK (size >= 0),

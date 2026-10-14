@@ -38,7 +38,9 @@ async def _corpus(tmp_path: Path) -> AsyncIterator[Corpus]:
 
 async def _scan(corpus: Corpus) -> scan.ScanResult:
     registered = await require(corpus.db, corpus.name)
-    async with await KnowledgeDatabase.open(corpus.store_dir, registered.id) as opened:
+    async with await KnowledgeDatabase.open(
+        corpus.store_dir, registered.id, migrate=True
+    ) as opened:
         return await scan.run(opened, build_settings(corpus.config))
 
 

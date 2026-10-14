@@ -215,4 +215,4 @@ def test_default_server_command_still_used(tmp_path: Path) -> None:
     established precedent, per `test_hook_main.py`'s own note on the same question).
     """
     command = default_server_command(tmp_path / "s.sock", tmp_path / "store")
-    assert command[1:3] == ["-m", "zikaron.service.main"]
+    assert command[1:4] == ["-P", "-m", "zikaron.service.main"]
