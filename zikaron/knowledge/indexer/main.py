@@ -15,7 +15,7 @@ from pathlib import Path
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.indexing.encoder import FastEmbedEncoder
-from zikaron.core.knowledge import builds, disposal, lifecycle, registry, scan
+from zikaron.core.knowledge import builds, disposal, lifecycle, migration, registry, scan
 from zikaron.core.knowledge.counters import SkipReason
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.knowledge import scope
@@ -96,7 +96,8 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
     Args:
         store: the open store to build against — its directory, its connection, its effective
             configuration, and the `schema_version` that decides whether an event row is attempted
-            at all, since a direct run never migrates one.
+            at all, since a direct run never migrates `memory.db`, and whether this build may bring
+            the corpus's own database forward.
         name: which knowledge base to build.
         full: reindex every admitted file rather than only what changed.
     """
@@ -111,14 +112,16 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
         schema_version=store.schema_version,
         started=started,
     )
+    migrate = migration.may_migrate(store.schema_version)
     try:
-        await builds.prepare(store.directory, db, store.config, name=name)
+        await builds.prepare(store.directory, db, store.config, name=name, migrate=migrate)
         refreshed = await lifecycle.refresh(
             store.directory,
             db,
             store.config,
             name=name,
             build=await build_settings(store.config, full=full),
+            migrate=migrate,
             on_completion=log.settle,
         )
     except Exception as error:

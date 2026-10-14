@@ -44,6 +44,7 @@ async def test_health_json_shape_matches_architecture_mds_field_set(tmp_path: Pa
             "pid",
             "model_loaded",
             "uptime_seconds",
+            "version",
         }
 
 

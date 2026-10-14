@@ -20,7 +20,7 @@ from zikaron.core.knowledge import meta
 
 def _identity(**overrides: object) -> meta.KnowledgeMeta:
     base: dict[str, object] = {
-        "schema_version": meta.SUPPORTED_SCHEMA_VERSION,
+        "schema_version": meta.CURRENT_SCHEMA_VERSION,
         "id": uuid.uuid4(),
         "name_breadcrumb": "docs",
         "root_path": "/a/corpus/root",

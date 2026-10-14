@@ -36,8 +36,9 @@ import os
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, Protocol
 
 #: The command the child runs. Spelled once, as the module path a build is documented under, so the
 #: spawn and the entry point cannot come to disagree about which one exists.
@@ -58,14 +59,38 @@ def spawned_by_op_id() -> str | None:
     return os.environ.get(SPAWNED_BY_OP_ID_VARIABLE)
 
 
+class BuildProcess(Protocol):
+    """A started build as its spawner watches it: its pid, and whether it has exited."""
+
+    @property
+    def pid(self) -> int: ...
+
+    def poll(self) -> int | None:
+        """The exit status once the process has exited, `None` while it runs."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Spawned:
+    """A build just started: the argv it runs, and the handle that says whether it still runs.
+
+    The handle rather than the pid is what answers that, because a number can be recycled and a
+    handle to an exited child cannot come back to life.
+    """
+
+    argv: list[str]
+    process: BuildProcess
+
+
 def command(name: str, *, project: Path, full: bool) -> list[str]:
     """The argv a detached build is started with, for a caller that wants to show it to somebody.
 
     The knowledge-base name goes after `--`, because a name is free-form: nothing stops one
     beginning with a dash, and without the separator such a name would be read as an option and the
-    build would die on its own arguments before opening anything.
+    build would die on its own arguments before opening anything. `-P` keeps the working directory
+    off `sys.path`, as `service.lifecycle.default_server_command` says.
     """
-    argv = [sys.executable, "-m", _MODULE, "--project", str(project)]
+    argv = [sys.executable, "-P", "-m", _MODULE, "--project", str(project)]
     if full:
         argv.append("--full")
     argv.extend(["--", name])
@@ -74,7 +99,7 @@ def command(name: str, *, project: Path, full: bool) -> list[str]:
 
 def spawn(
     name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-) -> list[str]:
+) -> Spawned:
     """Start a build of `name` and return without waiting for it.
 
     Args:
@@ -91,8 +116,9 @@ def spawn(
 
     Returns:
         The argv the child was started with — what a caller shows somebody who has to reproduce
-        this build in the foreground. Returned rather than rebuilt at the call site so that what is
-        printed is what actually ran.
+        this build in the foreground, returned rather than rebuilt at the call site so that what is
+        printed is what actually ran — and the child's handle, whose `poll()` answers `None` until
+        the reaper below has collected the child and its exit status after.
 
     Raises:
         OSError: the child could not be started at all — no interpreter, no permission. Raised
@@ -119,4 +145,4 @@ def spawn(
     # accumulate a zombie per build, so the wait happens on a daemon thread: it reaps without
     # blocking here, and without keeping the caller alive past its own work.
     threading.Thread(target=process.wait, daemon=True).start()
-    return argv
+    return Spawned(argv=argv, process=process)

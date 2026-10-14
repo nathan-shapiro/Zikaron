@@ -133,7 +133,7 @@ class Removed:
 
 @asynccontextmanager
 async def _open_registered(
-    store_dir: Path, registered: KnowledgeBase
+    store_dir: Path, registered: KnowledgeBase, *, migrate: bool
 ) -> AsyncIterator[database.KnowledgeDatabase]:
     """This corpus's own database, open, for a verb that cannot proceed without one.
 
@@ -153,7 +153,9 @@ async def _open_registered(
             f"{registered.name!r} has no database, so nothing records what it indexes; "
             f"remove it and add it again"
         )
-    async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
+    async with await database.KnowledgeDatabase.open(
+        store_dir, registered.id, migrate=migrate
+    ) as opened:
         yield opened
 
 
@@ -219,7 +221,8 @@ async def add(
     ):
         pass
 
-    observed = await reporting.observe(store_dir, registered, config)
+    # Created at this build's schema, so there is nothing for the observation to bring forward.
+    observed = await reporting.observe(store_dir, registered, config, migrate=False)
     return Created(
         knowledge_base=registered,
         database_path=paths.knowledge_db_path(store_dir, registered.id),
@@ -267,7 +270,9 @@ async def rename(
         return await registry.rename(connection, name=name, new_name=new_name)
 
     renamed = await in_one_transaction(db, _work, failure=propagate)
-    observed = await reporting.observe(store_dir, renamed, config)
+    # Not brought forward here, which would take the corpus's write lock: a renamed corpus is
+    # migrated by whatever next reads it (`knowledge-index.md` §7.7.1).
+    observed = await reporting.observe(store_dir, renamed, config, migrate=False)
     return observed.status
 
 
@@ -278,6 +283,7 @@ async def refresh(  # noqa: PLR0913 — `on_completion` is the recorder's, not a
     *,
     name: str,
     build: BuildSettings,
+    migrate: bool,
     on_completion: scan.Completion | None = None,
 ) -> Refreshed:
     """Build one corpus's index, and report what the build did and where it left the corpus.
@@ -297,6 +303,9 @@ async def refresh(  # noqa: PLR0913 — `on_completion` is the recorder's, not a
             reindex everything rather than only what changed. Supplied by the caller rather than
             loaded here, because loading a model is the expensive part of starting a build and a
             caller building several corpora loads it once.
+        migrate: whether this build may bring the corpus's database forward first, which its
+            caller decides from the version it opened `memory.db` at. One that may not builds the
+            corpus at the schema it found.
         on_completion: told how the scan ended while it still holds the corpus's lock (`scan.run`).
 
     Raises:
@@ -310,14 +319,18 @@ async def refresh(  # noqa: PLR0913 — `on_completion` is the recorder's, not a
             driver's own failure, propagated rather than renamed, since nothing the caller can do
             fixes it.
     """
-    registered = await builds.prepare(store_dir, db, config, name=name)
-    async with await database.KnowledgeDatabase.open(store_dir, registered.id) as opened:
+    registered = await builds.prepare(store_dir, db, config, name=name, migrate=migrate)
+    async with await database.KnowledgeDatabase.open(
+        store_dir, registered.id, migrate=migrate
+    ) as opened:
         result = await scan.run(opened, build, on_completion=on_completion)
-    observed = await reporting.observe(store_dir, registered, config)
+    observed = await reporting.observe(store_dir, registered, config, migrate=migrate)
     return Refreshed(knowledge_base=registered, result=result, status=observed.status)
 
 
-async def unlock(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> lock.LockHolder | None:
+async def unlock(
+    store_dir: Path, db: aiosqlite.Connection, *, name: str, migrate: bool
+) -> lock.LockHolder | None:
     """Clear a build lock an operator has judged dead, refusing the one case evidence contradicts.
 
     The way out of the state nothing clears on its own. A lock recorded on another machine is never
@@ -339,12 +352,14 @@ async def unlock(store_dir: Path, db: aiosqlite.Connection, *, name: str) -> loc
             it is the indexer, and `lock.force_release` says so and names the manual exit.
     """
     registered = await registry.lookup(db, name)
-    async with _open_registered(store_dir, registered) as opened:
+    async with _open_registered(store_dir, registered, migrate=migrate) as opened:
 
         async def _work(connection: aiosqlite.Connection) -> lock.LockHolder | None:
             return await lock.force_release(connection, host=lock.this_host())
 
-        return await in_one_transaction(opened.connection, _work, failure=propagate)
+        # A read then a delete, which deferred would be refused at the delete whenever another
+        # connection held the write lock.
+        return await in_one_transaction(opened.connection, _work, failure=propagate, immediate=True)
 
 
 async def remove(
@@ -380,7 +395,8 @@ async def remove(
         IndexerBusyError: a build that cannot be shown to be dead holds this corpus's lock.
     """
     registered = await registry.lookup(db, name)
-    observed = await reporting.observe(store_dir, registered, config)
+    # A corpus about to be unlinked owes no migration.
+    observed = await reporting.observe(store_dir, registered, config, migrate=False)
     if observed.blocker is not None:
         raise IndexerBusyError(
             f"{registered.name!r}'s build lock is held by a process this host cannot show is "

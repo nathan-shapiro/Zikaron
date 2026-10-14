@@ -19,6 +19,7 @@ follows the same precedence every other reader sees: a database that will not op
 root, a missing root before a running build.
 """
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -33,6 +34,7 @@ from zikaron.core.knowledge.errors import (
     DanglingKnowledgeBaseError,
     IndexerBusyError,
 )
+from zikaron.core.knowledge.lock import LockHolder
 from zikaron.core.knowledge.registry import KnowledgeBase
 from zikaron.core.knowledge.state import KnowledgeState
 
@@ -47,8 +49,9 @@ class BuildObstacle(StrEnum):
     state.
     """
 
-    #: A build that cannot be shown to be dead already holds this corpus's lock. Nothing was
-    #: queued and nothing blocked: this is the idempotent case rather than a failure.
+    #: A build that cannot be shown to be dead already holds this corpus's lock, or one the caller
+    #: spawned has not yet taken it. Nothing was queued and nothing blocked: this is the idempotent
+    #: case rather than a failure.
     ALREADY_INDEXING = "already_indexing"
     #: Registered, with no database file — so everything that said what to index is gone with it,
     #: and there is nothing for a walk to walk. Repaired by removing the name and adding it again,
@@ -84,6 +87,19 @@ class PlannedBuild:
     def may_start(self) -> bool:
         """Whether this corpus is ready for an indexer to be spawned against it."""
         return self.obstacle is None
+
+    def still_loading(self, holder: LockHolder) -> "PlannedBuild":
+        """This entry answered `already_indexing` for a build its caller spawned that has not yet
+        taken the corpus's lock, naming that build's process as `holder`."""
+        return dataclasses.replace(
+            self,
+            obstacle=BuildObstacle.ALREADY_INDEXING,
+            refusal=IndexerBusyError(
+                f"a build started for {self.knowledge_base.name!r} has not yet taken its lock "
+                f"({holder.describe()}); if it never does, stop that process",
+                holder=holder,
+            ),
+        )
 
 
 def _stopped_by(
@@ -139,6 +155,7 @@ async def plan(
     config: EffectiveConfig,
     *,
     names: Sequence[str] | None,
+    migrate: bool,
 ) -> tuple[PlannedBuild, ...]:
     """Classify a build for each named corpus, or for every registered one.
 
@@ -150,6 +167,8 @@ async def plan(
             the build repairs.
         names: which corpora to plan for, or `None` for every registered one. A name that is
             registered under a different case is the same name.
+        migrate: whether this opener may bring each corpus's database forward
+            (`KnowledgeDatabase.open`).
 
     Returns:
         One entry per corpus, in the order named — or in registry order when none were.
@@ -165,7 +184,7 @@ async def plan(
         wanted = await registry.lookup_each(db, names)
     planned: list[PlannedBuild] = []
     for registered in wanted:
-        observed = await reporting.observe(store_dir, registered, config)
+        observed = await reporting.observe(store_dir, registered, config, migrate=migrate)
         stopped = _stopped_by(registered, observed)
         planned.append(
             PlannedBuild(
@@ -179,7 +198,12 @@ async def plan(
 
 
 async def prepare(
-    store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str
+    store_dir: Path,
+    db: aiosqlite.Connection,
+    config: EffectiveConfig,
+    *,
+    name: str,
+    migrate: bool,
 ) -> KnowledgeBase:
     """Everything that must hold before a build of `name` is worth starting, raising if it does not.
 
@@ -197,7 +221,7 @@ async def prepare(
             driver's own failure, propagated rather than renamed, since nothing the caller can do
             fixes it.
     """
-    (planned,) = await plan(store_dir, db, config, names=[name])
+    (planned,) = await plan(store_dir, db, config, names=[name], migrate=migrate)
     if planned.refusal is not None:
         raise planned.refusal
     return planned.knowledge_base

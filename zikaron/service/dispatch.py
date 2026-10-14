@@ -87,6 +87,7 @@ class HealthStatus(RpcResult):
     pid: int
     model_loaded: bool
     uptime_seconds: float
+    version: str
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -99,6 +100,7 @@ class HealthStatus(RpcResult):
             "pid": self.pid,
             "model_loaded": self.model_loaded,
             "uptime_seconds": self.uptime_seconds,
+            "version": self.version,
         }
 
 
@@ -120,6 +122,8 @@ def health(ctx: ServiceContext) -> HealthStatus:
     the service stops itself rather than going on answering `ready` it cannot honour.
     `model_loaded` and `uptime_seconds` say whether that load is still running and how long the
     store has been open, so a client can tell a service still starting from one that has stalled.
+    `version` is the package version the context recorded when it was built, not the installed
+    one now.
     """
     return HealthStatus(
         ready=True,
@@ -131,6 +135,7 @@ def health(ctx: ServiceContext) -> HealthStatus:
         pid=os.getpid(),
         model_loaded=ctx.model_loaded,
         uptime_seconds=time.monotonic() - ctx.assembled_at,
+        version=ctx.version,
     )
 
 

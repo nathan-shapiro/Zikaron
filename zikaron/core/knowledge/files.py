@@ -21,9 +21,11 @@ from pathlib import Path
 
 import aiosqlite
 
+from zikaron.core.knowledge import links
 from zikaron.core.knowledge.counters import SkipReason
 
 _COLUMNS = "path, size, content_hash, git_blob_hash, chunk_count, indexed_at"
+_LINK_COLUMNS = "link_read_from, link_declared, source_path, source_blob"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,27 +100,46 @@ async def load_all(db: aiosqlite.Connection) -> dict[str, IndexedFile]:
     return found
 
 
-async def record(db: aiosqlite.Connection, indexed: IndexedFile) -> None:
+async def record(
+    db: aiosqlite.Connection, indexed: IndexedFile, *, link: links.LinkRecord | None
+) -> None:
     """Write one file's row, replacing whatever was there.
 
     An upsert because both cases are ordinary and neither is worth asking about first: a file the
     corpus has never seen and a file whose content moved arrive down the same path, and the row
     that results is identical either way.
+
+    Args:
+        link: what these bytes declare, for a corpus that records it — `None` for one at schema 1,
+            whose `files` has no link columns to name.
     """
-    await db.execute(
-        f"INSERT INTO files ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?) "  # noqa: S608 — a source-level column list; every value is bound.
-        "ON CONFLICT(path) DO UPDATE SET "
+    values: tuple[object, ...] = (
+        indexed.path,
+        indexed.size,
+        indexed.content_hash,
+        indexed.git_blob_hash,
+        indexed.chunk_count,
+        indexed.indexed_at,
+    )
+    updates = (
         "size = excluded.size, content_hash = excluded.content_hash, "
         "git_blob_hash = excluded.git_blob_hash, chunk_count = excluded.chunk_count, "
-        "indexed_at = excluded.indexed_at",
-        (
-            indexed.path,
-            indexed.size,
-            indexed.content_hash,
-            indexed.git_blob_hash,
-            indexed.chunk_count,
-            indexed.indexed_at,
-        ),
+        "indexed_at = excluded.indexed_at"
+    )
+    if link is None:
+        await db.execute(
+            f"INSERT INTO files ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?) "  # noqa: S608 — a source-level column list; every value is bound.
+            f"ON CONFLICT(path) DO UPDATE SET {updates}",
+            values,
+        )
+        return
+    await db.execute(
+        f"INSERT INTO files ({_COLUMNS}, {_LINK_COLUMNS}) "  # noqa: S608 — source-level column lists; every value is bound.
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        f"ON CONFLICT(path) DO UPDATE SET {updates}, "
+        "link_read_from = excluded.link_read_from, link_declared = excluded.link_declared, "
+        "source_path = excluded.source_path, source_blob = excluded.source_blob",
+        (*values, *link.columns()),
     )
 
 

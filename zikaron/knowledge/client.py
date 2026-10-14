@@ -30,7 +30,9 @@ from typing import Final
 
 from zikaron.core.errors import ERROR_SPECS, Disposition, ErrorCode
 from zikaron.core.events import ClientKind
+from zikaron.core.version import package_version
 from zikaron.mcp.connection import ServiceConnection
+from zikaron.service.lifecycle import HealthCheck
 from zikaron.service.rpc import WireError, parse_response
 
 CLIENT_KIND: Final = ClientKind.CLI.value
@@ -77,11 +79,59 @@ class ServiceRefusalError(Exception):
         return f"{self.disposition.value}: {self.message}{suffix}"
 
 
-class KnowledgeClient:
-    """One connection to this project's service, for the life of one command."""
+class ServiceVersionError(Exception):
+    """The service this command reached runs another version of Zikaron, or names none.
 
-    def __init__(self, connection: ServiceConnection, project: Path) -> None:
+    Refused rather than talked to, because what an older service means by an answer can differ
+    from what a newer command reads it as (`distribution.md` §3). The command orders no versions,
+    so a service that names one is given both remedies; one that names none is older than this
+    check by construction, and has one.
+    """
+
+    def __init__(self, *, ours: str, theirs: str | None, pid: int | None) -> None:
+        self.ours = ours
+        self.theirs = theirs
+        self.pid = pid
+        super().__init__(self.render())
+
+    def render(self) -> str:
+        """The refusal as a person reads it: both versions, the process, and what to do."""
+        process = "its process" if self.pid is None else f"pid {self.pid}"
+        stop = "stop that process" if self.pid is None else f"stop it (`kill {self.pid}`)"
+        if self.theirs is None:
+            return (
+                f"refused: this project's service ({process}) is older than this command, "
+                f"zikaron {self.ours}, and names no version; {stop}, and the next command "
+                f"starts one that matches"
+            )
+        return (
+            f"refused: this command is zikaron {self.ours}, and this project's service ({process}) "
+            f"runs {self.theirs}. If this command is the newer install, {stop}, and the next "
+            f"command starts one that matches. If the service is newer, run this command from "
+            f"the install that started it — the one this project's hook and .mcp.json name"
+        )
+
+
+def _refuse_another_version(health: HealthCheck) -> None:
+    """Raise unless the service runs exactly this command's version."""
+    ours = package_version()
+    if health.version != ours:
+        raise ServiceVersionError(ours=ours, theirs=health.version, pid=health.pid)
+
+
+class KnowledgeClient:
+    """One connection to this project's service, for the life of one command.
+
+    Every connection it sends over has been compared with this command's version, including one
+    re-established after the service died mid-command: that one is compared after the request that
+    reconnected, which is the first moment it exists.
+    """
+
+    def __init__(
+        self, connection: ServiceConnection, project: Path, *, compared: HealthCheck | None = None
+    ) -> None:
         self._connection = connection
+        self._compared = compared
         #: The directory whose store this command acts on, carried so an empty answer can name it:
         #: under D17 a command typed one level too deep addresses a project of its own — refused
         #: before the connection when that project has no store, and answered from when it has one.
@@ -92,11 +142,16 @@ class KnowledgeClient:
 
         Raises:
             ServiceRefusalError: the service answered with an error object.
+            ServiceVersionError: the request reconnected, to a service of another version.
             TypeError: the response was neither a well-formed result nor a well-formed error,
                 which is a defect in the service rather than a rejection.
         """
         envelope = self._connection.envelope(kind=CLIENT_KIND)
         response = await self._connection.request(method, params, envelope=envelope)
+        current = self._connection.health
+        if current is not None and current is not self._compared:
+            _refuse_another_version(current)
+            self._compared = current
         parsed = parse_response(response)
         if isinstance(parsed, WireError):
             raise ServiceRefusalError(code=parsed.code, message=parsed.message, data=parsed.data)
@@ -118,10 +173,18 @@ async def connected(project: Path) -> AsyncIterator[KnowledgeClient]:
     `lifecycle._HEALTH_POLL_DEADLINE_SECONDS`; past it this client gives up while the service keeps
     starting. A start that exits instead ends the poll at once, as `lifecycle.StartFailedError`.
     `knowledge-index.md` §9 carries the measurement and what is still open about it.
+
+    **The connection is established before this yields, and refused on a service of another
+    version** before anything is sent over it (`distribution.md` §3).
+
+    Raises:
+        ServiceVersionError: the service runs another version, or names none.
     """
     connection = ServiceConnection(project)
     try:
-        yield KnowledgeClient(connection, project)
+        health = await connection.handshake()
+        _refuse_another_version(health)
+        yield KnowledgeClient(connection, project, compared=health)
     finally:
         connection.close()
 

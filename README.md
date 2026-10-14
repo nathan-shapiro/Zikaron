@@ -269,13 +269,19 @@ exists for. `zikaron doctor` afterwards says whether a Claude Code project's Zik
 **What upgrading the package does not do by itself:**
 
 - **A service already running keeps the old code** until it idles out (`idle_timeout`, below) or is
-  stopped — `pkill -f zikaron.service.main`. Until then `zikaron knowledge` may be refused with a
-  `bounds` error naming a field you never typed: that is the older service not knowing the newer
-  command.
+  stopped — `pkill -f '[z]ikaron.service.main'`, bracketed so that, run from a script or by an
+  agent, it does not match the shell running it. Until then `zikaron init` and every
+  `zikaron knowledge` verb refuse it, naming both versions and the service's pid: if the command is
+  the newer install, stop that process and the next command starts one that matches; if the service
+  is newer, run the command from the install that started it — the one the project's hook and
+  `.mcp.json` name. The hook and the agent's MCP tools go on using whichever service is running.
 - **A store moves forward, never back.** The first time a newer service opens a project's store it
   migrates it in one transaction, without saying so, and an older Zikaron then refuses that store —
   `0.1.0` cannot open one `0.3.0` has opened. If more than one environment serves the same project,
-  upgrade them together.
+  upgrade them together. That includes the install a project's `.mcp.json` names: once a newer
+  service has moved the store, an agent session running an older `zikaron-mcp` is refused the store
+  (`schema_incompatible`) and loses its memory and knowledge tools until that install is upgraded
+  and the session restarts its MCP server.
 
 Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
 the MCP config too:
@@ -544,7 +550,7 @@ write policy goes into the model's context, not to your terminal. Then, from the
 
 ```bash
 # a service should be running for this project after your first message
-pgrep -af zikaron.service.main
+pgrep -af '[z]ikaron.service.main'
 
 # one line per hook failure, missed cold start, write-policy-override note, or session/environment mismatch; absent means none happened
 cat .zikaron/hook.log
@@ -619,6 +625,29 @@ can finish while an indexer is still running, and whatever kills the step kills 
 **Nothing updates an index on its own.** There is no watcher and no schedule: a corpus drifts from
 its files until somebody refreshes it. A search says so when it can — a result whose file has
 changed since it was indexed comes back marked `stale`.
+
+**A document can say which file it was written from, and a search then says whether that file has
+moved since.** A summary of a long document, a translation, a description of a source file: open it
+with a front-matter block naming the file and the hash of the version you wrote from —
+
+```markdown
+---
+zikaron-source: src/billing/invoice.py
+zikaron-source-blob: 3f2a9c0d41e7b8a65c1d2e3f4a5b6c7d8e9f0a1b
+---
+# What invoice.py does
+```
+
+— and every result from that document carries `source: {path, state}`, where `state` is `fresh` (the
+file is still the version you wrote from), `changed`, `missing`, or `unverifiable` (it could not be
+checked). The path is relative to the project directory — the one holding `.zikaron/` — whichever
+directory the document is in, may climb out of it with `..`, and is at most 1,024 characters. The
+hash is git's object id, what `git hash-object` prints for the file's real path, run from the
+project directory; outside a repository the same command still gives the right answer. The block
+must close within the document's first 4,096 characters, and any other keys it carries are ignored.
+A block that names a link and gets it wrong — one key without the other, a hash in capitals — comes
+back `unverifiable` rather than looking unlinked. `zikaron knowledge status` counts the linked files and how often a
+search met a source that had moved.
 
 **An index holds the text of every file in it.** Do not point one at a directory holding
 credentials. The databases are `0600`, the same as `memory.db`, and they are under `.zikaron/`, so
@@ -787,10 +816,11 @@ on every **memory** read and write — used to measure whether the write policy 
 the database because those rows must commit alongside the change they describe. It also holds an
 access log, best-effort: a `call` row for each request the service answers — which method, how long
 it took, and what it refused, if anything — and a `knowledge_build` row for each corpus build.
-Neither carries text. A knowledge base's own database has no event log: it keeps four **search**
-counters in its metadata — searches, empty searches,
-results returned, results stale — which `zikaron_knowledge_status` reports beside the last build's
-own file, byte and skip-reason counts.
+Neither carries text. A knowledge base's own database has no event log: it keeps **search**
+counters in its metadata — searches, empty searches, results returned, results stale, and, of the
+results from linked documents, how many there were and how many had a source that had changed, had
+gone or could not be checked — which `zikaron_knowledge_status` reports beside the last build's own
+file, byte and skip-reason counts.
 
 ---
 
@@ -819,15 +849,16 @@ symptoms it cannot see.
 |---|---|
 | nothing searchable works at all | `zikaron doctor` — extension loading, FTS5 and `sqlite-vec` are the three that fail this way, and all three are properties of the interpreter rather than of your project |
 | the MCP server starts and immediately dies | `zikaron doctor` — an over-long `$XDG_RUNTIME_DIR` makes the socket path exceed what the platform allows, and this is the only channel that says so |
-| no memories are being injected | `.zikaron/hook.log`, then `pgrep -af zikaron.service.main` |
+| no memories are being injected | `.zikaron/hook.log`, then `pgrep -af '[z]ikaron.service.main'` |
 | the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval — then check whether that agent's own frontmatter sets `tools:`, which overrides the project-wide registration entirely (below) |
 | every Zikaron tool call asks permission | kiro: add `@zikaron` to the agent's `allowedTools`. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
 | a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
+| `zikaron init` or `zikaron knowledge` refuses: "this project's service … runs …", or "… is older than this command … and names no version" | the running service is another version than the command — usually one started before an upgrade. Do what the message says: stop that process if the command is the newer install, or run the command from the install the project's hook and `.mcp.json` name |
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
-| the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af zikaron.service.main` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
+| the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af '[z]ikaron.service.main'` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
 | Zikaron's tools are listed but arrive name-only, or the agent's first calls are refused for argument shape | Claude Code: an install predating `alwaysLoad`, which `zikaron doctor` reports. Upgrade Zikaron where the project was installed from and re-run the installer there; the entry upgrades in place and needs no `--force` |
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |
@@ -861,7 +892,7 @@ behind: the index then returns hits for a row that no longer exists, and the nex
 can corrupt the database. Two safe options, in order of preference:
 
 1. Stop the service, delete the whole store, **and delete the spill files, which are not in it**:
-   `pkill -f zikaron.service.main; rm -rf .zikaron; rm -f "${XDG_RUNTIME_DIR:-/tmp}"/zikaron*/*.json`.
+   `pkill -f '[z]ikaron.service.main'; rm -rf .zikaron; rm -f "${XDG_RUNTIME_DIR:-/tmp}"/zikaron*/*.json`.
    You lose every memory **and every knowledge base**; the store rebuilds itself empty on the next
    session.
    **The separator is `;` rather than `&&` deliberately**: the service stops itself after
@@ -886,8 +917,8 @@ deleting the copy.
 From the project directory, first the part that is the same on both harnesses:
 
 ```bash
-pkill -f zikaron.service.main    # or just let it idle out
-rm -rf .zikaron                  # the memory store, every knowledge base, and the logs
+pkill -f '[z]ikaron.service.main'   # or just let it idle out
+rm -rf .zikaron                     # the memory store, every knowledge base, and the logs
 rm -f "${XDG_RUNTIME_DIR:-/tmp}"/zikaron*/*.json   # Claude Code only: spilled consolidator groups
 ```
 

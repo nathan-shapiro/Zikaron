@@ -31,6 +31,7 @@ from zikaron.core.knowledge import (
     chunking,
     database,
     files,
+    links,
     pending,
     text,
     vectors,
@@ -162,9 +163,16 @@ async def _record_indexed(
         chunk_count=plan.n_chunks,
         indexed_at=timestamp(),
     )
+    link = (
+        links.LinkRecord(read_from=indexed.content_hash, declared=links.read_link(decoded))
+        if corpus.stores_links
+        else None
+    )
 
     async def _work(connection: aiosqlite.Connection) -> None:
-        await writes.index_file(connection, indexed=indexed, plan=plan, embeddings=embeddings)
+        await writes.index_file(
+            connection, indexed=indexed, plan=plan, embeddings=embeddings, link=link
+        )
         await pending.dispose(connection, path)
         await database.write_meta(connection, context.counters.as_meta_rows())
 

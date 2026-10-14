@@ -70,7 +70,9 @@ class TestCreation:
             ((journal_mode,),) = list(await made.connection.execute_fetchall("PRAGMA journal_mode"))
             ((busy_timeout,),) = list(await made.connection.execute_fetchall("PRAGMA busy_timeout"))
 
-        async with await database.KnowledgeDatabase.open(store_dir, identity.id) as opened:
+        async with await database.KnowledgeDatabase.open(
+            store_dir, identity.id, migrate=False
+        ) as opened:
             ((on_open,),) = list(await opened.connection.execute_fetchall("PRAGMA foreign_keys"))
 
         assert int(on_create) == 0
@@ -232,24 +234,32 @@ class TestOpening:
         identity = _identity(tmp_path)
         async with await database.KnowledgeDatabase.create(store_dir, identity):
             pass
-        async with await database.KnowledgeDatabase.open(store_dir, identity.id) as opened:
+        async with await database.KnowledgeDatabase.open(
+            store_dir, identity.id, migrate=False
+        ) as opened:
             assert opened.meta == identity
 
-    async def test_open_refuses_a_newer_schema_version(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("claimed", [2, 3, meta.CURRENT_SCHEMA_VERSION + 1])
+    async def test_open_refuses_a_version_no_corpus_of_this_build_has(
+        self, tmp_path: Path, claimed: int
+    ) -> None:
         """A newer writer may have changed tables, indexes or the meaning of an existing key, so
-        opening it and reading on would be reading an unknown schema as if it were this one."""
+        opening it and reading on would be reading an unknown schema as if it were this one. A
+        version between the two this build knows names no shape at all, and read as the older one
+        it would be a corpus whose link columns nothing reads."""
         store_dir = tmp_path / ".zikaron"
         identity = _identity(tmp_path)
         async with await database.KnowledgeDatabase.create(store_dir, identity) as created:
             await created.connection.execute(
                 "UPDATE meta SET value = ? WHERE key = ?",
-                (str(meta.SUPPORTED_SCHEMA_VERSION + 1), meta.SCHEMA_VERSION_KEY),
+                (str(claimed), meta.SCHEMA_VERSION_KEY),
             )
             await created.connection.commit()
 
         with pytest.raises(ZikaronError) as caught:
-            await database.KnowledgeDatabase.open(store_dir, identity.id)
+            await database.KnowledgeDatabase.open(store_dir, identity.id, migrate=True)
         assert caught.value.code is ErrorCode.SCHEMA_INCOMPATIBLE
+        assert caught.value.data["supported"] == [1, meta.CURRENT_SCHEMA_VERSION]
 
     async def test_open_refuses_a_database_with_no_meta_table(self, tmp_path: Path) -> None:
         """A database with no `meta` is one missing every required key, which is exactly true and
@@ -261,7 +271,7 @@ class TestOpening:
             await created.connection.commit()
 
         with pytest.raises(ZikaronError) as caught:
-            await database.KnowledgeDatabase.open(store_dir, identity.id)
+            await database.KnowledgeDatabase.open(store_dir, identity.id, migrate=True)
         assert caught.value.code is ErrorCode.BAD_CONFIG
 
     async def test_open_does_not_create_an_absent_database(self, tmp_path: Path) -> None:
@@ -272,7 +282,7 @@ class TestOpening:
         missing = uuid.uuid4()
 
         with pytest.raises(aiosqlite.Error):
-            await database.KnowledgeDatabase.open(store_dir, missing)
+            await database.KnowledgeDatabase.open(store_dir, missing, migrate=True)
         assert not paths.knowledge_db_path(store_dir, missing).exists()
 
     async def test_open_succeeds_while_the_encoder_disagrees_with_configuration(
@@ -284,7 +294,9 @@ class TestOpening:
         identity = _identity(tmp_path, embed_model="some/other-model")
         async with await database.KnowledgeDatabase.create(store_dir, identity):
             pass
-        async with await database.KnowledgeDatabase.open(store_dir, identity.id) as opened:
+        async with await database.KnowledgeDatabase.open(
+            store_dir, identity.id, migrate=False
+        ) as opened:
             assert not database.encoder_matches_config(opened.meta, config_for(tmp_path))
 
 

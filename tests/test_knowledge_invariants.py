@@ -218,7 +218,7 @@ class TestTheRegistryIsTheAuthorityOnExistence:
             )
             created.database_path.unlink()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             (report,) = listing.knowledge_bases
             assert report.summary.state is KnowledgeState.REINDEX_REQUIRED
             assert report.summary.files_indexed == 0
@@ -242,7 +242,7 @@ class TestTheRegistryIsTheAuthorityOnExistence:
             await db.execute("DELETE FROM knowledge_bases")
             await db.commit()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             assert listing.knowledge_bases == ()
             (orphan,) = listing.orphans
             assert orphan.path == created.database_path
@@ -267,7 +267,7 @@ class TestTheRegistryIsTheAuthorityOnExistence:
             stray = directory / f"{uuid.uuid4()}.db"
             stray.mkdir()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
 
             (orphan,) = listing.orphans
             assert orphan.path == stray
@@ -306,7 +306,7 @@ class TestTheRegistryIsTheAuthorityOnExistence:
             assert journal_mode == "delete", "the fixture must not already be in WAL"
             before = foreign.read_bytes()
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
 
             (orphan,) = listing.orphans
             assert orphan.breadcrumb_name == "someone elses"
@@ -323,7 +323,7 @@ class TestTheRegistryIsTheAuthorityOnExistence:
             broken = stray / f"{uuid.uuid4()}.db"
             broken.write_bytes(b"not a database at all")
 
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
             (orphan,) = listing.orphans
             assert orphan.path == broken
             assert orphan.breadcrumb_name is None

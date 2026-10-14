@@ -85,7 +85,7 @@ class ReadPool:
         except BaseException:
             await self._forget_one()
             raise
-        hold(db, immediate=False)
+        hold(db, immediate=False, polls_for_lock=True)
         return db
 
     async def _give_back(self, db: aiosqlite.Connection) -> None:

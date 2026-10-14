@@ -16,6 +16,7 @@ import aiosqlite
 import pytest
 
 from tests.contention_fixtures import call, error_of, external_writer, patch_budget
+from tests.knowledge_fixtures import stub_spawned
 from tests.service_fixtures import open_context
 from zikaron.core.knowledge import registry
 from zikaron.core.knowledge.database import KnowledgeDatabase
@@ -37,9 +38,9 @@ def no_real_builds(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _no_spawn(
         name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> list[str]:
+    ) -> detach.Spawned:
         del full, spawned_by_op_id
-        return detach.command(name, project=project, full=False)
+        return stub_spawned(detach.command(name, project=project, full=False))
 
     monkeypatch.setattr(detach, "spawn", _no_spawn)
 
@@ -130,7 +131,7 @@ async def test_the_wait_for_the_write_lock_ends_at_the_deadline(
     """The write-lock half of the one budget: a transaction whose deadline is half spent polls for
     the write lock only for the other half, so behind another process's lock it is refused at the
     deadline — not a whole budget after it, and not wherever SQLite's own sleep lands."""
-    budget_ms = 500
+    budget_ms = 1000
     patch_budget(monkeypatch, budget_ms)
     async with open_context(tmp_path) as ctx:
         deadline = Deadline.budget()

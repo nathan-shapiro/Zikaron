@@ -138,7 +138,9 @@ async def _indexed_at(db: aiosqlite.Connection) -> dict[str, str]:
 
 async def _reported_state(corpus: Corpus) -> KnowledgeState:
     """The state `status` reports for this corpus, through the path a caller actually reaches."""
-    listing = await reporting.status(corpus.store_dir, corpus.db, corpus.config, name=corpus.name)
+    listing = await reporting.status(
+        corpus.store_dir, corpus.db, corpus.config, name=corpus.name, migrate=True
+    )
     (report,) = listing.knowledge_bases
     return report.summary.state
 
@@ -156,6 +158,7 @@ async def _served_results(corpus: Corpus) -> list[object]:
         corpus.config,
         groups.SearchRequest(text="alpha prose", limit_per_kb=5),
         encoder=FakeEncoder(),
+        migrate=True,
     )
     (group,) = response.groups
     assert isinstance(group, groups.Group)
@@ -170,7 +173,9 @@ async def _write_meta(corpus: Corpus, rows: dict[str, str]) -> None:
     consulted again.
     """
     registered = await registry.require(corpus.db, corpus.name)
-    async with await KnowledgeDatabase.open(corpus.store_dir, registered.id) as opened:
+    async with await KnowledgeDatabase.open(
+        corpus.store_dir, registered.id, migrate=True
+    ) as opened:
 
         async def _work(connection: aiosqlite.Connection) -> None:
             await database.write_meta(connection, rows)

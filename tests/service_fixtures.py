@@ -23,6 +23,7 @@ from zikaron.core.store.store import Store
 from zikaron.service.access_log import AccessLog
 from zikaron.service.context import ActivityTracker, ServiceContext
 from zikaron.service.envelope import ResolvedEnvelope
+from zikaron.service.spawned_builds import SpawnedBuilds
 
 MAX_DEPTH: Final = 32
 
@@ -81,12 +82,17 @@ async def open_context(tmp_path: Path, overrides: str = "") -> AsyncIterator[Ser
 
 
 @asynccontextmanager
-async def context_over(store_dir: Path, config_source: Path) -> AsyncIterator[ServiceContext]:
+async def context_over(
+    store_dir: Path, config_source: Path, spawned_builds: SpawnedBuilds | None = None
+) -> AsyncIterator[ServiceContext]:
     """A `ServiceContext` over a store that **already exists**, for a caller that made it itself.
 
     `open_context` creates one; this opens one, which is what a test driving a surface through its
     own entry point needs — that surface is the thing under test and has already put a store where
     it expects to find it.
+
+    `spawned_builds` is for a caller that builds a context per call and stands for one long-lived
+    service across them: the builds that service spawned outlive any one call.
     """
     cfg = resolve(config_source / "system.toml", config_source / "project.toml")
     encoder = FakeEncoder()
@@ -104,4 +110,5 @@ async def context_over(store_dir: Path, config_source: Path) -> AsyncIterator[Se
             supersession_max_depth=cfg.get_int("supersession_max_depth"),
             activity=ActivityTracker(last_activity=time.monotonic()),
             access_log=log,
+            spawned_builds=SpawnedBuilds() if spawned_builds is None else spawned_builds,
         )

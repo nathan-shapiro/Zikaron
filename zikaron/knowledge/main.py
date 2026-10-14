@@ -22,6 +22,7 @@ import shlex
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -174,6 +175,10 @@ def main(argv: Sequence[str] | None = None, *, prog: str = _MODULE_INVOCATION) -
     """
     args = _parser(prog).parse_args(sys.argv[1:] if argv is None else argv)
     args.invocation = prog
+    if args.verb == "refresh" and args.force_unlock and args.name is None:
+        # Decided by the arguments alone, so before anything that could start a service.
+        stderr("refused: --force-unlock clears one knowledge base's lock, so name one")
+        return 1
     try:
         args.project_scope = resolve(args.project)
     except ZikaronError as error:
@@ -298,16 +303,15 @@ async def _refresh(args: argparse.Namespace, client: KnowledgeClient) -> int:
     promises is a call that does not return while an indexer is running against a named corpus, and
     a build somebody else started is one of those. Returning 0 there would end a CI step with that
     indexer alive — and the documented provisioning sequence reaches it, since `add` starts a build
-    and has no `--wait` of its own, so a `refresh --wait` arriving after that build took its lock
-    sees exactly this outcome.
+    and has no `--wait` of its own, so a `refresh --wait` arriving while that build is alive sees
+    exactly this outcome.
+
+    **What each corpus is waited for is read off its entry and nothing else** (`knowledge-index.md`
+    §9): the entry's `last_scan_started_at` is the baseline a build's mark must advance past, and an
+    `already_indexing` entry's `lock` says which kind of build is under way.
     """
     if args.force_unlock:
-        if args.name is None:
-            stderr("refused: --force-unlock clears one knowledge base's lock, so name one")
-            return 1
         _report_unlock(await client.call("knowledge_unlock", {"knowledge_base": args.name}))
-
-    before = await _scan_marks(client, name=args.name) if args.wait else {}
 
     params: dict[str, object] = {"full": args.full}
     if args.name is not None:
@@ -317,51 +321,81 @@ async def _refresh(args: argparse.Namespace, client: KnowledgeClient) -> int:
     entries = _entries(payload)
     if not entries:
         print(f"no knowledge bases in {client.project}")
-    building: list[str] = []
-    running: list[str] = []
-    failed = False
+    plan = _Waits()
     for entry in entries:
-        name = str(entry.get("name"))
-        if _report_build(entry, prog=args.invocation, waiting=args.wait, full=args.full):
-            building.append(name)
-        elif str(entry.get("outcome")) == "already_indexing" and args.wait:
-            running.append(name)
-        elif _OUTCOMES.get(str(entry.get("outcome")), ("refused", True))[1]:
-            failed = True
+        plan.add(entry, args)
     if not args.wait:
-        if building:
+        if plan.started:
             _explain_detachment()
-        return 1 if failed else 0
-    if not building and not running:
-        return 1 if failed else 0
-    failed_waits = await _await_builds(
-        client, building, running=running, before=before, only=args.name
-    )
-    if failed_waits & set(building):
+        return 1 if plan.failed else 0
+    if not plan.expected and not plan.running:
+        return 1 if plan.failed else 0
+    failed_waits = await _await_builds(client, plan.expected, running=plan.running, only=args.name)
+    if failed_waits & set(plan.started):
         # The one moment the foreground command is most wanted: a build **this call started** has
         # ended badly and its own output went nowhere. Intersected rather than merely non-empty,
         # because the note points at a line `_report_build` prints for `started` alone — a corpus
         # that was already being built has none, and pointing at it would send a reader looking.
         _explain_detachment()
-    return 1 if failed_waits or failed else 0
+    return 1 if failed_waits or plan.failed else 0
 
 
-async def _scan_marks(client: KnowledgeClient, *, name: str | None) -> dict[str, str | None]:
-    """Each corpus's `last_scan_started_at` before a build is asked for.
+@dataclass(slots=True)
+class _Waits:
+    """What one `refresh` answered, sorted into what `--wait` waits for, by each entry alone.
 
-    The baseline half of the wait's predicate. A corpus with no database has none, and `None` is
-    the honest value: any timestamp at all is an advance on it.
-
-    Narrowed to `name` when one was given, because `reporting.status` opens every registered
-    corpus's database per call: a sweep needs all of them and a named refresh needs one, and the
-    difference is the whole registry opened once a second for the minutes a build takes.
+    `started` are the builds this call started; `expected` maps every build that has not yet
+    reached its lock to the mark its entry carried; `running` are those already holding a live one;
+    `failed` is whether anything named could not be built or waited for.
     """
-    payload = await client.call("knowledge_status", {"knowledge_base": name})
-    marks: dict[str, str | None] = {}
-    for entry in _entries(payload):
-        mark = entry.get("last_scan_started_at")
-        marks[str(entry.get("name"))] = None if mark is None else str(mark)
-    return marks
+
+    started: list[str] = field(default_factory=list)
+    expected: dict[str, str | None] = field(default_factory=dict)
+    running: list[str] = field(default_factory=list)
+    failed: bool = False
+
+    def add(self, entry: Mapping[str, object], args: argparse.Namespace) -> None:
+        """Report one entry and sort it."""
+        name = str(entry.get("name"))
+        outcome = str(entry.get("outcome"))
+        if _report_build(entry, prog=args.invocation, waiting=args.wait, full=args.full):
+            self.started.append(name)
+            self.expected[name] = _scan_mark(entry)
+        elif outcome == "already_indexing" and args.wait:
+            held = _lock_of(entry)
+            if held is None or held.get("live") is False:
+                # A build that has not yet reached its lock — the next mark is still to be written.
+                self.expected[name] = _scan_mark(entry)
+            elif held.get("live") is None:
+                _cannot_wait_on(name)
+                self.failed = True
+            else:
+                self.running.append(name)
+        elif _OUTCOMES.get(outcome, ("refused", True))[1]:
+            self.failed = True
+
+
+def _scan_mark(entry: Mapping[str, object]) -> str | None:
+    """The `last_scan_started_at` an entry carries, which is the baseline half of the wait.
+
+    `None` for a corpus never scanned, and any mark at all advances past it.
+    """
+    mark = entry.get("last_scan_started_at")
+    return None if mark is None else str(mark)
+
+
+def _cannot_wait_on(name: str) -> None:
+    """Say why a build held by a lock this host cannot probe is not waited for.
+
+    Nothing here can see such a lock released — another host's, or one whose pid is unreadable,
+    which is the judgement `lock.probe` itself declines to make — so waiting on it is waiting
+    forever, and the exit is the one an operator already has.
+    """
+    stderr(
+        f"failed    {name}: its build lock is held by a process this machine cannot probe — "
+        f"another host, or an unreadable pid — so this wait can never see it released; clear it "
+        f"with `refresh {shlex.quote(name)} --force-unlock`"
+    )
 
 
 def _still_building(entry: Mapping[str, object], *, mark: str | None) -> bool:
@@ -401,10 +435,9 @@ def _lock_says_running(held: Mapping[str, object] | None) -> bool:
 
 async def _await_builds(
     client: KnowledgeClient,
-    names: Sequence[str],
+    expected: Mapping[str, str | None],
     *,
     running: Sequence[str],
-    before: Mapping[str, str | None],
     only: str | None = None,
 ) -> set[str]:
     """Block until every named build is over. Returns every corpus the wait failed on.
@@ -412,12 +445,14 @@ async def _await_builds(
     Three kinds reach that set and all three fail the command: a build that ran and left the corpus
     unusable, one that never started, and one held by a lock this host cannot probe.
 
-    `names` are the builds this call started; `running` are those a call found already under way.
-    **The two need different predicates.** A started build is over when its lock is gone *and* its
-    scan mark has advanced past the baseline — the mark is what closes the window between the spawn
-    and the lock. A build already running took its lock before this call read that baseline, so its
-    mark will never advance past it and the same test would say *not begun* forever; its lock alone
-    — present and not provably dead — is the evidence, and the lock is already there.
+    `expected` maps each build that has not yet reached its lock — one this call started, or one
+    the service spawned earlier that is still loading — to the mark its entry carried; `running`
+    are those found already holding a live lock. **The two need different predicates.** A build in
+    `expected` is over when its lock is gone *and* its scan mark has advanced past that baseline —
+    the mark is what closes the window between the spawn and the lock. A build already holding its
+    lock wrote its mark before the call, so its mark will never advance again and the same test
+    would say *not begun* forever; its lock alone — present and not provably dead — is the
+    evidence, and the lock is already there.
 
     **Unbounded once a build is demonstrably running, bounded while one is only expected.** A
     build is minutes of work over a whole tree and inventing a deadline for it would be inventing a
@@ -436,12 +471,12 @@ async def _await_builds(
     dead spawn is recorded, reported, and dropped from what is watched; the call fails at the end
     **because** of it rather than instead of the rest of its work.
 
-    `only` narrows each poll to one corpus, for the same reason `_scan_marks` takes a name: a status
-    call opens every registered corpus's database, and a named refresh watches one.
+    `only` narrows each poll to one corpus: a status call opens every registered corpus's database,
+    and a named refresh watches one.
     """
     shown: dict[str, str] = {}
     lock_only = set(running)
-    watched = [*names, *running]
+    watched = [*expected, *running]
     appeared: set[str] = set(running)
     dead: set[str] = set()
     deadline = time.monotonic() + _APPEARANCE_DEADLINE_SECONDS
@@ -456,24 +491,16 @@ async def _await_builds(
             held = _lock_of(entry)
             if name in lock_only:
                 if held is not None and held.get("live") is None:
-                    # A holder this host cannot probe. Nothing here can see it released — the
-                    # same judgement `lock.probe` declines to make — so waiting on it is waiting
-                    # forever, and the exit is the one an operator already has.
-                    stderr(
-                        f"failed    {name}: its build lock is held by a process this machine "
-                        f"cannot probe — another host, or an unreadable pid — so this wait can "
-                        f"never see it released; clear it with "
-                        f"`refresh {shlex.quote(name)} --force-unlock`"
-                    )
+                    _cannot_wait_on(name)
                     dead.add(name)
                     continue
                 if _lock_says_running(held):
                     pending.append(name)
                     _show_progress(name, entry, shown)
                 continue
-            if entry.get("last_scan_started_at") != before.get(name):
+            if entry.get("last_scan_started_at") != expected[name]:
                 appeared.add(name)
-            if _still_building(entry, mark=before.get(name)):
+            if _still_building(entry, mark=expected[name]):
                 pending.append(name)
                 _show_progress(name, entry, shown)
         if not pending:
@@ -714,6 +741,13 @@ def _print_details(entry: Mapping[str, object]) -> None:
     print(
         f"  searches  {entry.get('searches')} ({entry.get('searches_empty')} empty), "
         f"results {entry.get('results_returned')} ({entry.get('results_stale')} stale)"
+    )
+    print(
+        f"  linked    {_text(entry.get('files_linked'))} files, results "
+        f"{_text(entry.get('results_linked'))} "
+        f"({_text(entry.get('results_source_changed'))} source changed, "
+        f"{_text(entry.get('results_source_missing'))} missing, "
+        f"{_text(entry.get('results_source_unverifiable'))} unverifiable)"
     )
     print(
         f"  last scan {_text(entry.get('last_scan_started_at'))} .. "

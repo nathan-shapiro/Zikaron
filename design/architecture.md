@@ -581,9 +581,13 @@ the identity check rather than spellings; re-derive the premise with
 
 - `meta.store_id` is a UUID minted when the store is created.
 - `health()` returns `{ready, store_path, store_id, embed_model, embed_dim, schema_version, pid,
-  model_loaded, uptime_seconds}` — the last two whether the model is still loading and how long the store
-  has been open, so a client can tell a service still starting from one that has stalled
-  (§"Degraded modes"). It carries **no `client` envelope and resolves no session label** — see below.
+  model_loaded, uptime_seconds, version}` — `model_loaded` and `uptime_seconds` whether the model is
+  still loading and how long the store has been open, so a client can tell a service still starting
+  from one that has stalled (§"Degraded modes"); `version` the package version the service runs, read
+  once at startup on §"Read once, at service startup"'s rule — never from the installed metadata per
+  call, which an in-place upgrade replaces under a running process — and compared by the typed
+  commands with their own (`distribution.md` §3). It carries **no `client` envelope and resolves no
+  session label** — see below.
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
   write.** A mismatch is not a retry: the client ~~logs it, treats~~ **treats** the socket as foreign,
   and — for the hook — goes through the same degraded path as any other failure (§"Degraded modes"):
@@ -1039,8 +1043,12 @@ and `busy_timeout` never retries that. Another connection can be another process
 build row, a second service on the same store through another runtime directory (§"Start-if-absent,
 without a thundering herd"), an operator's shell — so no in-process lock closes it; `IMMEDIATE` does, by
 taking the write lock before the first read. The indexer's own `memory.db` handle is a store's writer and
-opens `IMMEDIATE` the same way. The access log's connection and the corpus databases stay deferred; the one
-exception is a build's lock acquisition, `knowledge-index.md` §"6. The indexer process".
+opens `IMMEDIATE` the same way. The access log's connection stays deferred. A deferred transaction that
+has read is refused at once even with no commit in between, while another connection merely *holds* the
+write lock — plain `SQLITE_BUSY`, measured, `busy_timeout` again not retrying — so on a corpus database
+every transaction that writes after reading opens `IMMEDIATE` too: a build's, the lock's clearing, and
+the migration; reads, the no-wait counter write and a database's creation stay deferred
+(`knowledge-index.md` §"6. The indexer process").
 
 **Every transaction on the writer, and every read, has one wait budget, `ddl.BUSY_TIMEOUT_MS`, for the
 wait for its connection and the wait for SQLite's write lock together.** On the writer the budget starts
@@ -1061,8 +1069,10 @@ uv's managed Python ships, it overran `busy_timeout` by 0.6–1 s at `BEGIN IMME
 SQLite on Linux was exact (`research/m35-implementation-evidence.md`). Under WAL, `BEGIN IMMEDIATE` is
 where a serving transaction waits for another connection's write lock, so it is the only statement polled;
 a read's upgrade is refused at once, as it always was, and retried from `IMMEDIATE`. A store's open,
-and a migration's `BEGIN IMMEDIATE`, still run under SQLite's own 5 s wait, since no request's deadline
-applies before the socket exists.
+and a migration's `BEGIN IMMEDIATE`, still run under SQLite's own 5 s wait — `memory.db`'s because no
+request's deadline applies before the socket exists, a corpus database's because its connections keep
+`busy_timeout` at 5 s (`knowledge-index.md` §3.2) and its migration runs inside whichever request
+first opens it.
 
 **The primitive's refusals before any statement runs are answered by the dispatcher**, with the method as
 `verb`: a lock or lease wait that reached the service's budget, and a writer a failed rollback closed while
@@ -2574,10 +2584,12 @@ things and refuses rather than guesses when it cannot.
   Claude Code start entry's `--components` is its arguments.
   Two reasons for the absolute path, and the second is the load-bearing one: the shell has
   not activated any venv, so a bare name would resolve against the user's `PATH` or not at all; and
-  start-if-absent spawns the service as `sys.executable -m zikaron.service.main`, so the *interpreter* the
+  start-if-absent spawns the service as `sys.executable -P -m zikaron.service.main`, so the *interpreter* the
   client runs under must be the one Zikaron is installed into. A console script's shebang guarantees exactly
   that, which a `python -m` command line only guarantees if whoever wrote it also spelled the interpreter
-  absolutely. Measured cost of the console-script form against `-m`: the two differ by **~1.4 ms** median
+  absolutely. The `-P` there, as on every spawn — the service, a build, the warm helper — keeps the
+  inherited working directory off `sys.path`, so another checkout's `zikaron/` package in it cannot stand
+  in for the installed one. Measured cost of the console-script form against `-m`: the two differ by **~1.4 ms** median
   over a full hook process, i.e. the choice is free. *The absolutes that used to stand here — 68.6 against
   70.0 ms — were taken before the hook stopped round-tripping its `client` envelope through the service's
   parser, which moved the same path to ~50 ms; the difference between the two forms was never re-measured

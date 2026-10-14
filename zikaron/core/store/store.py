@@ -29,7 +29,7 @@ from zikaron.core.store.pool import ReadPool
 #: What a store created by this build records. Declared here rather than derived from
 #: `migration.MIGRATIONS`, and asserted against it in `test_store.py`: one declaration checked from
 #: another direction, rather than two that agree today.
-CURRENT_SCHEMA_VERSION: Final = 3
+CURRENT_SCHEMA_VERSION: Final = 4
 
 #: A store below `CURRENT_SCHEMA_VERSION` opens read-compatible and is brought forward only by the
 #: opener that asks (`Store.open(..., migrate=True)`), so a version bump is not a flag day for the
@@ -249,7 +249,7 @@ class Store:
         self.opened_inode: Final = opened_inode
         self.pool: Final = ReadPool(self._open_checked)
         self._reopening: Final = asyncio.Lock()
-        holders.hold(db, immediate=True)
+        holders.hold(db, immediate=True, polls_for_lock=True)
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -277,7 +277,7 @@ class Store:
         async with self._reopening:
             if holders.holder_of(self._db).closed:
                 reopened = await self._open_checked()
-                holders.hold(reopened, immediate=True)
+                holders.hold(reopened, immediate=True, polls_for_lock=True)
                 self._db = reopened
         return self._db
 

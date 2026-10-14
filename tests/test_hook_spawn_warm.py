@@ -70,8 +70,8 @@ def test_a_top_level_session_spawns_the_warm_helper_with_this_stores_paths(
     spawn_warm.run(scope_dir=tmp_path, payload_session_id=None)
     assert len(spawned) == 1
     command = spawned[0]
-    assert command[1:3] == ["-m", "zikaron.hook.warm_helper"]
-    assert str(tmp_path / ".zikaron") == command[4]
+    assert command[1:4] == ["-P", "-m", "zikaron.hook.warm_helper"]
+    assert str(tmp_path / ".zikaron") == command[5]
 
 
 def test_a_spawn_failure_does_not_change_what_is_printed(

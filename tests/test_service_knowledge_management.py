@@ -20,6 +20,7 @@ from tests.knowledge_fixtures import (
     DEAD_PID,
     build_settings,
     corpus_root,
+    stub_spawned,
     write_meta,
     write_tree,
 )
@@ -64,9 +65,9 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> Spawns:
 
     def fake_spawn(
         name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> list[str]:
+    ) -> detach.Spawned:
         recorded.append((name, project, full, spawned_by_op_id))
-        return ["python", "-m", "zikaron.knowledge.indexer", "--", name]
+        return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", "--", name])
 
     monkeypatch.setattr(detach, "spawn", fake_spawn)
     return recorded
@@ -583,6 +584,7 @@ class TestRemove:
                 ctx.config,
                 name="docs",
                 build=build_settings(ctx.config, encoder=FakeEncoder()),
+                migrate=True,
             )
 
             with pytest.raises(ZikaronError) as raised:
@@ -888,6 +890,7 @@ class TestTheWholeLifecycleThroughTheTools:
                 ctx.config,
                 name="design docs",
                 build=build_settings(ctx.config, encoder=FakeEncoder()),
+                migrate=True,
             )
             assert _only(await _call(ctx, "knowledge_list", {}))["state"] == "ok"
 
@@ -922,6 +925,7 @@ class TestTheWholeLifecycleThroughTheTools:
                 ctx.config,
                 name="docs",
                 build=build_settings(ctx.config, encoder=FakeEncoder()),
+                migrate=True,
             )
 
             await _call(ctx, "knowledge_search", {"query": "protobuf"})
@@ -1154,8 +1158,9 @@ class TestTheForegroundCommand:
     async def test_add_reports_the_argv_the_spawn_returned(self, tmp_path: Path) -> None:
         async with open_context(tmp_path) as ctx:
             entry = _only(await _add(ctx, tmp_path))
-            assert entry["foreground_command"] == detach.spawn(
-                "docs", project=paths.scope_of(ctx.store_directory)
+            assert (
+                entry["foreground_command"]
+                == detach.spawn("docs", project=paths.scope_of(ctx.store_directory)).argv
             )
 
     async def test_add_reports_the_database_it_created(self, tmp_path: Path) -> None:

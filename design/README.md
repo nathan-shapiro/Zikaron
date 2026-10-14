@@ -18,7 +18,7 @@ is to track a count.)*
 | `indexing.md` | chunking contract: token-exact preflight, boundaries, gist-prepending, `max` rollup, storage, and the implementation constraints — one transaction per mutation of indexed prose among them |
 | `consolidation.md` | grouping mechanism and its cohesion rule, rejected alternatives, candidate construction, the provisional parameter seeds and what they are not, consolidator identity and model, never-lose guard |
 | `write-policy.md` | the `agentSpawn` prompt text, its rationale, the secrets and poisoning boundary, the operator erasure procedure and its limits, the six instrumented signals, known gaps |
-| `knowledge-index.md` | **The institutional-knowledge half** (D1 as amended). One SQLite file per corpus plus the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search and its bounds, the detached indexer, the seven MCP tools and the CLI, K1–K13 and its invariants |
+| `knowledge-index.md` | **The institutional-knowledge half** (D1 as amended). One SQLite file per corpus plus the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search and its bounds, the detached indexer, the seven MCP tools and the CLI, linked documents, and its K-decisions and invariants |
 | `harness.md` | the two supported harnesses as one table (D34): detection, session identity, triggers and output channels, injection budgets, subagent rules, D32's split, consolidation ownership, the consolidator's model, and the installer's two targets — the value/shape split and what each flag refuses |
 | `guards.md` | **Normative for D38.** The two deterministic Claude Code hooks: the find-replace guard, its exemptions and its override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` per platform, what Claude Code was measured to deliver, installation by selection, fail-open, known gaps |
 | `distribution.md` | supported platforms (D35) and what rules each out, acquisition (D36) and why `uv` is install-time only, the version scheme (a minor bump means a schema bump), what CI asserts and the residual it cannot close |
@@ -26,6 +26,7 @@ is to track a count.)*
 | `build-plan.md` | **Per-milestone briefs**: scope, the normative sections each is built against, the invariants it must cover, its done-when list, and an explicit scope fence |
 | `coding-standards.md` | **Binding.** Structure, the domain model, typing, the five test tiers, invariant tests, comment rules, dependency rules, bulk-edit rules, the check gate |
 | `evaluation.md` | **Proposal, not normative.** The product claim decomposed into six links, three arms with the cheap one first, why resolve rate is probably the wrong dependent variable, what the benchmark literature returned, and the sample-size arithmetic |
+| `code-knowledge.md` | **Proposal, not normative.** Agents that write per-source-file documentation into a knowledge base: the proposed D39, and what M40's brainstorm must settle. K14, which lets a search say whether a result's source has moved since it was documented, is specified in `knowledge-index.md` §7.7 |
 
 Evidence lives elsewhere: measured results in `research/`, review rounds in `reviews/`, re-runnable
 harnesses in `experiments/`. This corpus has been through sixteen independent review rounds —

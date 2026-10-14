@@ -113,6 +113,7 @@ async def _built(tmp_path: Path, encoder: FastEmbedEncoder) -> AsyncIterator[Cor
             build=disposal.BuildSettings(
                 encoder=encoder, embed_batch=config.get_int("knowledge_embed_batch")
             ),
+            migrate=True,
         )
         yield corpus
 
@@ -130,6 +131,7 @@ async def test_a_real_corpus_answers_a_real_query(
             config_for(tmp_path),
             SearchRequest(text="how do the two retrieval arms combine", limit_per_kb=5),
             encoder=encoder,
+            migrate=True,
         )
     (group,) = response.groups
     assert isinstance(group, Group)
@@ -151,6 +153,7 @@ async def test_a_real_snippet_reads_back_off_the_file(
             config_for(tmp_path),
             SearchRequest(text="make release health check", limit_per_kb=5),
             encoder=encoder,
+            migrate=True,
         )
         (group,) = response.groups
         assert isinstance(group, Group)

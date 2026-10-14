@@ -22,7 +22,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from zikaron.core.knowledge import lock, reporting
-from zikaron.core.knowledge.builds import PlannedBuild
+from zikaron.core.knowledge.builds import BuildObstacle, PlannedBuild
 from zikaron.service.serialize import RpcResult
 
 
@@ -62,11 +62,16 @@ def _details_payload(details: reporting.Details) -> dict[str, object]:
         "bytes_indexed": details.bytes_indexed,
         "files_seen": details.files_seen,
         "files_skipped": details.files_skipped,
+        "files_linked": details.files_linked,
         "skipped": dict(details.skipped),
         "searches": details.searches,
         "searches_empty": details.searches_empty,
         "results_returned": details.results_returned,
         "results_stale": details.results_stale,
+        "results_linked": details.results_linked,
+        "results_source_changed": details.results_source_changed,
+        "results_source_missing": details.results_source_missing,
+        "results_source_unverifiable": details.results_source_unverifiable,
         "last_scan_started_at": details.last_scan_started_at,
         "last_scan_completed_at": details.last_scan_completed_at,
         "lock": None if details.lock is None else _lock_payload(details.lock),
@@ -175,12 +180,21 @@ def _build_entry(entry: PlannedBuild, argv: Sequence[str] | None) -> dict[str, o
     behaviour. It is what carries the specifics that make an obstacle actionable — *which* root is
     gone, *who* holds the lock — none of which the `list` projection beside it has room for, and
     for `unreadable` it is the driver's own exception rather than a sentence invented for it.
+
+    `last_scan_started_at`, and `lock` on an `already_indexing` entry, are the two diagnostic
+    fields a caller waiting for the build keys on (`knowledge-index.md` §9): the mark is the one
+    this call's observation read, which for `started` is the one recorded beside the spawn.
     """
     payload = KnowledgeBaseJson(status=entry.status, detailed=False).as_json()
     obstacle = entry.obstacle
     payload["outcome"] = "started" if obstacle is None else obstacle.value
     payload["foreground_command"] = None if argv is None else list(argv)
     payload["reason"] = None if entry.refusal is None else str(entry.refusal)
+    payload["last_scan_started_at"] = entry.status.scan_mark
+    if obstacle is BuildObstacle.ALREADY_INDEXING:
+        details = entry.status.details
+        held = None if details is None else details.lock
+        payload["lock"] = None if held is None else _lock_payload(held)
     return payload
 
 
@@ -191,10 +205,10 @@ class KnowledgeBuildResult(RpcResult):
     One shape for both verbs and for both of `refresh`'s forms, so a caller parses one thing rather
     than three. Each entry is the **`list` projection** — name, description, state, files indexed,
     files remaining — in `status`'s own field names and vocabulary, which is what lets an agent
-    read the result it already holds instead of learning a second one. The eighteen diagnostic
-    fields are deliberately not here: a verb that starts a build has no more of them to report
-    than `list` does, and `add`'s own description points a caller at `zikaron_knowledge_status`
-    for the detail.
+    read the result it already holds instead of learning a second one. The twenty-three diagnostic
+    fields are deliberately not here, but for the two a caller waiting for the build keys on
+    (`_build_entry`): a verb that starts a build has no more of them to report than `list` does,
+    and `add`'s own description points a caller at `zikaron_knowledge_status` for the detail.
 
     `git_modes` is `add`'s own creation-time probe and is absent for a refresh, which runs none. It
     sits beside the per-corpus entries rather than inside them, under its own names —

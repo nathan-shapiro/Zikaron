@@ -66,6 +66,7 @@ def _spawn_warm_helper_best_effort(scope_dir: Path) -> None:
         sock_path = connect.resolve_sock_path(store_dir)
         command = [
             sys.executable,
+            "-P",
             "-m",
             "zikaron.hook.warm_helper",
             str(sock_path),

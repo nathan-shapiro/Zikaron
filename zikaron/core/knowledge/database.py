@@ -27,13 +27,13 @@ import aiosqlite
 
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.knowledge import ddl, meta, paths
+from zikaron.core.knowledge import ddl, meta, migration, paths
 from zikaron.core.store import permissions
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.transactions import in_one_transaction, propagate
 
 
-def _schema_too_new(found: int) -> ZikaronError:
+def _schema_unsupported(found: int) -> ZikaronError:
     return ZikaronError(
         ErrorCode.SCHEMA_INCOMPATIBLE, found=found, supported=list(meta.SUPPORTED_SCHEMA_VERSIONS)
     )
@@ -80,7 +80,7 @@ def seed_identity(
     """
     configured_cap = config.get_int("knowledge_max_file_bytes")
     return meta.KnowledgeMeta(
-        schema_version=meta.SUPPORTED_SCHEMA_VERSION,
+        schema_version=meta.CURRENT_SCHEMA_VERSION,
         id=kb_id,
         name_breadcrumb=spec.name,
         root_path=str(spec.root),
@@ -343,7 +343,7 @@ class KnowledgeDatabase:
         await in_one_transaction(db, _work, failure=propagate)
 
     @classmethod
-    async def open(cls, store_dir: Path, kb_id: UUID) -> Self:
+    async def open(cls, store_dir: Path, kb_id: UUID, *, migrate: bool) -> Self:
         """Open an existing knowledge base, validating its `meta` on every call.
 
         Deliberately takes no configuration to compare against. A knowledge base whose recorded
@@ -351,20 +351,30 @@ class KnowledgeDatabase:
         a state a caller reports and a build repairs — and refusing here would deny that caller the
         very fields it needs in order to say so.
 
+        Args:
+            migrate: whether this opener may bring a database below `CURRENT_SCHEMA_VERSION`
+                forward — which its caller decides from the version it opened `memory.db` at
+                (`migration.may_migrate`). After a migration `meta` is read again, so the caller
+                holds the database as it now is.
+
         Raises:
             aiosqlite.Error: the database is absent or cannot be opened — which includes a vector
                 table that is missing or declared in a way this build cannot read, since a database
-                whose accepted width is unknowable is one no write to it can be trusted. Absence is
-                not an error to this module's callers — it is an empty knowledge base — so telling
-                the two apart is left to them, who know which they are looking at.
+                whose accepted width is unknowable is one no write to it can be trusted — or a
+                migration did not complete. Absence is not an error to this module's callers — it
+                is an empty knowledge base — so telling the two apart is left to them, who know
+                which they are looking at.
             ZikaronError: `BAD_CONFIG` (`source='meta'`) if a required key is missing, unparseable
-                or out of range; `SCHEMA_INCOMPATIBLE` if `meta.schema_version` is newer than this
-                build supports.
+                or out of range; `SCHEMA_INCOMPATIBLE` if `meta.schema_version` is not one this
+                build supports — newer than it, or a number no corpus schema has had.
         """
         db_path = paths.knowledge_db_path(store_dir, kb_id)
         db, _inode = await open_connection(db_path, pragmas=ddl.PRAGMAS, existing_only=True)
         try:
             current_meta, width = await cls._validate_on_open(db)
+            if migrate and current_meta.schema_version < meta.CURRENT_SCHEMA_VERSION:
+                await migration.migrate(db)
+                current_meta, width = await cls._validate_on_open(db)
         except BaseException:
             await db.close()
             raise
@@ -375,6 +385,6 @@ class KnowledgeDatabase:
         """Every check `open` must run before handing back a database, in the required order."""
         raw = await read_meta(db)
         current_meta = meta.parse_and_validate(raw)
-        if current_meta.schema_version > meta.SUPPORTED_SCHEMA_VERSION:
-            raise _schema_too_new(current_meta.schema_version)
+        if current_meta.schema_version not in meta.SUPPORTED_SCHEMA_VERSIONS:
+            raise _schema_unsupported(current_meta.schema_version)
         return current_meta, await stored_vector_width(db)

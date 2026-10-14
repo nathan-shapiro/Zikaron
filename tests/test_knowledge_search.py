@@ -27,6 +27,7 @@ from zikaron.core.knowledge import arms, pending, search
 from zikaron.core.knowledge.chunking import plan_file_chunks
 from zikaron.core.knowledge.meta import GitMode
 from zikaron.core.knowledge.search import Result, SearchSettings, cut_to_snippet
+from zikaron.core.knowledge.source_hash import HashBudget
 
 _DEFAULT_SETTINGS: Final = SearchSettings(
     limit_per_kb=5, max_chunks_per_file=2, snippet_max_chars=1200
@@ -70,7 +71,11 @@ async def _search(
     ).prepared
     async with open_index(corpus) as opened:
         return await search.search_one(
-            opened.connection, query=prepared, corpus=opened.meta, settings=settings_used
+            opened.connection,
+            query=prepared,
+            corpus=opened.meta,
+            settings=settings_used,
+            links=search.Links(root=corpus.store_dir.parent, budget=HashBudget()),
         )
 
 

@@ -51,7 +51,15 @@ from pathlib import Path
 import aiosqlite
 
 from zikaron.core.errors import ErrorCode, ZikaronError
-from zikaron.core.knowledge import builds, groups, lifecycle, registry, reporting, state
+from zikaron.core.knowledge import (
+    builds,
+    groups,
+    lifecycle,
+    migration,
+    registry,
+    reporting,
+    state,
+)
 from zikaron.core.knowledge.errors import (
     DanglingKnowledgeBaseError,
     DuplicateNameError,
@@ -102,6 +110,12 @@ class KnowledgeSearchResult(RpcResult):
 
     def as_json(self) -> dict[str, object]:
         return self.response.payload()
+
+
+def _migrates(ctx: ServiceContext) -> bool:
+    """Whether this service may bring a corpus's database forward when a request opens it — which
+    the version it opened `memory.db` at decides (`knowledge-index.md` §7.7.1)."""
+    return migration.may_migrate(ctx.store.meta.schema_version)
 
 
 def _reported_name(name: str) -> str:
@@ -252,7 +266,12 @@ async def knowledge_search(
         names=optional_str_list(params, "knowledge_bases"),
     )
     response = await groups.search_all(
-        ctx.store_directory, db, ctx.config, request, encoder=ctx.encoder
+        ctx.store_directory,
+        db,
+        ctx.config,
+        request,
+        encoder=ctx.encoder,
+        migrate=_migrates(ctx),
     )
     return KnowledgeSearchResult(response=response)
 
@@ -270,7 +289,9 @@ async def knowledge_list(
     reading `knowledge_bases: []` in a directory holding index files and concluding there was
     nothing there.
     """
-    listing = await reporting.list_bases(ctx.store_directory, db, ctx.config)
+    listing = await reporting.list_bases(
+        ctx.store_directory, db, ctx.config, migrate=_migrates(ctx)
+    )
     return KnowledgeListResult(reports=listing.knowledge_bases, orphans=listing.orphans)
 
 
@@ -283,7 +304,9 @@ async def knowledge_status(
     """`knowledge_status(knowledge_base?) -> {knowledge_bases, orphans}`."""
     name = optional_str(params, "knowledge_base")
     with _refusals_as_wire_errors(supplied={"knowledge_base": name or ""}):
-        listing = await reporting.status(ctx.store_directory, db, ctx.config, name=name)
+        listing = await reporting.status(
+            ctx.store_directory, db, ctx.config, name=name, migrate=_migrates(ctx)
+        )
     return KnowledgeStatusResult(reports=listing.knowledge_bases, orphans=listing.orphans)
 
 
@@ -339,24 +362,41 @@ def _spawn(
     *,
     full: bool,
     op_id: str,
-) -> dict[str, list[str]]:
+) -> tuple[tuple[builds.PlannedBuild, ...], dict[str, list[str]]]:
     """Start a detached indexer for every corpus nothing stops, and return without waiting.
 
-    Returns each started corpus's argv as the spawn reported it, so the result can carry the
-    command that reproduces a build in the foreground without constructing one a second time.
+    **A corpus whose last spawned build is still alive and has not yet taken its lock answers
+    `already_indexing` instead** (`knowledge-index.md` §8.4, invariant 19). The table is consulted,
+    the build spawned and recorded with nothing awaited between them, so of two concurrent calls
+    for one corpus one spawns and the other sees it. The mark recorded is the one this call's own
+    observation read.
+
+    Returns every entry as this call answers it, and each started corpus's argv as the spawn
+    reported it, so the command that reproduces a build in the foreground is never constructed a
+    second time.
 
     `op_id` is this call's, which each child records on its own event row. It travels in the
     environment rather than the argv precisely so the returned command stays the one that reproduces
     the build: an attribution token is not an input that changes what a build does.
     """
     project = paths.scope_of(ctx.store_directory)
-    return {
-        entry.knowledge_base.name: detach.spawn(
-            entry.knowledge_base.name, project=project, full=full, spawned_by_op_id=op_id
-        )
-        for entry in planned
-        if entry.may_start
-    }
+    answered: list[builds.PlannedBuild] = []
+    spawned: dict[str, list[str]] = {}
+    for entry in planned:
+        if not entry.may_start:
+            answered.append(entry)
+            continue
+        mark = entry.status.scan_mark
+        loading = ctx.spawned_builds.loading(entry.knowledge_base.id, mark=mark)
+        if loading is not None:
+            answered.append(entry.still_loading(loading))
+            continue
+        name = entry.knowledge_base.name
+        started = detach.spawn(name, project=project, full=full, spawned_by_op_id=op_id)
+        ctx.spawned_builds.record(entry.knowledge_base.id, started.process, mark=mark)
+        spawned[name] = started.argv
+        answered.append(entry)
+    return tuple(answered), spawned
 
 
 async def knowledge_add(
@@ -384,11 +424,16 @@ async def knowledge_add(
     with _refusals_as_wire_errors(supplied={"name": request.name}):
         created = await lifecycle.add(ctx.store_directory, db, ctx.config, request)
     planned = await builds.plan(
-        ctx.store_directory, db, ctx.config, names=[created.knowledge_base.name]
+        ctx.store_directory,
+        db,
+        ctx.config,
+        names=[created.knowledge_base.name],
+        migrate=_migrates(ctx),
     )
+    answered, spawned = _spawn(ctx, planned, full=False, op_id=envelope.op_id)
     return KnowledgeBuildResult(
-        planned=planned,
-        spawned=_spawn(ctx, planned, full=False, op_id=envelope.op_id),
+        planned=answered,
+        spawned=spawned,
         git_modes=(created.git_mode.value, created.git_mode_effective.value),
         database_path=str(created.database_path),
     )
@@ -415,11 +460,14 @@ async def knowledge_refresh(
     full = require_bool(params, "full", default=False)
     with _refusals_as_wire_errors(supplied={"name": name or ""}):
         planned = await builds.plan(
-            ctx.store_directory, db, ctx.config, names=None if name is None else [name]
+            ctx.store_directory,
+            db,
+            ctx.config,
+            names=None if name is None else [name],
+            migrate=_migrates(ctx),
         )
-    return KnowledgeBuildResult(
-        planned=planned, spawned=_spawn(ctx, planned, full=full, op_id=envelope.op_id)
-    )
+    answered, spawned = _spawn(ctx, planned, full=full, op_id=envelope.op_id)
+    return KnowledgeBuildResult(planned=answered, spawned=spawned)
 
 
 async def knowledge_unlock(
@@ -437,7 +485,7 @@ async def knowledge_unlock(
     """
     name = require_str(params, "knowledge_base")
     with _refusals_as_wire_errors(supplied={"knowledge_base": name}):
-        cleared = await lifecycle.unlock(ctx.store_directory, db, name=name)
+        cleared = await lifecycle.unlock(ctx.store_directory, db, name=name, migrate=_migrates(ctx))
     return KnowledgeUnlockResult(cleared=cleared)
 
 
@@ -473,11 +521,35 @@ async def knowledge_remove(
     if not require_bool(params, "confirm", default=False):
         raise await _what_would_be_destroyed(db, ctx, name)
     with _refusals_as_wire_errors(supplied={"name": name}):
+        await _refuse_while_a_spawned_build_loads(db, ctx, name)
         removed = await lifecycle.remove(ctx.store_directory, db, ctx.config, name=name)
     return KnowledgeRemoveResult(
         status=removed.status,
         files_unlinked=tuple(str(path) for path in removed.files_unlinked),
     )
+
+
+async def _refuse_while_a_spawned_build_loads(
+    db: aiosqlite.Connection, ctx: ServiceContext, name: str
+) -> None:
+    """Refuse a removal while a build this service spawned for the corpus has not taken its lock.
+
+    The same test `refresh` answers `already_indexing` on (`knowledge-index.md` §8.4): such a build
+    is about to open the database the removal would unlink. Once it holds the lock, the lock's own
+    refusal in `lifecycle.remove` governs.
+
+    Raises:
+        IndexerBusyError: naming the spawned process as the holder.
+    """
+    registered = await registry.lookup(db, name)
+    observed = await reporting.observe(ctx.store_directory, registered, ctx.config, migrate=False)
+    holder = ctx.spawned_builds.loading(registered.id, mark=observed.status.scan_mark)
+    if holder is not None:
+        raise IndexerBusyError(
+            f"{registered.name!r} has a build this service started that has not yet taken its "
+            f"lock ({holder.describe()}); wait for it to finish, or stop that process",
+            holder=holder,
+        )
 
 
 async def _what_would_be_destroyed(
@@ -498,7 +570,10 @@ async def _what_would_be_destroyed(
     a corpus in this condition.
     """
     with _refusals_as_wire_errors(supplied={"name": name}):
-        listing = await reporting.status(ctx.store_directory, db, ctx.config, name=name)
+        # Not brought forward: a preview of a removal owes the corpus no migration.
+        listing = await reporting.status(
+            ctx.store_directory, db, ctx.config, name=name, migrate=False
+        )
     (found,) = listing.knowledge_bases
     return ZikaronError(
         ErrorCode.KNOWLEDGE_CONFIRM_REQUIRED,

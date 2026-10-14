@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.knowledge_fixtures import config_for, corpus_root
+from tests.knowledge_fixtures import config_for, corpus_root, stub_spawned
 from zikaron.core.knowledge import candidates, git, lifecycle, lock
 from zikaron.core.knowledge.errors import UnknownKnowledgeBaseError
 from zikaron.core.knowledge.meta import GitMode
@@ -48,7 +48,7 @@ def _no_detached_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     the test then takes, and reaching the machine long after the suite had moved on. The one test
     that wants the command it *would* have started replaces this with a recorder.
     """
-    monkeypatch.setattr(detach, "spawn", lambda *_args, **_keywords: [])
+    monkeypatch.setattr(detach, "spawn", lambda *_args, **_keywords: stub_spawned([]))
 
 
 @pytest.fixture

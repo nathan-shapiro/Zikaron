@@ -122,12 +122,21 @@ async def _widen_event_for_the_access_log(db: aiosqlite.Connection) -> None:
     await _rebuild_event(db, _V3_EVENT)
 
 
+async def _let_corpora_move(_db: aiosqlite.Connection) -> None:
+    """Change nothing here: version 4 says the store's corpus databases may be at schema 4.
+
+    A binary that cannot read those corpora refuses the store whole at this version, rather than
+    opening it and failing on its corpora one at a time (`schema.md` §"When the version moves").
+    """
+
+
 #: Every step this build knows, in the order they run. `store.py` declares
 #: `CURRENT_SCHEMA_VERSION` separately and `test_store.py` asserts it equals the last `to_version`,
 #: so neither can move without the other.
 MIGRATIONS: Final[Sequence[Migration]] = (
     Migration(to_version=2, apply=_widen_event_client_kind),
     Migration(to_version=3, apply=_widen_event_for_the_access_log),
+    Migration(to_version=4, apply=_let_corpora_move),
 )
 
 

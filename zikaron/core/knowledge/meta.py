@@ -57,16 +57,20 @@ LOCK_PID_KEY: Final = "lock_pid"
 LOCK_HOST_KEY: Final = "lock_host"
 LOCK_STARTED_AT_KEY: Final = "lock_started_at"
 
-#: The schema version every table in this build implements, for a knowledge base's own `meta`.
-#: Independent of `memory.db`'s: the two databases have different schemas that move separately,
-#: and tying them together would make a knowledge-index change look like a memory-store one.
-SUPPORTED_SCHEMA_VERSION: Final = 1
+#: The schema version a knowledge base this build creates records in its own `meta`. **A corpus
+#: schema version is the `memory.db` version that introduced its shape**, so the two are one
+#: version line and a corpus is never ahead of its store; it carries its own because it is migrated
+#: on its own terms, when something next opens it (`schema.md` §"When the version moves").
+CURRENT_SCHEMA_VERSION: Final = 4
 
-#: Every version this build opens, which for now is the one above. It exists so that
-#: `schema_incompatible`'s `supported` payload has the same *shape* here as it does for
-#: `memory.db`, which supports a range: one code reporting a bare integer about one database and a
-#: list about the other is one rejection with two payloads.
-SUPPORTED_SCHEMA_VERSIONS: Final[tuple[int, ...]] = (SUPPORTED_SCHEMA_VERSION,)
+#: Every version this build opens — a list, not a range, since a corpus has only the versions its
+#: shape changed at. One below `CURRENT_SCHEMA_VERSION` is served and built as it is unless its
+#: opener may bring it forward (`knowledge-index.md` §7.7.1).
+SUPPORTED_SCHEMA_VERSIONS: Final[tuple[int, ...]] = (1, CURRENT_SCHEMA_VERSION)
+
+#: The first version whose `files` rows record the link each file declares, and whose `meta`
+#: carries the link counters.
+LINKS_SCHEMA_VERSION: Final = 4
 
 #: The configuration key each seeded value comes from, for the four whose bounds are declared
 #: there. `max_file_bytes` is the one whose `meta` name differs from its configuration name,
@@ -98,16 +102,18 @@ class GitMode(StrEnum):
 PROGRESS_KEYS: Final[tuple[str, ...]] = counters.PROGRESS_KEYS
 SKIP_REASON_KEYS: Final[tuple[str, ...]] = counters.SKIP_REASON_KEYS
 
-#: The four a search raises, defined where a search defines them, for the reason the scan's own
-#: counters are: a second list of these names here could disagree with the one a search writes
+#: The counters a search raises, defined where a search defines them, for the reason the scan's
+#: own counters are: a second list of these names here could disagree with the one a search writes
 #: through, and the symptom would be a count nothing reports.
 SEARCH_COUNTER_KEYS: Final[tuple[str, ...]] = counters.SEARCH_COUNTER_KEYS
+LINK_COUNTER_KEYS: Final[tuple[str, ...]] = counters.LINK_COUNTER_KEYS
 
 #: Every counter seeded to zero at creation, in the order `defaults_at_creation` writes them.
 COUNTER_KEYS: Final[tuple[str, ...]] = (
     *PROGRESS_KEYS,
     *SKIP_REASON_KEYS,
     *SEARCH_COUNTER_KEYS,
+    *LINK_COUNTER_KEYS,
 )
 
 #: The identity and configuration keys required on every open, in the order they are validated.
@@ -172,6 +178,13 @@ class KnowledgeMeta:
     rrf_k: int
     fusion_depth: int
     max_file_bytes: int
+
+    @property
+    def stores_links(self) -> bool:
+        """Whether this corpus's `files` rows record each file's link and its `meta` carries the
+        link counters — which decides every read and write of either (`knowledge-index.md`
+        §7.7.1)."""
+        return self.schema_version >= LINKS_SCHEMA_VERSION
 
 
 def _bad_meta(key: str, value: str, expected: str) -> ZikaronError:

@@ -28,6 +28,7 @@ from tests.contention_fixtures import (
     external_writer,
     patch_budget,
 )
+from tests.knowledge_fixtures import stub_spawned
 from tests.served_group_fixtures import CONSOLIDATOR
 from tests.service_fixtures import open_context
 from tests.test_access_log import _ARMS, _answer, _line, _remembered
@@ -51,9 +52,9 @@ def no_real_builds(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _no_spawn(
         name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> list[str]:
+    ) -> detach.Spawned:
         del full, spawned_by_op_id
-        return detach.command(name, project=project, full=False)
+        return stub_spawned(detach.command(name, project=project, full=False))
 
     monkeypatch.setattr(detach, "spawn", _no_spawn)
 

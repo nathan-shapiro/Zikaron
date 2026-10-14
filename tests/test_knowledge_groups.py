@@ -268,8 +268,9 @@ async def _search_all(
                     config,
                     name=name,
                     build=build_settings(config, encoder=using),
+                    migrate=True,
                 )
-        return await groups.search_all(store_dir, db, config, asked, encoder=using)
+        return await groups.search_all(store_dir, db, config, asked, encoder=using, migrate=True)
 
 
 class TestWhichCorporaAnswer:
@@ -399,7 +400,12 @@ class TestWhatAGroupSaysAboutItself:
             )
             encoder = FakeEncoder()
             await lifecycle.refresh(
-                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+                store_dir,
+                db,
+                config,
+                name="docs",
+                build=build_settings(config, encoder=encoder),
+                migrate=True,
             )
             (root / "a.md").unlink()
             root.rmdir()
@@ -409,6 +415,7 @@ class TestWhatAGroupSaysAboutItself:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=encoder,
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -426,7 +433,12 @@ class TestWhatAGroupSaysAboutItself:
             )
             encoder = FakeEncoder()
             await lifecycle.refresh(
-                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+                store_dir,
+                db,
+                config,
+                name="docs",
+                build=build_settings(config, encoder=encoder),
+                migrate=True,
             )
             write_config(tmp_path, '[embedding]\nembed_model = "a-different-model"\n')
             moved = config_for(tmp_path)
@@ -436,6 +448,7 @@ class TestWhatAGroupSaysAboutItself:
                 moved,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=FakeEncoder(model_name="a-different-model"),
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -460,6 +473,7 @@ class TestWhatAGroupSaysAboutItself:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=FakeEncoder(),
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -481,10 +495,17 @@ class TestWhatAGroupSaysAboutItself:
             )
             encoder = FakeEncoder()
             await lifecycle.refresh(
-                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+                store_dir,
+                db,
+                config,
+                name="docs",
+                build=build_settings(config, encoder=encoder),
+                migrate=True,
             )
             registered = await registry.require(db, "docs")
-            async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+            async with await KnowledgeDatabase.open(
+                store_dir, registered.id, migrate=True
+            ) as opened:
                 await opened.connection.execute("DROP TABLE chunks_fts")
                 await opened.connection.commit()
             response = await groups.search_all(
@@ -493,6 +514,7 @@ class TestWhatAGroupSaysAboutItself:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=encoder,
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -512,15 +534,22 @@ class TestWhatAGroupSaysAboutItself:
             )
             encoder = FakeEncoder()
             await lifecycle.refresh(
-                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+                store_dir,
+                db,
+                config,
+                name="docs",
+                build=build_settings(config, encoder=encoder),
+                migrate=True,
             )
             registered = await registry.require(db, "docs")
-            async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+            async with await KnowledgeDatabase.open(
+                store_dir, registered.id, migrate=True
+            ) as opened:
                 await opened.connection.execute("DROP TABLE chunks_vec")
                 await opened.connection.commit()
 
             with pytest.raises(aiosqlite.Error, match="no chunks_vec table"):
-                await KnowledgeDatabase.open(store_dir, registered.id)
+                await KnowledgeDatabase.open(store_dir, registered.id, migrate=True)
 
             response = await groups.search_all(
                 store_dir,
@@ -528,6 +557,7 @@ class TestWhatAGroupSaysAboutItself:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=encoder,
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -548,6 +578,7 @@ class TestWhatAGroupSaysAboutItself:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=5),
                 encoder=FakeEncoder(),
+                migrate=True,
             )
         (group,) = response.groups
         assert isinstance(group, Group)
@@ -581,6 +612,7 @@ class TestEveryNamedCorpusIsInTheAnswer:
                     config,
                     name=name,
                     build=build_settings(config, encoder=encoder),
+                    migrate=True,
                 )
             unbuilt = write_tree(tmp_path / "unbuilt", {"c.md": b"protobuf\n"})
             await add_base(
@@ -596,6 +628,7 @@ class TestEveryNamedCorpusIsInTheAnswer:
                 config,
                 SearchRequest(text=_QUERY, limit_per_kb=20, names=asked),
                 encoder=encoder,
+                migrate=True,
             )
         assert {group.knowledge_base for group in response.groups} == set(asked)
         assert response.groups_dropped is True
@@ -670,7 +703,12 @@ class TestACorpusBeingBuilt:
                 store_dir, db, config, add_request(root, name="docs", git_mode=GitMode.OFF)
             )
             await lifecycle.refresh(
-                store_dir, db, config, name="docs", build=build_settings(config, encoder=encoder)
+                store_dir,
+                db,
+                config,
+                name="docs",
+                build=build_settings(config, encoder=encoder),
+                migrate=True,
             )
             await _pretend_a_build_is_running(store_dir, db, pending_paths=["a.md", "b.md"])
 
@@ -692,7 +730,9 @@ async def _one_group(
     config: EffectiveConfig,
     encoder: FakeEncoder,
 ) -> Group:
-    response = await groups.search_all(store_dir, db, config, _asking(), encoder=encoder)
+    response = await groups.search_all(
+        store_dir, db, config, _asking(), encoder=encoder, migrate=True
+    )
     (group,) = response.groups
     assert isinstance(group, Group)
     return group
@@ -709,7 +749,7 @@ async def _pretend_a_build_is_running(
     before it returns.
     """
     registered = await registry.require(db, "docs")
-    async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+    async with await KnowledgeDatabase.open(store_dir, registered.id, migrate=True) as opened:
 
         async def _work(connection: aiosqlite.Connection) -> None:
             await knowledge_pending.replace_all(connection, pending_paths, noticed_at=_WALKED_AT)
@@ -729,7 +769,7 @@ async def _pretend_a_build_is_running(
 
 async def _dispose_one_pending(store_dir: Path, db: aiosqlite.Connection, path: str) -> None:
     registered = await registry.require(db, "docs")
-    async with await KnowledgeDatabase.open(store_dir, registered.id) as opened:
+    async with await KnowledgeDatabase.open(store_dir, registered.id, migrate=True) as opened:
 
         async def _work(connection: aiosqlite.Connection) -> None:
             await knowledge_pending.dispose(connection, path)
@@ -755,14 +795,24 @@ class TestOneUnreadableCorpusAmongHealthyOnes:
                     store_dir, db, config, add_request(root, name=name, git_mode=GitMode.OFF)
                 )
                 await lifecycle.refresh(
-                    store_dir, db, config, name=name, build=build_settings(config, encoder=encoder)
+                    store_dir,
+                    db,
+                    config,
+                    name=name,
+                    build=build_settings(config, encoder=encoder),
+                    migrate=True,
                 )
             await _erase_the_declared_width(store_dir, db, "broken")
 
             response = await groups.search_all(
-                store_dir, db, config, SearchRequest(text=_QUERY, limit_per_kb=5), encoder=encoder
+                store_dir,
+                db,
+                config,
+                SearchRequest(text=_QUERY, limit_per_kb=5),
+                encoder=encoder,
+                migrate=True,
             )
-            listing = await reporting.list_bases(store_dir, db, config)
+            listing = await reporting.list_bases(store_dir, db, config, migrate=True)
 
         by_name = {group.knowledge_base: group for group in response.groups}
         broken = by_name["broken"]

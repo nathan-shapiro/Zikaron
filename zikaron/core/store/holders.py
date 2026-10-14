@@ -8,10 +8,11 @@ handle behind that handle's lock, and this module is where the lock lives.
 
 **A holder is found by the connection, not passed beside it**, so no signature that takes a bare
 `aiosqlite.Connection` has to change. A handle nobody registered gets a default holder on first use:
-deferred, and left to SQLite's own `busy_timeout`. The two kinds of handle that differ register
-themselves — a `Store`'s writer, which opens every transaction `IMMEDIATE`, and a read-pool
-connection, whose one `IMMEDIATE` transaction is a read's retry. Both run at `busy_timeout = 0`, and
-the primitive polls for the write lock on them itself, until the request's deadline.
+deferred, and left to SQLite's own `busy_timeout`. The kinds of handle that differ register
+themselves. A `Store`'s writer opens every transaction `IMMEDIATE`, and a read-pool connection's
+one `IMMEDIATE` transaction is a read's retry; both run at `busy_timeout = 0`, and the primitive
+polls for the write lock on them itself, until the request's deadline. A build's corpus connection
+opens every transaction `IMMEDIATE` and waits for the write lock under its own `busy_timeout`.
 
 **Every refusal the primitive makes before a statement runs shares `TransactionRefused`**, and none
 is an `aiosqlite.Error`: nothing reached SQLite, so no failure map may read one as the driver's.
@@ -111,14 +112,14 @@ _HOLDERS: Final[weakref.WeakKeyDictionary[aiosqlite.Connection, ConnectionHolder
 )
 
 
-def hold(db: aiosqlite.Connection, *, immediate: bool) -> ConnectionHolder:
-    """Register one of a store's serving connections, with the transaction mode its owner requires.
+def hold(db: aiosqlite.Connection, *, immediate: bool, polls_for_lock: bool) -> ConnectionHolder:
+    """Register a connection with the transaction mode its owner requires.
 
-    Called once, by whoever opened the handle, before any transaction runs on it. The handle must
-    already run at `busy_timeout = 0` (`ddl.SERVING_PRAGMA`), since the primitive polls for its
-    write lock.
+    Called by whoever owns the handle, while no transaction is open on it. A handle that
+    `polls_for_lock` must already run at `busy_timeout = 0` (`ddl.SERVING_PRAGMA`), since the
+    primitive polls for its write lock; any other waits under its own `busy_timeout`.
     """
-    holder = ConnectionHolder(immediate=immediate, polls_for_lock=True)
+    holder = ConnectionHolder(immediate=immediate, polls_for_lock=polls_for_lock)
     _HOLDERS[db] = holder
     return holder
 

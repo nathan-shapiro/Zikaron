@@ -454,7 +454,7 @@ def default_server_command(sock_path: Path, store_dir: Path) -> list[str]:
     `zikaron.service.lifecycle.default_server_command`, restated rather than imported for the same
     reason every other reuse in this module is direct rather than through `lifecycle.py`.
     """
-    return [sys.executable, "-m", "zikaron.service.main", str(sock_path), str(store_dir)]
+    return [sys.executable, "-P", "-m", "zikaron.service.main", str(sock_path), str(store_dir)]
 
 
 def resolve_sock_path(store_dir: Path) -> Path:
