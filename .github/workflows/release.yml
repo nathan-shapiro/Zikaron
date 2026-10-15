@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
 
       - name: Refuse a release whose tag disagrees with the version being published
         # The one failure a human makes here: tagging `v0.2.0` against a tree that still says
