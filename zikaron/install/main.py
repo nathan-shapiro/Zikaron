@@ -25,6 +25,7 @@ from typing import Final
 
 from zikaron.harness.spec import CLAUDE_CODE, Harness
 from zikaron.hook.components import Components
+from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
 from zikaron.install.entries import Commands, HookFormat
 from zikaron.install.harness import InstallError
 from zikaron.install.targets import HarnessTarget, target_for
@@ -60,7 +61,10 @@ _MODULE_INVOCATION: Final = "python -m zikaron.install"
 def _parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
-        description="Install Zikaron's consolidator, consolidation skill, hook and MCP entries.",
+        description=(
+            "Install Zikaron's agents — the consolidator, the documenter and, under Claude Code, "
+            "the code orchestrator — their two skills, and its hook and MCP entries."
+        ),
     )
     parser.add_argument(
         "--project",
@@ -94,8 +98,9 @@ def _parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="the consolidator's model (default: this harness's own, which kiro validates against "
-        "its model list and Claude Code refuses at spawn if unknown)",
+        help="the model of every agent Zikaron ships (default: this harness's own for each agent, "
+        "which kiro validates against its model list and Claude Code refuses at spawn if "
+        "unknown)",
     )
     parser.add_argument(
         "--format",
@@ -196,6 +201,8 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         # would silently substitute this harness's default for it. Found by the test written for the
         # shape check rather than by the shape check itself, which never saw the value.
         model=(target.spec.consolidator_model if options.model is None else options.model),
+        documenter_model=(target.spec.documenter_model if options.model is None else options.model),
+        orchestrator_model=(ORCHESTRATOR_MODEL if options.model is None else options.model),
         hook_format=options.hook_format,
         force=options.force,
         trust_tools=options.trust_tools,
@@ -211,7 +218,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         # install still refuses.
         try:
             target.refuse_absent_harness()
-            target.refuse_unknown_model(plan.model)
+            _refuse_unknown_models(target, plan)
         except InstallError as exc:
             # "refused", not "could not be validated": the two reachable causes read very
             # differently to whoever ran this. Kiro's is a genuinely unreachable harness; the shape
@@ -231,7 +238,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         return report
 
     target.refuse_absent_harness()
-    target.refuse_unknown_model(plan.model)
+    _refuse_unknown_models(target, plan)
     shipped = target.shipped_files(plan)
     _refuse_agent_aliasing_a_shipped_target(agent, shipped)
 
@@ -366,14 +373,22 @@ def _refuse_unoffered_guards(components: Components, target: HarnessTarget) -> N
 
 
 def _refuse_model_without_consolidator(components: Components, model: str | None) -> None:
-    """Refuse `--model` where nothing would use it: the guards ship no consolidator. Refused rather
-    than ignored, as `--agent` is under Claude Code, because ignoring it discards an instruction."""
+    """Refuse `--model` where nothing would use it: the guards ship no agent. Refused rather than
+    ignored, as `--agent` is under Claude Code, because ignoring it discards an instruction."""
     if model is None or components.memory:
         return
     raise InstallError(
-        f"--model names the consolidator's model, and --components {components.value} ships no "
-        "consolidator. Drop --model, or install --components both."
+        f"--model names the model of every agent Zikaron ships, and --components "
+        f"{components.value} ships none. Drop --model, or install --components both."
     )
+
+
+def _refuse_unknown_models(target: HarnessTarget, plan: Plan) -> None:
+    """Refuse either model both harnesses ship, each checked once: kiro's check runs `kiro-cli`.
+    The orchestrator's is `--model`, checked here as `model`, or `ORCHESTRATOR_MODEL`, which is not
+    passed: kiro, whose check would refuse that alias, ships no orchestrator."""
+    for model in dict.fromkeys((plan.model, plan.documenter_model)):
+        target.refuse_unknown_model(model)
 
 
 def _refuse_missing_commands(commands: Commands, components: Components) -> None:
@@ -396,6 +411,8 @@ def _print_report(report: Report) -> None:
         print(f"replaced  {path}")
     for path in report.merged:
         print(f"merged    {path}")
+    for path in report.current:
+        print(f"kept      {path} (already carries this install's entries)")
     for path in report.backed_up:
         print(f"backed up {path}")
     for path in report.skipped:

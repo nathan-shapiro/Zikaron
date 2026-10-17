@@ -126,6 +126,16 @@ def resolve(explicit: Path | None) -> Project:
     return Project(Path.cwd(), WORKING_DIRECTORY)
 
 
+def initialize_command(prog: str) -> str:
+    """How this reader reaches `init`, given how they reached the command refusing them.
+
+    A console script is on `PATH` only when one was installed; `uv tool install` provides it and a
+    source tree run through `python -m` does not. Naming the wrong one is a command that fails for
+    somebody already stuck.
+    """
+    return MODULE_INITIALIZE if prog.startswith("python -m") else CONSOLE_INITIALIZE
+
+
 def nearest_store_above(directory: Path) -> Path | None:
     """The closest ancestor holding a store, for a refusal to name. Binds nothing.
 

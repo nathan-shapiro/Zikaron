@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from zikaron.hook.limits import TIMEOUT_MS
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
@@ -44,7 +45,7 @@ def merge_agent_config(path: Path, plan: Plan, report: Report) -> None:
 
 
 def write_kiro_files(plan: Plan, report: Report) -> None:
-    """Kiro's two shipped files, through the same target the installer uses.
+    """Kiro's shipped files, through the same target the installer uses.
 
     The content is asked of the target rather than restated, so these tests keep asserting about
     what an install actually writes rather than about a fixture that happens to resemble it.
@@ -53,6 +54,13 @@ def write_kiro_files(plan: Plan, report: Report) -> None:
 
 
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
+
+#: The agents the install adds to a populated crew, and the skills it declares, in its order.
+_OURS = (CONSOLIDATOR_AGENT_NAME, DOCUMENTER_AGENT_NAME)
+_SKILLS = (
+    "skill://.kiro/skills/zikaron-consolidate/SKILL.md",
+    "skill://.kiro/skills/zikaron-document-code/SKILL.md",
+)
 _OTHER_COMMANDS = Commands(
     hook=Path("/elsewhere/bin/zikaron-hook"), mcp=Path("/elsewhere/bin/zikaron-mcp")
 )
@@ -69,6 +77,8 @@ def _plan(
         project=project,
         commands=_COMMANDS,
         model="a-model",
+        documenter_model="a-model",
+        orchestrator_model="a-model",
         hook_format=fmt,
         force=force,
         trust_tools=trust_tools,
@@ -81,13 +91,18 @@ def _write_agent(path: Path, document: dict[str, object]) -> None:
 
 
 class TestWritingTheShippedFiles:
-    def test_it_creates_both_files_and_their_directories(self, tmp_path: Path) -> None:
+    def test_it_creates_every_file_and_its_directories(self, tmp_path: Path) -> None:
         report = Report()
         write_kiro_files(_plan(tmp_path), report)
         targets = Targets(project=tmp_path)
-        assert targets.consolidator_config.is_file()
-        assert targets.skill_file.is_file()
-        assert set(report.created) == {targets.consolidator_config, targets.skill_file}
+        shipped = {
+            targets.consolidator_config,
+            targets.skill_file,
+            targets.documenter_config,
+            targets.document_skill_file,
+        }
+        assert all(path.is_file() for path in shipped)
+        assert set(report.created) == shipped
 
     def test_the_written_config_is_json_carrying_the_planned_model(self, tmp_path: Path) -> None:
         write_kiro_files(_plan(tmp_path), Report())
@@ -101,7 +116,12 @@ class TestWritingTheShippedFiles:
         write_kiro_files(_plan(tmp_path), Report())
         report = Report()
         write_kiro_files(_plan(tmp_path), report)
-        assert report.skipped == [targets.consolidator_config, targets.skill_file]
+        assert report.skipped == [
+            targets.consolidator_config,
+            targets.skill_file,
+            targets.documenter_config,
+            targets.document_skill_file,
+        ]
         assert report.replaced == []
 
     def test_a_hand_edited_file_is_backed_up_and_refreshed(self, tmp_path: Path) -> None:
@@ -340,10 +360,11 @@ class TestTheConsolidatorIsAddedToTheCrew:
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert crew["availableAgents"] == ["helper-a", "helper-b", CONSOLIDATOR_AGENT_NAME]
+        assert crew["availableAgents"] == ["helper-a", "helper-b", *_OURS]
         assert crew["trustedAgents"] == ["helper-a"], "spawn trust is a separate grant, not ours"
-        assert any("availableAgents" in note for note in report.notes)
-        assert any("ask your permission once" in note for note in report.notes)
+        for agent in _OURS:
+            assert any(agent in note and "availableAgents" in note for note in report.notes)
+            assert any(agent in note and "trustedAgents" in note for note in report.notes)
 
     def test_an_absent_available_list_is_left_alone_rather_than_narrowed(
         self, tmp_path: Path
@@ -383,7 +404,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path), Report())
         settings = json.loads(config.read_text())["toolsSettings"]
         assert "crew" not in settings
-        assert settings["agent_crew"]["availableAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
+        assert settings["agent_crew"]["availableAgents"] == ["helper-a", *_OURS]
 
     def test_other_tools_settings_survive(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
@@ -409,7 +430,18 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path), Report())
         merge_agent_config(config, _plan(tmp_path), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert crew["availableAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
+        assert crew["availableAgents"] == ["helper-a", *_OURS]
+
+    def test_an_agent_already_listed_is_not_added_again(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        crew = {"availableAgents": ["helper-a", CONSOLIDATOR_AGENT_NAME]}
+        _write_agent(config, {"name": "mine", "toolsSettings": {"crew": crew}})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        merged = json.loads(config.read_text())["toolsSettings"]["crew"]
+        assert merged["availableAgents"] == ["helper-a", *_OURS]
+        added = [note for note in report.notes if note.startswith("Added `zikaron-")]
+        assert added == [next(note for note in added if DOCUMENTER_AGENT_NAME in note)]
 
     def test_an_existing_trusted_agents_list_is_never_touched(self, tmp_path: Path) -> None:
         """Spawn trust is a wider grant than Zikaron's tools — its own model invocation and four
@@ -428,7 +460,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         merge_agent_config(config, _plan(tmp_path, force=True), report)
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["trustedAgents"] == ["a"]
-        assert any("ask your permission once" in note for note in report.notes)
+        assert any("will ask your permission" in note for note in report.notes)
 
     def test_the_alias_with_no_available_list_is_left_alone_and_named_in_the_note(
         self, tmp_path: Path
@@ -465,7 +497,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         )
         merge_agent_config(config, _plan(tmp_path, trust_tools=False), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert crew["availableAgents"] == ["helper-a", CONSOLIDATOR_AGENT_NAME]
+        assert crew["availableAgents"] == ["helper-a", *_OURS]
         assert "trustedAgents" not in crew
 
 
@@ -486,10 +518,8 @@ class TestTheSkillIsAlwaysDeclared:
         _write_agent(config, {"name": "mine"})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert json.loads(config.read_text())["resources"] == [
-            "skill://.kiro/skills/zikaron-consolidate/SKILL.md"
-        ]
-        assert any("reachable whether or not" in note for note in report.notes)
+        assert json.loads(config.read_text())["resources"] == list(_SKILLS)
+        assert sum("reachable whether or not" in note for note in report.notes) == len(_SKILLS)
 
     def test_a_glob_that_already_covers_the_skill_is_not_duplicated(self, tmp_path: Path) -> None:
         """The common case in this repo's own configs: a `**` glob over every workspace skill."""
@@ -504,20 +534,21 @@ class TestTheSkillIsAlwaysDeclared:
         _write_agent(config, {"name": "mine", "resources": ["file://NOTES.md"]})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert json.loads(config.read_text())["resources"] == [
-            "file://NOTES.md",
-            "skill://.kiro/skills/zikaron-consolidate/SKILL.md",
-        ]
+        assert json.loads(config.read_text())["resources"] == ["file://NOTES.md", *_SKILLS]
         assert any("`resources`" in note for note in report.notes)
+
+    def test_a_skill_already_declared_is_not_declared_again(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "resources": [_SKILLS[1]]})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["resources"] == [_SKILLS[1], _SKILLS[0]]
 
     def test_a_second_install_does_not_add_it_twice(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine", "resources": []})
         merge_agent_config(config, _plan(tmp_path), Report())
         merge_agent_config(config, _plan(tmp_path), Report())
-        assert json.loads(config.read_text())["resources"] == [
-            "skill://.kiro/skills/zikaron-consolidate/SKILL.md"
-        ]
+        assert json.loads(config.read_text())["resources"] == list(_SKILLS)
 
     def test_a_resources_value_that_is_not_an_array_is_refused(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
@@ -770,11 +801,26 @@ class TestTheBackup:
         _write_agent(config, {"name": "mine"})
         original = config.read_text()
         merge_agent_config(config, _plan(tmp_path), Report())
+        merged = json.loads(config.read_text())
+        del merged["mcpServers"]
+        _write_agent(config, merged)
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
         assert (tmp_path / "mine.json.bak").read_text() == original
         assert report.backed_up == []
         assert any("left as it was" in note for note in report.notes)
+
+    def test_a_merge_that_changes_nothing_backs_up_and_writes_nothing(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine"})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        (tmp_path / "mine.json.bak").unlink()
+        inode, content = config.stat().st_ino, config.read_bytes()
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert (config.stat().st_ino, config.read_bytes()) == (inode, content)
+        assert not (tmp_path / "mine.json.bak").exists()
+        assert (report.current, report.merged, report.backed_up) == ([config], [], [])
 
 
 class TestAStaleShippedConfigIsCorrectedRatherThanKept:
@@ -1300,3 +1346,33 @@ class TestTheSubagentToolNote:
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
         assert not any(self.CLAUSE in note for note in report.notes)
+
+
+class TestTheShellToolNote:
+    """The code documentation skill runs its planner as a shell command."""
+
+    CLAUSE = "does not list the `shell` tool"
+
+    def test_it_says_so_when_the_tool_is_missing(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "tools": ["read", "subagent"]})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert any(self.CLAUSE in note for note in report.notes)
+
+    def test_it_stays_quiet_when_the_tool_is_there(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "tools": ["read", "subagent", "shell"]})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert not any(self.CLAUSE in note for note in report.notes)
+
+
+def test_an_agent_already_trusted_gets_no_trust_note(tmp_path: Path) -> None:
+    config = tmp_path / "mine.json"
+    crew = {"availableAgents": ["a"], "trustedAgents": [DOCUMENTER_AGENT_NAME]}
+    _write_agent(config, {"name": "mine", "toolsSettings": {"crew": crew}})
+    report = Report()
+    merge_agent_config(config, _plan(tmp_path), report)
+    trust_notes = [note for note in report.notes if "trustedAgents" in note]
+    assert [CONSOLIDATOR_AGENT_NAME in note for note in trust_notes] == [True]

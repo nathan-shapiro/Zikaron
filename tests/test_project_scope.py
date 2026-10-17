@@ -16,7 +16,6 @@ import pytest
 
 from zikaron.core.errors import BadConfigSource, ErrorCode, ZikaronError
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
-from zikaron.knowledge.main import _initialize_command
 from zikaron.knowledge.main import main as knowledge
 from zikaron.project import initialize as initialize_module
 from zikaron.project.initialize import main as initialize
@@ -26,6 +25,7 @@ from zikaron.project.resolve import (
     MODULE_INITIALIZE,
     WORKING_DIRECTORY,
     Project,
+    initialize_command,
     nearest_store_above,
     refusal,
     resolve,
@@ -339,10 +339,10 @@ class TestWhichInitializeCommandIsSuggested:
     """
 
     def test_the_console_form_is_suggested_to_a_console_caller(self) -> None:
-        assert _initialize_command("zikaron knowledge") == CONSOLE_INITIALIZE
+        assert initialize_command("zikaron knowledge") == CONSOLE_INITIALIZE
 
     def test_the_module_form_is_suggested_to_a_module_caller(self) -> None:
-        assert _initialize_command("python -m zikaron.knowledge") == MODULE_INITIALIZE
+        assert initialize_command("python -m zikaron.knowledge") == MODULE_INITIALIZE
 
 
 class TestTheCommandsThemselves:

@@ -5,8 +5,8 @@ different value.
 thin clients — a harness difference is data in `zikaron.harness.spec`, because forking doubles every
 future change to the two components the design keeps deliberately thin. The installer cannot be
 written that way, and the reason is structural rather than a concession: kiro's artefacts are
-**one** file whose path the *user* supplies, and Claude Code's are **four** files at paths the
-*project* fixes. That is not two values of one parameter.
+**one** file whose path the *user* supplies, and Claude Code's are files at paths the *project*
+fixes. That is not two values of one parameter.
 
 **The split this module has to keep honest.** A *value* that differs (a session variable, a trigger
 name, an injection budget, the consolidator's model default) is a `HarnessSpec` field with a row in
@@ -38,6 +38,20 @@ from zikaron.install.assets import (
     identity_vocabulary,
     skill_markdown,
 )
+from zikaron.install.code_knowledge import (
+    CLAUDE_CODE_PLANNER_COMMAND,
+    DOCUMENT_SKILL_NAME,
+    DOCUMENTER_AGENT_NAME,
+    KIRO_PLANNER_COMMAND,
+    ORCHESTRATOR_AGENT_NAME,
+    document_code_skill,
+)
+from zikaron.install.code_knowledge import (
+    CLAUDE_CODE_SPAWN_INSTRUCTION as CLAUDE_CODE_DOCUMENTER_SPAWN,
+)
+from zikaron.install.code_knowledge import (
+    KIRO_SPAWN_INSTRUCTION as KIRO_DOCUMENTER_SPAWN,
+)
 from zikaron.install.entries import (
     CLAUDE_START_TRIGGERS,
     CONSOLIDATOR_AGENT_NAME,
@@ -50,8 +64,11 @@ from zikaron.install.entries import (
     claude_tool_vocabulary,
     consolidator_agent_config,
     consolidator_agent_markdown,
+    documenter_agent_config,
+    documenter_agent_markdown,
     hooks_value,
     mcp_servers_value,
+    orchestrator_agent_markdown,
 )
 from zikaron.install.harness import InstallError
 from zikaron.install.ownership import ANOTHER_INSTALL, merged_server, refuse_conflicting
@@ -272,7 +289,7 @@ class HarnessTarget(ABC):
 
 
 class KiroTarget(HarnessTarget):
-    """kiro-cli: two shipped files under `.kiro/`, and one merge into a user-named agent config.
+    """kiro-cli: shipped files under `.kiro/`, and one merge into a user-named agent config.
 
     Byte-for-byte what kiro already shipped, asserted by a regression guard rather than hoped for:
     the risk in generalising the writer is that it quietly changes a working harness's output, and
@@ -296,6 +313,23 @@ class KiroTarget(HarnessTarget):
                 targets.skill_file,
                 skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION),
             ),
+            ShippedFile(
+                targets.documenter_config,
+                json.dumps(
+                    documenter_agent_config(plan.commands, model=plan.documenter_model),
+                    indent=_JSON_INDENT,
+                )
+                + "\n",
+            ),
+            ShippedFile(
+                targets.document_skill_file,
+                document_code_skill(
+                    identity_vocabulary(),
+                    spawn_instruction=KIRO_DOCUMENTER_SPAWN,
+                    planner_command=KIRO_PLANNER_COMMAND,
+                    fork_agent=None,
+                ),
+            ),
         )
 
     def plan_merges(self, plan: Plan, agent: Path | None) -> tuple[MergePlan, ...]:
@@ -315,8 +349,9 @@ class KiroTarget(HarnessTarget):
             f"`{TOOL_SELECTOR}` must be in that agent's `tools`, or Zikaron's tools are simply "
             "absent — `mcpServers` configures the server and `tools` selects from it. Put it in "
             "`allowedTools` as well, or every Zikaron tool call will interrupt you for approval.",
-            "The agent also needs `subagent` among its `tools` for the zikaron-consolidate skill "
-            "to spawn the consolidator.",
+            f"The agent also needs `subagent` among its `tools` for the {SKILL_NAME} and "
+            f"{DOCUMENT_SKILL_NAME} skills to spawn their agents, and `shell` for "
+            f"{DOCUMENT_SKILL_NAME} to run its planner.",
         ]
         if plan.hook_format is HookFormat.ARRAY:
             caveats.append(ARRAY_FORMAT_OUTPUT_CAP_NOTE)
@@ -364,7 +399,8 @@ class KiroTarget(HarnessTarget):
 
 
 class ClaudeCodeTarget(HarnessTarget):
-    """Claude Code: two shipped Markdown/JSON artefacts, and two merges into fixed project files."""
+    """Claude Code: the shipped Markdown artefacts — three agents and two skills — and two merges
+    into fixed project files."""
 
     spec = CLAUDE_CODE
 
@@ -386,7 +422,8 @@ class ClaudeCodeTarget(HarnessTarget):
         return claude_mcp_config(project)
 
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
-        """The consolidator and its skill, which only the memory store ships."""
+        """The consolidator, the documenter, the code orchestrator the documentation skill forks
+        to, and the two skills, which only the memory store ships."""
         if not plan.components.memory:
             return ()
         project = plan.project
@@ -398,6 +435,23 @@ class ClaudeCodeTarget(HarnessTarget):
             ShippedFile(
                 project / ".claude" / "skills" / SKILL_NAME / "SKILL.md",
                 skill_markdown(claude_tool_vocabulary(), CLAUDE_CODE_SPAWN_INSTRUCTION),
+            ),
+            ShippedFile(
+                project / ".claude" / "agents" / f"{DOCUMENTER_AGENT_NAME}.md",
+                documenter_agent_markdown(model=plan.documenter_model),
+            ),
+            ShippedFile(
+                project / ".claude" / "agents" / f"{ORCHESTRATOR_AGENT_NAME}.md",
+                orchestrator_agent_markdown(model=plan.orchestrator_model),
+            ),
+            ShippedFile(
+                project / ".claude" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md",
+                document_code_skill(
+                    claude_tool_vocabulary(),
+                    spawn_instruction=CLAUDE_CODE_DOCUMENTER_SPAWN,
+                    planner_command=CLAUDE_CODE_PLANNER_COMMAND,
+                    fork_agent=ORCHESTRATOR_AGENT_NAME,
+                ),
             ),
         )
 
@@ -451,7 +505,9 @@ class ClaudeCodeTarget(HarnessTarget):
         notes: list[str] = _rewritten_hook_notes(by_trigger, ours, plan=plan)
         if plan.components.memory:
             notes.extend(_merge_approvals(document, merged, plan=plan, path=path))
-        return MergePlan(path=path, document=merged, notes=tuple(notes))
+        return MergePlan(
+            path=path, document=merged, notes=tuple(notes), unchanged=merged == document
+        )
 
     def _plan_mcp(self, plan: Plan) -> MergePlan:
         """Both servers into `.mcp.json`, **merged per key** rather than replaced.
@@ -490,7 +546,9 @@ class ClaudeCodeTarget(HarnessTarget):
             notes.extend(entry_notes)
         merged = dict(document)
         merged["mcpServers"] = merged_servers
-        return MergePlan(path=path, document=merged, notes=tuple(notes))
+        return MergePlan(
+            path=path, document=merged, notes=tuple(notes), unchanged=merged == document
+        )
 
     def fragment(self, plan: Plan) -> str:
         # Built with this run's own flags rather than with the defaults, so the preview is a preview
@@ -558,7 +616,7 @@ class ClaudeCodeTarget(HarnessTarget):
         if _MODEL_ID.fullmatch(model) is not None:
             return
         raise InstallError(
-            f"{model!r} cannot be written into YAML frontmatter as given. The consolidator's "
+            f"{model!r} cannot be written into YAML frontmatter as given. An agent's "
             "`model:` must be a plain id or alias — letters, digits, dots, hyphens, underscores — "
             "because a value carrying a colon or a newline would silently change what that file "
             "means rather than fail."

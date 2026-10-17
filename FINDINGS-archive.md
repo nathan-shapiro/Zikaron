@@ -4062,6 +4062,17 @@ of this file) and it is worth re-running whenever either directory grows.
 | `research/m39-linked-corpus-observation.md` | a real linked corpus built by the real service and searched over MCP, every `source.state` as §7.7 says; the spawn dedup and the version check seen live |
 | `research/m39-manual-integration.md` | linked documents through real `claude -p` turns, indexed once by the CLI and once by the agent itself: `changed` sent the agent to the code 2 of 2, `fresh` let it stop at the document 1 of 2 |
 | `reviews/m39-linked-knowledge-review.md` | the M39 build's trail: memory-reviewer's `source` paragraph for the search description, fitted under its cap, then the build review rounds |
+| `research/nested-subagent-probe.md` | for M40: a Claude Code subagent granted `Agent` spawns subagents, a kiro-cli one has its `subagent` tool stripped — so the skill's own session orchestrates |
+| `research/generated-repo-docs-prior-art.md` | for M40: systems that generate repository documentation, and the evidence on whether it helps an agent — Gloaguen et al. (arXiv 2602.11988; generated context files −0.5 to −2 pts, cost +20%), Caumartin et al. (summaries vs raw code), Meta-RAG, RepoAgent, DocAgent; no controlled end-task measurement of the M40 pattern exists |
+| `research/code-localization-benchmarks.md` | for M40: localization benchmarks and why none fits (large, unmemorized, feature-shaped at once); SchrodingerRepo (arXiv 2609.27891: layout memorization survives post-cutoff tasks); the only controlled index-vs-ripgrep run, +8.1 pts acc@5 at p=0.080; an own-task-set recipe from merged PRs; the sample-size table |
+| `research/m40-eval-repository-candidates.md` | for M40's larger stage: Opus 4.6's cutoffs (training data August 2025, retirement not before 2027-02-05) and five repositories first public after it with merged-PR histories — Macro, Warp, OpenClaw, IronClaw, Buzz — with file counts from treeless clones |
+| `reviews/m40-code-knowledge-brief-review.md` | the M40 brief and `design/code-knowledge.md`, reviewed to APPROVED: the batched skill loop, the planner's classes and removals, the kiro merge, the hook exemption, and the evaluation's controls; then the evaluation rewritten as issue triage on Warp, with `experiments/m40_eval.py`'s probe stage and the documenter's dependency and partial-document rules, to APPROVED again |
+| `research/kiro-autonomous-agent.md` | what AWS publishes on the Kiro autonomous agent: memory kept as commands, conventions, corrections and ruled-out approaches at user, workspace and repository scope, its internals unpublished; a verification agent; one vendor case study, no control arm |
+| `reviews/m40-code-knowledge-build-review.md` | the M40 build's trail: memory-reviewer's wording of the documenter prompt, then the build review rounds to APPROVED |
+| `research/claude-code-background-subagents.md` | for M40's amendment, documentation only (Claude Code docs citing 2.1.301): a background subagent's permission prompts surface in the main session, and are denied in `-p` with no host; a `-p` run waits for background work up to a 10-minute idle ceiling (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` lifts it), but there a launcher does not wait for its own nested background subagents; `background: true` forces background; `Agent(type)` is ignored in a subagent's `tools:`; `Write(path)` rules are never consulted, `Edit(path)` ones are; §Q8 documents a skill's `context: fork` with `agent:` as running the skill in a background subagent |
+| `research/forked-skill-probe.md` | for M40's amendment, measured headless on Claude Code 2.1.292: a `context: fork` skill runs in its own context with exactly its `agent:`'s `tools:`, receives `$ARGUMENTS`, and spawns a subagent in the foreground and uses its answer; and the shipped skill end to end headless, `up_to_date` in 39 s over a three-file package, every subagent handed the write policy; and interactively in the playground — the session free, 45 s, no prompt under auto mode, every report through the handback — with the session's knowledge queries |
+| `research/m40-toy-run.md` | M40's toy run on LeibaTrader's `sugar-leiba`, in place: 198 documents in 23 min 20 s and a 1 min 47 s build, every item on its first attempt; Claude Code's limit of 20 concurrent subagents and its start-on-message-complete spawn latency; tokens by field, the orchestrator's context at about 2,000 tokens a document, all of it harness framing; no memory written; `leiba-engineer`'s identifier-heavy queries |
+| `research/m40-eval-sonnet5-issue-sets.md` | for the evaluation's larger stage as an issue-triage test: Opus 4.5/4.6, Sonnet 4.6/5/5.5 cutoffs and retirement floors (Sonnet 4.6's sources disagree), the five candidates screened against each, Warp's ~230 qualifying issue→PR pairs and why no 150–500-file module catches most fixes, and the confounds — bot diagnoses, cause-stating bodies, flag-promotion fixes |
 
 ## M25, and the last three pre-knowledge-index milestones (moved out of FINDINGS 2026-09-20)
 
@@ -7272,3 +7283,38 @@ running §9.6's darwin premise; the worktree was removed and the branch deleted;
 re-run with `--components both` in all three projects (2026-10-11), each now routing
 `Bash|Monitor` to the guard; and `v0.3.2` was released on `e7b91c4` and published to PyPI by
 `release.yml` (2026-10-12).
+
+## M39 as built (moved out of FINDINGS 2026-10-13, once it landed as `4f60a15`)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
+
+1. **M39 — linked knowledge, under way** (operator, 2026-10-13: *"start working on M39"*). Built
+   in the worktree **`/home/nathan/Zikaron-m39`, branch `m39-linked-knowledge`, whose `FINDINGS.md`
+   is the live one**: `~/Trading/LeibaTrader` runs `/home/nathan/Zikaron`'s tree and M39 bumps the
+   store's schema. The main tree's uncommitted changes were carried into the worktree byte for byte
+   on 2026-10-13 and are frozen there; once M39 merges they are a subset of its commit. The steps:
+   1. **Brief — APPROVED** (`reviews/m39-linked-knowledge-brief-review.md`): K14 in
+      `design/knowledge-index.md` §7.7–§7.7.1, the version amendments, and §M39 in
+      `design/build-plan.md`. Its "Invariants and properties to cover" list is the test plan.
+   2. **Build — done, uncommitted, review APPROVED** (`reviews/m39-linked-knowledge-review.md`):
+      every item of §M39's "What ships", item 13's `-P` included (operator, 2026-10-13); every new
+      test seen red against its mutation; every line the build adds under `zikaron/` executed by a
+      test. The migration bar is met (`research/m39-migration-bar.md`) and done-when 2 is observed
+      (`research/m39-linked-corpus-observation.md`).
+   3. **Closed**: `./check.sh` and `./check-matrix.sh --parallel` green on one tree (2026-10-13),
+      and **the pull request is open** against `main` from `m39-linked-knowledge` (operator,
+      2026-10-13; `gh pr list --head m39-linked-knowledge` names it). The operator merges.
+
+   **What the operator will see once M39 merges into `/home/nathan/Zikaron`**: every typed command
+   in `~/Trading/LeibaTrader` refuses its still-running service, whose `health()` carries no
+   `version`, until that service is restarted; until then an MCP `refresh` there can still spawn a
+   second build. The restart ends both and migrates the store to version 4 — and every agent session
+   open across it loses its memory and knowledge tools at its next reconnect, refused
+   `schema_incompatible` by its own old `zikaron-mcp`, until that session restarts its MCP server.
+
+**How it closed.** PR #26 merged as `4f60a15`, its tree byte-identical to the PR's head `7fd4768`,
+with the PR's CI green; `pyproject.toml` carries `0.4.0.dev0`. The main tree's uncommitted copies,
+each verified contained in `4f60a15`, were backed up and replaced by the merged content, and the
+tree fast-forwarded; the editable install was re-run; the worktree was removed and the branch
+deleted (2026-10-13). No service was running at the time; the open sessions in
+`~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory` were left to restart their MCP servers.

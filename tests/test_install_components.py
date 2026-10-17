@@ -339,11 +339,12 @@ def test_model_is_refused_under_guards_and_accepted_under_both(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _install(project, "--components", "guards", "--model", "opus") == 1
-    assert "ships no consolidator" in capsys.readouterr().err
+    assert "ships none" in capsys.readouterr().err
     assert _tree(project) == {}
     assert _install(project, "--components", "both", "--model", "opus") == 0
-    consolidator = project / ".claude" / "agents" / "zikaron-consolidator.md"
-    assert "model: opus" in consolidator.read_text(encoding="utf-8")
+    for agent in ("zikaron-consolidator", "zikaron-documenter", "zikaron-code-orchestrator"):
+        definition = project / ".claude" / "agents" / f"{agent}.md"
+        assert "model: opus" in definition.read_text(encoding="utf-8")
 
 
 def test_no_trust_tools_is_a_no_op_under_guards(tmp_path: Path) -> None:

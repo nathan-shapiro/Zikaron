@@ -107,8 +107,8 @@ def _lines(text: str) -> Iterator[tuple[str, bool]]:
         start = newline + 1
 
 
-def _key_and_value(line: str) -> tuple[str, str] | None:
-    """A line's key and value, or `None` for a line with no `:` in it."""
+def key_and_value(line: str) -> tuple[str, str] | None:
+    """A front-matter line's key and value by §7.7's grammar, or `None` for a line with no `:`."""
     key, colon, value = line.partition(":")
     if not colon:
         return None
@@ -153,7 +153,7 @@ def read_link(text: str) -> DeclaredLink | None:
             if not paths and not blobs:
                 return None
             return _well_formed(paths, blobs)
-        parsed = _key_and_value(line)
+        parsed = key_and_value(line)
         if parsed is None:
             continue
         key, value = parsed

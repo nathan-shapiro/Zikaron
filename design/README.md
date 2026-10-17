@@ -26,7 +26,7 @@ is to track a count.)*
 | `build-plan.md` | **Per-milestone briefs**: scope, the normative sections each is built against, the invariants it must cover, its done-when list, and an explicit scope fence |
 | `coding-standards.md` | **Binding.** Structure, the domain model, typing, the five test tiers, invariant tests, comment rules, dependency rules, bulk-edit rules, the check gate |
 | `evaluation.md` | **Proposal, not normative.** The product claim decomposed into six links, three arms with the cheap one first, why resolve rate is probably the wrong dependent variable, what the benchmark literature returned, and the sample-size arithmetic |
-| `code-knowledge.md` | **Proposal, not normative.** Agents that write per-source-file documentation into a knowledge base: the proposed D39, and what M40's brainstorm must settle. K14, which lets a search say whether a result's source has moved since it was documented, is specified in `knowledge-index.md` §7.7 |
+| `code-knowledge.md` | **Normative for D39.** The producer of per-source-file documentation: the planner command and what it classifies, removes and moves, the document format, the documenter and the skill, installation, navigation, the evaluation, known gaps. K14, which lets a search say whether a result's source has moved since it was documented, is specified in `knowledge-index.md` §7.7 |
 
 Evidence lives elsewhere: measured results in `research/`, review rounds in `reviews/`, re-runnable
 harnesses in `experiments/`. This corpus has been through sixteen independent review rounds —

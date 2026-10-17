@@ -125,6 +125,8 @@ class HarnessSpec(NamedTuple):
     injection_budget: int
     budget_unit: BudgetUnit
     consolidator_model: str
+    #: The code documenter's default model.
+    documenter_model: str
     harness_binary: str
     #: The variable naming the directory this harness considers "the project", or `None` where the
     #: harness exports none. Read by `store_scope_dir` below; see its docstring for why.
@@ -141,6 +143,11 @@ class HarnessSpec(NamedTuple):
     #: The guards' triggers and matchers, or `None` where the guards are not offered — which is
     #: what the installer's refusal of them reads.
     guards: Guards | None
+    #: The documenter's whole grant: reading, searching and writing files, spelled as this harness
+    #: names its own tools. The only place either harness's file tools are named, so the
+    #: documenter's prompt can say *read* and *write* and stay true on both
+    #: (`design/code-knowledge.md` §5.4).
+    file_tools: tuple[str, ...]
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -259,6 +266,7 @@ KIRO: Final = HarnessSpec(
     # id it does not recognise, *silently*, so the installer validates membership against
     # `chat --list-models` — a check an alias would fail, since that command lists ids.
     consolidator_model="claude-sonnet-5",
+    documenter_model="claude-sonnet-5",
     harness_binary="kiro-cli",
     # Measured, not assumed: the lifecycle probe captured every `KIRO_*` variable across 42
     # records and none names a workspace or project directory.
@@ -269,6 +277,7 @@ KIRO: Final = HarnessSpec(
     consolidator_can_read_files=False,
     # Not offered: this harness's `postToolUse` has no documented path to the model.
     guards=None,
+    file_tools=("read", "grep", "glob", "write"),
 )
 
 #: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
@@ -293,6 +302,7 @@ CLAUDE_CODE: Final = HarnessSpec(
     # instead: an install a year from now would ship last year's id, and once that id retires the
     # consolidator fails at spawn. Experiments pin; the shipped default does not have to.
     consolidator_model="sonnet",
+    documenter_model="haiku",
     harness_binary="claude",
     project_dir_variable="CLAUDE_PROJECT_DIR",
     # Measured: an over-large result is replaced wholesale by an error notice, and the harness's
@@ -303,6 +313,7 @@ CLAUDE_CODE: Final = HarnessSpec(
         command=GuardHook(trigger="PreToolUse", matcher="Bash|Monitor"),
         reread=GuardHook(trigger="PostToolUse", matcher="Edit|MultiEdit|NotebookEdit|Write"),
     ),
+    file_tools=("Read", "Grep", "Glob", "Write", "Edit"),
 )
 
 SPECS: Final[dict[Harness, HarnessSpec]] = {

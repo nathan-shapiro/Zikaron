@@ -33,8 +33,9 @@ from zikaron.knowledge.client import (
     connected,
     relative_to_shell,
 )
-from zikaron.project.report import execute, render, stderr
-from zikaron.project.resolve import CONSOLE_INITIALIZE, MODULE_INITIALIZE, refusal, resolve
+from zikaron.project.messages import render, stderr
+from zikaron.project.report import execute
+from zikaron.project.resolve import initialize_command, refusal, resolve
 
 _UNSET = "—"
 
@@ -187,19 +188,9 @@ def main(argv: Sequence[str] | None = None, *, prog: str = _MODULE_INVOCATION) -
     if not args.project_scope.has_store:
         # Before the connection rather than after a failure from it, because the service creates a
         # store wherever it is pointed: reaching it at all is what makes the second store.
-        stderr(refusal(args.project_scope, initialize=_initialize_command(prog)))
+        stderr(refusal(args.project_scope, initialize=initialize_command(prog)))
         return 1
     return execute(lambda: _run(args))
-
-
-def _initialize_command(prog: str) -> str:
-    """How this reader reaches `init`, given how they reached this command.
-
-    A console script is on `PATH` only when one was installed; `uv tool install` provides it and a
-    source tree run through `python -m` does not. Naming the wrong one is a command that fails for
-    somebody already stuck.
-    """
-    return MODULE_INITIALIZE if prog.startswith("python -m") else CONSOLE_INITIALIZE
 
 
 async def _run(args: argparse.Namespace) -> int:

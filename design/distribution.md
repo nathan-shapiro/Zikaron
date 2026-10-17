@@ -133,7 +133,8 @@ load-bearing, since a distribution build loads the system `libsqlite3.so` and so
 
 ### The front door
 
-**One `zikaron` console script, with `init`, `install`, `knowledge` and `doctor`.** Before M30
+**One `zikaron` console script, with `init`, `install`, `knowledge`, `code-knowledge` and
+`doctor`.** Before M30
 `install` and `knowledge` were reachable only as `python -m zikaron.<x>`, which under the recommended
 acquisition is not reachable at all: `uv tool install` puts a package's console scripts on `PATH` and
 never the tool virtualenv's interpreter, so using them meant finding
@@ -156,6 +157,11 @@ rejected**: a flag is a mode the reader carries and a verb is an act they perfor
 created is the whole store — memories and the knowledge registry alike — rather than a corpus.
 `init` is idempotent, so a provisioning script may run it twice.
 
+**`code-knowledge` refuses a storeless project by the same predicate and never connects at all**
+(`design/code-knowledge.md` §3.7). Its one verb, `plan`, decides from the files on disk and git
+which per-source-file documents a module needs; it needs no store open, but its documents could not
+be indexed in a project without one, so it refuses where a `knowledge` verb would.
+
 **`--version` is the only flag the umbrella answers itself**, beside `-h`/`--help`. It reports the
 installed distribution's version through `importlib.metadata`, and where there is no distribution —
 a source tree nobody installed — it says so rather than raising, because the flag exists precisely
@@ -170,15 +176,17 @@ lines no human types. `zikaron-guard` is the guards' one process (`design/guards
 The install contract is unchanged by M30, and `tests/test_install_targets.py`'s golden artefacts are
 what assert it rather than inspection.
 
-**`python -m zikaron.install`, `python -m zikaron.knowledge` and `python -m zikaron.project` keep
-working**, because a host-Python install with several virtualenvs needs the form that says *which*
-interpreter's Zikaron is acting — and because a refusal has to name a command its reader can run:
-one that suggested the console script to somebody driving a source tree would fail twice.
-The first two keep theirs from before the umbrella; `zikaron.project` has one because that refusal
-picks its suggestion from how the caller was invoked, and a source checkout puts no console script
-on `PATH`. `doctor` has no such form — it is named in remedies but never has to adapt the spelling
-to its reader — and `zikaron/knowledge/indexer/` likewise has none — it is spawned as
-`sys.executable -m`, and an entry on a user's `PATH` is not what a machine-spawned process wants.
+**`python -m zikaron.install`, `python -m zikaron.knowledge`, `python -m zikaron.code_knowledge`
+and `python -m zikaron.project` keep working**, because a host-Python install with several
+virtualenvs needs the form that says *which* interpreter's Zikaron is acting — and because a refusal
+has to name a command its reader can run: one that suggested the console script to somebody driving
+a source tree would fail twice. The first two keep theirs from before the umbrella, and
+`zikaron.code_knowledge` has one for the reason `zikaron.knowledge` does; `zikaron.project` has one
+because the storeless refusal those two print picks its suggestion from how the caller was invoked,
+and a source checkout puts no console script on `PATH`. `doctor` has no such form — it is named in
+remedies but never has to adapt the spelling to its reader — and `zikaron/knowledge/indexer/`
+likewise has none — it is spawned as `sys.executable -m`, and an entry on a user's `PATH` is not
+what a machine-spawned process wants.
 
 **`doctor` exists because the interpreter decision supports two acquisition paths**, and the host one
 can be built in ways that make Zikaron unrunnable. It names each failure **by remedy rather than by

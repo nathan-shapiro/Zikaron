@@ -21,12 +21,14 @@ zikaron/
     consolidation/      # grouping, run/group state machine, the four verbs
     knowledge/          # the knowledge index: KB storage, scan, git change
                         # detection, its own chunker and retrieval arms, lifecycle
+    code_knowledge/     # D39's planner: which per-source-file documents a module needs
     signals/            # D30's six, as SQL
     config/             # layered resolution, declarative key schema
     errors.py           # the wire error codes, one enum
   service/              # asyncio UDS server, JSON-RPC, lifecycle
   harness/              # the one seam where a harness difference lives, as data (D34)
   knowledge/            # the detached indexer process, and `zikaron knowledge`'s RPC client
+  code_knowledge/       # `zikaron code-knowledge plan`: the walk, git and the disk
   mcp/                  # MCP server, built on fastmcp — see §6 on why it is not stdlib-only
   hook/                 # thin hook client — stdlib only, see §6
   install/              # the shipped artefacts for both harnesses, and the command that writes them

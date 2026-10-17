@@ -22,7 +22,7 @@ _ROOT: Final = Path(__file__).resolve().parent.parent
 #: Every subcommand the umbrella offers, as the help text lists them. Spelled here rather than read
 #: from the dispatch table, so that a command silently dropped from that table fails rather than
 #: quietly agreeing with itself.
-_SUBCOMMANDS: Final = ("init", "install", "knowledge", "doctor")
+_SUBCOMMANDS: Final = ("init", "install", "knowledge", "code-knowledge", "doctor")
 
 
 _SCRIPTS: Final[dict[str, str]] = tomllib.loads(
@@ -121,6 +121,7 @@ def test_every_listed_subcommand_dispatches(name: str, capsys: pytest.CaptureFix
     [
         ("zikaron.install.main", "python -m zikaron.install"),
         ("zikaron.knowledge.main", "python -m zikaron.knowledge"),
+        ("zikaron.code_knowledge.main", "python -m zikaron.code_knowledge"),
         ("zikaron.project.initialize", "python -m zikaron.project"),
     ],
 )

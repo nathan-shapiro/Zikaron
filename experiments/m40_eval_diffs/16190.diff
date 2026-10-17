@@ -1,0 +1,138 @@
+diff --git a/app/src/terminal/cli_agent.rs b/app/src/terminal/cli_agent.rs
+index d10fa9bda58..c5e5ff2a355 100644
+--- a/app/src/terminal/cli_agent.rs
++++ b/app/src/terminal/cli_agent.rs
+@@ -272,6 +272,8 @@ impl CLIAgent {
+             CLIAgent::Auggie => Some(Icon::AuggieLogo),
+             CLIAgent::CursorCli => Some(Icon::CursorLogo),
+             CLIAgent::Goose => Some(Icon::GooseLogo),
++            // Ships without a brand asset until an officially licensed SVG is
++            // available, same as Vibe below.
+             CLIAgent::Hermes => None,
+             // Vibe is recognized but ships without a brand asset. The brand color
+             // still drives the toolbar tile; an `Icon::MistralLogo` can be wired
+diff --git a/app/src/terminal/cli_agent_sessions/listener/mod.rs b/app/src/terminal/cli_agent_sessions/listener/mod.rs
+index d57005240f4..dc398cb3ece 100644
+--- a/app/src/terminal/cli_agent_sessions/listener/mod.rs
++++ b/app/src/terminal/cli_agent_sessions/listener/mod.rs
+@@ -36,20 +36,11 @@ trait CLIAgentSessionHandler {
+ }
+ 
+ /// Returns `true` if the given CLI agent has a supported session handler.
++///
++/// Derived from [`create_handler`] so the supported-agent list cannot drift
++/// from handler registration.
+ pub fn is_agent_supported(agent: &CLIAgent) -> bool {
+-    matches!(
+-        agent,
+-        CLIAgent::Claude
+-            | CLIAgent::OpenCode
+-            | CLIAgent::Codex
+-            | CLIAgent::Gemini
+-            | CLIAgent::Auggie
+-            | CLIAgent::Droid
+-            | CLIAgent::Pi
+-            | CLIAgent::OhMyPi
+-            | CLIAgent::Grok
+-            | CLIAgent::WarpTui
+-    )
++    create_handler(agent).is_some()
+ }
+ 
+ /// Creates the appropriate handler for the given CLI agent.
+@@ -58,9 +49,10 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
+         // Auggie and Pi are supported via community-maintained plugins
+         // (https://github.com/augmentmoogi/auggie-warp,
+         // https://github.com/badlogic/pi-mono). OhMyPi emits these structured
+-        // OSC 777 events natively. Droid can be supported by user-configured
+-        // hooks or future integrations that emit the same events. We don't ship
+-        // install flows for these agents here — we just listen.
++        // OSC 777 events natively. Droid and Hermes can be supported by
++        // user-configured hooks or future integrations that emit the same
++        // events. We don't ship install flows for these agents here — we
++        // just listen.
+         // WarpTui emits OSC 777 events directly (no external plugin needed).
+         CLIAgent::Claude
+         | CLIAgent::OpenCode
+@@ -69,12 +61,12 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
+         | CLIAgent::Droid
+         | CLIAgent::Pi
+         | CLIAgent::OhMyPi
++        | CLIAgent::Hermes
+         | CLIAgent::WarpTui => Some(Box::new(DefaultSessionListener)),
+         CLIAgent::Codex | CLIAgent::Grok => {
+             Some(Box::new(Osc9FallbackSessionHandler { agent: *agent }))
+         }
+-        CLIAgent::Hermes
+-        | CLIAgent::Amp
++        CLIAgent::Amp
+         | CLIAgent::Copilot
+         | CLIAgent::CursorCli
+         | CLIAgent::Goose
+diff --git a/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs b/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
+index 1b41c309e6b..9952e13c73d 100644
+--- a/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
++++ b/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
+@@ -298,6 +298,37 @@ fn droid_default_handler_forwards_permission_request() {
+     assert!(handler.handle_event(event).is_some());
+ }
+ 
++#[test]
++fn hermes_end_to_end_parsing_and_handling() {
++    let mut handler = create_handler(&CLIAgent::Hermes).expect("should create handler");
++
++    // Payload shapes mirror what Hermes emits (hermes_cli/terminal_notify.py):
++    // `response` on `stop`, `summary` on `permission_request`.
++    let stop_body = r#"{"v":1,"agent":"hermes","event":"stop","session_id":"sess-7","cwd":"/tmp/proj","project":"proj","response":"Done: fixed the bug"}"#;
++    let parsed_stop = handler
++        .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), stop_body, false)
++        .expect("should parse stop");
++    assert_eq!(parsed_stop.agent, CLIAgent::Hermes);
++    assert_eq!(parsed_stop.event, CLIAgentEventType::Stop);
++    assert_eq!(parsed_stop.session_id.as_deref(), Some("sess-7"));
++    assert_eq!(
++        parsed_stop.payload.response.as_deref(),
++        Some("Done: fixed the bug")
++    );
++    assert!(handler.handle_event(parsed_stop).is_some());
++
++    let approval_body = r#"{"v":1,"agent":"hermes","event":"permission_request","session_id":"sess-7","cwd":"/tmp/proj","project":"proj","summary":"Approve dangerous command?"}"#;
++    let parsed_approval = handler
++        .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), approval_body, false)
++        .expect("should parse permission_request");
++    assert_eq!(parsed_approval.event, CLIAgentEventType::PermissionRequest);
++    assert_eq!(
++        parsed_approval.payload.summary.as_deref(),
++        Some("Approve dangerous command?")
++    );
++    assert!(handler.handle_event(parsed_approval).is_some());
++}
++
+ #[test]
+ fn warp_tui_notifications_are_supported() {
+     assert!(is_agent_supported(&CLIAgent::WarpTui));
+diff --git a/app/src/terminal/cli_agent_tests.rs b/app/src/terminal/cli_agent_tests.rs
+index f30c33e290e..19475a37c25 100644
+--- a/app/src/terminal/cli_agent_tests.rs
++++ b/app/src/terminal/cli_agent_tests.rs
+@@ -671,3 +671,20 @@ fn test_warp_tui_variant_properties() {
+         CLIAgent::WarpTui
+     );
+ }
++
++#[test]
++fn test_hermes_variant_properties() {
++    assert_eq!(CLIAgent::Hermes.command_prefix(), "hermes");
++    assert_eq!(CLIAgent::Hermes.display_name(), "Hermes");
++    assert_eq!(
++        CLIAgent::Hermes.brand_color(),
++        Some(ColorU::new(124, 58, 237, 255))
++    );
++    // Deliberately None until an officially licensed SVG is available (same as Vibe).
++    assert!(CLIAgent::Hermes.icon().is_none());
++    assert_eq!(CLIAgent::Hermes.brand_icon_color(), ColorU::white());
++    assert_eq!(
++        CLIAgent::from_serialized_name(&CLIAgent::Hermes.to_serialized_name()),
++        CLIAgent::Hermes
++    );
++}

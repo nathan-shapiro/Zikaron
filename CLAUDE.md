@@ -12,8 +12,10 @@ amended; `design/knowledge-index.md` is normative for the second):
 - **the knowledge index** — *institutional* knowledge: named corpora of files the project already
   wrote — docs trees, run books, design records — searched and returned as fragments with line
   ranges. **No authored content** — an agent creates, renames, refreshes and removes corpora, but
-  nothing it writes becomes searchable text — so no write policy, no consolidation, and **no scope
-  test**: it is whatever corpus somebody points it at.
+  nothing it writes through the index's tools becomes searchable text — so no write policy, no
+  consolidation, and **no scope test**: it is whatever corpus somebody points it at. What is indexed
+  is files, whoever wrote them — including D39's documenter, which writes per-source-file
+  documentation into a corpus from outside the index (`design/code-knowledge.md`).
 
 **And, on request, the guards** (D38, `design/guards.md` is normative): deterministic Claude Code
 hooks, independent of both stores, that refuse a find-replace edit to an authored file and a
@@ -77,7 +79,7 @@ falsifies, in the one place nobody edits when adding one.
 | **`design/guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` — what Claude Code was measured to deliver, installation by selection, fail-open |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
-| `design/code-knowledge.md` | **Proposal, not normative.** Agents that write per-source-file documentation into a knowledge base: the proposed D39, and what M40's brainstorm must settle. K14, which lets a search say whether a result's source has moved, is specified in `design/knowledge-index.md` §7.7 |
+| `design/code-knowledge.md` | **Normative for D39.** The producer of per-source-file documentation: the planner command and what it classifies, removes and moves, the document format, the documenter and the skill, installation, navigation, the evaluation, known gaps. K14, which lets a search say whether a result's source has moved, is specified in `design/knowledge-index.md` §7.7 |
 
 Evidence is separated by kind and stays that way: **`research/`** measured results and literature notes,
 **`reviews/`** review rounds, **`experiments/`** re-runnable harnesses, **`spikes/`** throwaway probes.
@@ -336,10 +338,9 @@ format .`, not adjusting the code by hand to satisfy it.
   prefer shell tooling for file changes.
   The rule is about **mutating prose you have not read**. Read the passage, edit it, and for a
   multi-part change read the *whole* affected section rather than the lines you intend to match.
-  **The one exception is a file whose bytes a program owns.** The golden installer output under
-  `.kiro/` (§Harness) is **re-rendered** through `install/assets.py`'s own function —
-  `skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)` reproduces
-  `skills/zikaron-consolidate/SKILL.md` byte-for-byte. Hand-typing those files is the defect there.
+  **The one exception is a file whose bytes a program owns.** The install snapshots under
+  `tests/fixtures/installed/` (§Harness) are **re-rendered** by `python -m tests.install_snapshots`,
+  which calls the installer's own functions. Hand-typing those files is the defect there.
   **After any edit, grep for the *claim* you changed — not the phrasing you happened to replace —
   across the whole corpus rather than only the file you were editing.** A matched-once replacement
   proves you changed what you aimed at and nothing about the sentences around it, and an
@@ -390,19 +391,15 @@ names. Mine it for reusable mechanisms and lessons, **strictly read-only**. Writ
 operator's explicit per-task say-so.
 
 ## Harness
-This project was built in **kiro-cli** and is being migrated to **Claude Code**. Three things follow:
+This project was built in **kiro-cli** and is being migrated to **Claude Code**. What follows:
 
 - **`.kiro/` stays in the repository, and what "not to be edited" means depends on which kind of file
-  it is.** It is the reference for what the shipped product still installs, and the fallback if the
-  migration goes badly. `.claude/` is the live crew. **Five kinds of file live under `.kiro/` and
-  the rule is not the same for all five:**
-  - **Installer output** — `skills/zikaron-consolidate/SKILL.md`, `agents/zikaron-consolidator.json`.
-    These are **golden files pinned by tests against what `install/assets.py` emits today**, so they
-    are *supposed* to move when the shipped text does; a tracked copy that disagrees with the code is
-    a **broken** reference, not a preserved one. Never hand-edit them — **re-render them through
-    the installer's own function** so the bytes are whatever it would actually write, e.g.
-    `skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)`. The red test is asking "did
-    you mean this?", not "you may not".
+  it is.** It is the fallback if the migration goes badly; `.claude/` is the live crew. It holds no
+  installer output (operator, 2026-10-16): the kiro fallback is restored by re-running
+  `python -m zikaron.install --project . --harness kiro --agent .kiro/agents/zikaron-dogfood.json`,
+  which writes the consolidator, the documenter and their two skills — both agents' configs
+  carrying this machine's `zikaron-mcp` path — and merges into the dogfood config. **Four kinds of
+  file live under `.kiro/` and the rule is not the same for all four:**
   - **Crew configs** — `agents/memory-*.json`, `agents/py-runner.json`. The kiro mirrors of
     `.claude/agents/`. **Editable**, per the operator, and worth keeping in step with their twins.
     Validate the JSON after any edit — these are one-line-per-field files where a stray quote is
@@ -422,6 +419,13 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
   may take a different *shape* rather than a different value; a value that migrates into a
   `HarnessTarget` method is the seam failing, and `design/harness.md` §"The installer's two targets"
   is normative for the split.
+- **What an install ships, on both harnesses, is snapshotted under `tests/fixtures/installed/`**,
+  one directory per harness with the dot-directory dropped from every path, so neither harness
+  loads a snapshot here as an agent or a skill of its own. `tests/test_install_snapshots.py`
+  fails until the snapshot agrees with the installer, so a change to shipped text is seen in a diff.
+  Never hand-edit a snapshot — **re-render it** with `.venv/bin/python -m tests.install_snapshots`,
+  so the bytes are whatever the installer would actually write. The red test is asking "did you
+  mean this?", not "you may not".
 - **No Zikaron is installed into this repository**, by choice. **Do not assume Zikaron's tools or
   the push hook are live in this session.** To install it, `python -m zikaron.install --project .
   --harness claude-code`; `--harness auto` refuses here, since the repo carries both dotdirs.

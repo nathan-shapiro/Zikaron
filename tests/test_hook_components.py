@@ -16,6 +16,7 @@ from zikaron.hook import main as main_module
 from zikaron.hook import push, spawn_warm, subagent_policy
 from zikaron.hook.components import Components
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
 
 SPAWN: dict[str, object] = {
     "hook_event_name": "SessionStart",
@@ -114,6 +115,17 @@ def test_the_consolidator_gets_no_start_text_under_any_selection(
     flag: list[str], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert _emit(CONSOLIDATOR, flag, capsys, monkeypatch) == ""
+
+
+@pytest.mark.parametrize("agent_type", [DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME])
+def test_the_code_knowledge_agents_get_both_start_texts(
+    agent_type: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """They hold the memory verbs, so they are any other subagent here (`design/code-knowledge.md`
+    §5.4): the consolidator is the one agent Zikaron ships that is given nothing."""
+    agent = {**SUBAGENT, "agent_type": agent_type}
+    emitted = _emit(agent, ["--components", "both"], capsys, monkeypatch)
+    assert _subagent_context(emitted) == f"{SUBAGENT_WRITE_POLICY_PROMPT}\n\n{GUARD_START_TEXT}"
 
 
 def test_a_subagent_session_spawn_with_both_still_gets_the_guard_text(

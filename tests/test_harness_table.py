@@ -176,6 +176,16 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert (answer == "yes") == spec.consolidator_can_read_files
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_documenter_tool_grant(
+        self, rows: dict[str, dict[str, str]], spec: HarnessSpec
+    ) -> None:
+        """The documenter's grant, the only place a file tool is named for it: the cell's leading
+        backticked names, in order, are exactly the spec's."""
+        cell = _cell(rows, "Documenter tool grant (`file_tools`)", spec)
+        named = tuple(_BACKTICKED.findall(cell))[: len(spec.file_tools)]
+        assert named == spec.file_tools
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_guard_hooks(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         """The guards' triggers and matchers, or that the harness offers no guards at all — which is
         what the installer's refusal of them reads."""
@@ -215,6 +225,12 @@ class TestTheCodeTableMatchesTheDesignTable:
         """
         assert _identifier(_cell(rows, "Shipped consolidator `model`", spec)) == (
             spec.consolidator_model
+        )
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_documenter_model(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        assert _identifier(_cell(rows, "Shipped documenter `model`", spec)) == (
+            spec.documenter_model
         )
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)

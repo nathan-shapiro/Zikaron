@@ -1,0 +1,490 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 1cefbcdbb0f..61eeeaaa58a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -15477,6 +15477,7 @@ dependencies = [
+  "typed-path 0.10.0",
+  "ui_components",
+  "unicase",
++ "unicode-bidi",
+  "unicode-general-category",
+  "unicode-width 0.1.14",
+  "unindent 0.1.11",
+diff --git a/Cargo.toml b/Cargo.toml
+index 821f7e0254f..ced9772e6e5 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -338,6 +338,7 @@ arborium = { version = "2", default-features = false, features = [
+   "lang-dockerfile",
+   "lang-markdown",
+ ] }
++unicode-bidi = "0.3.15"
+ unicode-general-category = "1.1.0"
+ unicode-linebreak = "0.1.5"
+ unicode-segmentation = "1.11.0"
+diff --git a/app/Cargo.toml b/app/Cargo.toml
+index beb7b530b28..1577bab4fe2 100644
+--- a/app/Cargo.toml
++++ b/app/Cargo.toml
+@@ -213,6 +213,7 @@ tracing.workspace = true
+ tracing-futures = { workspace = true, features = ["futures-03"] }
+ ui_components.workspace = true
+ unicase = "2.7.0"
++unicode-bidi.workspace = true
+ unicode-general-category.workspace = true
+ unicode-width.workspace = true
+ unindent = "0.1.7"
+@@ -1031,6 +1032,7 @@ ctrl_c_cancels_third_party_harness = []
+ shell_widget_handoff = []
+ history_search_ranking_v2 = []
+ stored_screenshots = []
++rtl_terminal_text = []
+ 
+ [package.metadata.bundle.bin.warp-oss]
+ category = "public.app-category.developer-tools"
+diff --git a/app/src/features.rs b/app/src/features.rs
+index 9bea5984452..87d99c931f4 100644
+--- a/app/src/features.rs
++++ b/app/src/features.rs
+@@ -529,6 +529,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
+         FeatureFlag::HistorySearchRankingV2,
+         #[cfg(feature = "stored_screenshots")]
+         FeatureFlag::StoredScreenshots,
++        #[cfg(feature = "rtl_terminal_text")]
++        FeatureFlag::RtlTerminalText,
+     ]);
+ 
+     flags
+diff --git a/app/src/terminal/grid_renderer.rs b/app/src/terminal/grid_renderer.rs
+index f7279dfef1a..eadfd7645ee 100644
+--- a/app/src/terminal/grid_renderer.rs
++++ b/app/src/terminal/grid_renderer.rs
+@@ -1,6 +1,7 @@
+ mod box_drawing;
+ mod cell_glyph_cache;
+ mod cell_type;
++mod rtl;
+ 
+ use core::mem;
+ use std::cmp::Ordering;
+@@ -26,6 +27,7 @@ use warpui::{AppContext, Element, EntityId, PaintContext, Scene, SingletonEntity
+ 
+ pub use self::cell_glyph_cache::CellGlyphCache;
+ use self::cell_type::{CellType, IsFocused, Secret};
++use self::rtl::RtlRuns;
+ use super::block_filter::{BLOCK_FILTER_DOTTED_LINE_DASH, BLOCK_FILTER_DOTTED_LINE_WIDTH};
+ use super::blockgrid_renderer::GridRenderParams;
+ use super::model::char_or_str::CharOrStr;
+@@ -639,6 +641,7 @@ fn render_grid_without_ligatures<'a>(
+             );
+             continue;
+         };
++        let mut rtl_runs = RtlRuns::for_row(&row[..], font_family);
+ 
+         for col in 0..grid.columns() {
+             let current_point = Point::new(row_idx, col);
+@@ -706,6 +709,7 @@ fn render_grid_without_ligatures<'a>(
+                         &mut native_glyphs_to_render,
+                         obfuscate_secrets,
+                         bg_color_sampler.as_deref_mut(),
++                        None,
+                         ctx,
+                     );
+                     continue;
+@@ -841,9 +845,17 @@ fn render_grid_without_ligatures<'a>(
+                 &mut native_glyphs_to_render,
+                 obfuscate_secrets,
+                 bg_color_sampler.as_deref_mut(),
++                rtl_runs.run_containing(col),
+                 ctx,
+             );
+         }
++        rtl_runs.paint(
++            grid_origin + vec2f(0., cell_size.y() * offset_row as f32) + baseline_position,
++            cell_size.x(),
++            font_size,
++            line_height_ratio,
++            ctx,
++        );
+ 
+         if grid.filter_has_context_lines() {
+             maybe_render_dotted_lines(
+@@ -916,6 +928,7 @@ fn render_cell(
+     native_glyphs_to_render: &mut Vec<NativeGlyph>,
+     obfuscate_mode: ObfuscateSecrets,
+     bg_color_sampler: Option<&mut ColorSampler>,
++    rtl_run: Option<&mut AttributedStringBuilder>,
+     ctx: &mut PaintContext,
+ ) -> Option<CachedBackgroundColor> {
+     let cell_colors = cell_colors(
+@@ -947,6 +960,7 @@ fn render_cell(
+ 
+     render_cell_glyph(
+         cell,
++        col,
+         &cell_type,
+         first_cell_in_link,
+         first_cell_in_secret,
+@@ -961,6 +975,7 @@ fn render_cell(
+         cell_colors.foreground_color,
+         native_glyphs_to_render,
+         obfuscate_mode,
++        rtl_run,
+         ctx,
+     );
+     cell_decorations.extend(calculate_cell_decorations(
+@@ -1150,6 +1165,7 @@ fn render_grid_with_ligatures<'a>(
+             );
+             continue;
+         };
++        let mut rtl_runs = RtlRuns::for_row(&row[..], font_family);
+ 
+         // Elide any empty cells at the end of the row, they don't need to be included in the text
+         // layout
+@@ -1407,16 +1423,14 @@ fn render_grid_with_ligatures<'a>(
+                 obfuscate_secrets,
+             ));
+ 
+-            string_builder.update_style(
+-                if cell_type.is_filter_match() {
+-                    let mut flags = cell.flags;
+-                    flags.insert(Flags::BOLD);
+-                    flags.into()
+-                } else {
+-                    cell.flags.into()
+-                },
+-                cell_colors.foreground_color,
+-            );
++            let font_style = if cell_type.is_filter_match() {
++                let mut flags = cell.flags;
++                flags.insert(Flags::BOLD);
++                flags.into()
++            } else {
++                cell.flags.into()
++            };
++            string_builder.update_style(font_style, cell_colors.foreground_color);
+ 
+             if !cell
+                 .flags
+@@ -1450,6 +1464,10 @@ fn render_grid_with_ligatures<'a>(
+                     // to properly align the contents. We don't want the text layout engine to
+                     // attempt the same thing, so we replace it with a placeholder
+                     string_builder.append_placeholder(col);
++                } else if let Some(rtl_run) = rtl_runs.run_containing(col) {
++                    rtl_run.update_style(font_style, cell_colors.foreground_color);
++                    rtl_run.append_content(cell.content_for_display(), col);
++                    string_builder.append_placeholder(col);
+                 } else {
+                     string_builder.append_content(cell.content_for_display(), col);
+                 }
+@@ -1480,6 +1498,13 @@ fn render_grid_with_ligatures<'a>(
+             &string_data.character_index_to_cell_map,
+             ctx.scene,
+         );
++        rtl_runs.paint(
++            line_origin,
++            cell_size.x(),
++            font_size,
++            line_height_ratio,
++            ctx,
++        );
+ 
+         if grid.filter_has_context_lines() {
+             maybe_render_dotted_lines(
+@@ -1701,6 +1726,7 @@ impl FontIdCache {
+ #[allow(clippy::too_many_arguments)]
+ fn render_cell_glyph(
+     cell: &Cell,
++    col: usize,
+     cell_type: &CellType,
+     first_cell_in_link: bool,
+     first_cell_in_secret: FirstCellInSecret,
+@@ -1715,6 +1741,7 @@ fn render_cell_glyph(
+     foreground_color: ColorU,
+     native_glyphs_to_render: &mut Vec<NativeGlyph>,
+     obfuscate_mode: ObfuscateSecrets,
++    rtl_run: Option<&mut AttributedStringBuilder>,
+     ctx: &mut PaintContext,
+ ) {
+     let cell_size = if cell.flags().intersects(Flags::WIDE_CHAR) {
+@@ -1785,11 +1812,17 @@ fn render_cell_glyph(
+                 foreground_color,
+                 glyph_type,
+             });
++            if let Some(rtl_run) = rtl_run {
++                rtl_run.append_placeholder(col);
++            }
+         }
+         None => {
+-            // Add FontId as part of the hashkey since characters with different
+-            // fonts will have different glyph ids.
+-            if let Some((glyph_id, font_id)) = glyph_and_font {
++            if let Some(rtl_run) = rtl_run {
++                rtl_run.update_style(font_style, foreground_color);
++                rtl_run.append_content(cell_content, col);
++            } else if let Some((glyph_id, font_id)) = glyph_and_font {
++                // Add FontId as part of the hashkey since characters with different
++                // fonts will have different glyph ids.
+                 // If we don't have special handling for the character, draw the
+                 // glyph from the font.
+                 ctx.scene
+diff --git a/app/src/terminal/grid_renderer/rtl.rs b/app/src/terminal/grid_renderer/rtl.rs
+new file mode 100644
+index 00000000000..251950fc42b
+--- /dev/null
++++ b/app/src/terminal/grid_renderer/rtl.rs
+@@ -0,0 +1,155 @@
++//! Rendering of right-to-left text (e.g. Arabic, Hebrew) within a terminal grid row.
++//!
++//! The grid stores text in logical order, one character per cell. Right-to-left runs are instead
++//! shaped as a whole, so letters join and appear in visual order, and are painted within the same
++//! columns they occupy in the grid. Left-to-right content around them keeps its grid alignment.
++
++use std::ops::Range;
++
++use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
++use warp_core::features::FeatureFlag;
++use warpui::PaintContext;
++use warpui::fonts::FamilyId;
++use warpui::geometry::vector::{Vector2F, vec2f};
++use warpui::platform::LineStyle;
++use warpui::text_layout::DEFAULT_TOP_BOTTOM_RATIO;
++
++use super::AttributedStringBuilder;
++use crate::terminal::model::cell::Cell;
++use crate::terminal::model::char_or_str::CharOrStr;
++
++/// The right-to-left runs of a single grid row, collecting their styled text while the row's cells
++/// are rendered.
++pub(super) struct RtlRuns {
++    runs: Vec<RtlRun>,
++}
++
++struct RtlRun {
++    columns: Range<usize>,
++    text: AttributedStringBuilder,
++}
++
++impl RtlRuns {
++    /// Returns the right-to-left runs of `cells`, or no runs if the row contains no
++    /// right-to-left text.
++    pub(super) fn for_row(cells: &[Cell], font_family: FamilyId) -> Self {
++        let runs = if FeatureFlag::RtlTerminalText.is_enabled() {
++            rtl_column_ranges(cells)
++                .into_iter()
++                .map(|columns| RtlRun {
++                    text: AttributedStringBuilder::new(font_family, font_family, columns.len()),
++                    columns,
++                })
++                .collect()
++        } else {
++            Vec::new()
++        };
++        Self { runs }
++    }
++
++    /// Returns the text of the run containing `column`, if any. Cells in a run must have their
++    /// content appended here instead of having their glyph drawn at the cell.
++    pub(super) fn run_containing(&mut self, column: usize) -> Option<&mut AttributedStringBuilder> {
++        self.runs
++            .iter_mut()
++            .find(|run| run.columns.contains(&column))
++            .map(|run| &mut run.text)
++    }
++
++    /// Shapes each run and paints it within its columns.
++    ///
++    /// `row_baseline` is the baseline origin of the row's first column.
++    pub(super) fn paint(
++        self,
++        row_baseline: Vector2F,
++        cell_width: f32,
++        font_size: f32,
++        line_height_ratio: f32,
++        ctx: &mut PaintContext,
++    ) {
++        for run in self.runs {
++            let run_width = cell_width * run.columns.len() as f32;
++            let string_data = run.text.build();
++            let line = ctx.text_layout_cache.layout_line(
++                &string_data.line,
++                LineStyle {
++                    font_size,
++                    line_height_ratio,
++                    baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
++                    fixed_width_tab_size: None,
++                },
++                &string_data.style_runs,
++                run_width,
++                Default::default(),
++                &ctx.font_cache.text_layout_system(),
++            );
++
++            // Right-to-left text starts at the right edge of its columns. A run whose shaped text
++            // is wider than its columns overflows to the right rather than over the preceding text.
++            let run_x = cell_width * run.columns.start as f32 + (run_width - line.width).max(0.);
++            let run_origin = row_baseline + vec2f(run_x, 0.);
++
++            for glyph_run in &line.runs {
++                let glyph_color = glyph_run.styles.foreground_color.unwrap_or_default();
++                for glyph in &glyph_run.glyphs {
++                    ctx.scene.draw_glyph(
++                        run_origin + glyph.position_along_baseline,
++                        glyph.id,
++                        glyph_run.font_id,
++                        line.font_size,
++                        glyph_color,
++                    );
++                }
++            }
++        }
++    }
++}
++
++/// Returns the column ranges of `cells` that the Unicode Bidirectional Algorithm, resolved with a
++/// left-to-right paragraph direction, places above the paragraph's embedding level.
++///
++/// This includes neutrals and numbers embedded in right-to-left text, but not trailing whitespace.
++fn rtl_column_ranges(cells: &[Cell]) -> Vec<Range<usize>> {
++    if !cells.iter().any(|cell| is_strong_rtl(cell.c)) {
++        return Vec::new();
++    }
++
++    let mut text = String::new();
++    let mut column_byte_offsets = Vec::with_capacity(cells.len());
++    for cell in cells {
++        column_byte_offsets.push(text.len());
++        match cell.content_for_display() {
++            CharOrStr::Char(c) => text.push(c),
++            CharOrStr::Str(s) => text.push_str(s),
++        }
++    }
++
++    let bidi_info = BidiInfo::new(&text, Some(Level::ltr()));
++    let mut levels = Vec::with_capacity(text.len());
++    for paragraph in &bidi_info.paragraphs {
++        let paragraph_levels = bidi_info.reordered_levels(paragraph, paragraph.range.clone());
++        levels.extend_from_slice(&paragraph_levels[paragraph.range.clone()]);
++    }
++
++    let mut ranges: Vec<Range<usize>> = Vec::new();
++    for (column, &byte_offset) in column_byte_offsets.iter().enumerate() {
++        if levels[byte_offset].number() == 0 {
++            continue;
++        }
++        match ranges.last_mut() {
++            Some(range) if range.end == column => range.end = column + 1,
++            _ => ranges.push(column..column + 1),
++        }
++    }
++    ranges
++}
++
++fn is_strong_rtl(c: char) -> bool {
++    // Every strong right-to-left character is at or above the Hebrew block, so this avoids the
++    // bidi class lookup for ASCII and other common left-to-right text.
++    c >= '\u{0590}' && matches!(bidi_class(c), BidiClass::R | BidiClass::AL)
++}
++
++#[cfg(test)]
++#[path = "rtl_tests.rs"]
++mod tests;
+diff --git a/app/src/terminal/grid_renderer/rtl_tests.rs b/app/src/terminal/grid_renderer/rtl_tests.rs
+new file mode 100644
+index 00000000000..ee00e35e5bb
+--- /dev/null
++++ b/app/src/terminal/grid_renderer/rtl_tests.rs
+@@ -0,0 +1,70 @@
++use unicode_width::UnicodeWidthChar;
++
++use super::*;
++
++/// Builds one cell per character, attaching zero-width characters (e.g. Arabic diacritics) to the
++/// preceding cell as the grid does.
++fn cells(text: &str) -> Vec<Cell> {
++    let mut cells: Vec<Cell> = Vec::new();
++    for c in text.chars() {
++        match (c.width(), cells.last_mut()) {
++            (Some(0), Some(last)) => {
++                last.push_zerowidth(c, false);
++            }
++            _ => {
++                let mut cell = Cell::default();
++                cell.c = c;
++                cells.push(cell);
++            }
++        }
++    }
++    cells
++}
++
++#[test]
++fn test_left_to_right_text_has_no_rtl_ranges() {
++    assert!(rtl_column_ranges(&cells("ls -la /tmp")).is_empty());
++    assert!(rtl_column_ranges(&cells("Привет 中文 12345")).is_empty());
++    assert!(rtl_column_ranges(&[]).is_empty());
++}
++
++#[test]
++fn test_arabic_text_is_a_single_range() {
++    // Spaces between Arabic words belong to the run.
++    assert_eq!(rtl_column_ranges(&cells("مرحبا بالعالم")), vec![0..13]);
++}
++
++#[test]
++fn test_hebrew_text_is_a_single_range() {
++    assert_eq!(rtl_column_ranges(&cells("שלום עולם")), vec![0..9]);
++}
++
++#[test]
++fn test_range_keeps_the_columns_of_mixed_text() {
++    // "file: " occupies columns 0..6 and ".txt" follows the Arabic run.
++    assert_eq!(rtl_column_ranges(&cells("file: مرحبا.txt")), vec![6..11]);
++}
++
++#[test]
++fn test_left_to_right_word_splits_rtl_ranges() {
++    assert_eq!(
++        rtl_column_ranges(&cells("مرحبا hello عالم")),
++        vec![0..5, 12..16]
++    );
++}
++
++#[test]
++fn test_numbers_within_rtl_text_belong_to_the_range() {
++    assert_eq!(rtl_column_ranges(&cells("عدد 42 ملفات")), vec![0..12]);
++}
++
++#[test]
++fn test_trailing_whitespace_is_excluded() {
++    assert_eq!(rtl_column_ranges(&cells("مرحبا   ")), vec![0..5]);
++}
++
++#[test]
++fn test_diacritics_do_not_shift_columns() {
++    // "مَرحبا" has a fatha attached to its first letter, so it still spans five columns.
++    assert_eq!(rtl_column_ranges(&cells("ok مَرحبا ok")), vec![3..8]);
++}
+diff --git a/crates/warp_features/src/lib.rs b/crates/warp_features/src/lib.rs
+index 86c8f4cb34f..3cd593f4444 100644
+--- a/crates/warp_features/src/lib.rs
++++ b/crates/warp_features/src/lib.rs
+@@ -982,6 +982,10 @@ pub enum FeatureFlag {
+     /// replace inline computer-use screenshot bytes with references to
+     /// Warp-managed object storage.
+     StoredScreenshots,
++
++    /// Renders right-to-left scripts (e.g. Arabic, Hebrew) in terminal output in visual order with
++    /// contextual shaping, instead of drawing each cell's glyph in logical order.
++    RtlTerminalText,
+ }
+ 
+ static FLAG_STATES: [AtomicBool; cardinality::<FeatureFlag>()] =
+@@ -1058,6 +1062,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
+     FeatureFlag::WarpingModelName,
+     FeatureFlag::LrcActivitySignal,
+     FeatureFlag::StoredScreenshots,
++    FeatureFlag::RtlTerminalText,
+ ];
+ 
+ /// Features enabled for feature preview build users (e.g.: Friends of Warp).

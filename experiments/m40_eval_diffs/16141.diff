@@ -1,0 +1,586 @@
+diff --git a/app/src/terminal/input.rs b/app/src/terminal/input.rs
+index c853d92a2c6..bd5ee18751d 100644
+--- a/app/src/terminal/input.rs
++++ b/app/src/terminal/input.rs
+@@ -115,6 +115,7 @@ use super::ligature_settings::LigatureSettings;
+ use super::model::block::{
+     AgentInteractionMetadata, BlockId, BlockMetadata, BlocklistEnvVarMetadata,
+ };
++use super::model::blocks::BlockList;
+ use super::model::completions::ShellCompletion;
+ use super::model::session::{Session, SessionId, SessionType, Sessions};
+ use super::prompt_render_helper::{
+@@ -1671,6 +1672,11 @@ enum DenyExecutionReason {
+     /// Can't execute command because there's an active command in control of the pty.
+     ExistingActiveCommand,
+ 
++    /// An in-band generator command currently owns the active block / PTY write path.
++    /// User Enter should be queued and retried after that command finishes — starting a
++    /// user command on the same executing block is rejected by the lifecycle coordinator.
++    InBandCommandInFlight,
++
+     /// With the exception of shared sessions, we should only execute commands if they can be
+     /// recorded in history.
+     ///
+@@ -1687,6 +1693,15 @@ impl DenyExecutionReason {
+     pub fn is_existing_active_command(&self) -> bool {
+         matches!(self, DenyExecutionReason::ExistingActiveCommand)
+     }
++
++    fn should_queue_pending_retry(self) -> bool {
++        matches!(
++            self,
++            DenyExecutionReason::HistoryNotAppendable
++                | DenyExecutionReason::NotBootstrapped
++                | DenyExecutionReason::InBandCommandInFlight
++        )
++    }
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+@@ -7685,14 +7700,17 @@ impl Input {
+ 
+         if !model.block_list().is_bootstrapped() {
+             CanExecuteCommand::No(DenyExecutionReason::NotBootstrapped)
++        } else if model.block_list().is_writing_or_executing_in_band_command() {
++            // In-band commands reuse the active block. Starting a user command while one is
++            // in flight is rejected/coalesced by the lifecycle coordinator, which looks like
++            // a no-op Enter on Warpified SSH (completer `ls` traffic). Queue and retry after.
++            CanExecuteCommand::No(DenyExecutionReason::InBandCommandInFlight)
+         } else if active_block.is_active_and_long_running()
+             && !active_block.is_in_band_command_block()
+         {
+             CanExecuteCommand::No(DenyExecutionReason::ExistingActiveCommand)
+         } else if !model.shared_session_status().is_executor()
+-            && active_block
+-                .session_id()
+-                .is_none_or(|session_id| !History::as_ref(ctx).is_appendable(&session_id))
++            && !Self::history_is_appendable_for_execution(model.block_list(), ctx)
+         {
+             CanExecuteCommand::No(DenyExecutionReason::HistoryNotAppendable)
+         } else {
+@@ -7700,6 +7718,29 @@ impl Input {
+         }
+     }
+ 
++    /// Session id used to decide whether history can accept the next command.
++    ///
++    /// Prefers the active block's session id. Between `CommandFinished` and `Precmd`
++    /// the new active block may not have one yet; fall back to the previous
++    /// non-background block so Enter is not denied as `HistoryNotAppendable`
++    /// during that gap (common under Warpified-SSH in-band completer traffic).
++    fn session_id_for_command_execution(block_list: &BlockList) -> Option<SessionId> {
++        block_list.active_block().session_id().or_else(|| {
++            block_list
++                .blocks()
++                .iter()
++                .rev()
++                .skip(1)
++                .find(|block| !block.is_background())
++                .and_then(|block| block.session_id())
++        })
++    }
++
++    fn history_is_appendable_for_execution(block_list: &BlockList, ctx: &AppContext) -> bool {
++        Self::session_id_for_command_execution(block_list)
++            .is_some_and(|session_id| History::as_ref(ctx).is_appendable(&session_id))
++    }
++
+     pub fn execute_pending_command(&mut self, ctx: &mut ViewContext<Self>) {
+         if !self.has_pending_command {
+             return;
+@@ -7710,8 +7751,12 @@ impl Input {
+             return;
+         }
+ 
+-        self.try_execute_command(&command, ctx);
+-        self.has_pending_command = false;
++        // Keep pending until the command actually starts. During the
++        // CommandFinished → Precmd gap, can_execute can already pass (inherited
++        // session id) while has_received_precmd is still false.
++        if self.try_execute_command(&command, ctx) {
++            self.has_pending_command = false;
++        }
+ 
+         self.editor.update(ctx, |editor, ctx| {
+             editor.set_interaction_state(InteractionState::Editable, ctx);
+@@ -7964,6 +8009,15 @@ impl Input {
+                         ctx,
+                     );
+                 });
++            } else if reason.should_queue_pending_retry() {
++                // Retry once the session/precmd is ready, or once in-band generator traffic
++                // releases the PTY (common on Warpified SSH while the completer runs `ls`).
++                self.has_pending_command = true;
++                if matches!(reason, DenyExecutionReason::InBandCommandInFlight)
++                    && let Some(session) = self.active_session(ctx)
++                {
++                    session.cancel_active_commands();
++                }
+             }
+ 
+             log::warn!("Tried to execute command but can_execute_command was false: {reason:?}");
+@@ -8114,7 +8168,11 @@ impl Input {
+             // We don't want to submit the command if precmd has not
+             // been received. Instead, we want the user to be aware
+             // that the prompt might not be up to date.
++            //
++            // Queue a retry for when Precmd arrives (common during the
++            // Warpified-SSH in-band CommandFinished → Precmd gap).
+             send_telemetry_from_ctx!(TelemetryEvent::TriedToExecuteBeforePrecmd, ctx);
++            self.has_pending_command = true;
+             did_execute = false;
+         }
+ 
+diff --git a/app/src/terminal/line_editor_status.rs b/app/src/terminal/line_editor_status.rs
+index 60e1acaf689..974b7e6852b 100644
+--- a/app/src/terminal/line_editor_status.rs
++++ b/app/src/terminal/line_editor_status.rs
+@@ -69,16 +69,17 @@ impl LineEditorStatus {
+     }
+ 
+     fn handle_model_event(&mut self, event: &ModelEvent, ctx: &mut ModelContext<Self>) {
+-        let Some(active_session_id) = self.model_event_dispatcher.as_ref(ctx).active_session_id()
+-        else {
+-            return;
+-        };
+-
+-        let Some(active_session) = self.sessions.as_ref(ctx).get(active_session_id) else {
+-            return;
+-        };
+-
+-        let is_active_session_zsh = active_session.shell().shell_type() == ShellType::Zsh;
++        // The shell's first Precmd can arrive before Bootstrapped registers the session.
++        // Returning early dropped that Precmd and deadlocked bash sessions: bash only emits
++        // another Precmd after a command finishes, but commands cannot be written while the
++        // line editor is inactive. Treat a missing/unregistered session as non-zsh — the
++        // correct Precmd reading for every shell except zsh.
++        let is_active_session_zsh = self
++            .model_event_dispatcher
++            .as_ref(ctx)
++            .active_session_id()
++            .and_then(|session_id| self.sessions.as_ref(ctx).get(session_id))
++            .is_some_and(|session| session.shell().shell_type() == ShellType::Zsh);
+         match event {
+             ModelEvent::Handler(AnsiHandlerEvent::Precmd) => {
+                 if is_active_session_zsh {
+@@ -150,3 +151,7 @@ pub enum LineEditorStatusEvent {
+ impl Entity for LineEditorStatus {
+     type Event = LineEditorStatusEvent;
+ }
++
++#[cfg(test)]
++#[path = "line_editor_status_tests.rs"]
++mod tests;
+diff --git a/app/src/terminal/line_editor_status_tests.rs b/app/src/terminal/line_editor_status_tests.rs
+new file mode 100644
+index 00000000000..d52635ece23
+--- /dev/null
++++ b/app/src/terminal/line_editor_status_tests.rs
+@@ -0,0 +1,60 @@
++use std::time::Duration;
++
++use warpui::App;
++use warpui::r#async::Timer;
++
++use super::*;
++use crate::terminal::model::session::Sessions;
++use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
++
++#[test]
++fn precmd_activates_line_editor_before_session_is_registered() {
++    App::test((), |mut app| async move {
++        let (_model_events_tx, model_events_rx) = async_channel::unbounded();
++        let sessions = app.add_model(|_| Sessions::new_for_test());
++        let model_events =
++            app.add_model(|ctx| ModelEventDispatcher::new(model_events_rx, sessions.clone(), ctx));
++        // Precmd updates active_session_id before LineEditorStatus sees the event, but the
++        // session object may not exist in Sessions yet (Bootstrapped lands later).
++        model_events.update(&mut app, |dispatcher, _| {
++            dispatcher.set_active_session_id(crate::terminal::model::session::SessionId::from(1));
++        });
++        let line_editor_status =
++            app.add_model(|ctx| LineEditorStatus::new(model_events, sessions, ctx));
++
++        line_editor_status.update(&mut app, |status, ctx| {
++            status.handle_model_event(&ModelEvent::Handler(AnsiHandlerEvent::Precmd), ctx);
++        });
++
++        Timer::after(LINE_EDITOR_ACTIVATION_DELAY + Duration::from_millis(20)).await;
++
++        line_editor_status.read(&app, |status, _| {
++            assert!(
++                status.is_line_editor_active(),
++                "Precmd before session registration must activate the line editor for non-zsh shells"
++            );
++        });
++    });
++}
++
++#[test]
++fn precmd_activates_line_editor_when_active_session_id_is_unset() {
++    App::test((), |mut app| async move {
++        let (_model_events_tx, model_events_rx) = async_channel::unbounded();
++        let sessions = app.add_model(|_| Sessions::new_for_test());
++        let model_events =
++            app.add_model(|ctx| ModelEventDispatcher::new(model_events_rx, sessions.clone(), ctx));
++        let line_editor_status =
++            app.add_model(|ctx| LineEditorStatus::new(model_events, sessions, ctx));
++
++        line_editor_status.update(&mut app, |status, ctx| {
++            status.handle_model_event(&ModelEvent::Handler(AnsiHandlerEvent::Precmd), ctx);
++        });
++
++        Timer::after(LINE_EDITOR_ACTIVATION_DELAY + Duration::from_millis(20)).await;
++
++        line_editor_status.read(&app, |status, _| {
++            assert!(status.is_line_editor_active());
++        });
++    });
++}
+diff --git a/app/src/terminal/model/block.rs b/app/src/terminal/model/block.rs
+index 8f5781ebc2f..e8f6973931a 100644
+--- a/app/src/terminal/model/block.rs
++++ b/app/src/terminal/model/block.rs
+@@ -2656,6 +2656,20 @@ impl Block {
+         self.session_id = Some(id);
+     }
+ 
++    /// Copies session/cwd from the last populated precmd without marking this block
++    /// as having received Precmd.
++    ///
++    /// Used after in-band `CommandFinished` so `can_execute_command` can resolve a
++    /// session id during the gap before the shell's real Precmd. Must not set
++    /// [`PrecmdState::AfterPrecmd`] — that would desync the lifecycle coordinator
++    /// from `LineEditorStatus` activation.
++    pub(super) fn inherit_session_context_pending_precmd(&mut self, data: PromptMetadata) {
++        self.session_id = data.session_id.map(Into::into);
++        if data.pwd.is_some() {
++            self.pwd = data.pwd;
++        }
++    }
++
+     pub fn pwd(&self) -> Option<&String> {
+         self.pwd.as_ref()
+     }
+diff --git a/app/src/terminal/model/blocks.rs b/app/src/terminal/model/blocks.rs
+index a0255cde803..a3aa7559738 100644
+--- a/app/src/terminal/model/blocks.rs
++++ b/app/src/terminal/model/blocks.rs
+@@ -3293,7 +3293,8 @@ impl BlockList {
+             "Completing active block with next ID disposition {next_block_id_disposition:?}"
+         );
+         let active_block_was_finished = self.active_block().finished();
+-        if self.active_block().is_for_in_band_command {
++        let was_in_band_command = self.active_block().is_for_in_band_command;
++        if was_in_band_command {
+             self.in_flight_in_band_command_count =
+                 self.in_flight_in_band_command_count.saturating_sub(1);
+         }
+@@ -3303,7 +3304,7 @@ impl BlockList {
+             self.bootstrap_stage
+         };
+ 
+-        if !self.active_block().is_for_in_band_command {
++        if !was_in_band_command {
+             self.finish_background_block();
+         }
+ 
+@@ -3324,6 +3325,16 @@ impl BlockList {
+             None, /* prompt_metadata */
+             None, /* restored_block_was_local */
+         );
++        // After an in-band CommandFinished the new block has no session_id until the
++        // real Precmd arrives. Inherit session/cwd only — do not call apply_precmd
++        // here. A full precmd apply would set received_precmd while the lifecycle
++        // coordinator is still AwaitingPrecmd, reconcile to Unknown, and cause the
++        // shell's real Precmd (and LineEditorStatus activation) to be ignored —
++        // which breaks Tab / native completions and other in-band writes.
++        if was_in_band_command && let Some(meta) = self.last_populated_precmd_payload.clone() {
++            self.active_block_mut()
++                .inherit_session_context_pending_precmd(meta);
++        }
+         if next_bootstrap_stage == BootstrapStage::ScriptExecution {
+             self.start_active_block();
+             self.update_active_block_height();
+diff --git a/app/src/terminal/model/lifecycle/mod_tests.rs b/app/src/terminal/model/lifecycle/mod_tests.rs
+index 48941085cad..d6ab6985f4f 100644
+--- a/app/src/terminal/model/lifecycle/mod_tests.rs
++++ b/app/src/terminal/model/lifecycle/mod_tests.rs
+@@ -326,6 +326,19 @@ fn lifecycle_phase_reconciliation_requires_compatible_live_evidence() {
+         reconcile_phase(AwaitingPrecmd, &before_execution),
+         AwaitingPrecmd
+     );
++    // Applying Precmd-like metadata while still AwaitingPrecmd (without advancing the
++    // coordinator) leaves received_precmd true and forces Unknown — the shell's real
++    // Precmd is then ignored as UnsupportedPromptOnlyPrecmd.
++    assert_eq!(
++        reconcile_phase(
++            AwaitingPrecmd,
++            &LifecycleSnapshot {
++                received_precmd: true,
++                ..before_execution.clone()
++            }
++        ),
++        Unknown
++    );
+     assert_eq!(
+         reconcile_phase(
+             AtPrompt,
+diff --git a/app/src/terminal/model/terminal_model_tests.rs b/app/src/terminal/model/terminal_model_tests.rs
+index b9124f382c0..a4c2a5055ec 100644
+--- a/app/src/terminal/model/terminal_model_tests.rs
++++ b/app/src/terminal/model/terminal_model_tests.rs
+@@ -1567,6 +1567,75 @@ fn precmd_with_completion_metadata_recovers_in_band_completion_and_reuses_cached
+     );
+ }
+ 
++#[test]
++fn in_band_command_finished_inherits_session_context_before_real_precmd_arrives() {
++    let mut terminal = TerminalModel::mock(None, None);
++    let session_id = 42u64;
++    normal_command_finished_and_precmd(
++        &mut terminal,
++        PromptMetadata {
++            pwd: Some("/remote/home".to_owned()),
++            session_id: Some(session_id),
++            ..Default::default()
++        },
++    );
++    assert_eq!(
++        terminal.block_list().active_block().session_id(),
++        Some(session_id.into())
++    );
++    assert!(terminal.block_list().active_block().has_received_precmd());
++
++    assert_eq!(
++        terminal.start_in_band_command_execution(),
++        StartCommandOutcome::Accepted
++    );
++    terminal.preexec(PreexecValue {
++        command: "Warp-Run-GeneratorCommand ls".to_owned(),
++        session_id: Some(session_id),
++    });
++    assert!(
++        terminal
++            .block_list()
++            .active_block()
++            .is_in_band_command_block()
++    );
++
++    let next_block_id = BlockId::new();
++    terminal.command_finished(CommandFinishedValue {
++        completion_metadata: CompletionMetadata {
++            exit_code: ExitCode::from(0),
++            next_block_id: next_block_id.clone(),
++        },
++        session_id: Some(session_id),
++    });
++
++    // Session/cwd are available for can_execute_command, but PrecmdState must stay
++    // BeforePrecmd so the lifecycle coordinator can still accept the shell's real Precmd
++    // (which activates LineEditorStatus for Tab / in-band writes).
++    assert_eq!(terminal.active_block_id(), &next_block_id);
++    assert!(!terminal.block_list().active_block().has_received_precmd());
++    assert_eq!(
++        terminal.block_list().active_block().session_id(),
++        Some(session_id.into())
++    );
++    assert_eq!(
++        terminal
++            .block_list()
++            .active_block()
++            .pwd()
++            .map(String::as_str),
++        Some("/remote/home")
++    );
++
++    terminal.prompt_only_precmd(PromptMetadata {
++        pwd: Some("/remote/home".to_owned()),
++        session_id: Some(session_id),
++        is_after_in_band_command: true,
++        ..Default::default()
++    });
++    assert!(terminal.block_list().active_block().has_received_precmd());
++}
++
+ #[test]
+ fn empty_and_syntax_error_commands_without_preexec_complete_as_execution() {
+     for (command, exit_code) in [("", ExitCode::from(0)), ("if then", ExitCode::from(2))] {
+diff --git a/app/src/terminal/view.rs b/app/src/terminal/view.rs
+index 719df291f02..7a2e44f5595 100644
+--- a/app/src/terminal/view.rs
++++ b/app/src/terminal/view.rs
+@@ -13199,6 +13199,9 @@ impl TerminalView {
+                     BlockMetadataUpdateSource::Precmd,
+                     ctx,
+                 );
++                // Enter pressed during the CommandFinished → Precmd gap is queued as
++                // a pending command; retry once the active block has real precmd metadata.
++                self.execute_pending_command((), ctx);
+             }
+             ModelEvent::BlockWorkingDirectoryUpdated(block_working_directory_updated_event) => {
+                 self.apply_block_metadata_update(
+@@ -22362,10 +22365,13 @@ impl TerminalView {
+                     active_session.cancel_active_commands();
+                 }
+ 
+-                // Don't steal focus from other parts of the app.
+-                if ctx.is_self_or_child_focused() {
+-                    self.focus_terminal(ctx);
+-                }
++                // Keep the input focused on submit. Moving focus to the terminal here made
++                // short/failed SSH submits look like "Enter did nothing": the blinking cursor
++                // left the editor, and if a User BlockCompleted never arrived (common when
++                // remote in-band completer traffic interleaves), focus stayed on the terminal
++                // so the next Enter became TerminalAction::KeyDown instead of another submit.
++                // Long-running commands still take terminal focus via
++                // maybe_emit_terminal_view_state_changed_for_long_running_block (~50ms).
+ 
+                 ctx.emit(Event::ExecuteCommand(event.as_ref().clone()));
+ 
+diff --git a/app/src/terminal/writeable_pty/pty_controller.rs b/app/src/terminal/writeable_pty/pty_controller.rs
+index 2623092ee30..f4bdd882689 100644
+--- a/app/src/terminal/writeable_pty/pty_controller.rs
++++ b/app/src/terminal/writeable_pty/pty_controller.rs
+@@ -299,6 +299,24 @@ impl<T: EventLoopSender> PtyController<T> {
+         self.line_editor_status.as_ref(ctx).is_line_editor_active()
+     }
+ 
++    /// Whether a user/agent command write may go to the PTY immediately.
++    ///
++    /// Prefers [`LineEditorStatus`], but also allows writes when the active block has
++    /// already received precmd and has not started a command. That recovers from cases
++    /// where LineEditorStatus dropped or delayed activation while command submission
++    /// correctly observed block-level precmd — previously those submits started the block
++    /// UI and queued a write that never drained (e.g. multiple Enter presses in Warpified
++    /// SSH).
++    fn can_write_user_command_to_pty(&self, ctx: &mut ModelContext<Self>) -> bool {
++        if self.can_write_to_pty(ctx) {
++            return true;
++        }
++
++        let model = self.terminal_model.lock();
++        let active_block = model.block_list().active_block();
++        !active_block.started() && active_block.has_received_precmd()
++    }
++
+     /// Executes the next queued `PtyWrite`, if able.
+     ///
+     /// This is a no-op if the line editor is currently inactive; in the constructor of
+@@ -474,8 +492,9 @@ impl<T: EventLoopSender> PtyController<T> {
+ 
+     /// Converts the given `command` into a byte array and writes its corresponding bytes to the PTY.
+     ///
+-    /// If the line editor is active, the command is written immediately. Otherwise, the command is
+-    /// written when the line editor becomes active.
++    /// If the line editor is active (or the active block is already at a prompt — see
++    /// [`Self::can_write_user_command_to_pty`]), the command is written immediately. Otherwise,
++    /// the command is written when the line editor becomes active.
+     ///
+     /// This also clears pending_writes, since the priority is to execute the user's command.
+     ///
+@@ -489,6 +508,11 @@ impl<T: EventLoopSender> PtyController<T> {
+         source: CommandExecutionSource,
+         ctx: &mut ModelContext<Self>,
+     ) -> StartCommandOutcome {
++        // Snapshot writability before start_command_execution mutates the active block.
++        // Otherwise a LineEditorStatus desync would queue the write after the block is
++        // already marked started, and the queued write could never drain.
++        let can_write = self.can_write_user_command_to_pty(ctx);
++
+         {
+             let mut model = self.terminal_model.lock();
+ 
+@@ -529,9 +553,7 @@ impl<T: EventLoopSender> PtyController<T> {
+             in_band_command_id: None,
+             before_write_fn: None,
+         };
+-        if self.can_write_to_pty(ctx) {
+-            // Cancel the async writer task and clear the async write queue.
+-            // Check if line editor is active
++        if can_write {
+             self.send_write_to_event_loop(write, ctx);
+         } else {
+             self.pending_writes.push_back(write);
+diff --git a/app/src/terminal/writeable_pty/pty_controller_lifecycle_tests.rs b/app/src/terminal/writeable_pty/pty_controller_lifecycle_tests.rs
+index 62298d2bf00..af8ac0be934 100644
+--- a/app/src/terminal/writeable_pty/pty_controller_lifecycle_tests.rs
++++ b/app/src/terminal/writeable_pty/pty_controller_lifecycle_tests.rs
+@@ -5,9 +5,11 @@ use warpui::App;
+ 
+ use super::*;
+ use crate::terminal::event_listener::ChannelEventListener;
++use crate::terminal::input::CommandExecutionSource;
+ use crate::terminal::model::StartCommandOutcome;
+-use crate::terminal::model::ansi::{Handler, PreexecValue};
++use crate::terminal::model::ansi::{Handler, PreexecValue, PromptMetadata};
+ use crate::terminal::model::session::{SessionId, SessionInfo, Sessions};
++use crate::terminal::shell::ShellType;
+ 
+ #[derive(Clone, Default)]
+ struct TestEventLoopSender {
+@@ -205,6 +207,63 @@ fn native_shell_completions_reports_no_matches_without_an_active_session() {
+     });
+ }
+ 
++#[test]
++fn write_command_sends_immediately_when_block_has_precmd_despite_inactive_line_editor() {
++    App::test((), |mut app| async move {
++        let model = terminal_model();
++        model.lock().prompt_only_precmd(PromptMetadata::default());
++        assert!(
++            model
++                .lock()
++                .block_list()
++                .active_block()
++                .has_received_precmd()
++        );
++        assert!(!model.lock().block_list().active_block().started());
++
++        let (model_events_tx, model_events_rx) = async_channel::unbounded();
++        let (_executor_command_tx, executor_command_rx) = async_channel::unbounded();
++        let sessions = app.add_model(|_| Sessions::new_for_test());
++        let model_events =
++            app.add_model(|ctx| ModelEventDispatcher::new(model_events_rx, sessions.clone(), ctx));
++        let line_editor_status =
++            app.add_model(|ctx| LineEditorStatus::new(model_events.clone(), sessions.clone(), ctx));
++        let sender = TestEventLoopSender::default();
++        let controller = app.add_model(|ctx| {
++            PtyController::new(
++                sender.clone(),
++                model_events,
++                line_editor_status.clone(),
++                sessions,
++                executor_command_rx,
++                model,
++                ctx,
++            )
++        });
++
++        line_editor_status.read(&app, |status, _| {
++            assert!(!status.is_line_editor_active());
++        });
++
++        let outcome = controller.update(&mut app, |controller, ctx| {
++            controller.write_command("ls", ShellType::Bash, CommandExecutionSource::User, ctx)
++        });
++        assert_eq!(outcome, StartCommandOutcome::Accepted);
++        controller.read(&app, |controller, _| {
++            assert!(
++                controller.pending_writes.is_empty(),
++                "command must not stay queued when the active block is already at a prompt"
++            );
++        });
++        assert!(
++            !sender.messages.lock().is_empty(),
++            "command bytes must be written immediately despite inactive LineEditorStatus"
++        );
++
++        drop(model_events_tx);
++    });
++}
++
+ #[test]
+ fn rejected_queued_in_band_start_is_cancelled_without_writing_bytes() {
+     App::test((), |mut app| async move {

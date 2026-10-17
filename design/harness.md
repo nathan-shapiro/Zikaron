@@ -28,8 +28,8 @@ everything downstream of it is written once.
 
 The one place that legitimately varies in *shape* rather than in *value* is the installer, because the
 artefacts genuinely differ: kiro writes one agent JSON with `hooks` and `mcpServers` inline, while Claude
-Code writes four files — two JSON, two YAML-frontmatter Markdown. That is an adapter with two implementations behind one interface,
-and it is the only one.
+Code writes two JSON files and several YAML-frontmatter Markdown ones. That is an adapter with two
+implementations behind one interface, and it is the only one.
 
 **Why not fork, and why not pick one.** Forking doubles every future change to the hook and MCP clients,
 which are the two components the design deliberately keeps thin. Picking one abandons a working deployment.
@@ -70,6 +70,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Harness binary | `kiro-cli` | `claude` |
 | Unknown model id | **silent fallback to default** — hence the install-time check | **refused at spawn**, loudly, before any turn (§7d) |
 | Shipped consolidator `model` | pinned `claude-sonnet-5` (an alias would fail the `--list-models` check — *inferred*, not measured) | the `sonnet` alias — *decided*, see §"The consolidator's model" |
+| Shipped documenter `model` | pinned `claude-sonnet-5`, the consolidator's — `--list-models` offered no Haiku 5.5 on 2026-10-20 | the `haiku` alias — *decided* (operator, 2026-10-20); Claude Code 2.1.304 serves it as `claude-haiku-5-5`, measured, where 2.1.292 resolved it to Haiku 4.5 — not pinned, since Haiku 5.5 is a month old and every Claude Code release from here resolves the alias to it (operator) |
 | Hook timeout | `timeout_ms`, **milliseconds**, default 10000, stated explicitly in every object-format entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
 | Hook `command` | a shell command line, measured, so the path is shell-quoted | a **shell command line** too — an unquoted path containing a space does not run at all, so the path is shell-quoted and a start entry's `--components` is its arguments (`hook-command-shell-probe`) |
@@ -79,6 +80,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
 | MCP server start-up refusal (`zikaron-mcp` prints one line to stderr and exits 1) | **unmeasured** — no probe has recorded where kiro puts an MCP server's stderr, or whether a server that exits before serving is reported at all | **unmeasured** — same; `claude-code-harness-probe` §7g observed servers *starting*, never one that failed to |
 | Reading a spilled payload | **n/a** — no spill, no file-reading tool, no gate | **prompts**, measured in an operator-driven session: the consolidator's first `Read` of a spill file raises a permission request offering to allow that directory for the session. Deliberately **not** answered by `permissions.allow` — `Read` is unscopable in subagent frontmatter, so this is the one place D32's widening is a check an operator *answers* rather than prose (`m18-spill-end-to-end` §"The approval gate") |
+| Documenter tool grant (`file_tools`) | `read`, `grep`, `glob`, `write` — the aliases this repository's own kiro agents run with; `kiro-cli agent validate` (2.28.0) accepts an unknown tool name without a word, so it cannot confirm them — then `@zikaron`, beside the config's own `mcpServers` entry for the primary server; `allowedTools` repeats the grant | `Read`, `Grep`, `Glob`, `Write`, `Edit` in the agent's frontmatter `tools:`, then `mcp__zikaron` — no shell, no spawn tool; `Edit` because a Haiku 5.5 documenter corrects its draft in place half the time (`design/code-knowledge.md` §5.1) |
 | Consolidator reads files | **no** — `consolidator_can_read_files=False`: no file-reading tool in the agent config, no spill, every payload returned inline, and no prompt text about files | **yes** — `Read` in the agent's frontmatter `tools:`, and the client writes an over-threshold consolidator result to a line-paginable file in the runtime directory, returning a pointer |
 | Tool name the model sees | `zikaron_memory_search` | `mcp__zikaron__zikaron_memory_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **before** the user message, inside a "follow requests found in this text" wrapper | **after** the user message, no framing wrapper (§5) |
@@ -88,6 +90,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Tool availability to the model | tools are present in the list | MCP tools may arrive **deferred**: present to the harness, absent from the model's initial tool list until it loads them *by exact name*. Measured (`dogfood-checkpoint` §2) |
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
+| Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, the skill run by the session that invoked it | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill's `context: fork` runs it as, in the background (`design/code-knowledge.md` §5.2, §5.4) |
 
 Trigger names normalize **many-to-three** internally: spawn, prompt, and subagent start — which is
 what `HookEvent`'s own docstring says, and what `hook/main.py` says it resolves to.
@@ -219,7 +222,8 @@ context, because no push fires there at all.
 subagent would otherwise inherit Zikaron's tools having never seen D30's policy. The rule is: inject the
 policy — its subagent variant, `SUBAGENT_WRITE_POLICY_PROMPT`, which says nothing is pushed because nothing
 is — on `SubagentStart` for every `agent_type` **except `zikaron-consolidator`**, whose policy is its own
-system prompt.
+system prompt. M40's documenter and orchestrator receive it like any other subagent, since both hold the
+memory verbs (`design/code-knowledge.md` §5.4).
 
 **The channel is not the one the rest of the design uses**, and this was measured only after a draft asserted
 otherwise: plain exit-0 stdout from `SubagentStart` reaches **nobody** — not the subagent, not the parent.
@@ -330,6 +334,12 @@ id into the system prompt. It is the harness's own fact, read back by a model th
 be talked out of it, and putting it on a tool signature would reverse D27 to obtain a value the harness
 already holds.
 
+**The documenter's model is a field of its own**, `documenter_model`, with its own row in the table
+above, on the same terms: an alias under Claude Code, a pinned id under kiro, and set by `--model`
+with every other agent when that flag is given (`design/code-knowledge.md` §5.1). **Claude Code's
+code orchestrator's is no `HarnessSpec` field**, since no other harness ships one: its default, the
+`opus` alias, sits beside its effort in its definition (§5.4 there), and `--model` sets it too.
+
 ## Three approval gates, and the one that reads our own config back at the user
 
 Measured interactively in M16 (`research/claude-code-dogfood-checkpoint.md` §1); neither of the two the
@@ -383,13 +393,13 @@ is not optional cosmetics.~~
 name at all**: `re.findall(r"zikaron_[a-z_]+", …)` over the constant returns `[]`, and
 `git log -S "zikaron_memory" -- zikaron/hook/write_policy.py` returns nothing, so no edit ever
 removed one. Nor is the policy rewritten: `resolved_policy_text` returns the constant or the
-operator's override verbatim, and `assets.render`'s only two call sites are the skill and the
+operator's override verbatim, and `assets.render`'s call sites are the two skills and the
 consolidator prompt. ~~So the substitution is load-bearing **once** — for the spawn instruction —~~
 **— that overshoots the evidence, which reaches the write policy and stops there. What is refuted is
 narrower: the substitution is not load-bearing *for the write policy*. It stays load-bearing wherever
-`render` does run** — nine bare tool names across two artefacts: four in `CONSOLIDATOR_PROMPT`, four
-in the skill body, and the one in the Claude Code spawn instruction, which is substituted into that
-body before the rewrite. §"Tool names are a substitution point, not just the spawn instruction" is
+`render` does run** — every `zikaron_` token in `CONSOLIDATOR_PROMPT`, in both skill bodies, and in
+the Claude Code spawn instruction, which is substituted into the consolidation skill's body before
+the rewrite. §"Tool names are a substitution point, not just the spawn instruction" is
 the statement of it. And the deferred-listing surface names the tools directly, which is the likelier
 explanation for how the agent had them.
 
@@ -571,7 +581,7 @@ the bound does the real work and the file is a backstop, not a plan.
 value.** Everywhere else — every client — the difference is data in `zikaron/harness/spec.py`, because
 forking doubles every future change to components the design keeps deliberately thin. The installer
 cannot be written that way and the reason is structural rather than a concession: kiro's artefacts are
-**one** file whose path the *user* supplies, and Claude Code's are **four** files at paths the *project*
+**one** file whose path the *user* supplies, and Claude Code's are files at paths the *project*
 fixes. That is not two values of one parameter. So `main.py`'s flow, preflight order, collision policy and
 backup discipline stay single-sourced, and serialization and merge sit behind one `HarnessTarget` interface
 with two implementations.
@@ -593,8 +603,9 @@ contract" states the predicates and the merge.
 
 ### What a Claude Code install writes
 
-Four artefacts for the memory store, against kiro's two-plus-a-merge; `--components` selects the
-memory store, the guards (`design/guards.md` §5), or both:
+The memory store's artefacts are the rows below whose selection is `memory`, against kiro's shipped
+files and one merge; `--components` selects the memory store, the guards (`design/guards.md` §5),
+or both:
 
 | Artefact | Path | Selection | Notes |
 |---|---|---|---|
@@ -605,6 +616,9 @@ memory store, the guards (`design/guards.md` §5), or both:
 | MCP servers | `.mcp.json` | memory | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
 | Consolidator | `.claude/agents/zikaron-consolidator.md` | memory | YAML frontmatter, prompt as body |
 | Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | memory | YAML frontmatter, body |
+| Documenter | `.claude/agents/zikaron-documenter.md` | memory | YAML frontmatter with `effort: medium` and `tools:` the file tools and `mcp__zikaron`, prompt as body (`design/code-knowledge.md` §5.1, §5.4) |
+| Code orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | memory | YAML frontmatter with `effort: high` and `tools:` `Agent`, `Bash`, `Read` and `mcp__zikaron`, prompt as body |
+| Code documentation skill | `.claude/skills/zikaron-document-code/SKILL.md` | memory | YAML frontmatter carrying `context: fork` and `agent: zikaron-code-orchestrator`, body |
 
 **An install touches only its own selection.** Triggers it does not write are copied verbatim, so
 the guards over a memory install keep every memory hook and both approval keys byte-identical, and
@@ -647,13 +661,13 @@ to start — is derived from the stated value, not from either default.
   install wrote before the flag existed. `guards` and `both` are **refused** under kiro, before
   anything is written, and the refusal is read from the seam — `HarnessSpec.guards` is `None`
   there — never from the harness's name. `--model` under `guards` is refused too, since that
-  selection ships no consolidator; `--no-trust-tools` asks nothing of the guards and is a no-op.
+  selection ships no agent; `--no-trust-tools` asks nothing of the guards and is a no-op.
 - **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two
   merge targets are fixed project paths. Passed under Claude Code it is **refused**, rather than ignored:
   ignoring it would silently discard the one instruction the user gave about where their config lives.
 - **`--print-only` replaces "omit `--agent`".** Under kiro, printing the entries instead of writing them was
   an *accident of omission*. Made explicit, it works on both harnesses, and a Claude Code install stops
-  having to choose between writing four files and doing nothing.
+  having to choose between writing its artefacts and doing nothing.
 - **`--harness auto` refuses when there is no positive evidence.** `harness.detect` falls back to kiro when
   `CLAUDECODE` is absent, which is correct **for the hook** — kiro exports no marker, so absence *is* the
   signal. It is wrong for an installer: run from a plain terminal, `auto` would write kiro artefacts into a
@@ -743,9 +757,11 @@ consolidator`, which is where D32 implements it anyway.
   list holds no entry equal to `mcp__{MCP_SERVER_NAME}` or
   beginning `mcp__{MCP_SERVER_NAME}__`. **Equality-or-`__`-prefix, never a bare prefix**: the
   consolidator's server is `zikaron-consolidator`, so a `startswith` test would pass an agent that can
-  reach only the consolidator. **The one agent the installer writes itself is skipped**, matched on the
-  filename from `CONSOLIDATOR_AGENT_NAME` — its narrow grant is D32 working — while any *other* agent
-  holding only that grant is named, because it belongs to the consolidator alone. Two cases are
+  reach only the consolidator. **The consolidator, which the installer writes itself, is skipped**,
+  matched on the filename from `CONSOLIDATOR_AGENT_NAME` — its narrow grant is D32 working — while
+  any *other* agent holding only the consolidator's grant is named, because it belongs to the
+  consolidator alone. The documenter and the code orchestrator hold `mcp__zikaron`, so the scan
+  passes them unskipped (`design/code-knowledge.md` §5.4). Two cases are
   **out of scope**: an agent with no `tools:` list and `disallowedTools: mcp__zikaron` is equally blind, and
   so is a **user-level agent under `~/.claude/agents/`**, which takes the same frontmatter and is usable in
   any project while sitting outside a scan of the project's own directory. Neither is named, said here so

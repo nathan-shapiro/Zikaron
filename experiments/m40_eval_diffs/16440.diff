@@ -1,0 +1,328 @@
+diff --git a/app/src/terminal/view.rs b/app/src/terminal/view.rs
+index 49d291251dd..4fd09a1194d 100644
+--- a/app/src/terminal/view.rs
++++ b/app/src/terminal/view.rs
+@@ -19390,10 +19390,11 @@ impl TerminalView {
+                     .lock()
+                     .link_at_range(url, RespectObfuscatedSecrets::No);
+                 ctx.notify();
+-                ctx.open_url(&uri);
++                self.open_url_link(&uri, ctx);
+             }
+             GridHighlightedLink::Hyperlink { link, uri } if link.contains(position) => {
+-                self.open_hyperlink_uri(uri, ctx);
++                let uri = uri.clone();
++                self.open_hyperlink_uri(&uri, ctx);
+             }
+             _ => (),
+         }
+@@ -19406,12 +19407,12 @@ impl TerminalView {
+ 
+     /// Open an OSC 8 hyperlink URI. The URI comes from untrusted terminal
+     /// output, so it is only opened if it parses as a URL.
+-    fn open_hyperlink_uri(&self, uri: &str, ctx: &mut ViewContext<Self>) {
++    fn open_hyperlink_uri(&mut self, uri: &str, ctx: &mut ViewContext<Self>) {
+         if url::Url::parse(uri).is_err() {
+             return;
+         }
+         ctx.notify();
+-        ctx.open_url(uri);
++        self.open_url_link(uri, ctx);
+     }
+ 
+     fn middle_click_on_grid(
+diff --git a/app/src/terminal/view/link_detection.rs b/app/src/terminal/view/link_detection.rs
+index 1efac8e7e04..7b68741c870 100644
+--- a/app/src/terminal/view/link_detection.rs
++++ b/app/src/terminal/view/link_detection.rs
+@@ -21,6 +21,7 @@ cfg_if::cfg_if! {
+         use std::path::PathBuf;
+         use unicode_general_category::{get_general_category, GeneralCategory};
+         use unicode_width::UnicodeWidthChar;
++        use url::Url;
+         use warp_util::path::CleanPathResult;
+         use warp_util::path::LineAndColumnArg;
+     }
+@@ -112,6 +113,40 @@ fn path_without_trailing_sentence_punctuation(
+     })
+ }
+ 
++/// Returns the file and position a `file://` URL with a line/column suffix points to,
++/// e.g. `file:///src/Main.kt:35:24` as printed by Gradle and other compilers.
++///
++/// Returns `None`, leaving the URL to be opened by the OS as before, when the URL has no
++/// suffix, isn't a local `file://` URL, or doesn't point to an existing file once the
++/// suffix is removed. A URL that already names an existing file (e.g. a file literally
++/// named `notes:12`) is also left alone.
++#[cfg(feature = "local_fs")]
++fn file_url_link_target(uri: &str) -> Option<(PathBuf, LineAndColumnArg)> {
++    let CleanPathResult {
++        path: uri_without_suffix,
++        line_and_column_num,
++    } = CleanPathResult::with_line_and_column_number(uri);
++    let line_and_column_num = line_and_column_num?;
++
++    let path = local_file_url_path(&uri_without_suffix)?;
++    if !path.is_file() || local_file_url_path(uri).is_some_and(|full| full.is_file()) {
++        return None;
++    }
++    Some((path, line_and_column_num))
++}
++
++/// Converts a local `file://` URL to a path, decoding percent-encoded characters. URLs with
++/// a host other than `localhost` return `None`, so they're never resolved as UNC paths on
++/// Windows.
++#[cfg(feature = "local_fs")]
++fn local_file_url_path(uri: &str) -> Option<PathBuf> {
++    let url = Url::parse(uri).ok()?;
++    if url.scheme() != "file" || !matches!(url.host_str(), None | Some("localhost")) {
++        return None;
++    }
++    url.to_file_path().ok()
++}
++
+ /// Highlighted link within a terminal model grid.
+ #[derive(Debug, Clone)]
+ pub enum GridHighlightedLink {
+@@ -515,7 +550,7 @@ impl super::TerminalView {
+                     .model
+                     .lock()
+                     .link_at_range(url, RespectObfuscatedSecrets::No);
+-                ctx.open_url(&uri);
++                self.open_url_link(&uri, ctx);
+             }
+             GridHighlightedLink::Hyperlink { uri, .. } => {
+                 self.open_hyperlink_uri(uri, ctx);
+@@ -523,6 +558,18 @@ impl super::TerminalView {
+         };
+     }
+ 
++    /// Opens a URL from the terminal grid. A `file://` URL with a `:line[:col]` suffix is
++    /// opened like a detected file path, so the suffix is used as the position instead of
++    /// being passed to the OS as part of the file name.
++    pub(super) fn open_url_link(&mut self, uri: &str, ctx: &mut ViewContext<Self>) {
++        #[cfg(feature = "local_fs")]
++        if let Some((path, line_and_column_num)) = file_url_link_target(uri) {
++            self.open_file_path(path, Some(line_and_column_num), ctx);
++            return;
++        }
++        ctx.open_url(uri);
++    }
++
+     pub(super) fn open_rich_content_link(
+         &mut self,
+         link: &RichContentLink,
+diff --git a/app/src/terminal/view/link_detection_tests.rs b/app/src/terminal/view/link_detection_tests.rs
+index 0067639b42d..f8399297f11 100644
+--- a/app/src/terminal/view/link_detection_tests.rs
++++ b/app/src/terminal/view/link_detection_tests.rs
+@@ -1,9 +1,11 @@
+ use std::iter;
+ 
+-use warp_util::path::CleanPathResult;
++use warp_util::path::{CleanPathResult, LineAndColumnArg};
+ 
+ use super::super::TerminalView;
+-use super::{GridHighlightedLink, path_without_trailing_sentence_punctuation};
++use super::{
++    GridHighlightedLink, file_url_link_target, path_without_trailing_sentence_punctuation,
++};
+ use crate::terminal::model::grid::grid_handler::PossiblePath;
+ use crate::terminal::model::index::Point;
+ use crate::terminal::model::terminal_model::WithinModel;
+@@ -209,3 +211,106 @@ fn compute_valid_paths_keeps_trailing_fullwidth_punctuation_when_it_is_the_filen
+         }
+     );
+ }
++
++fn file_url(path: &std::path::Path) -> String {
++    url::Url::from_file_path(path)
++        .expect("absolute path converts to a file URL")
++        .to_string()
++}
++
++#[test]
++fn file_url_link_target_splits_line_and_column_suffix() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = dir.path().join("Main.kt");
++    std::fs::write(&file, "").unwrap();
++    let url = file_url(&file);
++
++    assert_eq!(
++        file_url_link_target(&format!("{url}:35:24")),
++        Some((
++            file.clone(),
++            LineAndColumnArg {
++                line_num: 35,
++                column_num: Some(24),
++            }
++        ))
++    );
++    assert_eq!(
++        file_url_link_target(&format!("{url}:35")),
++        Some((
++            file,
++            LineAndColumnArg {
++                line_num: 35,
++                column_num: None,
++            }
++        ))
++    );
++}
++
++#[test]
++fn file_url_link_target_decodes_percent_encoded_paths() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = dir.path().join("my notes.kt");
++    std::fs::write(&file, "").unwrap();
++    let url = file_url(&file);
++    assert!(url.contains("my%20notes.kt"));
++
++    assert_eq!(
++        file_url_link_target(&format!("{url}:7:1")),
++        Some((
++            file,
++            LineAndColumnArg {
++                line_num: 7,
++                column_num: Some(1),
++            }
++        ))
++    );
++}
++
++#[test]
++fn file_url_link_target_leaves_other_urls_to_the_os() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = dir.path().join("Main.kt");
++    std::fs::write(&file, "").unwrap();
++    let url = file_url(&file);
++
++    // No line/column suffix: keep handing the URL to the OS as before.
++    assert_eq!(file_url_link_target(&url), None);
++    // Not a file URL.
++    assert_eq!(file_url_link_target("https://warp.dev:443"), None);
++    assert_eq!(file_url_link_target("https://warp.dev/foo.kt:35:24"), None);
++    // The file doesn't exist, so there's nothing to open in an editor.
++    let missing = file_url(&dir.path().join("Missing.kt"));
++    assert_eq!(file_url_link_target(&format!("{missing}:35:24")), None);
++    // A remote host is not opened as a local (or UNC) path.
++    let remote = format!("{url}:35:24").replacen("file://", "file://example.com", 1);
++    assert_eq!(file_url_link_target(&remote), None);
++    // `localhost` is the local machine (on Windows, `url` maps any host to a UNC path).
++    #[cfg(unix)]
++    {
++        let localhost = format!("{url}:35:24").replacen("file://", "file://localhost", 1);
++        assert_eq!(
++            file_url_link_target(&localhost),
++            Some((
++                file,
++                LineAndColumnArg {
++                    line_num: 35,
++                    column_num: Some(24),
++                }
++            ))
++        );
++    }
++}
++
++#[cfg(unix)]
++#[test]
++fn file_url_link_target_keeps_file_names_that_end_in_a_colon_number() {
++    let dir = tempfile::tempdir().unwrap();
++    // Both `notes` and `notes:12` exist. The URL names `notes:12` exactly, so it is not
++    // reinterpreted as line 12 of `notes`.
++    std::fs::write(dir.path().join("notes"), "").unwrap();
++    let file = dir.path().join("notes:12");
++    std::fs::write(&file, "").unwrap();
++
++    assert_eq!(file_url_link_target(&file_url(&file)), None);
++}
+diff --git a/app/src/terminal/view_tests.rs b/app/src/terminal/view_tests.rs
+index 057ef4813b0..d72f589cdb2 100644
+--- a/app/src/terminal/view_tests.rs
++++ b/app/src/terminal/view_tests.rs
+@@ -7345,6 +7345,84 @@ fn test_link_at_range_trims_zero_width_spaces() {
+     })
+ }
+ 
++/// Regression test for #3970: Cmd/Ctrl-clicking a `file://` URL with a `:line:col` suffix
++/// (as printed by Gradle and other compilers) should open the file at that position, not
++/// pass the whole URL, suffix included, to the OS.
++#[cfg(feature = "local_fs")]
++#[test]
++fn test_clicking_file_url_with_line_and_column_opens_file() {
++    App::test((), |mut app| async move {
++        initialize_app_for_terminal_view(&mut app);
++        let terminal = add_window_with_terminal(&mut app, None);
++
++        let dir = tempfile::tempdir().unwrap();
++        let file = dir.path().join("Main.kt");
++        std::fs::write(&file, "").unwrap();
++        let link = format!("{}:35:24", url::Url::from_file_path(&file).unwrap());
++
++        let opened = Rc::new(RefCell::new(Vec::new()));
++        let opened_clone = opened.clone();
++        app.update(|ctx| {
++            ctx.subscribe_to_view(&terminal, move |_, event, _| {
++                if let Event::OpenFileWithTarget { path, line_col, .. } = event {
++                    opened_clone.borrow_mut().push((path.clone(), *line_col));
++                }
++            });
++        });
++
++        terminal.update(&mut app, |view, _ctx| {
++            view.model
++                .lock()
++                .simulate_block(format!("echo {link}").as_str(), link.as_str());
++        });
++
++        let (point, url) = terminal.read(&app, |view, ctx| {
++            let model = view.model.lock();
++            let block = view
++                .viewport_state(model.block_list(), InputMode::PinnedToBottom, ctx)
++                .iter()
++                .next()
++                .expect("blocklist should have at least one item");
++            let point = WithinModel::BlockList(WithinBlock::new(
++                Point::new(0, 4),
++                block.block_index.expect("block index should exist"),
++                crate::terminal::GridType::Output,
++            ));
++            let url = model
++                .url_at_point(&point)
++                .expect("the file URL should be detected as a link");
++            assert_eq!(
++                model.link_at_range(&url, RespectObfuscatedSecrets::No),
++                link
++            );
++            (point, url)
++        });
++
++        terminal.update(&mut app, |view, ctx| {
++            view.highlighted_link
++                .set(GridHighlightedLink::Url(url), &mut view.model.lock());
++            // `cmd` directly opens links on macOS, `ctrl` on Linux and Windows.
++            let modifiers = ModifiersState {
++                cmd: true,
++                ctrl: true,
++                ..Default::default()
++            };
++            view.click_on_grid(&point, &modifiers, ctx);
++        });
++
++        assert_eq!(
++            *opened.borrow(),
++            vec![(
++                file,
++                Some(LineAndColumnArg {
++                    line_num: 35,
++                    column_num: Some(24),
++                })
++            )]
++        );
++    })
++}
++
+ #[test]
+ fn test_scroll_position_doesnt_change_when_block_finished() {
+     use futures_lite::StreamExt;

@@ -132,6 +132,11 @@ Source files outside `tests/`, by extension (`py ts js rs go cs cpp h java`):
 | `zikaron/` | 200 | 2.0 MB |
 | `~/Trading/LeibaTrader` | 243 | 1.7 MB |
 
+**The extension list omits Scala, and LeibaTrader's codebase is Scala** (corrected 2026-10-14): the
+243 are its Python `tools/` scripts, while `sugar-leiba/SugarLeiba` holds 123 tracked `.scala`
+files under `src/main/scala`, median 55 lines and the largest 2,077, and 59 under `src/test/scala`
+(`git ls-files '*.scala'`).
+
 **Both are small enough that grep still finds things**, so neither can show the benefit the
 proposal is for. They exercise the plumbing only.
 
