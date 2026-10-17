@@ -1,0 +1,639 @@
+diff --git a/app/src/terminal/alt_screen/alt_screen_element.rs b/app/src/terminal/alt_screen/alt_screen_element.rs
+index e703b0eb190..04f32e855b8 100644
+--- a/app/src/terminal/alt_screen/alt_screen_element.rs
++++ b/app/src/terminal/alt_screen/alt_screen_element.rs
+@@ -863,6 +863,7 @@ impl Element for AltScreenElement {
+                 if let Some(escape_sequence) = (KeystrokeWithDetails {
+                     keystroke,
+                     key_without_modifiers: details.key_without_modifiers.as_deref(),
++                    base_layout_key: details.base_layout_key,
+                     chars: Some(chars.as_str()),
+                 })
+                 .to_escape_sequence(self.model.lock().deref())
+diff --git a/app/src/terminal/block_list_element.rs b/app/src/terminal/block_list_element.rs
+index f1ab38e1793..16903155187 100644
+--- a/app/src/terminal/block_list_element.rs
++++ b/app/src/terminal/block_list_element.rs
+@@ -4629,6 +4629,7 @@ impl Element for BlockListElement {
+                     if let Some(escape_sequence) = (KeystrokeWithDetails {
+                         keystroke,
+                         key_without_modifiers: details.key_without_modifiers.as_deref(),
++                        base_layout_key: details.base_layout_key,
+                         chars: Some(chars.as_str()),
+                     })
+                     .to_escape_sequence(self.model.lock().deref())
+diff --git a/crates/warp_terminal/src/model/escape_sequences.rs b/crates/warp_terminal/src/model/escape_sequences.rs
+index f459f697985..0f1ef796d38 100644
+--- a/crates/warp_terminal/src/model/escape_sequences.rs
++++ b/crates/warp_terminal/src/model/escape_sequences.rs
+@@ -235,6 +235,9 @@ pub trait ToEscapeSequence<T> {
+ pub struct KeystrokeWithDetails<'a> {
+     pub keystroke: &'a Keystroke,
+     pub key_without_modifiers: Option<&'a str>,
++    /// The character the pressed physical key produces on the standard PC-101 layout, reported
++    /// to applications as the Kitty protocol's base layout key.
++    pub base_layout_key: Option<char>,
+     /// The text that this key event would insert, as provided by the OS input system.
+     /// Used for the REPORT_ASSOCIATED_TEXT enhancement (Kitty flag 16).
+     pub chars: Option<&'a str>,
+@@ -245,6 +248,7 @@ impl<T: ModeProvider> ToEscapeSequence<T> for KeystrokeWithDetails<'_> {
+         if let Some(csi_u) = maybe_convert_keystroke_to_csi_u(
+             self.keystroke,
+             self.key_without_modifiers,
++            self.base_layout_key,
+             self.chars,
+             mode_provider,
+         ) {
+diff --git a/crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs b/crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs
+index 1e64bf37d78..58fbe943e18 100644
+--- a/crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs
++++ b/crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs
+@@ -13,6 +13,7 @@ use super::{ModeProvider, TermMode};
+ pub(super) fn maybe_convert_keystroke_to_csi_u(
+     keystroke: &Keystroke,
+     key_without_modifiers: Option<&str>,
++    base_layout_key: Option<char>,
+     chars: Option<&str>,
+     mode_provider: &dyn ModeProvider,
+ ) -> Option<Vec<u8>> {
+@@ -64,12 +65,18 @@ pub(super) fn maybe_convert_keystroke_to_csi_u(
+         return None;
+     }
+ 
+-    keystroke_to_csi_u(keystroke, key_without_modifiers, chars, mode_provider)
++    keystroke_to_csi_u(
++        keystroke,
++        key_without_modifiers,
++        base_layout_key,
++        chars,
++        mode_provider,
++    )
+ }
+ 
+ /// Encodes a keystroke to a CSI u escape sequence for the Kitty keyboard protocol.
+ ///
+-/// Full format: CSI unicode-key-code[:shifted-key] ; modifiers[:event_type] ; text-as-codepoints u
++/// Full format: CSI unicode-key-code[:[shifted-key][:base-layout-key]] ; modifiers[:event_type] ; text-as-codepoints u
+ /// where modifiers is: 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0) + (super ? 8 : 0)
+ ///
+ /// Key codes follow the Kitty protocol specification:
+@@ -77,6 +84,8 @@ pub(super) fn maybe_convert_keystroke_to_csi_u(
+ /// - Function keys F13-F35 use codes 57376-57398
+ /// - When REPORT_ALTERNATE_KEYS (flag 4) is active and shift is held, the shifted key
+ ///   code is appended after a colon (e.g., `97:65` for shift+a).
++/// - When REPORT_ALTERNATE_KEYS (flag 4) is active, the base layout key follows in the third
++///   sub-field (e.g., `1084::118` for ctrl+v on a Russian layout, where 118 is `v`).
+ /// - When REPORT_ASSOCIATED_TEXT (flag 16) is active, the OS-provided text (`chars`)
+ ///   is appended as a colon-separated list of Unicode codepoints (e.g., `;65` for "A").
+ /// - Event type encoding (press=1, repeat=2, release=3) is omitted for press events
+@@ -89,6 +98,7 @@ pub(super) fn maybe_convert_keystroke_to_csi_u(
+ fn keystroke_to_csi_u(
+     keystroke: &Keystroke,
+     key_without_modifiers: Option<&str>,
++    base_layout_key: Option<char>,
+     chars: Option<&str>,
+     mode_provider: &(impl ModeProvider + ?Sized),
+ ) -> Option<Vec<u8>> {
+@@ -165,7 +175,7 @@ fn keystroke_to_csi_u(
+         _ => return None,
+     };
+ 
+-    // Build the key code portion: `key_code[:shifted_key]`
++    // Build the key code portion: `key_code[:[shifted_key][:base_layout_key]]`
+     // Per spec: "the shifted key must be present only if shift is also present in the modifiers"
+     let alternate_key_code = if report_alternate && keystroke.shift {
+         original_char.and_then(|c| {
+@@ -181,9 +191,21 @@ fn keystroke_to_csi_u(
+         None
+     };
+ 
+-    let key_part = match alternate_key_code {
+-        Some(alt) => format!("{key_code}:{alt}"),
+-        None => key_code.to_string(),
++    // The base layout key is what lets an application match a chord such as ctrl+v while a
++    // layout with no Latin letters is active, where `key_code` is a letter it cannot match on.
++    let base_layout_key_code = if report_alternate {
++        base_layout_key
++            .map(|c| c as u32)
++            .filter(|&base| base != key_code)
++    } else {
++        None
++    };
++
++    let key_part = match (alternate_key_code, base_layout_key_code) {
++        (Some(shifted), Some(base)) => format!("{key_code}:{shifted}:{base}"),
++        (Some(shifted), None) => format!("{key_code}:{shifted}"),
++        (None, Some(base)) => format!("{key_code}::{base}"),
++        (None, None) => key_code.to_string(),
+     };
+ 
+     // Calculate modifier value per the Kitty protocol.
+diff --git a/crates/warp_terminal/src/model/escape_sequences_tests.rs b/crates/warp_terminal/src/model/escape_sequences_tests.rs
+index 40105057f26..621c7718893 100644
+--- a/crates/warp_terminal/src/model/escape_sequences_tests.rs
++++ b/crates/warp_terminal/src/model/escape_sequences_tests.rs
+@@ -14,6 +14,7 @@ fn validate_keystroke_test_cases<T: ModeProvider>(
+         let result = KeystrokeWithDetails {
+             keystroke: key,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(mock_terminal_model);
+@@ -72,6 +73,7 @@ fn test_ctrl_slash_emits_us_control_code() {
+         KeystrokeWithDetails {
+             keystroke: &ctrl_slash,
+             key_without_modifiers: Some("/"),
++            base_layout_key: None,
+             chars: Some("/"),
+         }
+         .to_escape_sequence(&terminal_model_mock)
+@@ -84,6 +86,7 @@ fn test_ctrl_slash_emits_us_control_code() {
+         KeystrokeWithDetails {
+             keystroke: &slash,
+             key_without_modifiers: Some("/"),
++            base_layout_key: None,
+             chars: Some("/"),
+         }
+         .to_escape_sequence(&terminal_model_mock)
+@@ -275,6 +278,7 @@ fn test_cursor_movement_keystroke_without_modifier_to_escape_sequence() {
+         let result = KeystrokeWithDetails {
+             keystroke: key,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock);
+@@ -556,6 +560,7 @@ fn test_unmatched_keystroke_does_not_yield_escape_sequence() {
+         let result = KeystrokeWithDetails {
+             keystroke: key,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock);
+@@ -570,6 +575,7 @@ fn test_to_pty_bytes_layers_fallbacks_over_the_encoder() {
+         KeystrokeWithDetails {
+             keystroke,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars,
+         }
+         .to_pty_bytes(&mock)
+@@ -786,6 +792,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &escape,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -799,6 +806,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &shift_enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -811,6 +819,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &shift_tab,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -823,6 +832,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &shift_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -835,6 +845,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &ctrl_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -846,6 +857,7 @@ fn test_keyboard_enhancement_disambiguate_only() {
+         KeystrokeWithDetails {
+             keystroke: &enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -863,6 +875,7 @@ fn test_keyboard_enhancement_unshifted_keycode_for_shifted_printables() {
+         KeystrokeWithDetails {
+             keystroke: &Keystroke::parse("shift-@").unwrap(),
+             key_without_modifiers: Some("2"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -872,6 +885,7 @@ fn test_keyboard_enhancement_unshifted_keycode_for_shifted_printables() {
+         KeystrokeWithDetails {
+             keystroke: &Keystroke::parse("shift-%").unwrap(),
+             key_without_modifiers: Some("5"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -882,6 +896,7 @@ fn test_keyboard_enhancement_unshifted_keycode_for_shifted_printables() {
+         KeystrokeWithDetails {
+             keystroke: &Keystroke::parse("shift-A").unwrap(),
+             key_without_modifiers: Some("a"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -892,6 +907,7 @@ fn test_keyboard_enhancement_unshifted_keycode_for_shifted_printables() {
+         KeystrokeWithDetails {
+             keystroke: &Keystroke::parse("shift-A").unwrap(),
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -912,6 +928,7 @@ fn test_keyboard_enhancement_mac_option_without_meta_mapping_is_not_disambiguate
+         KeystrokeWithDetails {
+             keystroke: &alt_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&terminal_model_mock),
+@@ -930,6 +947,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &shift_a,
+             key_without_modifiers: Some("a"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -942,6 +960,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &shift_at,
+             key_without_modifiers: Some("2"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -954,6 +973,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &shift_pct,
+             key_without_modifiers: Some("5"),
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -966,6 +986,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -978,6 +999,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &ctrl_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -990,6 +1012,7 @@ fn test_keyboard_enhancement_alternate_keys() {
+         KeystrokeWithDetails {
+             keystroke: &shift_enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -1008,6 +1031,7 @@ fn test_keyboard_enhancement_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("a"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1020,6 +1044,7 @@ fn test_keyboard_enhancement_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &shift_a,
+             key_without_modifiers: Some("a"),
++            base_layout_key: None,
+             chars: Some("A"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1032,6 +1057,7 @@ fn test_keyboard_enhancement_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &ctrl_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("\x01"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1044,6 +1070,7 @@ fn test_keyboard_enhancement_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("\r"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1056,6 +1083,7 @@ fn test_keyboard_enhancement_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &escape,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("\x1b"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1063,6 +1091,52 @@ fn test_keyboard_enhancement_associated_text() {
+     );
+ }
+ 
++#[test]
++fn test_keyboard_enhancement_base_layout_key() {
++    // With REPORT_ALTERNATE_KEYS (flag 4), the physical key's US-layout character is reported in
++    // the third sub-field, so applications can match chords on layouts without Latin letters.
++    let mock = mock_with_alternate_keys();
++
++    // ctrl+v on a Russian layout: key=1084 (Cyrillic "m"), base layout key=118 (v).
++    let ctrl_cyrillic = Keystroke::parse("ctrl-\u{43c}").unwrap();
++    assert_eq!(
++        KeystrokeWithDetails {
++            keystroke: &ctrl_cyrillic,
++            key_without_modifiers: Some("\u{43c}"),
++            base_layout_key: Some('v'),
++            chars: None,
++        }
++        .to_escape_sequence(&mock),
++        Some(b"\x1b[1084::118;5u".to_vec())
++    );
++
++    // On a US layout the base layout key matches the key code, so it stays out of the sequence.
++    let ctrl_v = Keystroke::parse("ctrl-v").unwrap();
++    assert_eq!(
++        KeystrokeWithDetails {
++            keystroke: &ctrl_v,
++            key_without_modifiers: Some("v"),
++            base_layout_key: Some('v'),
++            chars: None,
++        }
++        .to_escape_sequence(&mock),
++        Some(b"\x1b[118;5u".to_vec())
++    );
++
++    // Without flag 4 the base layout key is not reported at all.
++    let mock_without_alternate_keys = mock_with_all_keys_as_escape();
++    assert_eq!(
++        KeystrokeWithDetails {
++            keystroke: &ctrl_cyrillic,
++            key_without_modifiers: Some("\u{43c}"),
++            base_layout_key: Some('v'),
++            chars: None,
++        }
++        .to_escape_sequence(&mock_without_alternate_keys),
++        Some(b"\x1b[1084;5u".to_vec())
++    );
++}
++
+ #[test]
+ fn test_keyboard_enhancement_alternate_keys_with_associated_text() {
+     // Both flags 4 and 16 active simultaneously.
+@@ -1074,6 +1148,7 @@ fn test_keyboard_enhancement_alternate_keys_with_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &shift_a,
+             key_without_modifiers: Some("a"),
++            base_layout_key: None,
+             chars: Some("A"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1086,6 +1161,7 @@ fn test_keyboard_enhancement_alternate_keys_with_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &shift_at,
+             key_without_modifiers: Some("2"),
++            base_layout_key: None,
+             chars: Some("@"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1098,6 +1174,7 @@ fn test_keyboard_enhancement_alternate_keys_with_associated_text() {
+         KeystrokeWithDetails {
+             keystroke: &z,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("z"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1118,6 +1195,7 @@ fn test_keyboard_enhancement_event_types() {
+         KeystrokeWithDetails {
+             keystroke: &a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -1130,6 +1208,7 @@ fn test_keyboard_enhancement_event_types() {
+         KeystrokeWithDetails {
+             keystroke: &ctrl_a,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -1142,6 +1221,7 @@ fn test_keyboard_enhancement_event_types() {
+         KeystrokeWithDetails {
+             keystroke: &enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -1154,6 +1234,7 @@ fn test_keyboard_enhancement_event_types() {
+         KeystrokeWithDetails {
+             keystroke: &shift_enter,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+@@ -1239,6 +1320,7 @@ fn test_kitty_protocol_mac_option_space_composition_is_not_disambiguated() {
+         KeystrokeWithDetails {
+             keystroke: &option_space,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: Some("\u{a0}"),
+         }
+         .to_escape_sequence(&mock),
+@@ -1251,6 +1333,7 @@ fn test_kitty_protocol_mac_option_space_composition_is_not_disambiguated() {
+         KeystrokeWithDetails {
+             keystroke: &option_space,
+             key_without_modifiers: None,
++            base_layout_key: None,
+             chars: None,
+         }
+         .to_escape_sequence(&mock),
+diff --git a/crates/warp_tui/src/terminal_content_element.rs b/crates/warp_tui/src/terminal_content_element.rs
+index 361b86699df..bf0cfdf5f53 100644
+--- a/crates/warp_tui/src/terminal_content_element.rs
++++ b/crates/warp_tui/src/terminal_content_element.rs
+@@ -230,6 +230,7 @@ fn forwarded_pty_input_for_event<'a>(
+             let bytes = KeystrokeWithDetails {
+                 keystroke,
+                 key_without_modifiers: details.key_without_modifiers.as_deref(),
++                base_layout_key: details.base_layout_key,
+                 chars: Some(chars.as_str()),
+             }
+             .to_pty_bytes(model)?;
+diff --git a/crates/warpui/src/platform/mac/event.rs b/crates/warpui/src/platform/mac/event.rs
+index b9495194765..7789a2acd26 100644
+--- a/crates/warpui/src/platform/mac/event.rs
++++ b/crates/warpui/src/platform/mac/event.rs
+@@ -67,11 +67,16 @@ pub unsafe fn from_native(
+                 // For example, Shift+1 on a US keyboard gives '!' as the key, but
+                 // key_without_modifiers will be '1'.
+                 let key_without_modifiers = Keycode(native_event.keyCode()).try_to_key_name(false);
++                let base_layout_key = match scancode_to_physicalkey(native_event.keyCode() as u32) {
++                    PhysicalKey::Code(code) => code.base_layout_key(),
++                    PhysicalKey::Unidentified(_) => None,
++                };
+ 
+                 let details = KeyEventDetails {
+                     left_alt: (native_modifiers.bits() & LEFT_ALT_MASK) != 0,
+                     right_alt: (native_modifiers.bits() & RIGHT_ALT_MASK) != 0,
+                     key_without_modifiers,
++                    base_layout_key,
+                 };
+                 let unmodified_chars = native_event.charactersIgnoringModifiers()?;
+                 let unmodified_chars = CStr::from_ptr(unmodified_chars.UTF8String())
+diff --git a/crates/warpui/src/windowing/winit/event_loop/key_events.rs b/crates/warpui/src/windowing/winit/event_loop/key_events.rs
+index 304734e62cb..6acd93457bd 100644
+--- a/crates/warpui/src/windowing/winit/event_loop/key_events.rs
++++ b/crates/warpui/src/windowing/winit/event_loop/key_events.rs
+@@ -147,6 +147,7 @@ pub fn convert_keyboard_input_event(
+             left_alt: window_state.left_alt_pressed,
+             right_alt: window_state.right_alt_pressed,
+             key_without_modifiers,
++            base_layout_key: None,
+         },
+         is_composing: false,
+     })
+diff --git a/crates/warpui_core/src/event.rs b/crates/warpui_core/src/event.rs
+index bcc31c85f2d..e06f25d5ea4 100644
+--- a/crates/warpui_core/src/event.rs
++++ b/crates/warpui_core/src/event.rs
+@@ -67,6 +67,9 @@ pub struct KeyEventDetails {
+     pub right_alt: bool,
+     /// The key that would have been produced without any modifiers (including Shift).
+     pub key_without_modifiers: Option<String>,
++    /// The character the pressed physical key produces on the standard PC-101 layout, when
++    /// the platform can report it. See [`crate::platform::keyboard::KeyCode::base_layout_key`].
++    pub base_layout_key: Option<char>,
+ }
+ 
+ #[derive(Copy, Clone, Debug, Default)]
+diff --git a/crates/warpui_core/src/platform/keyboard.rs b/crates/warpui_core/src/platform/keyboard.rs
+index 97b74c058f0..0c458190c19 100644
+--- a/crates/warpui_core/src/platform/keyboard.rs
++++ b/crates/warpui_core/src/platform/keyboard.rs
+@@ -527,3 +527,69 @@ pub enum KeyCode {
+     /// General-purpose function key.
+     F35,
+ }
++
++impl KeyCode {
++    /// The character this physical key produces on the standard PC-101 (US QWERTY) layout.
++    ///
++    /// The Kitty keyboard protocol calls this the base layout key. Reporting it lets an
++    /// application match a chord such as ctrl+v while a layout with no Latin letters is
++    /// active, where the layout-dependent key code carries no letter to match on.
++    ///
++    /// Returns `None` for keys that produce no character on that layout.
++    pub fn base_layout_key(self) -> Option<char> {
++        Some(match self {
++            Self::KeyA => 'a',
++            Self::KeyB => 'b',
++            Self::KeyC => 'c',
++            Self::KeyD => 'd',
++            Self::KeyE => 'e',
++            Self::KeyF => 'f',
++            Self::KeyG => 'g',
++            Self::KeyH => 'h',
++            Self::KeyI => 'i',
++            Self::KeyJ => 'j',
++            Self::KeyK => 'k',
++            Self::KeyL => 'l',
++            Self::KeyM => 'm',
++            Self::KeyN => 'n',
++            Self::KeyO => 'o',
++            Self::KeyP => 'p',
++            Self::KeyQ => 'q',
++            Self::KeyR => 'r',
++            Self::KeyS => 's',
++            Self::KeyT => 't',
++            Self::KeyU => 'u',
++            Self::KeyV => 'v',
++            Self::KeyW => 'w',
++            Self::KeyX => 'x',
++            Self::KeyY => 'y',
++            Self::KeyZ => 'z',
++            Self::Digit0 => '0',
++            Self::Digit1 => '1',
++            Self::Digit2 => '2',
++            Self::Digit3 => '3',
++            Self::Digit4 => '4',
++            Self::Digit5 => '5',
++            Self::Digit6 => '6',
++            Self::Digit7 => '7',
++            Self::Digit8 => '8',
++            Self::Digit9 => '9',
++            Self::Backquote => '`',
++            Self::Minus => '-',
++            Self::Equal => '=',
++            Self::BracketLeft => '[',
++            Self::BracketRight => ']',
++            Self::Backslash => '\\',
++            Self::Semicolon => ';',
++            Self::Quote => '\'',
++            Self::Comma => ',',
++            Self::Period => '.',
++            Self::Slash => '/',
++            _ => return None,
++        })
++    }
++}
++
++#[cfg(test)]
++#[path = "keyboard_tests.rs"]
++mod tests;
+diff --git a/crates/warpui_core/src/platform/keyboard_tests.rs b/crates/warpui_core/src/platform/keyboard_tests.rs
+new file mode 100644
+index 00000000000..48f6c53671b
+--- /dev/null
++++ b/crates/warpui_core/src/platform/keyboard_tests.rs
+@@ -0,0 +1,17 @@
++use super::*;
++
++#[test]
++fn base_layout_key_maps_character_keys() {
++    assert_eq!(KeyCode::KeyV.base_layout_key(), Some('v'));
++    assert_eq!(KeyCode::KeyZ.base_layout_key(), Some('z'));
++    assert_eq!(KeyCode::Digit7.base_layout_key(), Some('7'));
++    assert_eq!(KeyCode::Slash.base_layout_key(), Some('/'));
++    assert_eq!(KeyCode::Backslash.base_layout_key(), Some('\\'));
++}
++
++#[test]
++fn base_layout_key_is_none_for_keys_without_a_character() {
++    assert_eq!(KeyCode::Enter.base_layout_key(), None);
++    assert_eq!(KeyCode::ControlLeft.base_layout_key(), None);
++    assert_eq!(KeyCode::Backspace.base_layout_key(), None);
++}

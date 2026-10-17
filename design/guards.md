@@ -473,7 +473,7 @@ quoted string precedes no unquoted `#`, so it is never in a comment.
 - No separate override log. The command and its reason are in the harness transcript, which is
   where §7 counts them.
 - The override exists for the legitimate exceptions — a file whose bytes a program owns (this
-  repository's `.kiro/` golden files), a bulk mechanical change across many files — and for a guard
+  repository's install snapshots), a bulk mechanical change across many files — and for a guard
   that is wrong. **A false deny stops work outright**, so the escape hatch is not optional.
 
 ### 3.5 The deny message
@@ -584,12 +584,12 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
   install keeps `--components both`, so neither install ever drops the other's start text.
 - **The guards selection writes the guard groups and the start entry under `hooks` and nothing
   else** in `settings.local.json` — no `enabledMcpjsonServers`, no `permissions.allow` entry — writes no
-  `.mcp.json`, ships neither the consolidator nor the skill, and reports none of the memory
-  install's notes. A memory install removes none of the guards'.
-- A guards-only install needs no store, no service and no model. `--model` names a consolidator the
-  selection does not ship, so it is **refused** under `guards`, as `--agent` is refused under Claude
-  Code rather than silently discarded; `--no-trust-tools` asks for nothing to be done and is
-  accepted as a no-op.
+  `.mcp.json`, ships no agent and no skill, and reports none of the memory install's
+  notes. A memory install removes none of the guards'.
+- A guards-only install needs no store, no service and no model. `--model` names the model of the
+  agents the selection does not ship, so it is **refused** under `guards`, as `--agent` is
+  refused under Claude Code rather than silently discarded; `--no-trust-tools` asks for nothing to
+  be done and is accepted as a no-op.
 
 ## 6. Failure behaviour
 
@@ -978,7 +978,7 @@ scratch directory, where these rules would exempt them.
 | `echo $(date) > /tmp/x` · `cat <<'EOF' \| tee /tmp/x` / `x` / `EOF` · `sed -i 's/a/b/' /tmp/x &> /tmp/log` · `echo x \| tee /tmp/x >&2` · `sed -i 's/a/b/' /tmp/*.md` · `./check.sh 2>&1 \| tee /tmp/check.log` · `python3 -c "import tarfile; tarfile.open('/tmp/x.tar','w')"` | silent |
 | `sed -i 's/a/b/' f #ZIKARON-FORCE` / `#Reason: bulk fix` | deny (invalid marker: the reason must be on the marker's line) |
 | `python3 -c "for p in Path('/tmp').glob('*.md'): p.write_text('x')"` | deny (stated false deny on scratch) |
-| `.venv/bin/ruff format .` · `.venv/bin/ruff check --fix .` · `python -c "from zikaron.install.assets import *; print(skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION))" > .kiro/skills/zikaron-consolidate/SKILL.md` | silent — the gate's formatter and the prescribed golden re-render stay override-free on purpose |
+| `.venv/bin/ruff format .` · `.venv/bin/ruff check --fix .` · `python -c "from zikaron.install.assets import *; print(skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION))" > .kiro/skills/zikaron-consolidate/SKILL.md` | silent — the gate's formatter and a program re-rendering a file it owns stay override-free on purpose |
 | `bash -c 'sed -i s/a/b/ f'` · `sh -c 'sed -i s/a/b/ f'` · `{ echo a; echo b; } > f` · `(echo a; echo b) > f` · `echo x \| cat > f` · `echo x &> f` · `echo x 1> f` · `eval "sed -i 's/a/b/' f"` · `node --eval "require('fs').writeFileSync('f','x')"` · `node -p "require('fs').writeFileSync('f','x')"` · `ex -sc '%s/a/b/g' -cx f` · `printf '%s\n' ',s/a/b/g' w q \| ed -s f` · `vi -es -c '%s/a/b/g' -c wq f` · `nvim --headless -c '%s/a/b/g' -c wq f` · `parallel sed -i 's/a/b/' ::: f` · `x="$(sed -i 's/a/b/' f)"` · ``x=`sed -i 's/a/b/' f` `` · `su -c "sed -i 's/a/b/' f"` · `doas sed -i 's/a/b/' f` · `docker run -v "$PWD":/w img sed -i 's/a/b/' /w/f` · `kubectl exec pod -- sed -i 's/a/b/' f` · `: > f` · `> f` | silent (stated misses, §7) |
 | `bun -e "require('fs').writeFileSync('f','x')"` · `deno eval "Deno.writeTextFileSync('f','x')"` · `php -r "file_put_contents('f','x');"` · `Rscript -e "writeLines('x','f')"` · `lua -e "io.open('f','w')"` · `npx tsx -e "require('fs').writeFileSync('f','x')"` · `ts-node -e "require('fs').writeFileSync('f','x')"` · `tee f < /tmp/x` · `cat /tmp/x \| tee f` · `uvx python -c "open('f','w')"` · `cat fix.py \| python3` · `python3 < fix.py` · `python3 - < fix.py` · `python3 -c "import os; os.system('sed -i s/a/b/ f')"` · `"$PYTHON" -c "open('f','w')"` · `python3 -c "open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'x'),'w')"` · `source f` · `. f` · `node -e "fs.openSync('f','w')"` · `node -e "fs.writeSync(fd, 'x')"` · `echo x \| tee` | silent (stated misses, §7) |
 | `flock /tmp/l sed -i 's/a/b/' f` · `setsid sed -i 's/a/b/' f` · `stdbuf -oL sed -i 's/a/b/' f` · `ionice -c 3 sed -i 's/a/b/' f` · `chroot /root sed -i 's/a/b/' f` · `unshare sed -i 's/a/b/' f` · `nsenter sed -i 's/a/b/' f` · `strace -f sed -i 's/a/b/' f` · `caffeinate sed -i 's/a/b/' f` · `script -q /dev/null sed -i 's/a/b/' f` · `conda run -n env sed -i 's/a/b/' f` · `mamba run sed -i 's/a/b/' f` · `hatch run sed -i 's/a/b/' f` · `pipx run sed -i 's/a/b/' f` · `uv run --with-requirements r.txt sed -i 's/a/b/' f` · `uv run --with-editable . sed -i 's/a/b/' f` · `uv run --project . sed -i 's/a/b/' f` · `uv run --directory d sed -i 's/a/b/' f` · `uv run --group dev sed -i 's/a/b/' f` · `xargs -a /tmp/list sed -i 's/a/b/'` · `fd -x sed -i 's/a/b/'` · `fd -X sed -i 's/a/b/'` · `fd --exec sed -i 's/a/b/'` · `fd --exec-batch sed -i 's/a/b/'` | silent (stated misses, §7: no wrapper, or an argument-taking flag not listed) |

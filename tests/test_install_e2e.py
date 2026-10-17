@@ -363,8 +363,8 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
 async def test_the_installed_skill_and_consolidator_config_are_where_kiro_looks(
     tmp_path: Path,
 ) -> None:
-    """No subprocess: the two artefacts have to sit at the paths kiro discovers agents and skills
-    at, and nothing else in this file would fail if they moved."""
+    """No subprocess: the shipped artefacts have to sit at the paths kiro discovers agents and
+    skills at, and nothing else in this file would fail if they moved."""
     project = _project(tmp_path)
     _install(project)
     targets = Targets(project=project)
@@ -372,3 +372,7 @@ async def test_the_installed_skill_and_consolidator_config_are_where_kiro_looks(
     assert targets.skill_file == project / ".kiro/skills/zikaron-consolidate/SKILL.md"
     assert json.loads(targets.consolidator_config.read_text())["name"] == "zikaron-consolidator"
     assert targets.skill_file.read_text().startswith("---\nname: zikaron-consolidate\n")
+    assert targets.documenter_config == project / ".kiro/agents/zikaron-documenter.json"
+    assert targets.document_skill_file == project / ".kiro/skills/zikaron-document-code/SKILL.md"
+    assert json.loads(targets.documenter_config.read_text())["name"] == "zikaron-documenter"
+    assert targets.document_skill_file.read_text().startswith("---\nname: zikaron-document-code\n")

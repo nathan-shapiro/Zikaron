@@ -15,6 +15,7 @@ from zikaron.hook.write_policy import (
     OVERRIDE_EMPTY,
     SUBAGENT_WRITE_POLICY_PROMPT,
 )
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
 from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME
 from zikaron.service import paths
 
@@ -38,6 +39,14 @@ class TestTheConsolidatorIsExcluded:
         test pays the import cost, the hook does not.
         """
         assert subagent_policy.CONSOLIDATOR_AGENT_TYPE == CONSOLIDATOR_AGENT_NAME
+
+    @pytest.mark.parametrize("agent_type", [DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME])
+    def test_the_code_knowledge_agents_receive_the_policy(
+        self, tmp_path: Path, agent_type: str
+    ) -> None:
+        """Both hold the memory verbs (`design/code-knowledge.md` §5.4), so the policy is what
+        tells them what is worth recording."""
+        assert subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type) is not None
 
 
 class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:

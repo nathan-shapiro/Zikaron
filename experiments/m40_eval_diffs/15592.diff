@@ -1,0 +1,143 @@
+diff --git a/app/src/pane_group/working_directories.rs b/app/src/pane_group/working_directories.rs
+index 063c32bba79..c72ca3b8aa8 100644
+--- a/app/src/pane_group/working_directories.rs
++++ b/app/src/pane_group/working_directories.rs
+@@ -267,8 +267,8 @@ pub struct WorkingDirectoriesModel {
+     /// not the raw working directories reported by each pane.
+     ///
+     /// Concretely, for each pane group's active paths we store:
+-    /// - the detected repository root when the path belongs to a repo
+-    /// - otherwise, the normalized path itself (local) or the remote CWD/editor path
++    /// - a linked git worktree checkout (`.git` file) as its own root
++    /// - otherwise the detected repository root, or the normalized path itself
+     ///
+     /// IndexSet maintains insertion order - most recently added directories appear later.
+     pane_groups: HashMap<EntityId, IndexSet<LocalOrRemotePath>>,
+@@ -629,13 +629,8 @@ impl WorkingDirectoriesModel {
+         let old_focused_repo: Option<LocalOrRemotePath> =
+             self.focused_repo.get(&pane_group_id).cloned().flatten();
+ 
+-        // Resolve a local path to its detected repository root, or keep the path as-is if no repo is found.
+-        let root_for_path = |path: PathBuf| {
+-            DetectedRepositories::as_ref(ctx)
+-                .get_root_for_path(&LocalOrRemotePath::Local(path.clone()))
+-                .and_then(|r| PathBuf::try_from(r).ok())
+-                .unwrap_or(path)
+-        };
++        // Resolve a local path to its explorer display root.
++        let root_for_path = |path: PathBuf| display_root_for_local_path(path, ctx);
+ 
+         let root_for_raw_path = |raw_path: &str| normalize_cwd(raw_path).map(root_for_path);
+ 
+@@ -653,7 +648,7 @@ impl WorkingDirectoriesModel {
+             }
+         }
+ 
+-        // Collapse working directories to their nearest repository root (when detected).
++        // Collapse ordinary repo subdirectories to the repo root. Linked worktrees stay put.
+         let mut file_path_ancestors: HashSet<PathBuf> = local_terminal_cwds
+             .iter()
+             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
+@@ -1142,6 +1137,24 @@ fn normalize_cwd(raw_cwd: &str) -> Option<PathBuf> {
+     dunce::canonicalize(&path).ok()
+ }
+ 
++/// Linked worktrees use a `.git` file; keep that checkout as the explorer root.
++#[cfg(feature = "local_fs")]
++fn is_linked_git_worktree(path: &Path) -> bool {
++    path.join(".git").is_file()
++}
++
++/// Linked worktree checkout, else detected repo root, else the path itself.
++#[cfg(feature = "local_fs")]
++fn display_root_for_local_path(path: PathBuf, ctx: &AppContext) -> PathBuf {
++    if is_linked_git_worktree(&path) {
++        return path;
++    }
++    DetectedRepositories::as_ref(ctx)
++        .get_root_for_path(&LocalOrRemotePath::Local(path.clone()))
++        .and_then(|r| PathBuf::try_from(r).ok())
++        .unwrap_or(path)
++}
++
+ #[cfg(test)]
+ #[path = "working_directories_tests.rs"]
+ mod tests;
+diff --git a/app/src/pane_group/working_directories_tests.rs b/app/src/pane_group/working_directories_tests.rs
+index c4d63dd1cc8..998f98c36ea 100644
+--- a/app/src/pane_group/working_directories_tests.rs
++++ b/app/src/pane_group/working_directories_tests.rs
+@@ -76,6 +76,60 @@ fn refresh_working_directories_collapses_subroots_to_nearest_repo_root() {
+     });
+ }
+ 
++#[test]
++fn refresh_working_directories_keeps_linked_worktree_as_display_root() {
++    App::test((), |mut app| async move {
++        let detected_repos_handle = app.add_singleton_model(|_| DetectedRepositories::default());
++
++        let temp_dir = tempfile::TempDir::new().expect("temp dir");
++        let repo_root = temp_dir.path().join("repo");
++        let worktree = repo_root.join("linked-worktree");
++        fs::create_dir_all(repo_root.join(".git")).expect("create main .git dir");
++        fs::create_dir_all(&worktree).expect("create worktree");
++        fs::write(
++            worktree.join(".git"),
++            "gitdir: ../.git/worktrees/linked-worktree\n",
++        )
++        .expect("create worktree gitfile");
++
++        let canonical_repo_root = dunce::canonicalize(&repo_root).expect("canonical repo root");
++        let canonical_worktree = dunce::canonicalize(&worktree).expect("canonical worktree");
++
++        detected_repos_handle.update(&mut app, |repos, _ctx| {
++            let canonical =
++                warp_util::standardized_path::StandardizedPath::from_local_canonicalized(
++                    canonical_repo_root.as_path(),
++                )
++                .expect("canonicalized path");
++            repos.insert_test_repo_root(canonical);
++        });
++
++        let pane_group_id = EntityId::new();
++        let terminal_id = EntityId::new();
++
++        let working_directories_handle = app.add_model(|_| WorkingDirectoriesModel::new());
++        let roots: Vec<LocalOrRemotePath> =
++            working_directories_handle.update(&mut app, |model, ctx| {
++                model.refresh_working_directories_for_pane_group(
++                    pane_group_id,
++                    vec![(terminal_id, LocalOrRemotePath::Local(worktree.clone()))],
++                    vec![],
++                    Some(terminal_id),
++                    ctx,
++                );
++
++                model
++                    .most_recent_directories_for_pane_group(pane_group_id)
++                    .expect("pane group exists")
++                    .map(|dir| dir.path)
++                    .collect()
++            });
++
++        assert_eq!(roots, vec![local(&canonical_worktree)]);
++        assert_ne!(roots[0], local(&canonical_repo_root));
++    });
++}
++
+ #[test]
+ fn refresh_working_directories_preserves_non_repo_paths_and_dedupes() {
+     App::test((), |mut app| async move {
+diff --git a/app/src/terminal/view.rs b/app/src/terminal/view.rs
+index 8fbde9db181..15593ae2c9c 100644
+--- a/app/src/terminal/view.rs
++++ b/app/src/terminal/view.rs
+@@ -12345,6 +12345,8 @@ impl TerminalView {
+                             self.pending_command_queue.clear();
+                         }
+                         ctx.emit(Event::PendingCommandCompleted);
++                        // Setup commands (worktree `cd`) just finished; refresh explorer roots.
++                        ctx.emit(Event::AppStateChanged);
+ 
+                         // If agent view entry was deferred until setup commands
+                         // finished, enter it now (unless suppressed by onboarding).

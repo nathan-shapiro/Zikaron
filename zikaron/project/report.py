@@ -7,33 +7,15 @@ drift first is the one nothing obvious reaches.
 """
 
 import asyncio
-import sys
 from collections.abc import Callable, Coroutine
 from typing import Any
 
 import aiosqlite
 
-from zikaron.core.errors import ERROR_SPECS, ZikaronError
+from zikaron.core.errors import ZikaronError
 from zikaron.knowledge.client import ServiceRefusalError, ServiceVersionError
 from zikaron.mcp.connection import AmbiguousMutationError
-
-
-def stderr(line: str) -> None:
-    """Where every refusal and failure from a typed command goes.
-
-    Standard error, so redirecting a sweep's report leaves the reasons visible.
-    """
-    print(line, file=sys.stderr)
-
-
-def render(error: ZikaronError) -> None:
-    """Print one `ZikaronError` by its code's own declared disposition.
-
-    Exactly as a refusal that arrived over the wire is printed, so a failure raised locally and one
-    the service sent cannot disagree about whether a caller has a move. Reached from `execute` and
-    from the resolution that runs before any connection exists.
-    """
-    stderr(f"{ERROR_SPECS[error.code].disposition.value}: {error.message} ({error.detail()})")
+from zikaron.project.messages import render, stderr
 
 
 def execute(work: Callable[[], Coroutine[Any, Any, int]]) -> int:

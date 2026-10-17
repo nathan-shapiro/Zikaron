@@ -22,7 +22,8 @@ from pathlib import Path
 
 from zikaron.core.errors import ZikaronError
 from zikaron.knowledge.client import connected
-from zikaron.project.report import execute, render, stderr
+from zikaron.project.messages import render, stderr
+from zikaron.project.report import execute
 from zikaron.project.resolve import (
     MODULE_INITIALIZE,
     Project,

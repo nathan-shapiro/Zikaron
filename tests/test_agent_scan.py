@@ -20,6 +20,8 @@ from zikaron.install.entries import (
     MCP_SERVER_NAME,
     Commands,
     consolidator_agent_markdown,
+    documenter_agent_markdown,
+    orchestrator_agent_markdown,
 )
 
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
@@ -195,6 +197,14 @@ def test_the_installer_s_own_agent_is_skipped(tmp_path: Path) -> None:
     """
     shipped = consolidator_agent_markdown(_COMMANDS, model="sonnet")
     _agent(tmp_path, CONSOLIDATOR_AGENT_NAME, shipped)
+    assert agent_scan.blind_agents(tmp_path) == ()
+
+
+def test_the_code_knowledge_agents_pass_the_scan_unskipped(tmp_path: Path) -> None:
+    """Each holds the primary server's grant (`design/code-knowledge.md` §5.4), so the scan, which
+    skips the consolidator alone, passes them on their grants — under any filename."""
+    _agent(tmp_path, "documenter-copy", documenter_agent_markdown(model="sonnet"))
+    _agent(tmp_path, "orchestrator-copy", orchestrator_agent_markdown(model="sonnet"))
     assert agent_scan.blind_agents(tmp_path) == ()
 
 

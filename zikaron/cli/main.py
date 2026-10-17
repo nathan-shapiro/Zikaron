@@ -61,6 +61,12 @@ def _knowledge() -> Entry:
     return main
 
 
+def _code_knowledge() -> Entry:
+    from zikaron.code_knowledge.main import main  # noqa: PLC0415
+
+    return main
+
+
 def _doctor() -> Entry:
     from zikaron.doctor.main import main  # noqa: PLC0415
 
@@ -72,9 +78,14 @@ def _doctor() -> Entry:
 _SUBCOMMANDS: Final[dict[str, _Subcommand]] = {
     "init": _Subcommand("create this project's store, which the knowledge verbs need", _init),
     "install": _Subcommand(
-        "write Zikaron's hook, MCP and consolidator entries into a project", _install
+        "write Zikaron's agents, their skills, and its hook and MCP entries into a project",
+        _install,
     ),
     "knowledge": _Subcommand("manage this project's knowledge bases", _knowledge),
+    "code-knowledge": _Subcommand(
+        "plan per-source-file documentation of a module, for the skill that writes it",
+        _code_knowledge,
+    ),
     "doctor": _Subcommand("check that this machine can run Zikaron", _doctor),
 }
 

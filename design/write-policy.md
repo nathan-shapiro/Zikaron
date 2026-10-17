@@ -9,8 +9,11 @@
 > identify the agent, so it suppresses all of them (`architecture.md` §"Subagent sessions"). So this text
 > reaches top-level sessions only. That is the intended reach: the consolidator must not receive it (its verbs
 > and its judgment are different, and D32 keeps its context narrow on purpose), and any other subagent that
-> writes should carry its own policy in its own agent config, which is where per-agent instructions belong. The
-> accepted cost is that a *general-purpose* subagent writing through MCP does so without this guidance;
+> writes should carry its own policy in its own agent config, which is where per-agent instructions belong —
+> M40's kiro documenter is the shipped case: its prompt carries the rule to record only what the code could
+> not tell a later reader and the credential rule (`design/code-knowledge.md` §5.1), and not this text, which
+> §5.4 there counts as a gap. The accepted cost is that a *general-purpose* subagent writing through MCP does
+> so without this guidance;
 > §3's signals will show it if it matters, since `client.kind` is `mcp` either way and the write attributes to
 > the top-level session.
 >
@@ -22,7 +25,7 @@
 > harness: it does not reach top-level sessions only; a general-purpose subagent writing through MCP
 > **does** get this guidance, so the "accepted cost" is kiro's alone; and carrying a policy in the
 > agent's own config is no longer the only route. §"Delivery" above says "injected once per session":
-> under Claude Code it is once per session **plus** once per non-consolidator subagent.
+> under Claude Code it is once per session **plus** once per subagent other than the consolidator.
 > `harness.md` §"Subagents" is normative.
 > *This was the scope header of the document that owns the injected text, stating a reach that had been
 > half-false since M14 — and `harness.md`'s own inventory of kiro-stale prose did not name it. A delta
@@ -98,7 +101,8 @@ gist is injected into a future model's context. That makes two failure modes wor
   token is a durable plaintext leak that D16 makes *harder to remove*, since retire keeps the row, the FTS
   index and the vectors. The prompt now names the boundary.
 - **Instruction-shaped memories.** A memory can be written from material the agent did not author — a README,
-  a tool output, a web page, or an earlier poisoned memory. If an agent writes "always deploy with --force"
+  a tool output, a web page, an earlier poisoned memory, or — since M40 — a source file a documenter read
+  (`design/code-knowledge.md` §8). If an agent writes "always deploy with --force"
   as a gist, every future session sees it in the injected block, where it is indistinguishable from policy.
   Two mitigations, and neither is complete: the write side asks for observations rather than directives, and
   the read side frames the whole block as untrusted reference data

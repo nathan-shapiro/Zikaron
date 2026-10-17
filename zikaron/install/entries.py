@@ -1,5 +1,5 @@
 """The JSON Zikaron adds to a harness configuration: hook entries, the MCP server, and the
-consolidator agent config.
+definitions of the agents Zikaron ships.
 
 `architecture.md` §"Two hook formats, both inside the stable agent config" and §"The install
 contract" are normative.
@@ -24,6 +24,16 @@ from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.install.assets import consolidator_prompt, identity_vocabulary
+from zikaron.install.code_knowledge import (
+    DOCUMENTER_AGENT_NAME,
+    DOCUMENTER_DESCRIPTION,
+    DOCUMENTER_EFFORT,
+    DOCUMENTER_PROMPT,
+    ORCHESTRATOR_AGENT_NAME,
+    ORCHESTRATOR_DESCRIPTION,
+    ORCHESTRATOR_EFFORT,
+    ORCHESTRATOR_PROMPT,
+)
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
 #: The `mcpServers` key, and therefore the `@zikaron` selector. One declaration, because the name
@@ -429,4 +439,87 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
         "tools": [TOOL_SELECTOR],
         "allowedTools": [TOOL_SELECTOR],
         "mcpServers": mcp_servers_value(commands, mode="consolidator"),
+    }
+
+
+def documenter_agent_markdown(*, model: str) -> str:
+    """The whole `.claude/agents/zikaron-documenter.md`: frontmatter, then the prompt as body.
+
+    Its `tools:` is this harness's file tools and the primary server (`design/code-knowledge.md`
+    §5.4) — no shell, no spawn tool — and its effort is fixed at `DOCUMENTER_EFFORT`.
+    """
+    definition = _ClaudeAgent(
+        name=DOCUMENTER_AGENT_NAME,
+        description=DOCUMENTER_DESCRIPTION,
+        effort=DOCUMENTER_EFFORT,
+        tools=(*CLAUDE_CODE.file_tools, f"mcp__{MCP_SERVER_NAME}"),
+        prompt=DOCUMENTER_PROMPT,
+    )
+    return definition.markdown(model=model)
+
+
+def orchestrator_agent_markdown(*, model: str) -> str:
+    """The whole `.claude/agents/zikaron-code-orchestrator.md`, the agent the code documentation
+    skill forks to (`design/code-knowledge.md` §5.2, §5.4).
+
+    Its grant spawns, runs the planner, reads `.mcp.json` and reaches the primary server, and holds
+    none of the editing tools: the planner removes and moves documents and the documenters write
+    them. `Bash` could write a file, and the prompt is what says it does not.
+    `Agent(zikaron-documenter)` would narrow nothing, since a subagent's definition ignores the type
+    list. Its effort is fixed at `ORCHESTRATOR_EFFORT`. Kiro has no counterpart, its subagents
+    having no spawn tool.
+    """
+    definition = _ClaudeAgent(
+        name=ORCHESTRATOR_AGENT_NAME,
+        description=ORCHESTRATOR_DESCRIPTION,
+        effort=ORCHESTRATOR_EFFORT,
+        tools=("Agent", "Bash", "Read", f"mcp__{MCP_SERVER_NAME}"),
+        prompt=ORCHESTRATOR_PROMPT,
+    )
+    return definition.markdown(model=model)
+
+
+class _ClaudeAgent(NamedTuple):
+    """What a code-knowledge agent's Claude Code definition fixes; the model is the install's."""
+
+    name: str
+    description: str
+    effort: str
+    tools: tuple[str, ...]
+    prompt: str
+
+    def markdown(self, *, model: str) -> str:
+        """The definition: YAML frontmatter, then the prompt as body."""
+        frontmatter = "\n".join(
+            (
+                "---",
+                f"name: {self.name}",
+                f"description: {self.description}",
+                f"model: {model}",
+                f"effort: {self.effort}",
+                "tools:",
+                *(f"  - {tool}" for tool in self.tools),
+                "---",
+            )
+        )
+        return f"{frontmatter}\n\n{self.prompt}\n"
+
+
+def documenter_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
+    """The whole `.kiro/agents/zikaron-documenter.json`.
+
+    `tools` is the file tools and `@zikaron`, and `allowedTools` repeats it, as the consolidator's
+    does, because a subagent has no user to answer a permission prompt. The primary server is
+    configured here, since a kiro agent config carries its own `mcpServers`. No `hooks`: the hook
+    suppresses itself in every kiro subagent session (`architecture.md` §"Subagent sessions").
+    """
+    tools = [*KIRO.file_tools, TOOL_SELECTOR]
+    return {
+        "name": DOCUMENTER_AGENT_NAME,
+        "description": DOCUMENTER_DESCRIPTION,
+        "model": model,
+        "prompt": DOCUMENTER_PROMPT,
+        "tools": tools,
+        "allowedTools": list(tools),
+        "mcpServers": mcp_servers_value(commands, mode="primary"),
     }

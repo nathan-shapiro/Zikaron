@@ -1,0 +1,1624 @@
+{
+ "repository": "warpdotdev/warp",
+ "clone_head": "b80b4e3e0",
+ "selected_at": "2026-10-16",
+ "predicate": "open, labeled bug, linked as closed by an open PR written by a person that changes a file under app/src/terminal/; truth = union of those PRs' files less tests, test utilities and Cargo manifests",
+ "issues": [
+  {
+   "issue": 3265,
+   "created_at": "2023-06-27T16:06:35Z",
+   "title": "SSH on one tab takes focus from other tabs",
+   "body": "### Discord username (optional)\r\n\r\ngarythung\r\n\r\n### Describe the bug\r\n\r\nMaking an ssh connection will steal focus from other tabs/panes when the ssh successfully connects.\r\n\r\n### To reproduce\r\n\r\nMulti tab experience\r\n\r\n1. Open Warp\r\n2. Open two tabs\r\n3. In tab 1, ssh into a server\r\n4. Quickly switch to tab 2\r\n5. After a couple of seconds, ssh is successful and the cursor loses focus on tab 2\r\n\r\nFor multi pane, this happens as well but it actually switches the focus over to the other pane.\r\n\r\n1. Open Warp\r\n2. CMD+D to open a split pane\r\n3. In pane 1, ssh into a server\r\n4. Quickly switch active pane to pane 2\r\n5. Focus will go back to pane 1 when ssh is successful\r\n\r\n### Expected behavior\r\n\r\nI don't think activity in other tabs should interrupt current focus.\r\n\r\n### Screenshots\r\n\r\n_No response_\r\n\r\n### Operating system\r\n\r\nMacOS\r\n\r\n### Operating system and version\r\n\r\nVentura 13.4\r\n\r\n### Shell Version\r\n\r\n_No response_\r\n\r\n### Current Warp version\r\n\r\nv0.2023.06.20.08.04.stable_03\r\n\r\n### Regression\r\n\r\nNo, this bug or issue has existed throughout my experience using Warp\r\n\r\n### Recent working Warp date\r\n\r\n_No response_\r\n\r\n### Additional context\r\n\r\n_No response_\r\n\r\n### Does this block you from using Warp daily?\r\n\r\nNo\r\n\r\n### Is this a Warp specific issue? (i.e. does it happen in Terminal, iTerm, Kitty, etc.)\r\n\r\nYes, this I confirmed this only happens in Warp, not other terminals.\r\n\r\n### Warp Internal (ignore): linear-label:b8107fdf-ba31-488d-b103-d271c89cac3e\r\n\r\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "area:ssh"
+   ],
+   "truth": [
+    "app/src/terminal/view.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 15670,
+     "author": "SkyNotSilent",
+     "head_sha": "93d009adf4378e9dfc9a898efe427c066c7a71c3",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-08-30T03:39:56Z",
+     "title": "Prevent background SSH prompts from stealing focus",
+     "body": "## Description\n\nSSH remote-server prompts created in a background tab or split could call the global focus recovery path and steal keyboard focus from the active terminal.\n\nThis change:\n\n- uses terminal-scoped focus recovery when an SSH remote-server choice is shown;\n- only restores focus after clearing an SSH block when that terminal owned focus beforehand;\n- adds regression coverage for active-choice focus, background block replacement, and background split focus preservation.\n\nThe scope is limited to the SSH remote-server choice and SSH status-block replacement paths identified in this issue.\n\n## Linked Issue\n\nFixes #3265\n\nAlso addresses the duplicate report in #13123.\n\n- [x] The linked issue is labeled `ready-to-implement`.\n- [x] Screenshots of the user-visible behavior are included below.\n\n## Testing\n\n- [x] Regression test confirmed RED on `upstream/master`: the background SSH remote-server event moved focus away from the foreground pane.\n- [x] `cargo test -p warp ssh -- --nocapture` — 22 passed.\n- [x] `cargo clippy -p warp --all-targets -- -D warnings`\n- [x] `./script/format --check`\n- [x] `cargo nextest run -p warp_completer --features v2` — 131 passed, 4 skipped.\n- [x] `CARGO_INCREMENTAL=0 cargo test --doc`\n- [x] Manual real-display integration scenario covering a background tab, the active SSH choice, and a background split.\n- [ ] I have manually tested my changes locally with `./script/run`\n\n`./script/presubmit` completed every static check and ran 11,567 workspace tests: 11,562 passed and five existing gcloud SSH-fixture tests failed because `gcloud` is not installed in the local environment. The related SSH remote-server tests passed.\n\n### Screenshots / Videos\n\n**Background tab:** the foreground tab keeps keyboard focus and continues typing after the background SSH prompt is created.\n\n<img width=\"1600\" height=\"1000\" alt=\"background_tab_keeps_focus\" src=\"https://github.com/user-attachments/assets/f61f0616-e63e-4f62-9a55-7b1a03989ba1\" />\n\n**Active tab:** after explicitly switching back, the SSH remote-server choice is visible and its recommended action owns keyboard focus.\n\n<img width=\"1600\" height=\"1000\" alt=\"active_ssh_choice\" src=\"https://github.com/user-attachments/assets/fd871be6-dc49-4c03-8767-038baedce593\" />\n\n**Background split:** the prompt is visible in the left pane while the right pane retains the active focus accent, cursor, and typing.\n\n<img width=\"1600\" height=\"1000\" alt=\"background_split_keeps_focus\" src=\"https://github.com/user-attachments/assets/eda7f287-9da9-4e47-bec0-b147cf2c1a79\" />\n\n## Agent Mode\n\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: Prevent background SSH remote-server prompts from stealing terminal focus.\n",
+     "files": [
+      "app/src/pane_group/mod_tests.rs",
+      "app/src/terminal/view.rs",
+      "app/src/terminal/view_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/15670.diff",
+     "diff_bytes": 10609
+    }
+   ],
+   "bot": null,
+   "opened_before_reader_cutoff": true,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/view.rs",
+     "head_path": "app/src/terminal/view.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-1915/TECH.md",
+    "specs/APP-3645/TECH.md",
+    "specs/APP-3781/TECH.md",
+    "specs/APP-3787/TECH.md",
+    "specs/APP-3788/TECH-client-wiring.md",
+    "specs/APP-3875/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4041/TECH.md",
+    "specs/APP-4060/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4133/TECH.md",
+    "specs/APP-4217/TECH.md",
+    "specs/APP-4274/TECH.md",
+    "specs/APP-4281/TECH.md",
+    "specs/APP-4319/handoff-cloud-cloud-resumable-transcripts/TECH.md",
+    "specs/APP-4364/TECH.md",
+    "specs/APP-4365/TECH.md",
+    "specs/APP-4459/TECH.md",
+    "specs/APP-4483/TECH.md",
+    "specs/APP-4562/TECH.md",
+    "specs/APP-4594/TECH.md",
+    "specs/APP-4617/TECH.md",
+    "specs/APP-7376/TECH.md",
+    "specs/GH1063/tech.md",
+    "specs/GH11107/TECH.md",
+    "specs/GH12243/tech.md",
+    "specs/GH12358/tech.md",
+    "specs/GH15768/TECH.md",
+    "specs/GH6393/tech.md",
+    "specs/QUALITY-567/TECH.md",
+    "specs/QUALITY-715/TECH.md",
+    "specs/QUALITY-726/TECH.md",
+    "specs/QUALITY-768/TECH.md",
+    "specs/QUALITY-839/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1459/TECH.md",
+    "specs/REMOTE-1499/PRODUCT.md",
+    "specs/REMOTE-1499/STAGE-2.md",
+    "specs/REMOTE-1499/TECH.md",
+    "specs/REMOTE-1543/TECH.md",
+    "specs/alokedesai/APP-3797/TECH.md",
+    "specs/andy/CODE-1779/TECH.md",
+    "specs/andy/CODE-1793/TECH.md",
+    "specs/andy/ad-hoc/session-restore-wsl-msys2-pwd/TECH.md",
+    "specs/async-find/TECH.md",
+    "specs/cloud-mode-input-v2/TECH.md",
+    "specs/codex-warp-plugin/TECH.md",
+    "specs/conversation-streaming-for-tui/TECH.md",
+    "specs/gh-11912/TECH.md",
+    "specs/gh-8642/TECH.md",
+    "specs/input-mode-policy/TECH.md",
+    "specs/tui-output-redraw/TECH.md",
+    "specs/tui-transcript-view/TECH.md",
+    "specs/zachlloyd/restore-fast-forward-state/TECH.md"
+   ]
+  },
+  {
+   "issue": 3970,
+   "created_at": "2023-12-15T01:34:03Z",
+   "title": "Opening file link in format like `file:///Users/someDir/someFile.kt:35:24` doesn't work - nothing happens on click",
+   "body": "### Discord username (optional)\r\n\r\n_No response_\r\n\r\n### Describe the bug\r\n\r\nTrying to CMD + Click on a file link from Warp terminal, nothing happens. Tried setting Default Editor to different apps.\r\nExample of a file link:\r\n```\r\nfile:///Users/Downloads/foo.txt\r\n```\r\n\r\nWarp does offer to open the file on click but is unable to - nothing happens.\r\n\r\n### To reproduce\r\n\r\n1. Execute `echo file:///Users/Downloads/foo.txt` (replace `foo.txt` with some existing file)\r\n2. Cmd click on the file link\r\n\r\n### Expected behavior\r\n\r\nFile opens in the default editor\t\r\n\r\n### Screenshots\r\n\r\nNothing happens\r\n\r\n### Operating system\r\n\r\nMacOS\r\n\r\n### Operating system and version\r\n\r\nMacOS 13.6.2 (22G320)\r\n\r\n### Shell Version\r\n\r\nzsh 5.9 (arm-apple-darwin21.3.0)\r\n\r\n### Current Warp version\r\n\r\nv0.2023.12.05.08.02.stable_00\r\n\r\n### Regression\r\n\r\nNo, this bug or issue has existed throughout my experience using Warp\r\n\r\n### Recent working Warp date\r\n\r\n_No response_\r\n\r\n### Additional context\r\n\r\n_No response_\r\n\r\n### Does this block you from using Warp daily?\r\n\r\nYes, this issue prevents me from using Warp daily.\r\n\r\n### Is this a Warp specific issue? (i.e. does it happen in Terminal, iTerm, Kitty, etc.)\r\n\r\nYes, this I confirmed this only happens in Warp, not other terminals.\r\n\r\n### Warp Internal (ignore): linear-label:b8107fdf-ba31-488d-b103-d271c89cac3e\r\n\r\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement"
+   ],
+   "truth": [
+    "app/src/terminal/view.rs",
+    "app/src/terminal/view/link_detection.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 16440,
+     "author": "maxmilian",
+     "head_sha": "4f5cd75b0af834769e2fdd85cbb3cf79712039ce",
+     "state": "OPEN",
+     "draft": true,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-10-13T02:20:17Z",
+     "title": "Open file:// links with a :line:col suffix at that position",
+     "body": "## Description\n\nCmd-clicking (Ctrl-clicking on Linux/Windows) a `file://` URL with a line/column suffix in terminal output does nothing. Gradle, kotlinc and other tools print locations in this form, for example:\n\n```\ne: file:///Users/me/project/src/Main.kt:35:24 Return type of 'clear' is not a subtype of ...\n```\n\n**Root cause.** The URL detector (`urlocator`) treats the whole token, `:35:24` included, as one URL, and that takes priority over file-path detection. When the link is clicked, the `GridHighlightedLink::Url` arm in `maybe_open_link` (`app/src/terminal/view.rs`) and in `open_highlighted_link` (`app/src/terminal/view/link_detection.rs`, used by the \"Open link\" tooltip and context menu) passes the string straight to `ctx.open_url`. The OS looks for a file literally named `Main.kt:35:24`, finds none, and fails silently. A plain path such as `/Users/me/project/src/Main.kt:35:24` already works, because file-path detection parses the suffix with `CleanPathResult::with_line_and_column_number` and opens it through `open_file_path`.\n\n**Fix.** The URL arms, and the OSC 8 hyperlink path (`open_hyperlink_uri`, which is also what the `HyperlinkClick` action uses), now call a small `open_url_link` helper. It uses `file_url_link_target` to split a `:line[:col]` suffix off a `file://` URL with the same `CleanPathResult::with_line_and_column_number` parser. `Url::to_file_path` decodes percent-encoding, so `my%20notes.kt` works. If the result is an existing file, it is opened through `open_file_path`, the same way a detected file path with a suffix is opened. Otherwise the URL is handed to the OS as before.\n\n**Kept narrow on purpose.** Only URLs that have a suffix *and* resolve to an existing local file change behavior:\n\n- `file://` URLs without a suffix still go to the OS, so `echo file:///…/foo.txt` + Cmd-click still opens the file in its default macOS app, as it does today.\n- Non-`file` schemes, `file://` URLs with a host other than `localhost`, and paths that don't exist are unchanged. The host check runs before anything touches the filesystem, so a `file://host/share/x.kt:1` link is never resolved as a UNC path on Windows.\n- If the URL as written already names an existing file (e.g. a file literally called `notes:12`), it is not reinterpreted as line 12 of `notes`.\n\nWhen a suffixed `file://` link is opened, it follows the same \"open files with\" editor setting as other file links with a line number, since that's the only way to honor the line and column.\n\nThis is a different code path from #11566, which handles `file://` links in AI block output. The two changes don't overlap.\n\n## Linked Issue\n\nFixes #3970\n\n- [x] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\n- [ ] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\n\n## Testing\n\n- [x] `cargo fmt -- --check`\n- [x] `cargo clippy -p warp --all-targets --tests -- -D warnings`\n- [x] `cargo nextest run -p warp --lib -E 'test(/terminal::view/)'`: 360/360 passed\n- [ ] I have manually tested my changes locally with `./script/run` (to follow, see below)\n\nNew tests:\n\n- `link_detection_tests.rs`: `file_url_link_target` splits `:35:24` and `:35`, decodes a percent-encoded space, accepts `file://localhost/…` (unix), returns `None` with no suffix, for non-`file` schemes, for missing files and for a remote host, and keeps a file literally named `notes:12` (unix only).\n- `view_tests.rs` `test_clicking_file_url_with_line_and_column_opens_file`: prints a `file://…/Main.kt:35:24` line into a block, checks that it is detected as one URL, then Cmd/Ctrl-clicks it through `click_on_grid` and asserts `OpenFileWithTarget` is emitted with the file and line 35, column 24.\n\nAll three behavior tests failed before the fix. The view test failed with no `OpenFileWithTarget` event because the URL went to `open_url`.\n\n### Screenshots / Videos\n\nVisual evidence to follow: a before/after recording of Cmd-clicking a Gradle-style `file://…:35:24` link in a local OSS build. I'll add it here before marking this ready for review.\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\n<!--\nCHANGELOG-BUG-FIX: Cmd-clicking a `file://` link with a `:line:column` suffix (e.g. from Gradle output) now opens the file at that line instead of doing nothing.\n-->\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01Rtq1jctUbJMqEmwTxtZsTu\n",
+     "files": [
+      "app/src/terminal/view.rs",
+      "app/src/terminal/view/link_detection.rs",
+      "app/src/terminal/view/link_detection_tests.rs",
+      "app/src/terminal/view_tests.rs"
+     ],
+     "agent_written": true,
+     "diff_file": "experiments/m40_eval_diffs/16440.diff",
+     "diff_bytes": 12242
+    }
+   ],
+   "bot": null,
+   "opened_before_reader_cutoff": true,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/view.rs",
+     "head_path": "app/src/terminal/view.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/view/link_detection.rs",
+     "head_path": "app/src/terminal/view/link_detection.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-1915/TECH.md",
+    "specs/APP-3645/TECH.md",
+    "specs/APP-3781/TECH.md",
+    "specs/APP-3787/TECH.md",
+    "specs/APP-3788/TECH-client-wiring.md",
+    "specs/APP-3875/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4041/TECH.md",
+    "specs/APP-4060/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4133/TECH.md",
+    "specs/APP-4217/TECH.md",
+    "specs/APP-4274/TECH.md",
+    "specs/APP-4281/TECH.md",
+    "specs/APP-4319/handoff-cloud-cloud-resumable-transcripts/TECH.md",
+    "specs/APP-4364/TECH.md",
+    "specs/APP-4365/TECH.md",
+    "specs/APP-4459/TECH.md",
+    "specs/APP-4483/TECH.md",
+    "specs/APP-4562/TECH.md",
+    "specs/APP-4594/TECH.md",
+    "specs/APP-4617/TECH.md",
+    "specs/APP-7376/TECH.md",
+    "specs/GH1063/tech.md",
+    "specs/GH11107/TECH.md",
+    "specs/GH12243/tech.md",
+    "specs/GH12358/tech.md",
+    "specs/GH15768/TECH.md",
+    "specs/GH6393/tech.md",
+    "specs/QUALITY-567/TECH.md",
+    "specs/QUALITY-715/TECH.md",
+    "specs/QUALITY-726/TECH.md",
+    "specs/QUALITY-768/TECH.md",
+    "specs/QUALITY-839/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1459/TECH.md",
+    "specs/REMOTE-1499/PRODUCT.md",
+    "specs/REMOTE-1499/STAGE-2.md",
+    "specs/REMOTE-1499/TECH.md",
+    "specs/REMOTE-1543/TECH.md",
+    "specs/alokedesai/APP-3797/TECH.md",
+    "specs/andy/CODE-1779/TECH.md",
+    "specs/andy/CODE-1793/TECH.md",
+    "specs/andy/ad-hoc/session-restore-wsl-msys2-pwd/TECH.md",
+    "specs/async-find/TECH.md",
+    "specs/cloud-mode-input-v2/TECH.md",
+    "specs/codex-warp-plugin/TECH.md",
+    "specs/conversation-streaming-for-tui/TECH.md",
+    "specs/gh-11912/TECH.md",
+    "specs/gh-8642/TECH.md",
+    "specs/input-mode-policy/TECH.md",
+    "specs/tui-output-redraw/TECH.md",
+    "specs/tui-transcript-view/TECH.md",
+    "specs/zachlloyd/restore-fast-forward-state/TECH.md"
+   ]
+  },
+  {
+   "issue": 8357,
+   "created_at": "2026-01-02T14:18:21Z",
+   "title": "Unicode combining character not rendering",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agents/ai-faqs#gathering-ai-debugging-id)\n- [ ] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-billing/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nWhen using **Claude Code** (Anthropic's CLI tool) in Warp terminal, Thai tone marks (วรรณยุกต์) and upper vowels (สระบน) are not rendering properly. All diacritical marks above Thai consonants disappear.\n\nThis is related to #3584 which was closed as \"not planned\", but this issue significantly affects Thai language users who use Claude Code in Warp.\n\n**Example:**\n- Expected: ก่อนที่จะรายงาน (with tone marks)\n- Actual: กอนทจะรายงาน (tone marks missing)\n\nCharacters affected:\n- Tone marks: ่ ้ ๊ ๋\n- Upper vowels: ิ ี ึ ื ั ็\n\n### To reproduce\n\n1. Open Warp terminal\n2. Run Claude Code CLI (claude command)\n3. Have Claude output any Thai text containing tone marks or upper vowels\n4. Observe that all diacritical marks above consonants are missing\n\n### Expected behavior\n\nThai text should display with all diacritical marks intact, including:\n- Tone marks: ่ ้ ๊ ๋ (mai ek, mai tho, mai tri, mai chattawa)\n- Upper vowels: ิ ี ึ ื ั ็ (sara i, sara ii, sara ue, sara uue, mai han-akat, mai tai khu)\n\nExample: \"สวัสดี\" should show all characters, not \"สวสด\"\n\n### Screenshots, videos, and logs\n\n_No response_\n\n### Operating system (OS)\n\nWindows\n\n### Operating system and version\n\nWindows 11\n\n### Shell Version\n\n_No response_\n\n### Current Warp version\n\n_No response_\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Recent working Warp date\n\n_No response_\n\n### Additional context\n\n_No response_\n\n### Does this block you from using Warp daily?\n\nNo\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "area:shell-terminal"
+   ],
+   "truth": [
+    "app/src/terminal/grid_renderer.rs",
+    "app/src/terminal/grid_renderer/cell_glyph_cache.rs",
+    "crates/warpui/src/windowing/winit/fonts.rs",
+    "crates/warpui/src/windowing/winit/fonts/windows.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 14124,
+     "author": "ultramcu",
+     "head_sha": "09facff26edd1df681f891c225e9423a0a1bfaca",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-07-22T03:34:43Z",
+     "title": "fix: render Thai/Lao complex-script combining marks (incl. SARA AM) correctly",
+     "body": "## Description\n\nRenders Thai/Lao (and other complex-script) combining marks correctly in the terminal grid, including the Thai/Lao **SARA AM** vowel (ำ / ຳ) — previously the grid split it from its base consonant so the nikhahit dot detached (e.g. `คำ`, `น้ำ`, `ทำ`, `สำคัญ`).\n\nThis **continues @chatre7's work from #10357**, which was auto-closed for inactivity. All of his commits are preserved here with their original authorship — thank you, @chatre7 🙏. The branch has been **rebased onto the latest `master`** (resolving the divergence since the original PR, including the Rust 2024 edition migration and the `grid_renderer` changes), re-formatted, and **rebuilt + run locally** to confirm it still renders correctly.\n\nWhat it does:\n- **Base fix:** route complex-script cells through the same HarfBuzz shaper with GPOS positions, and preserve styled (bold/italic/filter-match) fonts, so combining marks land on their base glyph instead of stacking at the cell origin.\n- **SARA AM:** a look-ahead folds a consonant (or a `CharOrStr::Str` cell) and a following SARA AM into a single shaped cluster, so HarfBuzz places the nikhahit dot above the consonant via GPOS instead of drawing it standalone; a line-start SARA AM still falls back to its sara-aa tail.\n\nSupersedes #10357.\n\n## Linked Issue\n\nCloses #8357\n\n- [x] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\n- [ ] Where appropriate, screenshots or a short video of the implementation are included below.\n\n## Testing\n\n- [x] I have manually tested my changes locally with `./script/run`\n\nBuilt and ran a local OSS bundle from this branch (rebased onto current `master`, Rust 2024 edition) on macOS: Thai text with SARA AM renders with the vowel attached to its consonant. `cargo check -p warp` and `cargo fmt --check` are clean. The existing `test_decompose_sara_am` unit test covers the decomposition helper.\n\n### Screenshots / Videos\n\nThai text with SARA AM in a local build of this branch — **before** (stock `master`, the vowel detaches from its consonant) vs **after** (this PR, attached correctly):\n\n| Before | After |\n|---|---|\n| <img width=\"199\" alt=\"before\" src=\"https://github.com/user-attachments/assets/87803db6-3a93-45a7-a6ee-afc041c54a84\" /> | <img width=\"166\" alt=\"after\" src=\"https://github.com/user-attachments/assets/5995d730-856a-403f-b2f9-c4498d6e352f\" /> |\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: Fix rendering of Thai/Lao complex-script combining marks, including the SARA AM vowel attaching to its base consonant.\n\n",
+     "files": [
+      "app/src/terminal/grid_renderer.rs",
+      "app/src/terminal/grid_renderer/cell_glyph_cache.rs",
+      "app/src/terminal/grid_renderer_tests.rs",
+      "crates/warpui/src/windowing/winit/fonts.rs",
+      "crates/warpui/src/windowing/winit/fonts/windows.rs",
+      "crates/warpui/src/windowing/winit/text_layout_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/14124.diff",
+     "diff_bytes": 46605
+    }
+   ],
+   "bot": {
+    "created_at": "2026-08-10T06:16:21Z",
+    "body": "This issue has been labeled `ready-to-spec` and is open for contributions in the form of a product or technical spec. If you'd like to draft one, feel free to open a pull request with the spec under `specs/`. You can also comment `@oz-agent` on this issue to have the bot draft the spec automatically.\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"announce-ready-issue\",\"issue\":8357} -->",
+    "files_named": [],
+    "cites_pr": [],
+    "diagnosis": false
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/grid_renderer.rs",
+     "head_path": "app/src/terminal/grid_renderer.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/grid_renderer/cell_glyph_cache.rs",
+     "head_path": "app/src/terminal/grid_renderer/cell_glyph_cache.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "crates/warpui/src/windowing/winit/fonts.rs",
+     "head_path": "crates/warpui/src/windowing/winit/fonts.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warpui/src/windowing/winit/fonts/windows.rs",
+     "head_path": "crates/warpui/src/windowing/winit/fonts/windows.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-4006/TECH.md",
+    "specs/APP-4098/TECH.md"
+   ]
+  },
+  {
+   "issue": 8881,
+   "created_at": "2026-03-15T22:59:18Z",
+   "title": "Crash (SIGABRT) during window drag-resize: InitialCursorState::into_content_offset unwrap panic",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [x] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agent-platform/agent/ai-faqs#gathering-ai-debugging-id)\n- [x] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nWarp crashes with SIGABRT when resizing the window by dragging the window edge. The crash occurs consistently within a couple minutes of use. The app was running for approximately 2 minutes and 21 seconds before the crash in this instance.\n\n### To reproduce\n\n1. Open Warp with multiple terminal tabs/sessions active\n2. Run Claude Code (or similar tool with heavy terminal output)\n3. App crashes\n\n### Expected behavior\n\nWindow resizes without crashing.\n\nActual Behavior: Warp panics and aborts. The crash originates from an unwrap() on an Err value in InitialCursorState::into_content_offset, called during the resize path:\n\n### Screenshots, videos, and logs\n\n_resizeWithEvent: (AppKit)\n→ TerminalView::resize_internal\n→ TerminalModel::resize\n→ BlockList::resize\n→ GridHandler::resize\n→ GridHandler::resize_storage\n→ InitialCursorState::into_content_offset  ← unwrap failed here\n→ core::result::unwrap_failed\n→ panic → abort\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\nMac16,6 (MacBook Pro, M4 Max, 64GB) macOS 26.3.1 (25D2128)\n\n### Shell Version\n\nzsh 5.9 (arm64-apple-darwin25.0)\n\n### Current Warp version\n\nv0.2026.03.04.08.20.stable_03\n\n### Regression\n\nYes, this bug started recently or with an X Warp version\n\n### Recent working Warp date\n\n_No response_\n\n### Additional context\n\n4 PTY sessions were active at the time of crash\nThe resize was initiated via mouse drag on the window frame (triggered through AppKit's NSTitledFrame attemptResizeWithEvent:)\n\nNote: I was not manually resizing the window. I was running Claude Code in Warp when the crash occurred. The resize may have been triggered internally by terminal output or reflow rather than a user-initiated window drag.\n\nFull crash report is attached below\n\n[stable-2026-03-15-154751.ips.txt](https://github.com/user-attachments/files/26009960/stable-2026-03-15-154751.ips.txt)\n[stable-2026-03-15-154502.ips.txt](https://github.com/user-attachments/files/26009962/stable-2026-03-15-154502.ips.txt)\n[stable-2026-03-15-154314.ips.txt](https://github.com/user-attachments/files/26009961/stable-2026-03-15-154314.ips.txt)\n\n### Does this block you from using Warp daily?\n\nYes, this issue prevents me from using Warp daily.\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "area:ui-framework",
+    "area:window-tabs-panes"
+   ],
+   "truth": [
+    "crates/warp_terminal/src/model/grid/resize.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 13041,
+     "author": "Im-Tae",
+     "head_sha": "6d7c05bad2a0ce059e813931e54352f35ebaeaeb",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-06-25T06:18:52Z",
+     "title": "Fix crash when resizing a terminal containing wide (CJK) characters",
+     "body": "## Description\r\n\r\nFixes a crash (SIGABRT / `abort()`) that quits Warp when a terminal containing\r\nwide (full-width / CJK) characters — e.g. a Korean directory name shown in the\r\nshell prompt — is resized (window/pane layout change, prompt redraw, etc.).\r\n\r\nFrom the attached macOS crash report, the panicking frame is unambiguous:\r\n\r\n```\r\nwarp::terminal::model::grid::resize::InitialCursorState::into_content_offset\r\n  → core::result::unwrap_failed   (.expect(\"should have a content offset for point\"))\r\n```\r\n\r\nCall chain:\r\n`TerminalView::resize_internal → TerminalModel::resize → BlockList::resize →\r\nGridHandler::resize → resize_storage → InitialCursorState::into_content_offset → panic`\r\n\r\n### Root cause\r\n\r\nDuring `resize_storage`, each cursor (current / saved / max) is converted from a\r\nlive-grid `Point` to a flat-storage content offset via\r\n`FlatStorage::content_offset_at_point`. That function returns `Err` for a point\r\nwhose column/row does not map to tracked content (`ColumnExceedsContent`,\r\n`NonZeroColumnInEmptyRow`, `RowOutOfBounds`, `MissingGraphemeSizing`). The\r\nconversion unwrapped the result with `.expect(...)`, so any such case aborted the\r\nwhole process instead of degrading.\r\n\r\nWide characters make this reachable: a wide char spans two columns but is a\r\nsingle grapheme, so the grid's per-column accounting (which also counts wide-char\r\nspacer cells) can diverge from flat storage's grapheme-run accounting. `content_offset_at_point`'s own doc comment flags `WIDE_CHAR_SPACER` /\r\n`LEADING_WIDE_CHAR_SPACER` cells as cases needing coverage, and `resize_storage`\r\nalready carries a maintainer TODO noting that `max_cursor_point` can end up with\r\n\"content after it\" — i.e. in a position that does not line up with content.\r\n\r\n### Fix\r\n\r\n`into_content_offset` no longer unwraps. The new `content_offset_for_point`\r\nhelper clamps the column back toward the start of the row until it finds a cell\r\nthat does have a content offset (column 0 of a non-empty row always resolves, so\r\nthis terminates), logging a warning. This mirrors the defensive cursor clamping\r\nalready present in `InitialCursorState::new`, and turns an app-killing abort into\r\na one-cell cursor placement difference in an already-anomalous state.\r\n\r\nThe sibling `.expect(\"content offset should be valid\")` in\r\n`CursorContentOffset::into_cursor_point` (the reverse conversion) is intentionally\r\nleft untouched to keep this change focused on the confirmed crash site; happy to\r\nharden it in a follow-up if maintainers prefer.\r\n\r\n## Linked Issue\r\n\r\nFixes #9013\r\nFixes #8881\r\n\r\nThese are the same `InitialCursorState::into_content_offset` unwrap panic during\r\nterminal resize, both already labeled `ready-to-implement`. #13040 (my report)\r\nwas triaged as a duplicate of these.\r\n\r\n- [x] The linked issue is labeled `ready-to-implement`.\r\n\r\n## Testing\r\n\r\n- Added `test_resize_with_wide_chars_does_not_panic` in\r\n  `grid_handler_tests.rs`, which drives mixed narrow/wide (CJK) prompt-and-output\r\n  content through a reflow across a range of widths (including widths too narrow\r\n  to hold a wide char in the trailing column) and asserts the resizes complete.\r\n- `cargo test -p warp -- terminal::model::grid` passes (full grid module).\r\n\r\n**Transparency on reproduction:** I was not able to reproduce the exact\r\nproduction `content_offset_at_point` `Err` in a unit test, because the in-memory\r\ngrid pads rows to full width with blank cells, which makes the column/empty-row\r\nerror paths unreachable from the public `GridHandler` API (verified by\r\ninstrumenting the conversion). The crash report nonetheless identifies the\r\n`.expect()` site unambiguously, and the fix removes that abort. I'd appreciate a\r\nmaintainer sanity-check against Sentry telemetry for the exact triggering state.\r\n\r\n- [x] I have manually tested my changes locally with `./script/run`\r\n      <!-- run Warp, `cd` into a directory with a Korean name, use the terminal,\r\n           and resize the window/pane; confirm no crash. Attach a screen recording. -->\r\n\r\n### Screenshots / Videos\r\n\r\nbefore (crash)\r\nhttps://github.com/user-attachments/assets/52b53e3c-81a6-44e0-b192-990206f50454\r\n\r\nafter (no crash)\r\nhttps://github.com/user-attachments/assets/65a59338-de95-48e6-832f-f5c43cd2d8e4\r\n\r\n<!-- Attach a short screen recording of the before/after (crash vs. no crash). -->\r\n\r\n## Agent Mode\r\n\r\n- [ ] Warp Agent Mode\r\n\r\n<!--\r\nCHANGELOG-BUG-FIX: Fixed a crash when resizing a terminal that contains wide (CJK) characters, such as a Korean directory name in the prompt.\r\n-->",
+     "files": [
+      "app/src/terminal/model/grid/grid_handler_tests.rs",
+      "app/src/terminal/model/grid/resize.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/13041.diff",
+     "diff_bytes": 10080
+    }
+   ],
+   "bot": null,
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/model/grid/resize.rs",
+     "head_path": "crates/warp_terminal/src/model/grid/resize.rs",
+     "status": "moved",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [
+    "into_content_offset@crates/warp_terminal/src/model/grid/resize.rs",
+    "resize_storage@crates/warp_terminal/src/model/grid/resize.rs"
+   ],
+   "specs_naming_truth": []
+  },
+  {
+   "issue": 9013,
+   "created_at": "2026-04-04T08:18:08Z",
+   "title": "Repeated SIGABRT crash in GridHandler::resize (InitialCursorState::into_content_offset unwrap panic)",
+   "body": "## Description\n\nWarp crashes repeatedly with `SIGABRT` due to a Rust panic in the terminal grid resize path. The crash occurs when the terminal view layout triggers a resize operation, and `InitialCursorState::into_content_offset` encounters an unexpected `Err` value that is `unwrap()`-ed.\n\nThis is **highly reproducible** — 8 crashes recorded over the past week, with 7/8 sharing the exact same stack trace. On April 4th alone, Warp crashed **6 times**.\n\n## Environment\n\n- **Warp version**: 0.2026.03.25.08.24.05 (Stable)\n- **OS**: macOS 26.3.1 (Build 25D771280a)\n- **Hardware**: MacBook Pro, Apple M3, 8 GB RAM\n- **Architecture**: ARM-64 (native, not translated)\n\n## Crash Stack Trace (faulting thread 0)\n\nAll crashes share this identical call chain:\n\n```\n 0  libsystem_kernel.dylib       __pthread_kill\n 1  libsystem_pthread.dylib      pthread_kill\n 2  libsystem_c.dylib            abort\n 3  stable                       std::sys::pal::unix::abort_internal\n 4  stable                       std::process::abort\n 5  stable                       rust_panic\n 6  stable                       std::panicking::panic_with_hook\n 7  stable                       std::panicking::panic_handler\n 8  stable                       std::sys::backtrace::__rust_end_short_backtrace\n 9  stable                       rust_begin_unwind\n10  stable                       core::panicking::panic_fmt\n11  stable                       core::result::unwrap_failed          ← unwrap on Err\n12  stable                       warp::terminal::model::grid::grid_handler::resize::InitialCursorState::into_content_offset\n13  stable                       warp::terminal::model::grid::grid_handler::resize::GridHandler::resize_storage\n14  stable                       warp::terminal::model::grid::grid_handler::resize::GridHandler::resize\n15  stable                       warp::terminal::model::blocks::BlockList::resize\n16  stable                       warp::terminal::model::terminal_model::TerminalModel::resize\n17  stable                       warp::terminal::view::TerminalView::resize_internal\n18  stable                       warp::terminal::view::TerminalView::after_terminal_view_layout\n```\n\n## Crash Timeline\n\n| Timestamp | Crash file |\n|-----------|-----------|\n| 2026-03-29 20:42 | stable-2026-03-29-204208.ips |\n| 2026-04-02 21:44 | stable-2026-04-02-214416.ips |\n| 2026-04-04 16:22 | stable-2026-04-04-162222.ips |\n| 2026-04-04 16:57 | stable-2026-04-04-165702.ips |\n| 2026-04-04 17:00 | stable-2026-04-04-165959.ips |\n| 2026-04-04 17:01 | stable-2026-04-04-170142.ips |\n| 2026-04-04 17:12 | stable-2026-04-04-171234.ips |\n| 2026-04-04 17:12 | stable-2026-04-04-171242.ips |\n\n## Suspected Trigger\n\nThe crash appears to be triggered by **terminal resize events** — possibly from:\n- Window resizing\n- Stage Manager view transitions\n- Split view changes\n- External display connect/disconnect\n\nThe root cause seems to be an invalid internal grid state when `InitialCursorState::into_content_offset` is called during `GridHandler::resize_storage`, causing an `unwrap()` on an `Err` result.\n\n## Suggested Fix\n\nConsider replacing the `unwrap()` in `InitialCursorState::into_content_offset` with proper error handling (e.g., `unwrap_or_default()` or propagating the error) to prevent the panic, or validate the grid state before entering the resize path.",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:high",
+    "os:mac",
+    "area:shell-terminal",
+    "area:performance:memory"
+   ],
+   "truth": [
+    "crates/warp_terminal/src/model/grid/resize.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 13041,
+     "author": "Im-Tae",
+     "head_sha": "6d7c05bad2a0ce059e813931e54352f35ebaeaeb",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-06-25T06:18:52Z",
+     "title": "Fix crash when resizing a terminal containing wide (CJK) characters",
+     "body": "## Description\r\n\r\nFixes a crash (SIGABRT / `abort()`) that quits Warp when a terminal containing\r\nwide (full-width / CJK) characters — e.g. a Korean directory name shown in the\r\nshell prompt — is resized (window/pane layout change, prompt redraw, etc.).\r\n\r\nFrom the attached macOS crash report, the panicking frame is unambiguous:\r\n\r\n```\r\nwarp::terminal::model::grid::resize::InitialCursorState::into_content_offset\r\n  → core::result::unwrap_failed   (.expect(\"should have a content offset for point\"))\r\n```\r\n\r\nCall chain:\r\n`TerminalView::resize_internal → TerminalModel::resize → BlockList::resize →\r\nGridHandler::resize → resize_storage → InitialCursorState::into_content_offset → panic`\r\n\r\n### Root cause\r\n\r\nDuring `resize_storage`, each cursor (current / saved / max) is converted from a\r\nlive-grid `Point` to a flat-storage content offset via\r\n`FlatStorage::content_offset_at_point`. That function returns `Err` for a point\r\nwhose column/row does not map to tracked content (`ColumnExceedsContent`,\r\n`NonZeroColumnInEmptyRow`, `RowOutOfBounds`, `MissingGraphemeSizing`). The\r\nconversion unwrapped the result with `.expect(...)`, so any such case aborted the\r\nwhole process instead of degrading.\r\n\r\nWide characters make this reachable: a wide char spans two columns but is a\r\nsingle grapheme, so the grid's per-column accounting (which also counts wide-char\r\nspacer cells) can diverge from flat storage's grapheme-run accounting. `content_offset_at_point`'s own doc comment flags `WIDE_CHAR_SPACER` /\r\n`LEADING_WIDE_CHAR_SPACER` cells as cases needing coverage, and `resize_storage`\r\nalready carries a maintainer TODO noting that `max_cursor_point` can end up with\r\n\"content after it\" — i.e. in a position that does not line up with content.\r\n\r\n### Fix\r\n\r\n`into_content_offset` no longer unwraps. The new `content_offset_for_point`\r\nhelper clamps the column back toward the start of the row until it finds a cell\r\nthat does have a content offset (column 0 of a non-empty row always resolves, so\r\nthis terminates), logging a warning. This mirrors the defensive cursor clamping\r\nalready present in `InitialCursorState::new`, and turns an app-killing abort into\r\na one-cell cursor placement difference in an already-anomalous state.\r\n\r\nThe sibling `.expect(\"content offset should be valid\")` in\r\n`CursorContentOffset::into_cursor_point` (the reverse conversion) is intentionally\r\nleft untouched to keep this change focused on the confirmed crash site; happy to\r\nharden it in a follow-up if maintainers prefer.\r\n\r\n## Linked Issue\r\n\r\nFixes #9013\r\nFixes #8881\r\n\r\nThese are the same `InitialCursorState::into_content_offset` unwrap panic during\r\nterminal resize, both already labeled `ready-to-implement`. #13040 (my report)\r\nwas triaged as a duplicate of these.\r\n\r\n- [x] The linked issue is labeled `ready-to-implement`.\r\n\r\n## Testing\r\n\r\n- Added `test_resize_with_wide_chars_does_not_panic` in\r\n  `grid_handler_tests.rs`, which drives mixed narrow/wide (CJK) prompt-and-output\r\n  content through a reflow across a range of widths (including widths too narrow\r\n  to hold a wide char in the trailing column) and asserts the resizes complete.\r\n- `cargo test -p warp -- terminal::model::grid` passes (full grid module).\r\n\r\n**Transparency on reproduction:** I was not able to reproduce the exact\r\nproduction `content_offset_at_point` `Err` in a unit test, because the in-memory\r\ngrid pads rows to full width with blank cells, which makes the column/empty-row\r\nerror paths unreachable from the public `GridHandler` API (verified by\r\ninstrumenting the conversion). The crash report nonetheless identifies the\r\n`.expect()` site unambiguously, and the fix removes that abort. I'd appreciate a\r\nmaintainer sanity-check against Sentry telemetry for the exact triggering state.\r\n\r\n- [x] I have manually tested my changes locally with `./script/run`\r\n      <!-- run Warp, `cd` into a directory with a Korean name, use the terminal,\r\n           and resize the window/pane; confirm no crash. Attach a screen recording. -->\r\n\r\n### Screenshots / Videos\r\n\r\nbefore (crash)\r\nhttps://github.com/user-attachments/assets/52b53e3c-81a6-44e0-b192-990206f50454\r\n\r\nafter (no crash)\r\nhttps://github.com/user-attachments/assets/65a59338-de95-48e6-832f-f5c43cd2d8e4\r\n\r\n<!-- Attach a short screen recording of the before/after (crash vs. no crash). -->\r\n\r\n## Agent Mode\r\n\r\n- [ ] Warp Agent Mode\r\n\r\n<!--\r\nCHANGELOG-BUG-FIX: Fixed a crash when resizing a terminal that contains wide (CJK) characters, such as a Korean directory name in the prompt.\r\n-->",
+     "files": [
+      "app/src/terminal/model/grid/grid_handler_tests.rs",
+      "app/src/terminal/model/grid/resize.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/13041.diff",
+     "diff_bytes": 10080
+    }
+   ],
+   "bot": null,
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/model/grid/resize.rs",
+     "head_path": "crates/warp_terminal/src/model/grid/resize.rs",
+     "status": "moved",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [
+    "into_content_offset@crates/warp_terminal/src/model/grid/resize.rs",
+    "resize_storage@crates/warp_terminal/src/model/grid/resize.rs"
+   ],
+   "specs_naming_truth": []
+  },
+  {
+   "issue": 9056,
+   "created_at": "2026-04-13T23:18:03Z",
+   "title": "The warp terminal does not seem to prevent macOS to put my system on sleep while a task is still running (PreventUserIdleSystemSleep)",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agent-platform/agent/ai-faqs#gathering-ai-debugging-id)\n- [ ] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nMac MacBook Pro M5 Pro running macOS 26.4.1 goes into sleep mode while a long running command in the Warp Terminal is still running. I tried the same command in the native Terminal app and there is does not seem to happen, so I assume `PreventUserIdleSystemSleep` is not correctly obsolved.\n\n### To reproduce\n\nStart long running task in Terminal.\n\n### Expected behavior\n\n_No response_\n\n### Screenshots, videos, and logs\n\n_No response_\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\n26.4.1\n\n### Shell Version\n\n_No response_\n\n### Current Warp version\n\nzsh 5.9 (arm64-apple-darwin25.0)\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Recent working Warp date\n\nNot sure, but it might be related to a macOS update as well\n\n### Additional context\n\n_No response_\n\n### Does this block you from using Warp daily?\n\nNo\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "os:mac",
+    "area:shell-terminal"
+   ],
+   "truth": [
+    "app/src/terminal/model/terminal_model.rs",
+    "app/src/terminal/writeable_pty/pty_controller.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 13170,
+     "author": "amriksingh0786",
+     "head_sha": "3f3c9fe6b0a32839cb7597f3889b11602da2312e",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-06-29T08:41:59Z",
+     "title": "Prevent system sleep while a terminal command is running",
+     "body": "## Description\n\nThe terminal would let macOS idle into sleep mid-command (e.g. `aws configure sso`, a long build, anything that left the user away from the keyboard) because nothing in the terminal lifecycle was holding the user-initiated activity assertion. Agent Mode already does this via `prevent_sleep::prevent_sleep(\"Agent Mode request in-progress\")` in `warp_multi_agent_client`, so the pattern is established.\n\n`TerminalModel` now holds an `Option<prevent_sleep::Guard>` acquired in `start_command_execution` and dropped in the `command_finished` ANSI handler. RAII releases the assertion on drop, so short commands acquire and release within milliseconds without blocking sleep in practice; long-running commands hold the assertion for their full lifetime. The `Guard` type is `Send + Sync`, and on non-mac/non-windows targets it no-ops via the existing `crates/prevent_sleep/src/noop.rs` impl.\n\nFixes #9056.\n\n## Testing\n\nAdded two unit tests in `app/src/terminal/model/terminal_model_tests.rs`:\n\n- `prevent_sleep_guard_is_acquired_on_start_and_released_on_finish` covers the happy-path state transition: clear at construction, `Some` after `start_command_execution`, back to `None` after `command_finished`.\n- `prevent_sleep_guard_is_reset_when_start_called_twice` covers a defensive case where the shell ever signals start without an intervening finish: the previous guard is replaced (not leaked), and a single `command_finished` drops the active one.\n\n`cargo fmt`, `cargo clippy -p warp --tests --all-targets -- -D warnings`, and `cargo nextest run -p warp 'terminal::model::terminal_model_tests::prevent_sleep'` all pass cleanly.\n\nManually verified on macOS: started `sleep 600` in the patched dev build, then from a separate shell:\n\n```\n$ pmset -g assertions | grep -c \"Terminal command in-progress\"\n1\n\n$ pmset -g assertions | grep -B 1 -A 2 \"Terminal command in-progress\"\nListed by owning process:\n   pid 88270(warp-oss): [0x00082252000197b7] 00:01:14 PreventUserIdleSystemSleep named: \"Terminal command in-progress\"\n```\n\nConfirms the correct assertion type (`PreventUserIdleSystemSleep`, exactly what the issue title names) is held by the `warp-oss` process for the lifetime of the command. Once the command finishes, the count drops back to 0.\n\n## Agent Mode\n\n- [ ] Warp Agent Mode — This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: The terminal now keeps macOS awake while a foreground command is running, so long jobs like \\`aws configure sso\\` or slow builds no longer idle the system to sleep mid-execution.",
+     "files": [
+      "app/Cargo.toml",
+      "app/src/terminal/model/terminal_model.rs",
+      "app/src/terminal/model/terminal_model_tests.rs",
+      "app/src/terminal/writeable_pty/pty_controller.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/13170.diff",
+     "diff_bytes": 7597
+    }
+   ],
+   "bot": null,
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/model/terminal_model.rs",
+     "head_path": "app/src/terminal/model/terminal_model.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/writeable_pty/pty_controller.rs",
+     "head_path": "app/src/terminal/writeable_pty/pty_controller.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-3787/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4318/TECH.md",
+    "specs/APP-4319/handoff-cloud-cloud-resumable-transcripts/TECH.md",
+    "specs/APP-7376/TECH.md",
+    "specs/GH6393/tech.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1478/TECH.md",
+    "specs/REMOTE-1499/STAGE-2.md",
+    "specs/REMOTE-1674/TECH.md",
+    "specs/REMOTE-1973/TECH.md",
+    "specs/alokedesai/APP-3797/TECH.md",
+    "specs/code-1822-tui-cloud-children/TECH.md",
+    "specs/gh-11912/TECH.md",
+    "specs/tui-output-redraw/TECH.md"
+   ]
+  },
+  {
+   "issue": 9145,
+   "created_at": "2026-04-21T12:05:21Z",
+   "title": "CJK IME conversion candidates popup is misaligned from cursor/input line",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agent-platform/agent/ai-faqs#gathering-ai-debugging-id)\n- [ ] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nThe Japanese IME conversion candidates popup (the window showing kanji/hiragana suggestions) appears shifted/misaligned from the cursor and input line in Warp.\n\nOtherwise Warp has been great — looking forward to improvements!\n\n\n\n### To reproduce\n\n1. Open Warp on macOS\n2. Switch to a Japanese IME\n3. Start typing Japanese characters at the prompt (hiragana input that triggers kanji conversion)\n4. Observe the IME conversion candidates popup — it appears shifted/misaligned from the actual cursor position and input line\n\n### Expected behavior\n\nThe IME conversion candidates popup should appear directly at the cursor position, aligned with the input line — the same behavior as other macOS applications.\n\n### Screenshots, videos, and logs\n\nScreenshots are attached below. The red arrow points to the IME conversion candidates popup (\"ここには日本語を入力しています / Tab キーで選択\") — in Warp it appears far above the actual cursor position, separated from the input line. The second screenshot shows the same Japanese IME input in cmux where the popup is positioned correctly, directly under the cursor.\n\nConfirmed this issue does NOT reproduce in other terminals (e.g. cmux). Only observed in Warp.\n\n\n<img width=\"1378\" height=\"1417\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/25843450-9e09-4b02-894d-2608c9930851\" />\n\n<img width=\"1154\" height=\"675\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/9d67ddc7-143e-4fce-8099-2752d44f9a5f\" />\n\nOriginal report on X (also includes the first screenshot):\nhttps://x.com/tonkotsuboy_com/status/2046383630839377977\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\nmacOS 26.4\n\n### Shell Version\n\n_No response_\n\n### Current Warp version\n\nv0.2026.04.15.08.45.stable_02\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Recent working Warp date\n\n_No response_\n\n### Additional context\n\n_No response_\n\n### Does this block you from using Warp daily?\n\nYes, this issue prevents me from using Warp daily.\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:high",
+    "os:mac",
+    "area:ui-framework",
+    "area:terminal-input",
+    "warp:reserved-internal",
+    "warp:product-quality"
+   ],
+   "truth": [
+    "app/src/editor/view/element.rs",
+    "app/src/terminal/block_list_element.rs",
+    "app/src/terminal/blockgrid_renderer.rs",
+    "app/src/terminal/grid_renderer.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 12957,
+     "author": "acarl005",
+     "head_sha": "17600bb698a0a19653a33bc28e272178b8688796",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-06-23T18:32:51Z",
+     "title": "fix IME position when using claude code on MacOS",
+     "body": "## Linked Issue\r\n\r\nFixes #9145\r\n\r\n## Testing\r\n\r\nTo repro the bug. Open `claude` CLI on MacOS and then open the IME. The IME will be in the top-left corner of the grid, i.e. position (0, 0).\r\n\r\nOn this branch, the position is correct:\r\n\r\n<img width=\"1282\" height=\"800\" alt=\"Screenshot 2026-06-23 at 11 22 59 AM\" src=\"https://github.com/user-attachments/assets/1793ffc2-8021-4f49-b4c6-eb5f1d737c6b\" />\r\n\r\n## Description\r\n\r\nThe bug is due to the cached cursor position (in [`PaintContext::position_cache`](https://github.com/warpdotdev/warp/blob/7f0a121cf526bf6f97951c5218084b4d7701e276/crates/warpui_core/src/presenter.rs#L54-L54) being incorrect). The IME uses the cached cursor position to decide where to render. The bug was occurring because the position was stale at (0, 0).\r\n\r\nWhen you run `claude`, it tries to prevent visual flickering using the [synchronized update protocol](https://github.com/contour-terminal/vt-extensions/blob/master/synchronized-output.md). It emits escape codes like this:\r\n\r\n```\r\n# on one \"frame\" where \"frame\" is a step in claude's update cycle that outputs text to the terminal model. not WarpUI's idea of a \"frame\" or a \"rendered scene\"\r\n\r\n\\e[?2026h    ← begin sync\r\n\\e[?25l      ← hide cursor\r\nprint a bunch of output, the \"frame\" content\r\n\\e[?25h      ← show cursor\r\n\\e[?2026l    ← end sync / render \r\n\r\n# next \"frame\"\r\n\r\n\\e[?2026h    ← begin sync\r\n\\e[?25l      ← hide cursor\r\nprint a bunch of output, the \"frame\" content\r\n\\e[?25h      ← show cursor\r\n\\e[?2026l    ← end sync / render \r\n```\r\n\r\nThis is from inspecting PTY recordings BTW\r\n\r\n<img width=\"578\" height=\"413\" alt=\"Screenshot 2026-06-23 at 2 06 57 PM\" src=\"https://github.com/user-attachments/assets/4fbc820d-b5b9-4e19-8b8f-8334adcd6add\" />\r\n\r\n\r\nIt wraps each \"frame\" in synchronized output as well as hiding and then showing the cursor. I presume this is to ensure the cursor doesn't jump around at all during the update cycle. They want to maintain the user's idea of the cursor position even though updating the screen means the _actual_ cursor needs to fully traverse the grid to update each cell. Hiding it during the update ensures that the user won't notice that.\r\n\r\nSo why does this go wrong?\r\n\r\nWe do implement this sync output protocol. However, we do not actually paint the scene (Warp's idea of a frame) synchronously. We send a wakeup event, but wakeup events are buffered and coalesced, i.e. [throttled](https://github.com/warpdotdev/warp/blob/8d3baf91b0e9655f9623ee60924d2f7b622487e9/app/src/terminal/view.rs#L3697-L3697). When `\\e[?2026l` (end sync) is received, we correctly send a wakeup event and the cursor is SHOWN. But soon the `\\e[?25l` (hide cursor) for the next update comes in and gets applied to the terminal model and coalesces with the last wakeup event. Now we get a deferred render where cursor is HIDDEN.\r\n\r\nFinally rendering the scene happens and `BlockListElement::draw_block` is called. It checks `TermMode::SHOW_CURSOR`. If that is on, it calls `fn render_cursor` which is the function responsible for [setting the cached cursor position](https://github.com/warpdotdev/warp/blob/8d3baf91b0e9655f9623ee60924d2f7b622487e9/app/src/terminal/grid_renderer.rs#L2372) which the IME depends on. If _not_, no position is cached and the IME will not have an up-to-date position.\r\n\r\nI think in an ideal world, \r\n\r\n<!--\r\n## Changelog Entries for Stable\r\n\r\nCHANGELOG-BUG-FIX: [MacOS] Fix IME positioning in Claude Code.\r\n-->\r\n",
+     "files": [
+      "app/src/editor/view/element.rs",
+      "app/src/terminal/block_list_element.rs",
+      "app/src/terminal/blockgrid_renderer.rs",
+      "app/src/terminal/grid_renderer.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/12957.diff",
+     "diff_bytes": 13804
+    }
+   ],
+   "bot": {
+    "created_at": "2026-06-23T18:21:12Z",
+    "body": "This issue has been labeled `ready-to-implement` and is open for contributions involving code changes. If you'd like to tackle it, feel free to open a pull request against this issue. You can also comment `@oz-agent` on this issue to have the bot draft an implementation PR automatically.\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"announce-ready-issue\",\"issue\":9145} -->",
+    "files_named": [],
+    "cites_pr": [],
+    "diagnosis": false
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/editor/view/element.rs",
+     "head_path": "app/src/editor/view/element.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "app/src/terminal/block_list_element.rs",
+     "head_path": "app/src/terminal/block_list_element.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/blockgrid_renderer.rs",
+     "head_path": "app/src/terminal/blockgrid_renderer.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/grid_renderer.rs",
+     "head_path": "app/src/terminal/grid_renderer.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-4006/TECH.md",
+    "specs/QUALITY-512-ask-user-question-speedbump/TECH.md",
+    "specs/andy/CODE-1779/TECH.md",
+    "specs/async-find/TECH.md"
+   ]
+  },
+  {
+   "issue": 10144,
+   "created_at": "2026-05-05T13:10:36Z",
+   "title": "Interactive input for aws configure jumps off the pinned bottom command line",
+   "body": "<img width=\"2308\" height=\"1403\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/24381720-411d-409d-be38-47d2f41bc039\" />\n\n<img width=\"2307\" height=\"1399\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/a1710ca3-20ce-445d-b5e5-85d488a26bab\" />\n<img width=\"2303\" height=\"1398\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/39ec67bf-804f-4386-b48d-c0f660b807f7\" />\n\n<!-- warp-feedback-skill:v1 -->\n## Summary\nBug: interactive input for `aws configure` renders in the wrong place in Warp, leaving a large blank area and moving the active input away from the pinned bottom command line.\n\n## Problem\nWhen running `aws configure` in Warp, the terminal view shifts and shows a large blank area. The active input location moves upward so the user has to scroll or look above the visible command line to continue entering values. In some cases the input is effectively off-screen while the command is running.\n\nThis appears to be specific to Warp. The same shell setup, including Starship, works normally in the macOS Terminal app.\n\n## Expected behavior\nWhile `aws configure` is prompting for input, the active input area should remain visible and usable, with the command line anchored at the bottom when the terminal is configured for pinned-to-bottom input.\n\n## Actual behavior\nRunning `aws configure` causes the visible input area to jump upward and leaves a large empty \"page\" of space in the terminal view. The line where input is expected is no longer where the user would expect it, and typing can happen outside the normal visible bottom command area.\n\nPressing `Ctrl-C` to cancel `aws configure` immediately restores normal behavior and returns the shell to the expected bottom-aligned prompt.\n\nAn additional observation: after running `exec zsh` and then running `aws configure`, the input still jumps upward, but only to a position a little above the middle of the screen and it remains visible. That suggests a fresh shell partially changes the rendering state, but does not fix the underlying issue.\n\n## Reproduction steps or desired workflow\n1. Open Warp on macOS.\n2. Use zsh with a custom or default (warp) prompt.\n3. Run `aws configure` (or any aws cli command).\n4. Observe that the visible input area jumps upward and a large blank area appears in the terminal.\n5. Try typing the prompted values and note that the active input area is no longer aligned with the normal pinned-bottom command line.\n6. Press `Ctrl-C` to cancel the command.\n7. Observe that the terminal immediately returns to the normal bottom-aligned prompt/input behavior.\n\nAdditional variation:\n1. Run `exec zsh`.\n2. Run `aws configure` again.\n3. Observe that the input still jumps upward, but less severely than before.\n\n## Artifacts\nScreenshots attached\n\n## Warp version\nv0.2026.04.29.08.57.01\n\n## Operating system\nmacOS 26.4.1",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:medium",
+    "os:mac",
+    "area:shell-terminal",
+    "area:terminal-input",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/terminal/model/block.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 10729,
+     "author": "lonexreb",
+     "head_sha": "ecc8857ef709fa1d506943a9faec3b37cd110e1b",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-05-12T15:47:25Z",
+     "title": "fix(terminal-input): keep pinned input anchored during inline interactive prompts (#10144)",
+     "body": "Closes #10144\n\n## Summary\n\nFixes #10144. When an inline interactive command like `aws configure` runs in `PinnedToBottom` layout, the active block's height inflates to the deepest row the inferior's cursor ever touched, leaving a large blank gap above the visible prompt and detaching the active input from the pinned bottom command line. `Ctrl-C` restores normal layout because `Block::finish` truncates to cursor.\n\nThe fix turns on the existing `trim_trailing_blank_rows` mechanism for every block at `preexec`, gated on the same `TrimTrailingBlankLines` feature flag used for CLI-agent sessions, so the rollout matches the existing path.\n\n## Root cause\n\n`app/src/terminal/model/blockgrid.rs:162-170` — `BlockGrid::len()` for an active (non-finished) block returns `grid_storage().max_cursor_point.row + history_size + 1`. `max_cursor_point` is a monotonic high-water mark (`app/src/terminal/model/grid/grid_storage.rs:259-269`); it only grows on cursor updates and never shrinks when the inferior walks back up or clears trailing rows. `Block::output_grid_displayed_height` (`app/src/terminal/model/block.rs:1976-1982`) feeds that into `Block::height`, which the blocklist viewport uses to decide where the active block ends. In `PinnedToBottom` + `FollowsBottomOfMostRecentBlock`, the bottom of the block is anchored to the bottom of the pane, so any ghost rows past visible content push the real cursor row upward.\n\nReadline-style prompts (Python `input()`, `aws configure`, `node`/`python` REPL) routinely produce this pattern via `\\r\\x1b[K` redraws and cursor probes that move past the current line. Alt-screen programs (vim, top, less) bypass this entirely because they render their own grid.\n\nThe trim mechanism that fixes it already exists — `GridHandler::set_track_content_length` and `BlockGrid::set_trim_trailing_blank_rows` cap `len_displayed()` at the bottommost row with visible content via a cached backward scan refreshed in `on_finish_byte_processing`. It was previously wired only to CLI-agent session start (`app/src/terminal/view.rs:12253-12256`).\n\n## Fix\n\n`app/src/terminal/model/block.rs::preexec` (~line 3315): after `state = BlockState::Executing`, call `self.output_grid.set_trim_trailing_blank_rows(true)` under the existing `TrimTrailingBlankLines` feature flag. The eager initial scan inside `set_track_content_length` keeps the first render correct. Subsequent renders pay an O(trailing_blank_rows × cols) cost per PTY-read batch — the same cost CLI-agent sessions already pay, bounded by visible rows.\n\nThe CLI-agent session handler still calls `set_trim_trailing_blank_rows` explicitly; the redundant call from `preexec` is idempotent.\n\n## Test plan\n\nUnit tests (in `app/src/terminal/model/blockgrid_tests.rs`):\n- `test_trim_trailing_blank_rows_handles_inline_interactive_prompt_pattern` — reproduces the `aws configure` cursor-walk pattern (write two prompt rows, jump cursor to row 20, return cursor to row 1) and asserts `len()` reflects the high-water mark (21) while `len_displayed()` stays bounded by real content (≤3 rows).\n- `test_without_trim_inline_interactive_prompt_pattern_balloons_height` — pins the without-fix behavior so the trim contract can't silently regress: with trim off, `len_displayed() == len() == 21` even though only one row has visible content.\n\nBuild status:\n- [ ] `cargo check -p app` — could not run locally: this environment is missing the macOS `metal` shader toolchain that `warpui/build.rs` requires. The two changed files are pure Rust in `app/src/terminal/model/`, do not introduce new imports, and reuse only APIs already exercised by the existing CLI-agent trim path and existing trim tests. Please run CI to confirm.\n- [x] Tests authored to use the same fixtures and helpers as the existing trim tests in the same file (`set_trim_trailing_blank_rows`, `on_finish_byte_processing`, `goto`, `input`, `linefeed`, `carriage_return`).\n\nManual repro (please verify on macOS):\n1. Launch Warp with default `PinnedToBottom` input mode.\n2. In a fresh shell, run `aws configure`.\n3. Before fix: the active prompt jumps upward and a large blank area appears above the pinned-bottom input; scrollbar is elevated.\n4. After fix: prompt stays anchored at the bottom; typing remains aligned with the pinned input area.\n5. Regression sanity: run `top`, `vim`, `less` (alt-screen) — behavior unchanged. Run a CLI-agent session — behavior unchanged.\n\n## Files\n\n- `app/src/terminal/model/block.rs` — enable `trim_trailing_blank_rows` on the active block's output grid in `preexec`, gated on `FeatureFlag::TrimTrailingBlankLines`.\n- `app/src/terminal/model/blockgrid_tests.rs` — two new tests covering the regression and the without-fix baseline.\n\n## Manual testing note\n\nEnd-to-end manual verification on macOS requires the Xcode `metal` shader toolchain, which is not available in my contribution environment (Command Line Tools only — `crates/warpui/build.rs` panics on missing `metal`). I verified the change via:\n\n- `cargo check` / `cargo test` on the affected crate(s) — all green (see PR body for specific counts).\n- Deterministic unit test(s) added in this PR exercising the changed logic at the lowest testable layer.\n- Code-trace review against the documented behavior contract for the issue.\n\nMaintainers with a full Xcode install are best positioned to run the visual repro from the linked issue. Happy to add screenshots / a recording if a build-environment workaround is provided.",
+     "files": [
+      "app/src/terminal/model/block.rs",
+      "app/src/terminal/model/blockgrid_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/10729.diff",
+     "diff_bytes": 6954
+    }
+   ],
+   "bot": {
+    "created_at": "2026-05-05T13:10:58Z",
+    "body": "@B4Boris\n\nHere's what I found while triaging this issue:\n\nThis appears closely related to #9019, which also involves interactive AWS CLI commands causing the active prompt/input area to scroll away in Warp on macOS. I’m not marking this as a duplicate yet because only one strong matching open issue was found.\n\nI have a few follow-up questions before I can narrow this down:\n\n1. Could you attach a screenshot or short screen recording showing the blank area and where the `aws configure` prompt/cursor lands?\n\nReply in-thread with those details and the triage workflow will automatically re-evaluate the issue and update the diagnosis, labels, and next steps.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that interactive AWS CLI prompts in Warp appear to mis-anchor the terminal viewport/input area on macOS, leaving blank space and moving the active prompt away from the expected pinned-bottom position..\n\n## Initial triage\n\nThis looks like a Warp terminal viewport/input anchoring bug affecting interactive long-running CLI commands on macOS, rather than an AWS-specific failure. The report is detailed enough to route to terminal rendering/input, but a visual artifact would help confirm whether this is exactly the same visual state as related issue #9019.\n\n### Evidence\n- Repro path is specific: run `aws configure` on macOS with zsh and a Warp/default or custom prompt.\n- The reported behavior is Warp-specific and cancels cleanly with `Ctrl-C`, which points to active long-running command rendering/scroll state rather than persistent shell corruption.\n- A similar open issue, #9019, reports `aws configure sso` causing interactive AWS CLI input/output to scroll out of view in Warp on macOS. Only one strong duplicate candidate was found, so this triage is not marking the new issue as a duplicate under the current dedupe threshold.\n\n### Likely implementation area\n- `app/src/terminal/view.rs`: command execution and long-running input paths call `update_scroll_position_locking`, and `write_user_bytes_to_pty` sends typed characters directly to the PTY while updating scroll state.\n- `app/src/terminal/block_list_viewport.rs`: `ScrollPositionUpdate::AfterCommandExecutionStarted`, `AfterWriteUserBytesToPty`, and related viewport calculations resolve to `FollowsBottomOfMostRecentBlock` in pinned-to-bottom mode.\n- `app/src/terminal/block_list_element.rs` and `app/src/terminal/model/block.rs`: active long-running block cursor rendering happens inside the prompt/command or output grid, so a fix likely needs to keep the active PTY cursor row visible, not only the bottom of the block.\n\n### Open questions\nThe main missing evidence is a screenshot or short recording of the current issue's exact blank-space/cursor placement. That will help distinguish a duplicate of #9019 from a nearby but different pinned-bottom layout regression.\n\n**Question reasoning**\n1. **Could you attach a screenshot or short screen recording showing the blank area and where the `aws configure` prompt/cursor lands?** — The report describes a visual layout/scrolling symptom but has no artifact; media would confirm whether this is the same state as #9019 or a distinct pinned-bottom rendering bug.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":10144,\"run_id\":\"019df843-5570-73e5-be8f-ddc4691f833d\"} -->",
+    "files_named": [
+     "app/src/terminal/view.rs",
+     "app/src/terminal/block_list_viewport.rs",
+     "app/src/terminal/block_list_element.rs",
+     "app/src/terminal/model/block.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/model/block.rs",
+     "head_path": "app/src/terminal/model/block.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-3651/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4457/TECH.md",
+    "specs/CODE-1820/TECH.md",
+    "specs/GH12243/tech.md",
+    "specs/GH6393/tech.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1674/TECH.md",
+    "specs/REMOTE-1973/TECH.md",
+    "specs/tui-output-redraw/TECH.md"
+   ]
+  },
+  {
+   "issue": 10355,
+   "created_at": "2026-05-07T10:35:41Z",
+   "title": "RTL (Right-to-Left) text direction support for Hebrew, Arabic, and other languages",
+   "body": "<!-- warp-feedback-skill:v1 -->\n## Summary\nWarp lacks proper RTL (Right-to-Left) text direction support for Hebrew, Arabic, and other RTL languages.\n\n## Problem\nWhen typing or displaying text in right-to-left languages (such as Hebrew or Arabic), Warp renders the text left-to-right instead of right-to-left. This makes reading, writing, and editing RTL text difficult or impossible for users who work with these languages.\n\n## Expected behavior\n- Hebrew and Arabic text should render in proper right-to-left direction.\n- Cursor navigation should move correctly through RTL text segments.\n- Mixed LTR/RTL text should respect directional boundaries (bidirectional/BiDi support).\n\n## Actual behavior\nHebrew text is currently rendered left-to-right, which is incorrect and unreadable.\n\n## Reproduction steps or desired workflow\n1. Open Warp terminal.\n2. Type or paste Hebrew text, for example: שלום עולם\n3. Observe that the text is rendered left-to-right instead of right-to-left.\n\n## Artifacts\nNone attached\n\n## Warp version\nUnknown\n\n## Operating system\nmacOS",
+   "labels": [
+    "bug",
+    "triaged",
+    "repro:high",
+    "accessibility",
+    "os:mac",
+    "area:shell-terminal",
+    "area:terminal-input",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/features.rs",
+    "app/src/terminal/grid_renderer.rs",
+    "crates/warp_features/src/lib.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 16358,
+     "author": "UrNas",
+     "head_sha": "956994893216670cfb522e5dced2af04667a1c5b",
+     "state": "OPEN",
+     "draft": true,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-10-08T11:55:22Z",
+     "title": "Render right-to-left (Arabic/Hebrew) terminal output in visual order with shaping",
+     "body": "## Description\n\nArabic, Hebrew, and other right-to-left text in terminal output renders in reverse order, and Arabic letters render unjoined (isolated forms). The input editor renders the same text correctly.\n\n**Cause:** the grid renderer draws each cell's glyph at its logical column. The default path looks up one glyph per character, so there is no shaping and no bidi reordering. The ligature path does shape the row, but `paint_line` maps every glyph back to its source cell, which undoes the reordering.\n\n**Fix:** for rows that contain a strong right-to-left character, run the Unicode Bidirectional Algorithm (`unicode-bidi`, already in the lockfile via cosmic-text) with a left-to-right paragraph direction. Each right-to-left run (including embedded numbers and the spaces between RTL words) is then shaped as a whole with `layout_line` and painted **within the same columns it occupies in the grid**, right-aligned.\n\n- Left-to-right content keeps its grid alignment. That includes text before and after an RTL run, table separators, and backgrounds and decorations, which stay per-cell.\n- Both render paths are covered (ligatures on and off).\n- Rows without RTL characters take the existing path unchanged. The extra cost is one scan for `c >= U+0590` per rendered row.\n- Gated behind a new `RtlTerminalText` feature flag, added to `DOGFOOD_FLAGS`.\n\nThis differs from #10809, which painted RTL rows at the shaper's proportional positions. That approach shifts any left-to-right text that follows an RTL run off the grid (e.g. `ls` output with an Arabic filename).\n\n**Known limitations, deferred to follow-ups:**\n- Cursor, selection highlight, and mouse hit-testing on RTL runs still use logical columns.\n- Shaped Arabic is usually narrower than the columns it occupies, so a run leaves some empty space on its left. Vowel marks (harakat) can extend slightly into adjacent rows.\n- Full-screen apps that do their own layout are not specially handled.\n\n## Linked Issue\n\nCloses #10355 (rendering portion; see related #3589, #12689, #7889).\n\n- [ ] The linked issue is labeled `ready-to-spec` or `ready-to-implement`. (#10355 has no readiness label yet; requesting one on the issue.)\n- [x] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\n\n## Testing\n\n- Unit tests in `app/src/terminal/grid_renderer/rtl_tests.rs` cover RTL run detection: pure Arabic, Hebrew, LTR-only (Latin, Cyrillic, CJK), mixed `file: <arabic>.txt`, LTR words splitting RTL runs, numbers inside RTL text, trailing whitespace, and diacritics stored as zero-width content.\n- `cargo nextest run -p warp grid_renderer`: 24 passed (8 new, 16 existing).\n- `cargo clippy -p warp --all-targets --tests -- -D warnings`: clean. `cargo fmt`: applied.\n- Manual test on macOS with `./script/run --features rtl_terminal_text`, running `cat` on a file with eight cases: Arabic, Hebrew, mixed filename, English inside Arabic, numbers, diacritics, colored text, and table alignment.\n\n- [x] I have manually tested my changes locally with `./script/run`\n\n### Screenshots / Videos\n\n**Before** (current Warp):\n\n<img width=\"1497\" height=\"944\" alt=\"image-before-warp\" src=\"https://github.com/user-attachments/assets/64c90732-f808-45d2-9eb2-ac75c134d9a7\" />\n\n**After** (this branch with `rtl_terminal_text`):\n\n<img width=\"1278\" height=\"794\" alt=\"after-image-wrap\" src=\"https://github.com/user-attachments/assets/fbbe90f0-f1aa-43e1-b737-8fb768953bd5\" />\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: Arabic, Hebrew, and other right-to-left text in terminal output now renders in the correct order, with Arabic letters joined.\n",
+     "files": [
+      "Cargo.lock",
+      "Cargo.toml",
+      "app/Cargo.toml",
+      "app/src/features.rs",
+      "app/src/terminal/grid_renderer.rs",
+      "app/src/terminal/grid_renderer/rtl.rs",
+      "app/src/terminal/grid_renderer/rtl_tests.rs",
+      "crates/warp_features/src/lib.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/16358.diff",
+     "diff_bytes": 17878
+    }
+   ],
+   "bot": {
+    "created_at": "2026-05-07T10:35:53Z",
+    "body": "@adielCover\n\nHere's what I found while triaging this issue:\n\nThis appears to overlap with #3589 and looks like a terminal RTL/BiDi support gap rather than a one-off macOS setup issue. The provided Hebrew repro is enough to route this to terminal rendering/input.\n\nI have a few follow-up questions before I can narrow this down:\n\n1. Could you attach a screenshot or short screen recording showing how the Hebrew text appears in your current Warp build?\n2. Which Warp version/channel are you using?\n\nReply in-thread with those details and the triage workflow will automatically re-evaluate the issue and update the diagnosis, labels, and next steps.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that warp lacks terminal-level RTL/BiDi support, so Hebrew/Arabic text is stored, rendered, and navigated in fixed left-to-right terminal grid order rather than Unicode bidirectional visual order..\n\n## Triage summary\nThis is an internationalization/accessibility support gap for RTL/BiDi text in the terminal. The provided Hebrew repro is clear, and it overlaps with the existing open RTL/BiDi support request #3589, which shows Arabic text rendering incorrectly in Warp while Terminal renders it correctly.\n\n## Classification\n- Type: enhancement / RTL and BiDi terminal support\n- Areas: terminal output rendering and terminal input/cursor behavior\n- Reproducibility: high\n- Platform evidence: macOS was reported, though the underlying terminal-grid behavior likely is not macOS-specific.\n\n## Likely root cause\nWarp's terminal model stores content in fixed grid cells and advances the cursor by Unicode cell width. The renderer then paints terminal content at logical column positions: the non-ligature path draws each cell independently, and the ligature path builds a row string but maps shaped glyphs back to the original grid columns in `paint_line`. That means the terminal path does not appear to apply Unicode Bidirectional Algorithm visual reordering or RTL-aware cursor/navigation behavior.\n\n## Relevant code\n- `app/src/terminal/model/grid/ansi_handler.rs` handles character input, Unicode cell widths, and cursor advancement.\n- `app/src/terminal/grid_renderer.rs` renders terminal cells by logical grid columns; the ligature paint path maps glyphs back to original cell columns.\n- `crates/warp_terminal/src/model/grid/flat_storage/grapheme.rs` models grapheme cell width for the terminal grid.\n- `crates/warpui_core/src/text_layout.rs` and `crates/warpui/src/platform/mac/text_layout.rs` show the generic text layout layer has RTL-aware caret concepts, but terminal rendering appears to bypass those visual positions for fixed-grid output.\n\n## Duplicate search\nFound one strong related open issue, #3589, and an older closed issue, #4029. Per the duplicate-detection workflow, a duplicate label is not applied because fewer than two eligible existing open/recent duplicate issues were identified.\n\n**Question reasoning**\n1. **Could you attach a screenshot or short screen recording showing how the Hebrew text appears in your current Warp build?** — The symptom is visual and the new report has no artifact; media would confirm the exact current rendering and any cursor behavior visible during typing.\n2. **Which Warp version/channel are you using?** — The report lists the Warp version as unknown; the version/channel helps maintainers confirm whether this is present in current Stable/Preview/Dev builds or tied to a specific release.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":10355,\"run_id\":\"019e0202-1561-7107-bc83-bebcd5871b5a\"} -->",
+    "files_named": [
+     "crates/warp_terminal/src/model/grid/ansi_handler.rs",
+     "app/src/terminal/grid_renderer.rs",
+     "crates/warp_terminal/src/model/grid/flat_storage/grapheme.rs",
+     "crates/warpui_core/src/text_layout.rs",
+     "crates/warpui/src/platform/mac/text_layout.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/features.rs",
+     "head_path": "app/src/features.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "app/src/terminal/grid_renderer.rs",
+     "head_path": "app/src/terminal/grid_renderer.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/grid_renderer/rtl.rs",
+     "head_path": null,
+     "status": "added",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warp_features/src/lib.rs",
+     "head_path": "crates/warp_features/src/lib.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-3632/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4006/TECH.md",
+    "specs/APP-4067/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4318/TECH.md",
+    "specs/APP-4319/TECH.md",
+    "specs/APP-4562/TECH.md",
+    "specs/GH7043/product.md",
+    "specs/GH7043/tech.md",
+    "specs/QUALITY-567/TECH.md",
+    "specs/QUALITY-919/TECH.md",
+    "specs/QUALITY-928/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1486/TECH.md",
+    "specs/REMOTE-1973/TECH.md",
+    "specs/async-find/TECH.md",
+    "specs/cloud-mode-input-v2/TECH.md",
+    "specs/codex-warp-plugin/TECH.md",
+    "specs/harryalbert/APP-3809/TECH.md",
+    "specs/orch-pill-bar-web/TECH.md",
+    "specs/zachlloyd/inline-markdown-images-in-blocklist/TECH.md",
+    "specs/zachlloyd/restore-fast-forward-state/TECH.md"
+   ]
+  },
+  {
+   "issue": 11262,
+   "created_at": "2026-05-19T06:55:00Z",
+   "title": "SECRETS_REGEX silently empty at startup despite persisted custom_secret_regex_list — local MCP-save redaction check never fires",
+   "body": "## Summary\n\nThe custom secret regex set (`SECRETS_REGEX`) read by `find_secrets_in_text` can be empty at runtime even when:\n\n- `~/.warp-oss/settings.toml` has `[privacy.secret_redaction] enabled = true`\n- The same TOML has `custom_secret_regex_list = [...20 default patterns...]`\n- The Settings → Privacy UI correctly shows the toggle ON and lists all 20 default patterns\n\nAs a result, the local redaction check that PR #10839 fixes (`should_block_save_for_secrets(safe_mode, enterprise, contains_secrets)`) returns `contains_secrets=false` regardless of payload, because `find_secrets_in_text` runs against an empty `SECRETS_REGEX`. Saves go through, cloud sync receives the secret, and the *server* rejects with `Secrets detected while creating generic string object` — the cloud catches what the local check should have caught.\n\n## Why it happens\n\n`app/src/terminal/secret_regex_updater.rs:14` carries the comment `Initialize with current custom regexes (will be empty until safe mode is enabled)`. The intended flow:\n\n1. App starts with `safe_mode=false`, `user_secret_regex_list=[]`\n2. User toggles safe mode ON\n3. `initialize_default_regexes_once` pushes the 20 defaults into `user_secret_regex_list`\n4. That mutation fires `PrivacySettingsChangedEvent::CustomSecretRegexList`\n5. The updater subscribes to that event (`secret_regex_updater.rs:18-22`) and recompiles `SECRETS_REGEX`\n\nThe flow assumes a transition from empty list → populated list. It does NOT handle the case where TOML already has the defaults persisted from a prior session: `PrivacySettings::new` loads the list, but no `CustomSecretRegexList` change event fires, so `SECRETS_REGEX` remains the initial empty `Regex::new_many(&[])` from `app/src/terminal/model/secrets.rs:39-42`.\n\nThe updater's startup call to `update_custom_secret_regex_list` at `secret_regex_updater.rs:15` either runs before `PrivacySettings` exposes the populated list, or runs after but is racing some other init step — needs confirmation during the fix.\n\nThe empty-regex condition also persists across a user toggling safe mode OFF→ON at runtime, because the updater only subscribes to `CustomSecretRegexList` changes, not `SafeModeEnabled` changes.\n\n## Repro (verified 2026-05-19)\n\n1. Quit warp-oss\n2. Ensure `~/.warp-oss/settings.toml` has:\n   ```toml\n   [privacy.secret_redaction]\n   enabled = true\n   ```\n   and a populated `custom_secret_regex_list` (the 20 defaults)\n3. Launch warp-oss\n4. Open Settings → Privacy. Confirm the toggle is ON and the regex list shows all 20 entries. (UI proves the data is loaded.)\n5. Settings → MCP Servers → + Add. Paste a config where the secret is in a non-templatized field, e.g.:\n   ```json\n   {\n     \"demo-redact-8761\": {\n       \"command\": \"/usr/bin/true\",\n       \"args\": [\"--api-key=sk-FAKE0000000000FAKEdemoWARP8761\"]\n     }\n   }\n   ```\n6. Click Save.\n\n**Expected:** \"This MCP server contains secrets. Visit Settings > Privacy to modify your secret redaction settings.\" toast; save blocked.\n\n**Actual:** save succeeds (local), then sync fails server-side with `Failed to create mcp server` toast (cloud rejection on `Secrets detected while creating generic string object`). Confirmed via grep of `~/Library/Logs/warp-oss.log`:\n```\n[WARN] [warp::server::sync_queue] Failed to create GenericStringObject(Json(TemplatableMCPServer)) ... Secrets detected: Secrets detected while creating generic string object\n```\n\nSeparately verified that the regex set, when compiled standalone with the same 20 patterns via `regex_automata::meta::Regex::new_many`, *does* match `sk-FAKE0000000000FAKEdemoWARP8761` (pattern_id=17, Generic SK). So the patterns and runtime engine are fine — the in-memory `SECRETS_REGEX` simply does not contain them.\n\n## Proposed fix (small)\n\nAdd a subscription to `SafeModeSettingsChangedEvent::SafeModeEnabled` in `CustomSecretRegexUpdater::new` so the updater recompiles `SECRETS_REGEX` whenever the user flips safe mode:\n\n```rust\nlet safe_mode_settings = SafeModeSettings::handle(ctx);\nctx.subscribe_to_model(&safe_mode_settings, |me, evt, ctx| {\n    if let SafeModeSettingsChangedEvent::SafeModeEnabled { .. } = evt {\n        me.update_custom_secret_regex_list(ctx);\n    }\n});\n```\n\nThat covers the runtime-toggle path. The TOML-loaded-at-startup path likely needs an additional initial recompile after `PrivacySettings` finishes loading (e.g. on `initial_load_complete` or by replaying the value in the updater after a tick).\n\n## Related\n\n- Discovered while producing evidence for #10839 (which fixes the inverse bug — saves were being incorrectly blocked when safe mode is OFF). The predicate in #10839 is correct; this issue is upstream of the predicate, on the `contains_secrets` input.\n- Companion issue: secrets pasted into `env` / `headers` get templatized to placeholders before the redaction scan runs (filing separately).\n",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:high",
+    "area:settings-keybindings",
+    "area:mcp",
+    "triage-reviewed",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/terminal/secret_regex_updater.rs"
+   ],
+   "located": [
+    "app/src/terminal/secret_regex_updater.rs"
+   ],
+   "prs": [
+    {
+     "number": 11457,
+     "author": "david-engelmann",
+     "head_sha": "6ab5a0041d8abe361761c919bb16084e1f7d4303",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-05-21T00:27:39Z",
+     "title": "fix(privacy): refresh SECRETS_REGEX when Safe Mode is toggled at runtime",
+     "body": "Fixes #11262.\n\n## Why\n\n\\`CustomSecretRegexUpdater\\` only subscribed to \\`PrivacySettingsChangedEvent::CustomSecretRegexList\\`, which fires when the *user-secret regex list itself* mutates. Toggling Safe Mode at runtime doesn't mutate the list — it only flips the boolean that gates redaction — so the subscription never fires and the in-memory \\`SECRETS_REGEX\\` DFA stays in whatever state it had at app start.\n\nFor a user whose regex list was loaded from TOML and who toggled Safe Mode ON at runtime, this meant the local MCP-save redaction check from PR #10839 silently fell through:\n\n1. \\`find_secrets_in_text\\` ran against an empty DFA\n2. \\`contains_secrets\\` returned \\`false\\`\n3. \\`should_block_save_for_secrets(safe_mode=true, enterprise=false, contains=false)\\` returned \\`false\\`\n4. The save proceeded → cloud sync rejected → user saw \\`Failed to create mcp server\\` toast (server caught what the local check should have)\n\n## What\n\nAdds a second subscription in [\\`CustomSecretRegexUpdater::new\\`](app/src/terminal/secret_regex_updater.rs) for \\`SafeModeSettingsChangedEvent::SafeModeEnabled\\`. When Safe Mode flips, the updater recompiles \\`SECRETS_REGEX\\` from the current (persisted) regex list.\n\n## Implementation note: what the existing emission actually does\n\nI initially thought the bug was that \\`add_all_recommended_regex\\` and \\`remove_user_secret_regex\\` failed to emit \\`CustomSecretRegexList\\`. While implementing I confirmed via [\\`crates/settings/src/macros.rs:345-361\\`](crates/settings/src/macros.rs#L345-L361) that the macro-generated \\`set_value\\` already emits exactly that event for any setting mutation. So the missing piece really is the SafeMode subscription — both mutator paths fire \\`CustomSecretRegexList\\` correctly already.\n\nAdds 3 regression tests that pin this contract so it doesn't silently regress:\n\n- \\`add_all_recommended_regex_emits_custom_secret_regex_list_event\\`\n- \\`add_all_recommended_regex_when_already_populated_does_not_emit\\` (early-return guard)\n- \\`remove_user_secret_regex_emits_custom_secret_regex_list_event\\`\n\n## Test plan\n\n- [x] \\`cargo build -p warp --lib\\` — clean\n- [x] \\`cargo test -p warp --lib settings::privacy\\` — 3/3 pass\n- [x] \\`cargo clippy -p warp --lib --tests -- -D warnings\\` — clean\n- [x] \\`cargo fmt -p warp -- --check\\` — clean\n- [x] Recipe re-run pending: replay [scripts/recipes/11262-secrets-regex-startup-empty.json](https://github.com/david-engelmann/warp-taper/blob/main/scripts/recipes/11262-secrets-regex-startup-empty.json) against a patched build; the save should be blocked and the toast surfaced.\n\n## Repro recording\n\nThe repro recording (against an unpatched build) lives in warp-taper:\n\n![#11262 reproduction](https://raw.githubusercontent.com/david-engelmann/warp-taper/main/docs/evidence/11262-secrets-regex-startup-empty/master.gif)\n\n## Changelog\n\n`CHANGELOG-BUG-FIX: Custom secret redaction patterns are now applied immediately when Safe Mode is toggled during a session. Previously a regex list restored from settings at startup could leave the in-memory matcher empty until the next restart, silently skipping the redaction check when saving an MCP server configuration.`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+     "files": [
+      "app/src/settings/privacy_tests.rs",
+      "app/src/terminal/secret_regex_updater.rs"
+     ],
+     "agent_written": true,
+     "diff_file": "experiments/m40_eval_diffs/11457.diff",
+     "diff_bytes": 7489
+    }
+   ],
+   "bot": {
+    "created_at": "2026-05-19T06:55:13Z",
+    "body": "@david-engelmann\n\nHere's what I found while triaging this issue:\n\nThe supplied repro and server-side rejection point to a local redaction false negative, not a bad secret pattern. The likely fix area is keeping the in-memory secret-regex scanner synchronized with persisted Privacy settings and safe-mode changes before MCP saves run.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that MCP server save redaction can falsely miss secrets when the global secret-regex scanner is not populated from persisted custom regex settings..\n\n### Triage summary\nThis looks like a real bug in the local MCP server save redaction path rather than a bad default pattern. The report's observed behavior is that the local save path allows a config containing a secret, while the later cloud sync rejects the same payload as containing secrets.\n\nThe relevant code path supports that shape:\n- `app/src/settings_view/mcp_servers/edit_page.rs` scans `templatable_mcp_server.template.json` with `find_secrets_in_text` before saving.\n- `app/src/ai/blocklist/block/secret_redaction.rs` reads the process-global `SECRETS_REGEX`.\n- `app/src/terminal/model/secrets.rs` initializes `SECRETS_REGEX` empty and updates it through `set_user_and_enterprise_secret_regexes`.\n- `app/src/terminal/secret_regex_updater.rs` refreshes that global scanner once and then only on `PrivacySettingsChangedEvent::CustomSecretRegexList`. It does not currently listen for safe-mode setting changes, and any initialization path that loads or replays regex settings without that privacy event would leave the local scan stale.\n\nOne nuance for the eventual fix: the current checkout registers `CustomSecretRegexUpdater` after `PrivacySettings`, so the exact startup path for a persisted non-empty regex list should be verified while reproducing. Still, the local scan's dependence on a globally cached regex set and the updater's narrow subscription explain why the UI can show regex settings while the MCP save check behaves as if no patterns are loaded.\n\n### Duplicate check\nI enumerated all open issues and recently closed issues. The closest matches were #11263, #8761, and #9798, but they describe distinct MCP/redaction failures, so I am not marking this issue as a duplicate.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":11262,\"run_id\":\"019e3f04-5cba-79b4-a796-60af4a02edc6\"} -->",
+    "files_named": [
+     "app/src/settings_view/mcp_servers/edit_page.rs",
+     "app/src/ai/blocklist/block/secret_redaction.rs",
+     "app/src/terminal/model/secrets.rs",
+     "app/src/terminal/secret_regex_updater.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/secret_regex_updater.rs",
+     "head_path": "app/src/terminal/secret_regex_updater.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [
+    "update_custom_secret_regex_list@app/src/terminal/secret_regex_updater.rs"
+   ],
+   "specs_naming_truth": []
+  },
+  {
+   "issue": 12425,
+   "created_at": "2026-06-09T21:05:30Z",
+   "title": "Slash command not re-detected after editing input to a different slash command",
+   "body": "## Summary\nWhen a user starts an agent input with one slash command, types out a prompt, and then edits the beginning of the input to switch to a different slash command, the new slash command is not detected.\n\n## Steps to reproduce\n1. In the input editor, start typing a slash command (e.g. `/plan`).\n2. Continue typing a multi-line prompt after it.\n3. Go back and edit the leading slash command to a different one (e.g. `/write-product-spec`).\n\n## Actual behavior\nThe edited slash command at the start of the input is not detected/recognized as a slash command, so the input is not treated as that slash command invocation.\n\n## Expected behavior\nEditing the leading text to a valid slash command should be detected and treated as that slash command, the same as if it had been typed from the start.\n\n## Notes\nReported as a request for better slash command detection when changing an already-typed slash command.",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:medium",
+    "area:agent",
+    "area:skills",
+    "area:terminal-input",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/terminal/input/slash_command_model.rs",
+    "app/src/terminal/input/slash_commands/data_source/core.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 13079,
+     "author": "SkyNotSilent",
+     "head_sha": "69ef105cef6cbe6178d092dc161af80bcbcc1a62",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-06-26T06:53:57Z",
+     "title": "Detect slash commands after multiline edits",
+     "body": "## Description\nAllow slash command parsing to split the command token from its argument on any whitespace, not only a literal space. This lets edited multi-line inputs like `/rename-tab\\nBackend API` or a replaced leading slash command be detected the same way as single-line slash command inputs.\n\nThe same helper is used for built-in slash commands and skill commands so both command surfaces keep consistent parsing behavior.\n\n## Linked Issue\nCloses #12425\n\n- [x] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\n- [x] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\n\n## Testing\n- [x] `cargo test -p warp slash_command_model --lib`\n- [x] `cargo run -p integration --bin integration -- test_multiline_slash_command_edit_is_re_detected`\n- [x] `cargo test -p integration test_multiline_slash_command_edit_is_re_detected -- --nocapture`\n- [x] `WARPUI_USE_REAL_DISPLAY_IN_INTEGRATION_TESTS=1 WARP_INTEGRATION_TEST_VIDEO=test_multiline_slash_command_edit_is_re_detected WARP_INTEGRATION_TEST_ARTIFACTS_DIR=/tmp/warp-12425-artifacts cargo run -p integration --bin integration -- test_multiline_slash_command_edit_is_re_detected`\n- [x] `git diff --check`\n- [ ] I have manually tested my changes locally with `./script/run`\n\n### Screenshots / Videos\nRecorded integration test evidence for the multiline slash command edit flow:\n\n- [Recording MP4](https://raw.githubusercontent.com/SkyNotSilent/warp/codex-pr-12425-evidence/multiline-slash-command-recording.mp4)\n- [Screenshot PNG](https://raw.githubusercontent.com/SkyNotSilent/warp/codex-pr-12425-evidence/multiline-slash-command-detected.png)\n- [Recording log](https://raw.githubusercontent.com/SkyNotSilent/warp/codex-pr-12425-evidence/multiline-slash-command-recording.log)\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: Re-detect slash commands when edited multi-line input starts with a different command.\n",
+     "files": [
+      "app/src/terminal/input/slash_command_model.rs",
+      "app/src/terminal/input/slash_command_model_tests.rs",
+      "app/src/terminal/input/slash_commands/data_source/core.rs",
+      "crates/integration/src/bin/integration.rs",
+      "crates/integration/src/test/input.rs",
+      "crates/integration/tests/integration/ui_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/13079.diff",
+     "diff_bytes": 9948
+    }
+   ],
+   "bot": {
+    "created_at": "2026-06-09T21:05:43Z",
+    "body": "@warp-dev-github-integration[bot]\n\nHere's what I found while triaging this issue:\n\nThis looks like a reproducible agent-input slash-command parsing issue rather than an OS-specific problem. The strongest clue is that the failure happens after editing a command prefix in an already-populated multi-line prompt.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that editing an already-populated agent input from one leading slash command to another can leave the replacement command unrecognized, likely in the slash/skill command parser for multi-line input..\n\n## Triage summary\n\nThis appears to be a bug in agent-input slash command detection when the user edits the leading slash-command token after already typing a prompt. The report is specific enough for initial routing and does not look OS-specific.\n\n## Reproducibility\n\nMedium. The issue includes a clear edit sequence (`/plan` → prompt text → replace the leading command with `/write-product-spec`), and the current code has a plausible parser edge case around command/argument boundaries in multi-line input. I did not verify it by running the Warp UI, and the report does not include a version or screen recording.\n\n## Likely root cause\n\nThe most relevant path is `app/src/terminal/input/slash_command_model.rs`. `SlashCommandDataSource::parse_slash_command` and `SlashCommandModel::detect_skill_command` split the command token from its argument with `split_once(\" \")`, so only a literal space is treated as the command/argument delimiter. If the existing prompt is multi-line and the command is followed by a newline, editing the leading command to another slash/skill command can leave the parser comparing the full multi-line prefix instead of the command token alone.\n\nThe menu/state handling in `app/src/terminal/input/slash_commands/mod.rs`, `app/src/terminal/input/slash_commands/view.rs`, `app/src/terminal/input/slash_commands/cloud_mode_v2_view.rs`, and `app/src/terminal/input.rs` is also relevant because it decides when the menu closes, when detected slash/skill commands execute, and when the buffer is re-parsed after edits. Existing tests cover some disabled/re-detection behavior, but not replacing one detected command or skill prefix in a populated multi-line buffer.\n\n## Duplicate check\n\nI enumerated all open issues in `warpdotdev/warp` and recent closed issues via the GitHub API. The closest hits were broader slash-command feature requests or unrelated recognition issues, so I did not find the 2+ likely duplicate matches required to mark this as a duplicate.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":12425,\"run_id\":\"019eae34-8dcf-70e7-a78c-6c68a9700b2b\"} -->",
+    "files_named": [
+     "app/src/terminal/input/slash_command_model.rs",
+     "app/src/terminal/input/slash_commands/mod.rs",
+     "app/src/terminal/input/slash_commands/view.rs",
+     "app/src/terminal/input/slash_commands/cloud_mode_v2_view.rs",
+     "app/src/terminal/input.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/input/slash_command_model.rs",
+     "head_path": "app/src/terminal/input/slash_command_model.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/input/slash_commands/data_source/core.rs",
+     "head_path": "app/src/terminal/input/slash_commands/data_source/core.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-4005/TECH.md",
+    "specs/REMOTE-1558/TECH.md"
+   ]
+  },
+  {
+   "issue": 14231,
+   "created_at": "2026-07-24T06:43:19Z",
+   "title": "Async terminal find: update_dirty_matches can leave matches out of order → debug_assert! aborts (SIGABRT)",
+   "body": "## Summary\nThe incremental match merge in async terminal find (`BlockFindResults::update_dirty_matches`, `app/src/terminal/find/model/async_find.rs`) can produce a match list that is **not** in ascending order. In debug builds this trips the trailing `debug_assert!` and aborts the process (`SIGABRT` / \"Abort trap: 6\"); in release builds the assert is stripped, so the same mis-ordering silently persists and can corrupt find count / focus-traversal / highlight rendering.\n\n## Environment\n- Build: from-source `warp-oss`, `0.1.0 (20260722.050348)` (debug profile — `./script/run`)\n- OS: macOS 26.5.2 (25F84), Apple Silicon (Mac15,8)\n- Code path introduced in #9618 (\"[APP-4280] Async blocklist search\"); async find is now on Stable (#13515)\n\n## Crash signature\n```\nException Type:  EXC_CRASH (SIGABRT)\nTermination Reason: Namespace SIGNAL, Code 6, Abort trap: 6\nApplication Specific Information: abort() called\n\nThread 0 Crashed (main):\n  core::panicking::panic_fmt\n  warp::terminal::find::model::async_find::BlockFindResults::update_dirty_matches + 904\n  warp::terminal::find::model::async_find::AsyncFindController::process_message\n  ...::spawn_result_and_throttle_streams\n  warpui_core::core::app::AppContext::relay_task_output\n```\n`panic_fmt` (a *formatted* panic) points at the only formatted panic in that function — the ascending-order `debug_assert!`.\n\n## Root cause\n`update_dirty_matches` picks the splice window (`replace_start` / `replace_end`) from **row** overlap between the existing matches and the dirty row range:\n\n```rust\nlet replace_start = matches.iter().position(|m| m.end_row()   >= *dirty_range.start()).unwrap_or(matches.len());\nlet replace_end   = matches.iter().rposition(|m| m.start_row() <= *dirty_range.end()).map(|p| p + 1).unwrap_or(replace_start);\n```\n\nBut `AbsoluteMatch`'s `Ord` sorts by the full **end point then start point** (row *and* column):\n\n```rust\nself.end.cmp(&other.end).then(self.start.cmp(&other.start))\n```\n\nWhen a block has matches sharing a row, or a match that spans rows across the dirty-range boundary, the row-based splice can insert new matches next to a retained neighbor that sorts *before* them by column — leaving the vector out of order under the real `Ord`, which the trailing assertion then rejects. (The code even documents the fragile \"matches within a single grid do not overlap\" assumption it relies on.)\n\n## Reproduction (unit-level)\nExisting matches (sorted): one ending on row 9, one on row 11 ending at column 2. Rescanning dirty row 10 yields a match starting on row 10 and spanning onto row 11 ending at column 4:\n\n```\nexisting = [ (r9,c0)-(r9,c5), (r11,c0)-(r11,c2) ]\ndirty    = 10..=10\nnew      = [ (r10,c0)-(r11,c4) ]   // spans the boundary row, later end column\n```\n\nThe row-based splice yields `[ r9, span(end r11,c4), r11(end r11,c2) ]` → `span.end (11,4) > r11.end (11,2)` → not ascending → `debug_assert!` fires → abort.\n\nIn practice it surfaces when **Find is active on a terminal block whose content is still changing** (streaming output / scrollback churn), so `update_dirty_matches` runs repeatedly on updating dirty ranges.\n\n## Impact\n- Debug / from-source builds: hard crash (`SIGABRT`) whenever the invariant is violated.\n- Release / Stable builds: no crash, but matches can be mis-ordered, affecting match count, next/previous traversal, and highlight placement.\n\n## Suggested fix\nRestore the ascending invariant after the splice (cheap `is_sorted` fast-path; re-sort only when the seam actually broke), instead of asserting it:\n\n```rust\nmatches.splice(replace_range, new_matches);\nif !matches.is_sorted() {\n    matches.sort_unstable();\n}\n```\n\nPer-block match counts are bounded and updates are throttled, so the occasional re-sort is negligible. A regression test covering the boundary-spanning case is included. A PR with the fix + test is ready.\n",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:high",
+    "os:mac",
+    "area:shell-terminal",
+    "area:search",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/terminal/find/model.rs",
+    "app/src/terminal/find/model/async_find.rs",
+    "app/src/terminal/find/model/async_find/background_task.rs",
+    "app/src/terminal/find/model/async_find/work_queue.rs",
+    "crates/warp_terminal/src/model/grid/grid_handler.rs"
+   ],
+   "located": [
+    "app/src/terminal/find/model/async_find.rs"
+   ],
+   "prs": [
+    {
+     "number": 16462,
+     "author": "hkwan16",
+     "head_sha": "c762243b4258873ae3a9e447559d2d259019b754",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-10-14T02:34:56Z",
+     "title": "Fix async find crash and duplicate matches while a block streams output",
+     "body": "## Description\n\nFixes #14231.\n\nIf Find is open while a block is still producing output, async find's per-block match list can end up unsorted and full of duplicates. Debug builds then abort on the `debug_assert!` in `BlockFindResults::update_dirty_matches` (\"Matches should be in ascending order after update_dirty_matches\"). Release builds don't crash, but the match count is inflated and next/previous and highlights are wrong.\n\nThe issue blames the row-based splice for mishandling matches that span rows at the seam. I reproduced the crash in the app with an instrumented debug build, and the splice is fine, because `find_in_range` keeps every match inside the scanned rows. The splice stays ordered as long as its inputs are correct. The inputs were wrong in two ways.\n\n**1. A full rescan racing in-flight dirty-range results.** `invalidate_block(None)` clears the block's matches and queues a full rescan. Dirty-range results that were already in flight then land in the empty list. The full rescan's chunks are appended after them with a blind `extend`, starting again at row 0. Logged sequence from a crashing run:\n\n```\ninvalidate full=true                              <- block's matches cleared, full rescan queued\ndirty-result dirty=7117..=7523   existing=0       <- in-flight dirty results land after the clear\ndirty-result dirty=7524..=8195   existing=1056\nfull-chunk   rows 0..999          existing=2855    <- full scan appended from row 0 after row 8195\n...\ndirty-result dirty=8195..=8747   existing=26051   <- list is unsorted (row 8194 then row 0) -> assert\n```\n\nFix: Full-scan and dirty-range chunks now send the same message, `BlockGridMatches`, which carries the absolute row range it scanned, and one handler merges every chunk with the replace-overlap logic in `update_dirty_matches`. Empty chunks are sent too, so they clear stale matches in their rows. The background task processes work items one at a time, so results arrive in scan order and the latest result for a row range wins.\n\n**2. Scrollback truncation shifting rows between enqueue and scan.** On master, dirty work items store grid-relative rows plus the truncation count at enqueue time. Under heavy output, thousands of lines can be truncated before the item is scanned, so the scan reads rows that have shifted. The batch is also labeled with the stale count, while each `AbsoluteMatch` uses the current one. In one logged run, a batch labeled `48331..=49330` had its matches at rows `53934..=54933`. Separately, once a grid is at its scroll limit the cursor stays on the same grid row while lines are truncated, so grid-relative find-dirty tracking also misses rows that were written.\n\nFix: Track positions in absolute rows end to end. `GridHandler` records find-dirty rows as absolute rows (`take_find_dirty_rows_range` now returns `RangeInclusive<u64>`), work items carry that range with no truncation count, and `scan_grid_chunked` walks an absolute cursor. Each chunk is mapped to grid rows by `next_chunk_rows` under the same lock as the scan, skipping rows already truncated, so a chunk's stated range always covers exactly the rows scanned.\n\nThe `debug_assert!` is unchanged. I didn't re-sort or dedupe after the splice, because that would hide the crash and leave release builds with duplicate matches and wrong counts.\n\nNotes for reviewers:\n- `DirtyRangeMatches` is gone. The single handler records the block's `TotalIndex`, merges, prunes truncated matches, auto-selects the first match and recomputes filtering for every chunk. This also fixes a gap on master where matches that only ever arrived through dirty ranges were counted but couldn't be focused, because the dirty path never recorded the block's `TotalIndex`.\n- An empty chunk that overlaps no stored matches skips the merge and the focus rebuild, so rare queries over many blocks don't pay that cost for each empty chunk. If the block has no stored matches at all, it returns without taking the terminal model lock. If it does, it first prunes matches truncated from scrollback and refreshes the count and focus if any were removed.\n- `GridHandler::take_find_dirty_rows_range` changes from `usize` grid rows to `u64` absolute rows. The only callers are in `app/src/terminal/find`. I removed `find_dirty_rows_range`, which had no callers.\n- Possible follow-ups (not in this PR):\n  - The streaming path in `TerminalFindModel` requests a full rescan whenever no output rows are dirty. That's what triggers the race, and it probably costs performance on large blocks too.\n  - A match soft-wrapped across a scan batch boundary isn't found, since each batch is bounded to its rows. This predates this change and makes the final count vary by about 1 between identical runs.\n\n## Linked Issue\n- [x] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\n- [x] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\n\n## Testing\n\n- [x] I have manually tested my changes locally with `./script/run`\n\nManual repro (debug build): open Find (Cmd+F), search `foo`, then run this script in the same session:\n\n```python\nimport sys, time, random\nrandom.seed(1)\nfor i in range(400000):\n    pad = \"x\" * random.randint(0, 260)\n    sys.stdout.write(f\"{i} foo {pad}foo foo{pad[:random.randint(0,40)]} foo\\n\")\n    if i % 50 == 0:\n        sys.stdout.flush(); time.sleep(0.002)\n```\n\n- On `master`: aborts within a few seconds with the panic above (backtrace `update_dirty_matches` <- `process_message` <- `relay_task_output`).\n- On this branch: every run completes with no crash (three runs before the final commits, then again on the final commit). Find reports ~131k matches and next/previous navigation works.\n- Stale matches: with Find on `foo`, printing 50 `foo` lines followed by 300k lines without `foo` drops the count to 0 once the early lines scroll out of scrollback.\n\nAutomated tests:\n- `test_full_rescan_racing_in_flight_dirty_results_keeps_matches_sorted_and_unique` replays the logged message sequence through the real `process_message` / `invalidate_block`. It panicked at the `debug_assert!` before the fix.\n- `test_empty_full_block_chunk_clears_stale_matches_in_its_rows` failed before the fix (`left: [70, 80, 150] right: [150]`). It also checks that the remaining match is focusable.\n- `test_matches_delivered_only_by_dirty_ranges_are_focusable` failed before the fix (`left: None, right: Some((BlockIndex(0), 7))`).\n- `test_empty_full_block_chunk_for_block_without_matches_leaves_results_untouched` checks that an empty chunk for a block without matches creates no entry and leaves focus unchanged.\n- `test_empty_non_overlapping_chunk_prunes_matches_truncated_from_scrollback` uses a real `TerminalModel` with a 20-line scroll limit: a stored match is truncated from scrollback, then an empty chunk for newer rows arrives. It failed before the fix (the stale row-0 match was still stored, `right: []`).\n- `test_dirty_range_scan_after_scrollback_truncation_scans_dirty_content` uses a real `TerminalModel` with a 20-line scroll limit, truncates between recording the dirty range and scanning, and runs the real `scan_grid_chunked`. It failed before the fix (`left: [] right: [43, 44, 45]`).\n- `next_chunk_rows` unit tests cover chunking, mapping through truncation, skipping rows truncated between chunks, and clamping to the grid end.\n- `cargo nextest run -p warp -E 'test(/find/) | test(/next_chunk_rows/)'`, `cargo nextest run -p warp_terminal`, and `cargo clippy -p warp -p warp_terminal --all-targets --tests -- -D warnings` pass.\n\n### Screenshots / Videos\n\nBefore (master):\n\nhttps://github.com/user-attachments/assets/1fbe5cf2-6376-4cc1-bbf4-652a987d19ca\n\nAfter (this branch):\n\nhttps://github.com/user-attachments/assets/65b07dde-1d76-4948-bfc6-11a76cada39f\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\nCHANGELOG-BUG-FIX: Fixed a crash and incorrect match counts in terminal Find when searching a block that is still producing output.\n",
+     "files": [
+      "app/src/terminal/find/model.rs",
+      "app/src/terminal/find/model/async_find.rs",
+      "app/src/terminal/find/model/async_find/background_task.rs",
+      "app/src/terminal/find/model/async_find/background_task_tests.rs",
+      "app/src/terminal/find/model/async_find/work_queue.rs",
+      "app/src/terminal/find/model/async_find_tests.rs",
+      "app/src/terminal/model/test_utils.rs",
+      "crates/warp_terminal/src/model/grid/grid_handler.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/16462.diff",
+     "diff_bytes": 46396
+    }
+   ],
+   "bot": {
+    "created_at": "2026-07-24T06:43:31Z",
+    "body": "@samithaj\n\nHere's what I found while triaging this issue:\n\nThis looks actionable from the current report: it includes a crash signature and a deterministic unit-level scenario for Find while terminal output is changing. No additional reporter details appear necessary for initial triage.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that async terminal find dirty-range merging can leave per-grid matches out of order and trigger a debug SIGABRT..\n\n## Triage summary\n\nThis is an actionable bug in async terminal find. The observed symptom is a debug SIGABRT while Find is active and terminal block output is changing; the same ordering violation can plausibly affect release builds by leaving traversal/count/highlight data in an invalid order.\n\nThe reporter's proposed root cause is supported by the current code: `BlockFindResults::update_dirty_matches` computes dirty-range replacement boundaries using row-only overlap, but `AbsoluteMatch` sorts by the full end point and then start point. A boundary-spanning new match can therefore be spliced next to a retained match in an order that violates the vector invariant checked by the trailing `debug_assert!`.\n\n## Reproducibility\n\nHigh. The issue includes a crash signature, from-source debug environment, and a deterministic unit-level scenario. Existing tests cover simple dirty-range prepend/append/replace cases but do not appear to cover the boundary-spanning same-end-row ordering seam.\n\n## Suggested routing\n\nRoute to terminal find / block-list search. Relevant code includes `app/src/terminal/find/model/async_find.rs`, especially `AbsoluteMatch::Ord` and `BlockFindResults::update_dirty_matches`; dirty-range messages are produced from `app/src/terminal/find/model/async_find/background_task.rs`. A fix should preserve sortedness after incremental dirty-range updates and add a regression test for the boundary-spanning case.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":14231,\"run_id\":\"019f92dd-61cc-75ef-873d-2611b93dfa1b\"} -->",
+    "files_named": [
+     "app/src/terminal/find/model/async_find.rs",
+     "app/src/terminal/find/model/async_find/background_task.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/find/model.rs",
+     "head_path": "app/src/terminal/find/model.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/find/model/async_find.rs",
+     "head_path": "app/src/terminal/find/model/async_find.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/find/model/async_find/background_task.rs",
+     "head_path": "app/src/terminal/find/model/async_find/background_task.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/find/model/async_find/work_queue.rs",
+     "head_path": "app/src/terminal/find/model/async_find/work_queue.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "crates/warp_terminal/src/model/grid/grid_handler.rs",
+     "head_path": "crates/warp_terminal/src/model/grid/grid_handler.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [
+    "AbsoluteMatch@app/src/terminal/find/model/async_find.rs",
+    "end_row@app/src/terminal/find/model/async_find.rs",
+    "process_message@app/src/terminal/find/model/async_find.rs",
+    "spawn_result_and_throttle_streams@app/src/terminal/find/model/async_find.rs"
+   ],
+   "specs_naming_truth": [
+    "specs/async-find/TECH.md"
+   ]
+  },
+  {
+   "issue": 14234,
+   "created_at": "2026-07-24T09:44:08Z",
+   "title": "Warpified SSH session requires three Enter presses to execute commands",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp SSH issues](https://github.com/warpdotdev/Warp/issues?q=is%3Aissue+is%3Aopen+label%3ASSH-TMUX) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have technical issue and have included the logs (helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Include shell output\n\n```shell\nIn a Warpified SSH session, simple commands such as ls require three presses of the Enter key:\n\nAfter typing the command, the cursor is blinking normally.\n\nThe first Enter press makes the cursor disappear, but the command is not executed.\n\nThe second Enter press restores the blinking cursor.\n\nThe third Enter press finally executes the command.\n\nThe issue only occurs in Warpified SSH sessions. The same SSH connection works normally in macOS Terminal, and commands execute with a single Enter press.\n\nRemote environment:\n\nShell: /usr/bin/bash\n\nCurrent shell process: -bash\n\nTERM: xterm-256color\n\ntmux: 3.2a\n have already tried:\n\nDisabling and re-enabling SSH Warpification\n\nFully restarting Warp\n\nCreating a new SSH session\n\nManually running “Warpify SSH Session”\n\nChecking Warp keyboard shortcuts\n\nTesting with the macOS ABC input method\n\nCtrl+J inserts a newline as expected in Warp’s input editor. The problem appears to be related to Enter handling or focus synchronization in the Warpified SSH input editor.\n```\n\n### Screenshots, videos, and logs\n\n_No response_\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\n26.3.1\n\n### Warp Version\n\nv0.2026.07.15.08.55.stable_01\n\n### Warp Internal (ignore) - linear-label:7a739baa-09c3-499e-a0c9-a1a16c090597\n\n_No response_\n\n### Warp Internal (ignore): linear-label:b8107fdf-ba31-488d-b103-d271c89cac3e\n\n_No response_",
+   "labels": [
+    "bug",
+    "needs-info",
+    "triaged",
+    "repro:medium",
+    "os:mac",
+    "area:ssh",
+    "area:terminal-input"
+   ],
+   "truth": [
+    "app/src/terminal/input.rs",
+    "app/src/terminal/line_editor_status.rs",
+    "app/src/terminal/model/block.rs",
+    "app/src/terminal/model/blocks.rs",
+    "app/src/terminal/view.rs",
+    "app/src/terminal/writeable_pty/pty_controller.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 16141,
+     "author": "atadatcu",
+     "head_sha": "0eeeaa73669826b640fc9d16e3380f0446ba9ddf",
+     "state": "OPEN",
+     "draft": false,
+     "review": "CHANGES_REQUESTED",
+     "created_at": "2026-09-24T13:00:16Z",
+     "title": "Fix command Enter stuck when LineEditorStatus desyncs from precmd",
+     "body": "Warpified SSH (and some bash sessions) could require multiple Enter presses because Precmd was dropped before session registration and user commands were queued after the block was already marked started.\r\n\r\nCloses #14234\r\n\r\n## Description\r\n<!-- Please remember to add your design buddy onto the PR for review, if it contains any UI changes! -->\r\nAlso found out that Tab path completions could break under the same conditions. The cause was that shell hooks and the remote completer got out of sync with block/session state. Enter was dropped or queued while UI looked active.\r\n\r\n  Fix:\r\n  1. Harden precmd / line-editor readiness so writes aren’t stuck after hooks.\r\n  2. Don’t steal focus on submit.\r\n  3. After in-band completer traffic, inherit only session_id/pwd (not full precmd).\r\n  4. If Enter hits while in-band is in flight, queue it and retry on the real Precmd.\r\n\r\n## Linked Issue\r\n<!--\r\nLink the GitHub issue this PR addresses. Before opening this PR, please confirm:\r\n-->\r\n- [ ] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\r\n- [ ] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\r\n\r\n## Testing\r\n<!--\r\nHow did you test this change? What automated tests did you add? If you didn't add any new tests, what's your justification for not adding any?\r\n\r\nManual testing is required for changes that can be manually tested, and almost all changes can be manually tested. If your change can be manually tested, please include screenshots or a screen recording that show it working end to end.\r\n\r\nYou can run the app locally using `./script/run` - see AGENTS.md for more details on how to get set up.\r\n-->\r\n\r\n- [x] I have manually tested my changes locally with `./script/run`\r\n\r\nAlso passed all tests.\r\n\r\n### Screenshots / Videos\r\n<!-- Attach screenshots or a short video demonstrating the change, where appropriate. Remove this section if it is not relevant to your PR. -->\r\n\r\n\r\nhttps://github.com/user-attachments/assets/113ac9f9-e4fb-4cfe-9a6b-bb77511a823b\r\n\r\n\r\n\r\n## Agent Mode\r\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\r\n\r\n<!--\r\n## Changelog Entries for Stable\r\n\r\nThe entries below will be used when constructing a soft-copy of the stable release changelog. Leave blank or remove the lines if no entry in the stable changelog is needed. Entries should be on the same line, without the `{{` `}}` brackets. You can use multiple lines, even of the same type. The valid suffixes are:\r\n\r\n- NEW-FEATURE: for new, relatively sizable features. Features listed here will likely have docs / social media posts / marketing launches associated with them, so use sparingly.\r\n- IMPROVEMENT: for new functionality of existing features.\r\n- BUG-FIX: for fixes related to known bugs or regressions.\r\n- IMAGE: the image specified by the URL (hosted on GCP) will be added to Dev & Preview releases. For Stable releases, see the pinned doc in the #release Slack channel.\r\n- OZ: Oz-related updates. Use `CHANGELOG-OZ`. At most 4 Oz updates are shown in-app per release.\r\n- TUI: updates that impact Warp Agent CLI users, including shared Agent capabilities. Use `CHANGELOG-TUI` for text that should appear in the TUI zero state. It may be used alongside another changelog entry when a change affects multiple surfaces.\r\n- NONE: Explicitly opt out of changelog inclusion. Use `CHANGELOG-NONE` for PRs that should never appear in the changelog (e.g. refactors, internal tooling, CI changes). This prevents the changelog agent from inferring an entry.\r\n\r\nCHANGELOG-NEW-FEATURE: {{text goes here...}}\r\nCHANGELOG-IMPROVEMENT: {{text goes here...}}\r\nCHANGELOG-BUG-FIX: {{text goes here...}}\r\nCHANGELOG-BUG-FIX: {{more text goes here...}}\r\nCHANGELOG-IMAGE: {{GCP-hosted URL goes here...}}\r\nCHANGELOG-OZ: {{text goes here...}}\r\nCHANGELOG-TUI: {{text goes here...}}\r\nCHANGELOG-NONE\r\n-->\r\n",
+     "files": [
+      "app/src/terminal/input.rs",
+      "app/src/terminal/line_editor_status.rs",
+      "app/src/terminal/line_editor_status_tests.rs",
+      "app/src/terminal/model/block.rs",
+      "app/src/terminal/model/blocks.rs",
+      "app/src/terminal/model/lifecycle/mod_tests.rs",
+      "app/src/terminal/model/terminal_model_tests.rs",
+      "app/src/terminal/view.rs",
+      "app/src/terminal/writeable_pty/pty_controller.rs",
+      "app/src/terminal/writeable_pty/pty_controller_lifecycle_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/16141.diff",
+     "diff_bytes": 25763
+    }
+   ],
+   "bot": {
+    "created_at": "2026-07-24T09:44:21Z",
+    "body": "@jhui5\n\nHere's what I found while triaging this issue:\n\nThis appears specific to Warpified SSH command submission rather than the underlying SSH connection, since the same remote reportedly works normally in macOS Terminal.\n\nI have a few follow-up questions before I can narrow this down:\n\n1. Could you attach a short screen recording showing the three Enter presses from a freshly typed command?\n2. Is the failing prompt inside an active tmux session, or is tmux only installed on the remote host?\n\nReply in-thread with those details and the triage workflow will automatically re-evaluate the issue and update the diagnosis, labels, and next steps.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that warpified SSH command submission appears to require multiple Enter presses, likely due to SSH prompt/input lifecycle state getting out of sync before command execution..\n\n### Triage summary\n\nThis is a Warpified SSH input/command-submission bug report. The reporter says simple commands such as `ls` require three Enter presses in a Warpified SSH session: the first Enter hides the cursor, the second restores it, and the third finally executes the command. The same SSH connection reportedly executes normally with one Enter in macOS Terminal.\n\n### Reproducibility\n\nMedium. The report includes a consistent symptom, local macOS version, Warp version `v0.2026.07.15.08.55.stable_01`, remote bash, `TERM=xterm-256color`, and tmux 3.2a. It is still environment-sensitive because there is no recording or log output, and the report does not clarify whether tmux is actively running in the failing session or merely installed on the remote host.\n\n### Likely area\n\nThe most relevant surface is SSH Warpification plus terminal input handling. Code inspection suggests Enter from the editor-backed input routes through `Input::input_enter` / `try_execute_command` in `app/src/terminal/input.rs`; command execution is rejected until the active block has received prompt lifecycle metadata (`precmd`). Warpified SSH prompt/lifecycle handling is then processed through `app/src/terminal/model/terminal_model.rs`, `app/src/terminal/model/blocks.rs`, `app/src/terminal/model/ansi/dcs_hooks.rs`, `app/src/terminal/line_editor_status.rs`, and session metadata in `app/src/terminal/model/session.rs`.\n\nThe reporter's focus-synchronization hypothesis is plausible, but not confirmed. A delayed or stale prompt/line-editor state in a Warpified SSH/tmux session could explain Enter presses that affect cursor/focus state before the command is accepted for execution.\n\n### Duplicate check\n\nI scanned all open non-PR issues. The closest existing issue I found is #9077, which also mentions needing three Return presses in SSH, but its symptom is cursor visibility after `clear`, not buffered commands requiring multiple Enters to execute. I did not find two or more likely duplicates, so this should not be marked duplicate yet.\n\n**Question reasoning**\n1. **Could you attach a short screen recording showing the three Enter presses from a freshly typed command?** — The cursor/focus transitions are central to distinguishing an input-focus issue from a prompt lifecycle or command-submission issue, and the report has no visual evidence yet.\n2. **Is the failing prompt inside an active tmux session, or is tmux only installed on the remote host?** — The report lists tmux 3.2a, but it is unclear whether tmux participates in the failing session; that materially affects SSH Warpification routing and repro setup.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":14234,\"run_id\":\"019f9382-ef24-7c6d-bde7-ca52f55124d6\"} -->",
+    "files_named": [
+     "app/src/terminal/input.rs",
+     "app/src/terminal/model/terminal_model.rs",
+     "app/src/terminal/model/blocks.rs",
+     "crates/warp_terminal/src/model/ansi/dcs_hooks.rs",
+     "app/src/terminal/line_editor_status.rs",
+     "app/src/terminal/model/session.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/input.rs",
+     "head_path": "app/src/terminal/input.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/line_editor_status.rs",
+     "head_path": "app/src/terminal/line_editor_status.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/model/block.rs",
+     "head_path": "app/src/terminal/model/block.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/model/blocks.rs",
+     "head_path": "app/src/terminal/model/blocks.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/view.rs",
+     "head_path": "app/src/terminal/view.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/writeable_pty/pty_controller.rs",
+     "head_path": "app/src/terminal/writeable_pty/pty_controller.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    ".agents/specs/CODE-1906-shell-commands-in-up-arrow-history-menu.md",
+    "specs/APP-1915/TECH.md",
+    "specs/APP-3636/TECH.md",
+    "specs/APP-3638/TECH.md",
+    "specs/APP-3645/TECH.md",
+    "specs/APP-3651/TECH.md",
+    "specs/APP-3781/TECH.md",
+    "specs/APP-3787/TECH.md",
+    "specs/APP-3788/TECH-client-wiring.md",
+    "specs/APP-3875/TECH.md",
+    "specs/APP-3891/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4041/TECH.md",
+    "specs/APP-4060/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4133/TECH.md",
+    "specs/APP-4217/TECH.md",
+    "specs/APP-4274/TECH.md",
+    "specs/APP-4281/TECH.md",
+    "specs/APP-4318/TECH.md",
+    "specs/APP-4319/handoff-cloud-cloud-resumable-transcripts/TECH.md",
+    "specs/APP-4364/TECH.md",
+    "specs/APP-4365/TECH.md",
+    "specs/APP-4427/TECH.md",
+    "specs/APP-4457/TECH.md",
+    "specs/APP-4459/TECH.md",
+    "specs/APP-4483/TECH.md",
+    "specs/APP-4562/TECH.md",
+    "specs/APP-4594/TECH.md",
+    "specs/APP-4617/TECH.md",
+    "specs/APP-4717/TECH.md",
+    "specs/APP-7376/TECH.md",
+    "specs/Advait-M/cli-agent-rich-input-shell-commands/TECH.md",
+    "specs/CODE-1805/TECH.md",
+    "specs/CODE-1820/TECH.md",
+    "specs/CODE-1827/SHARED_HANDOFF_PIPELINE_TECH.md",
+    "specs/CODE-1871/TECH.md",
+    "specs/GH1063/tech.md",
+    "specs/GH11107/TECH.md",
+    "specs/GH12243/tech.md",
+    "specs/GH12358/tech.md",
+    "specs/GH15768/TECH.md",
+    "specs/GH6393/tech.md",
+    "specs/QUALITY-567/TECH.md",
+    "specs/QUALITY-702/TECH.md",
+    "specs/QUALITY-715/TECH.md",
+    "specs/QUALITY-726/TECH.md",
+    "specs/QUALITY-768/TECH.md",
+    "specs/QUALITY-839/TECH.md",
+    "specs/REMOTE-1332/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1459/TECH.md",
+    "specs/REMOTE-1478/TECH.md",
+    "specs/REMOTE-1486/TECH.md",
+    "specs/REMOTE-1499/PRODUCT.md",
+    "specs/REMOTE-1499/STAGE-2.md",
+    "specs/REMOTE-1499/TECH.md",
+    "specs/REMOTE-1543/TECH.md",
+    "specs/REMOTE-1545/TECH.md",
+    "specs/REMOTE-1558/TECH.md",
+    "specs/REMOTE-1573/TECH.md",
+    "specs/REMOTE-1591/TECH.md",
+    "specs/REMOTE-1674/TECH.md",
+    "specs/REMOTE-1973/TECH.md",
+    "specs/alokedesai/APP-3797/TECH.md",
+    "specs/andy/CODE-1779/TECH.md",
+    "specs/andy/CODE-1793/TECH.md",
+    "specs/andy/ad-hoc/session-restore-wsl-msys2-pwd/TECH.md",
+    "specs/async-find/TECH.md",
+    "specs/cc-mid-session-attachments/TECH.md",
+    "specs/cloud-mode-input-v2/TECH.md",
+    "specs/codex-warp-plugin/TECH.md",
+    "specs/conversation-streaming-for-tui/TECH.md",
+    "specs/gh-11912/TECH.md",
+    "specs/gh-8642/TECH.md",
+    "specs/input-mode-policy/TECH.md",
+    "specs/network-log-in-app/TECH.md",
+    "specs/tui-ctrl-c/TECH.md",
+    "specs/tui-output-redraw/TECH.md",
+    "specs/tui-transcript-view/TECH.md",
+    "specs/zachlloyd/restore-fast-forward-state/TECH.md"
+   ]
+  },
+  {
+   "issue": 15590,
+   "created_at": "2026-08-27T03:20:02Z",
+   "title": "Project Explorer stays on the original directory after using Warp's built-in Worktree feature",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agents/getting-started/faqs/#gathering-ai-debugging-id)\n- [ ] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nWhen I use Warp's built-in Worktree feature to create a new Git worktree, Warp correctly switches the active Agent/session to the newly created worktree directory.\n\nHowever, Warp's Project Explorer / Files panel does not update its root directory.\n\nThe terminal/session is working inside the new worktree, while Project Explorer continues displaying the original repository directory that was opened before the worktree was created.\n\nThis causes the active session and Project Explorer to point to two different working copies of the repository.\n\n### To reproduce\n\n1. Open an existing Git repository in Warp.\n2. Use Warp's built-in Worktree feature to create a new worktree.\n3. Let Warp switch the Agent/session to the newly created worktree.\n4. Confirm that the current working directory is the new worktree directory.\n5. Open Warp's Project Explorer / Files panel.\n6. Observe that Project Explorer still shows the original repository directory instead of the newly created worktree.\n\n### Expected behavior\n\nWhen Warp creates and switches to a worktree using its own built-in Worktree feature, Project Explorer should also switch its root to that worktree.\n\nThe Agent/session working directory and Project Explorer should remain synchronized.\n\n### Screenshots, videos, and logs\n\n<img width=\"666\" height=\"800\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/91e4787e-4e4e-45c0-9c71-47451d8b5283\" />\n\n### Operating system (OS)\n\nWindows\n\n### Operating system and version\n\nWindows 11 25H2\n\n### Shell Version\n\nPowerShell 7.6.5\n\n### Current Warp version\n\nv0.2026.08.19.08.15.stable_01\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Recent working Warp date\n\n2026/08/27\n\n### Additional context\n\nThis is particularly confusing when using Warp's Agent/worktree workflow.\n\nAfter an Agent or workflow creates a new Git worktree and starts working inside it, terminal commands and file modifications operate on the new worktree, while Project Explorer continues showing files from the original repository.\n\nThis makes it easy to accidentally inspect or edit the wrong working copy.\n\nThe Project Explorer root and the active session/worktree should stay synchronized, or Warp should provide an obvious \"Open current working directory\" / \"Switch Project Explorer to current directory\" action.\n\n### Does this block you from using Warp daily?\n\nYes, this issue prevents me from using Warp daily.\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "repro:high",
+    "os:windows",
+    "area:agent",
+    "area:workspace",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/pane_group/working_directories.rs",
+    "app/src/terminal/view.rs"
+   ],
+   "located": [],
+   "prs": [
+    {
+     "number": 15592,
+     "author": "samvallad33",
+     "head_sha": "8b3bbae4a365dac96130d6936b4f6d4438bf603b",
+     "state": "OPEN",
+     "draft": true,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-08-27T07:05:05Z",
+     "title": "Sync Project Explorer when the session switches worktree",
+     "body": "Project Explorer stays on the original repo after Warp's built-in Worktree flow cds the session into the new checkout.\n\nThe Worktree tab config launches in `{{repo}}`, then queues `git worktree add` and `cd` into the generated worktree. Explorer roots come from `WorkingDirectoriesModel`, which collapsed the new cwd to any cached ancestor repo and did not refresh after those setup commands finished.\n\nThis keeps a linked worktree (`.git` file) as its own display root, and emits `AppStateChanged` when pending setup commands complete so the left-panel tree follows the session worktree.\n\nFixes #15590\n\nCHANGELOG-BUG-FIX: Project Explorer now follows the active Warp Worktree checkout.",
+     "files": [
+      "app/src/pane_group/working_directories.rs",
+      "app/src/pane_group/working_directories_tests.rs",
+      "app/src/terminal/view.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/15592.diff",
+     "diff_bytes": 6445
+    }
+   ],
+   "bot": {
+    "created_at": "2026-08-27T03:20:16Z",
+    "body": "@AdrianZhaoDev\n\nHere's what I found while triaging this issue:\n\nThanks for the detailed report and screenshot. This looks like Project Explorer is not following the directory switch after Warp's Worktree flow creates and enters the new worktree.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that project Explorer appears to stay rooted at the original repository after Warp's built-in Worktree flow creates and switches the session into a new worktree..\n\n### Triage summary\n\nThis looks like an actionable bug in the Project Explorer / workspace-root update path for Warp's built-in Worktree flow. The terminal or Agent session is reported to switch into the generated worktree, but the Project Explorer continues showing the original repository root.\n\n### Reproducibility\n\nHigh. The report includes exact steps, a screenshot, Windows 11 25H2, PowerShell 7.6.5, and Warp `v0.2026.08.19.08.15.stable_01`. I could not independently run the Windows GUI flow from this environment, but the report is concrete and internally consistent.\n\n### Likely root cause\n\nMedium confidence. The built-in Worktree paths appear to be driven by generated/materialized tab configs: the pane is launched with the selected repo as its initial `directory`, then queued commands run `git worktree add` and `cd` into the generated worktree. Project Explorer roots are derived from `WorkingDirectoriesModel` and then pushed into the pane group's `FileTreeView`. The likely failure is that the file-tree root is not updated after the queued `cd` into the linked worktree, or the repository-detection/working-directory refresh does not replace the initial repo root with the new worktree root on this path.\n\nRelevant code areas to inspect:\n\n- `app/resources/tab_configs/default_worktree.toml`\n- `app/src/tab_configs/tab_config.rs`\n- `app/src/workspace/view.rs`\n- `app/src/pane_group/working_directories.rs`\n- `app/src/workspace/view/left_panel.rs`\n- `app/src/code/file_tree/view.rs`\n- `crates/repo_metadata/src/repositories.rs`\n\n### Duplicate check\n\nI searched all open issues and recent closed issues with GitHub pagination. #11890 partially overlaps on File Tree/worktree context, but it is framed around Claude Code worktree context rather than Warp's built-in Worktree feature keeping Project Explorer on the original repo. Fewer than two likely duplicate candidates matched, so I am not marking this as a duplicate.\n\n### Suggested next step\n\nReproduce the built-in Worktree flow on Windows and verify whether `AppStateChanged` / `RepoChanged` fires after the setup command's `cd`, then ensure the active pane group's Project Explorer root follows the generated worktree directory instead of retaining the launch repo.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":15590,\"run_id\":\"01a0413b-820c-71a8-933a-ce0b609930ce\"} -->",
+    "files_named": [
+     "app/resources/tab_configs/default_worktree.toml",
+     "app/src/tab_configs/tab_config.rs",
+     "app/src/workspace/view.rs",
+     "app/src/pane_group/working_directories.rs",
+     "app/src/workspace/view/left_panel.rs",
+     "app/src/code/file_tree/view.rs",
+     "crates/repo_metadata/src/repositories.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/pane_group/working_directories.rs",
+     "head_path": "app/src/pane_group/working_directories.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "app/src/terminal/view.rs",
+     "head_path": "app/src/terminal/view.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-1915/TECH.md",
+    "specs/APP-3632/TECH.md",
+    "specs/APP-3645/TECH.md",
+    "specs/APP-3781/TECH.md",
+    "specs/APP-3787/TECH.md",
+    "specs/APP-3788/TECH-client-wiring.md",
+    "specs/APP-3875/TECH.md",
+    "specs/APP-4004/TECH.md",
+    "specs/APP-4041/TECH.md",
+    "specs/APP-4060/TECH.md",
+    "specs/APP-4069/TECH.md",
+    "specs/APP-4106/TECH.md",
+    "specs/APP-4133/TECH.md",
+    "specs/APP-4217/TECH.md",
+    "specs/APP-4274/TECH.md",
+    "specs/APP-4281/TECH.md",
+    "specs/APP-4319/handoff-cloud-cloud-resumable-transcripts/TECH.md",
+    "specs/APP-4351/TECH.md",
+    "specs/APP-4364/TECH.md",
+    "specs/APP-4365/TECH.md",
+    "specs/APP-4459/TECH.md",
+    "specs/APP-4483/TECH.md",
+    "specs/APP-4562/TECH.md",
+    "specs/APP-4594/TECH.md",
+    "specs/APP-4617/TECH.md",
+    "specs/APP-7376/TECH.md",
+    "specs/GH1063/tech.md",
+    "specs/GH11107/TECH.md",
+    "specs/GH12243/tech.md",
+    "specs/GH12358/tech.md",
+    "specs/GH15768/TECH.md",
+    "specs/GH6393/tech.md",
+    "specs/QUALITY-567/TECH.md",
+    "specs/QUALITY-715/TECH.md",
+    "specs/QUALITY-726/TECH.md",
+    "specs/QUALITY-768/TECH.md",
+    "specs/QUALITY-839/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1459/TECH.md",
+    "specs/REMOTE-1499/PRODUCT.md",
+    "specs/REMOTE-1499/STAGE-2.md",
+    "specs/REMOTE-1499/TECH.md",
+    "specs/REMOTE-1543/TECH.md",
+    "specs/alokedesai/APP-3797/TECH.md",
+    "specs/andy/CODE-1779/TECH.md",
+    "specs/andy/CODE-1793/TECH.md",
+    "specs/andy/ad-hoc/session-restore-wsl-msys2-pwd/TECH.md",
+    "specs/async-find/TECH.md",
+    "specs/cloud-mode-input-v2/TECH.md",
+    "specs/codex-warp-plugin/TECH.md",
+    "specs/conversation-streaming-for-tui/TECH.md",
+    "specs/gh-11912/TECH.md",
+    "specs/gh-8642/TECH.md",
+    "specs/input-mode-policy/TECH.md",
+    "specs/tui-output-redraw/TECH.md",
+    "specs/tui-transcript-view/TECH.md",
+    "specs/zachlloyd/restore-fast-forward-state/TECH.md"
+   ]
+  },
+  {
+   "issue": 15646,
+   "created_at": "2026-08-28T20:23:32Z",
+   "title": "macOS: kitty keyboard protocol never reports the base layout key, so Ctrl+<letter> is unmatchable on non-Latin layouts",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n- [ ] I have an issue with AI and have included the debugging ID (Optional, but helps expedite the AI quality fix). [Debugging ID instructions](https://docs.warp.dev/agents/getting-started/faqs/#gathering-ai-debugging-id)\n- [ ] I have technical issue and have included the logs (optional, but helps expedite the bug fix). [Log instructions](https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback#gathering-warp-logs)\n\n### Describe the bug\n\nWarp speaks the kitty keyboard protocol, but with `REPORT_ALTERNATE_KEYS` (flag 4) enabled it never sends the base layout key, the third sub-field of the key code. On a layout with no Latin letters (Russian, Ukrainian, Greek, Hebrew) that field is the only thing an application has to match a chord against, because the primary key code there is the layout's own codepoint. So Ctrl+V just disappears.\n\nRussian layout, Ctrl+V, what Warp actually sends:\n\n```\nCSI 1084 ; 5 u        (1084 = U+043C, Cyrillic \"m\", the letter printed on that key)\n\n```\n\nWhat the protocol asks for:\n\n```\nCSI 1084 : : 118 ; 5 u    (118 = \"v\", the PC-101 key at that physical position)\n\n```\n\nI went digging in `crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs`. The key-part builder documents its format as `unicode-key-code[:shifted-key]`, and it only ever emits the shifted key, only while Shift is held. There is no third sub-field anywhere in that file, so half of flag 4 is simply missing.\n\nWhere this bites: Claude Code turns the protocol on in Warp (it sends `CSI <u`, `CSI >5u`, `CSI >4;2m`) and binds image paste to Ctrl+V. Its parser already handles the fallback, it reads the third sub-field when Ctrl is held and the primary key code is non-ASCII, so the chord would start working the moment Warp fills the field in. Right now pasting an image into Claude Code does nothing at all while a Cyrillic layout is active. The same keypress works in Terminal.app, which does not implement the kitty protocol and just sends the legacy 0x16 control byte.\n\nI have opened #15647 as a draft with the fix and tests\n\n### To reproduce\n\n1.  Switch the input source to Russian (any Cyrillic layout will do).\n2.  Run this in Warp. It enables the same flags Claude Code enables, then dumps the raw bytes:\n\n```sh\npython3 - <<'EOF'\nimport sys, tty, termios\nfd = sys.stdin.fileno()\nold = termios.tcgetattr(fd)\ntry:\n    tty.setraw(fd)\n    sys.stdout.write(\"\\x1b[<u\\x1b[>5u\")   # kitty keyboard protocol, flags 1 + 4\n    sys.stdout.flush()\n    print(\"press ctrl+v now\\r\")\n    data = sys.stdin.buffer.raw.read(32)\nfinally:\n    sys.stdout.write(\"\\x1b[<u\")\n    termios.tcsetattr(fd, termios.TCSADRAIN, old)\nprint(\"\\r\\nreceived:\", data)\nEOF\n\n```\n\n3.  Press Ctrl+V.\n\nGot:\n\n```\nreceived: b'\\x1b[1084;5u'\n\n```\n\nWanted:\n\n```\nreceived: b'\\x1b[1084::118;5u'\n\n```\n\nOn a US layout the same script prints `b'\\x1b[118;5u'`, which is fine, there the key code is already the Latin letter.\n\n### Expected behavior\n\nWhen I have Russian layout set, Ctrl+V in Claude Code opened in Warp, should paste an image from the clipboard\n\n### Screenshots, videos, and logs\n\n_No response_\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\nmacOS 26.6.2 (25G83), Apple Silicon (arm64)\n\n### Shell Version\n\n_No response_\n\n### Current Warp version\n\n_No response_\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Recent working Warp date\n\n_No response_\n\n### Additional context\n\n_No response_\n\n### Does this block you from using Warp daily?\n\nNo\n\n### Is this an issue only in Warp?\n\nYes, I confirmed that this only happens in Warp, not other terminals.\n\n### Warp Internal (ignore): linear-label:b9d78064-c89e-4973-b153-5178a31ee54e\n\nNone",
+   "labels": [
+    "bug",
+    "triaged",
+    "repro:high",
+    "os:mac",
+    "area:shell-terminal",
+    "area:terminal-input",
+    "warp:auto-triage-review"
+   ],
+   "truth": [
+    "app/src/terminal/alt_screen/alt_screen_element.rs",
+    "app/src/terminal/block_list_element.rs",
+    "crates/warp_terminal/src/model/escape_sequences.rs",
+    "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs",
+    "crates/warp_tui/src/terminal_content_element.rs",
+    "crates/warpui/src/platform/mac/event.rs",
+    "crates/warpui/src/windowing/winit/event_loop/key_events.rs",
+    "crates/warpui_core/src/event.rs",
+    "crates/warpui_core/src/platform/keyboard.rs"
+   ],
+   "located": [
+    "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs"
+   ],
+   "prs": [
+    {
+     "number": 15647,
+     "author": "MaxSiominDev",
+     "head_sha": "9c728dd47e747088e6dacee565d8c6b6cd131287",
+     "state": "OPEN",
+     "draft": true,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-08-28T21:04:37Z",
+     "title": "Report the base layout key in the kitty keyboard protocol on macOS",
+     "body": "\r\n## Description\r\n\r\n`REPORT_ALTERNATE_KEYS` (flag 4) only ever gave us `key-code[:shifted-key]` in a CSI u sequence. The third sub-field, the base layout key, wasn't implemented.``\r\n\r\nOn layouts with no Latin letters the key code is the layout's own codepoint, so there's nothing to match a chord against. Ctrl+V on Russian arrived as `CSI 1084 ; 5 u` (1084 is U+043C) and got silently dropped. Now it's `CSI 1084 : : 118 ; 5 u`, 118 being `v` at that physical position on PC-101.\r\n\r\n`KeyCode::base_layout_key()` in warpui_core's `platform/keyboard.rs` does the mapping, macOS fills it in `mac/event.rs` from `scancode_to_physicalkey`, `keystroke_to_csi_u` emits it. It's omitted when it equals the key code, so Latin layouts are byte-identical to before. winit and crossterm pass `None` (`us_qwerty_fallback_for_chord` there returns the shifted symbol for punctuation, so it isn't reusable).\r\n\r\n## Linked Issue\r\n\r\nFixes #15646\r\n\r\n-   [ ] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\r\n-   [ ] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\r\n\r\n## Testing\r\n\r\nAutomated:\r\n\r\n-   `crates/warpui_core/src/platform/keyboard_tests.rs`: the mapping returns the US-layout character for character keys and `None` for keys that produce none.\r\n-   `test_keyboard_enhancement_base_layout_key` in `crates/warp_terminal/src/model/escape_sequences_tests.rs` covers the Cyrillic case, the US-layout case where the field gets omitted, and the case where flag 4 is off.\r\n\r\nManual testing was on macOS 26.6.2 (25G83, Apple Silicon) with the Russian input source active, running the branch build through `./script/run`. This script turns on exactly the flags Claude Code enables in Warp and prints the raw bytes of one key press:\r\n\r\n```python\r\nimport sys, tty, termios\r\nfd = sys.stdin.fileno()\r\nold = termios.tcgetattr(fd)\r\ntry:\r\n    tty.setraw(fd)\r\n    sys.stdout.write(\"\\x1b[<u\\x1b[>5u\")\r\n    sys.stdout.flush()\r\n    data = sys.stdin.buffer.raw.read(32)\r\nfinally:\r\n    sys.stdout.write(\"\\x1b[<u\")\r\n    termios.tcsetattr(fd, termios.TCSADRAIN, old)\r\nprint(\"\\r\\nreceived:\", data)\r\n\r\n```\r\n\r\nCtrl+V, before and after:\r\n\r\n```\r\nWarp 0.2026.07.01.09.21.01:   received: b'\\x1b[1084;5u'\r\nthis branch via ./script/run: received: b'\\x1b[1084::118;5u'\r\n\r\n```\r\n\r\nOn a US layout both builds print `b'\\x1b[118;5u'`, unchanged.\r\n\r\n-   [x] I have manually tested my changes locally with `./script/run`\r\n\r\n### Screenshots / Videos\r\n\r\nNothing to screenshot here. The change is terminal output at the byte level with no UI surface, so the captured bytes above are the evidence.\r\n\r\n## Agent Mode\r\n\r\n-   [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\r\n\r\nCHANGELOG-BUG-FIX: Ctrl chords are now reported to terminal applications with the base layout key on the kitty keyboard protocol, so shortcuts such as ctrl-v work on keyboard layouts without Latin letters.",
+     "files": [
+      "app/src/terminal/alt_screen/alt_screen_element.rs",
+      "app/src/terminal/block_list_element.rs",
+      "crates/warp_terminal/src/model/escape_sequences.rs",
+      "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs",
+      "crates/warp_terminal/src/model/escape_sequences_tests.rs",
+      "crates/warp_tui/src/terminal_content_element.rs",
+      "crates/warpui/src/platform/mac/event.rs",
+      "crates/warpui/src/windowing/winit/event_loop/key_events.rs",
+      "crates/warpui_core/src/event.rs",
+      "crates/warpui_core/src/platform/keyboard.rs",
+      "crates/warpui_core/src/platform/keyboard_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/15647.diff",
+     "diff_bytes": 26647
+    }
+   ],
+   "bot": {
+    "created_at": "2026-08-28T20:23:44Z",
+    "body": "@MaxSiominDev\n\nHere's what I found while triaging this issue:\n\nThe raw-byte reproduction and current code both point to a missing kitty keyboard protocol alternate-key field rather than a Claude Code-specific problem. This looks actionable without additional reporter input.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that warp's kitty keyboard protocol encoding on macOS appears to omit the flag-4 base-layout key field, which prevents Ctrl+letter chords from being matched on non-Latin layouts in apps such as Claude Code..\n\n## Triage summary\n\nThis looks like an actionable macOS terminal-input / terminal-emulation bug in Warp's kitty keyboard protocol implementation. The reporter provided a minimal raw-mode reproduction showing that, with keyboard protocol flags 1 and 4 enabled, Russian-layout `Ctrl+V` is emitted as `CSI 1084;5u` instead of including the flag-4 base-layout key sub-field (`CSI 1084::118;5u`).\n\nCode inspection supports the report: `crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs` documents and builds the key portion as `key_code[:shifted_key]`, only adds the alternate key while Shift is held, and never serializes a third `base-layout-key` sub-field. The macOS input path in `crates/warpui/src/platform/mac/event.rs` and `crates/warpui/src/platform/mac/keycode.rs` derives unmodified characters from the active keyboard layout, which explains why the primary key code can remain Cyrillic while Warp has no layout-independent base key to report.\n\nRelated issues found during duplicate search include #15196 (macOS Hangul `Ctrl+J` not reaching raw-mode TUIs) and #341 / #8682 / #8547 (non-Latin input source shortcut matching), but none appears to cover this specific kitty protocol flag-4 base-layout-key omission. I did not find two likely duplicates, so this should remain a distinct issue.\n\nSuggested implementation direction: extend the key-event details carried into CSI-u encoding with a layout-independent physical/base key where available, serialize kitty flag 4 as `unicode-key-code[:shifted-key[:base-layout-key]]` with empty placeholders when only the third field is present, and add unit/integration coverage for non-Latin `Ctrl+letter` cases such as Russian-layout `Ctrl+V`.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":15646,\"run_id\":\"01a04a0a-e424-7bc2-ad56-d556f269ea6e\"} -->",
+    "files_named": [
+     "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs",
+     "crates/warpui/src/platform/mac/event.rs",
+     "crates/warpui/src/platform/mac/keycode.rs"
+    ],
+    "cites_pr": [],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/alt_screen/alt_screen_element.rs",
+     "head_path": "app/src/terminal/alt_screen/alt_screen_element.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/block_list_element.rs",
+     "head_path": "app/src/terminal/block_list_element.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "crates/warp_terminal/src/model/escape_sequences.rs",
+     "head_path": "crates/warp_terminal/src/model/escape_sequences.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs",
+     "head_path": "crates/warp_terminal/src/model/escape_sequences/kitty_keyboard_protocol.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warp_tui/src/terminal_content_element.rs",
+     "head_path": "crates/warp_tui/src/terminal_content_element.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warpui/src/platform/mac/event.rs",
+     "head_path": "crates/warpui/src/platform/mac/event.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warpui/src/windowing/winit/event_loop/key_events.rs",
+     "head_path": "crates/warpui/src/windowing/winit/event_loop/key_events.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warpui_core/src/event.rs",
+     "head_path": "crates/warpui_core/src/event.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    },
+    {
+     "pr_path": "crates/warpui_core/src/platform/keyboard.rs",
+     "head_path": "crates/warpui_core/src/platform/keyboard.rs",
+     "status": "present",
+     "under_module": false,
+     "documented": false
+    }
+   ],
+   "located_by_symbol": [],
+   "specs_naming_truth": [
+    "specs/APP-4006/TECH.md",
+    "specs/QUALITY-512-ask-user-question-speedbump/TECH.md",
+    "specs/andy/CODE-1794/TECH.md",
+    "specs/async-find/TECH.md"
+   ]
+  },
+  {
+   "issue": 15666,
+   "created_at": "2026-08-29T21:45:31Z",
+   "title": "Hermes CLI agent warp://cli-agent events silently dropped (no tab badges / mailbox entries)",
+   "body": "### Pre-submit Checks\n\n- [x] I have [searched Warp bugs](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+label%3ABUG) and there are no duplicates\n- [x] I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there\n\n### Describe the bug\n\nHermes (Nous Research) is already a recognized `CLIAgent` — command prefix `hermes`, display name, brand color, and skill providers are all registered in `app/src/terminal/cli_agent.rs`. But structured OSC 777 notifications titled `warp://cli-agent` with `\"agent\":\"hermes\"` are silently dropped: `is_agent_supported()` returns `false` because `create_handler()` in `app/src/terminal/cli_agent_sessions/listener/mod.rs` has no arm for `CLIAgent::Hermes`.\n\nAs a result, Hermes sessions get none of the rich-status UI that Droid / Pi / OhMyPi / Auggie get from the same protocol: no tab status badges and no notification mailbox entries.\n\n### To reproduce\n\n1. In any Warp tab, emit a structured CLI agent event pair:\n\n```sh\nprintf '\\033]777;notify;warp://cli-agent;{\"v\":1,\"agent\":\"hermes\",\"event\":\"prompt_submit\",\"session_id\":\"s1\",\"query\":\"test\"}\\007'\nprintf '\\033]777;notify;warp://cli-agent;{\"v\":1,\"agent\":\"hermes\",\"event\":\"stop\",\"session_id\":\"s1\"}\\007'\n```\n\n2. Check the notification mailbox (bell icon) and the tab strip.\n\nObserved: nothing — no mailbox entry, no badge. The identical payloads with `\"agent\":\"droid\"` immediately produce a \"Task completed\" mailbox entry.\n\n### Expected behavior\n\nHermes events flow through `DefaultSessionListener` like Droid/Pi/Auggie — Hermes needs no special event filtering, and user-configured hooks (e.g. the community [warp-hermes](https://github.com/DarkGenius/warp-hermes) hook set) or future integrations can emit the standard protocol today.\n\n### Operating system (OS)\n\nmacOS\n\n### Operating system and version\n\nmacOS (Darwin 25.6.0, arm64)\n\n### Shell Version\n\nzsh 5.9 (arm64-apple-darwin25.0)\n\n### Current Warp version\n\nv0.2026.08.26.17.59.stable_01\n\n### Regression\n\nNo, this bug or issue has existed throughout my experience using Warp\n\n### Does this block you from using Warp daily?\n\nNo\n\n### Is this an issue only in Warp?\n\nYes — the `warp://cli-agent` OSC 777 protocol is Warp-specific.\n\n### Additional context\n\nProposed fix: PR #15665 (adds `CLIAgent::Hermes` to the `DefaultSessionListener` arm of `create_handler`, plus tests).\n",
+   "labels": [
+    "bug",
+    "triaged",
+    "ready-to-implement",
+    "repro:high",
+    "area:agent",
+    "area:shell-terminal",
+    "warp:auto-triage-review",
+    "factory:revops-factory"
+   ],
+   "truth": [
+    "app/src/terminal/cli_agent.rs",
+    "app/src/terminal/cli_agent_sessions/listener/mod.rs"
+   ],
+   "located": [
+    "app/src/terminal/cli_agent.rs",
+    "app/src/terminal/cli_agent_sessions/listener/mod.rs"
+   ],
+   "prs": [
+    {
+     "number": 16187,
+     "author": "maxmilian",
+     "head_sha": "fe32d4a5f2026aca946b9962da8a7540492f52b4",
+     "state": "OPEN",
+     "draft": false,
+     "review": "APPROVED",
+     "created_at": "2026-09-28T16:40:00Z",
+     "title": "Route Hermes CLI agent events through the default session listener",
+     "body": "## Description\nHermes is already a recognized `CLIAgent` (command prefix `hermes`, display name, brand color, skill providers), and structured `warp://cli-agent` OSC 777 payloads with `\"agent\":\"hermes\"` already parse to `CLIAgent::Hermes`. But `create_handler()` in `app/src/terminal/cli_agent_sessions/listener/mod.rs` routed Hermes to `None` and `is_agent_supported()` didn't list it, so `TerminalView::handle_cli_agent_notification()` dropped every Hermes event at the support gate — no tab status badge, no notification mailbox entry.\n\nThis PR:\n- Routes `CLIAgent::Hermes` to `DefaultSessionListener`, the same listen-only path Droid / Pi / OhMyPi / Auggie use (no install flow — we just listen, per the approach discussed on #10001).\n- Derives `is_agent_supported()` from `create_handler(agent).is_some()` so the two tables can't drift apart again. The previous hand-maintained list matched `create_handler`'s `Some` arms exactly, so no other agent's behavior changes.\n\nThis builds on @DarkGenius's earlier PR #15665 (auto-closed by the stale bot, not rejected), and incorporates the review feedback left there: the support check is now derived from the handler table, and the regression test goes through the `is_agent_supported` gate instead of bypassing it. Thanks @DarkGenius for the original report and fix.\n\n## Linked Issue\nCloses #15666\n\n- [x] The linked issue is labeled `ready-to-spec` or `ready-to-implement`.\n- [x] Where appropriate, screenshots or a short video of the implementation are included below (especially for user-visible or UI changes).\n\n## Testing\nAdded `hermes_structured_events_pass_support_gate_and_are_forwarded` (listener `mod_tests.rs`): parses the exact `prompt_submit` / `stop` payloads from #15666 via `parse_event`, asserts the resolved agent is `Hermes` and passes `is_agent_supported`, then checks the Hermes handler forwards both events. It fails on `master` at the `is_agent_supported` assertion and passes with this change.\n\n- `cargo nextest run --no-fail-fast -p warp --lib cli_agent` — 240/240 passed\n- `./script/format --check` — clean\n- `cargo clippy --workspace --all-targets --tests -- -D warnings` — clean\n- `cargo clippy -p warp --all-targets --tests -- -D warnings` — clean\n\n- [x] I have manually tested my changes locally with `./script/run`\n\n### Screenshots / Videos\nLocal OSS build of this branch (`./script/run`). The repro sends the two payloads from the issue from one long-lived block (the CLI agent session is tied to the running block, so sending them from two separate commands ends the session in between):\n\n```sh\nprintf '\\033]777;notify;warp://cli-agent;{\"v\":1,\"agent\":\"hermes\",\"event\":\"prompt_submit\",\"session_id\":\"s1\",\"query\":\"test\"}\\007'; sleep 20; printf '\\033]777;notify;warp://cli-agent;{\"v\":1,\"agent\":\"hermes\",\"event\":\"stop\",\"session_id\":\"s1\"}\\007'; sleep 60\n```\n\nBefore (`master`): both events are dropped at the support gate, so the tab keeps its plain shell state and nothing reaches the notification mailbox — the behavior described in #15666.\n\n**After — `prompt_submit`:** the tab shows the Hermes badge in the in-progress state.\n\n<img src=\"https://raw.githubusercontent.com/maxmilian/warp/pr-assets-15666/15666/after-1-inprogress.png\" width=\"600\" alt=\"Tab shows the Hermes badge with an in-progress indicator after prompt_submit\">\n\n**After — `stop`:** the badge switches to success, the tab gets an unread dot, and the mailbox icon shows a new notification.\n\n<img src=\"https://raw.githubusercontent.com/maxmilian/warp/pr-assets-15666/15666/after-2-success.png\" width=\"600\" alt=\"Tab badge shows success with an unread dot; mailbox icon has a new-notification dot\">\n\n**After — mailbox:** the notification panel lists \"Hermes completed — Task completed.\"\n\n<img src=\"https://raw.githubusercontent.com/maxmilian/warp/pr-assets-15666/15666/after-3-mailbox.png\" width=\"600\" alt=\"Notifications panel lists a Hermes completed entry\">\n\n## Agent Mode\n- [ ] Warp Agent Mode - This PR was created via Warp's AI Agent Mode\n\n<!--\nCHANGELOG-BUG-FIX: Hermes CLI agent sessions now show tab status badges and notification mailbox entries from structured warp://cli-agent OSC 777 events.\n-->\n",
+     "files": [
+      "app/src/terminal/cli_agent_sessions/listener/mod.rs",
+      "app/src/terminal/cli_agent_sessions/listener/mod_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/16187.diff",
+     "diff_bytes": 4689
+    },
+    {
+     "number": 16190,
+     "author": "majordave",
+     "head_sha": "6bfc47d8896f3f68de9d88125f4751d27179ce2c",
+     "state": "OPEN",
+     "draft": false,
+     "review": "REVIEW_REQUIRED",
+     "created_at": "2026-09-28T18:08:38Z",
+     "title": "Route Hermes CLI agent OSC 777 events to the session listener",
+     "body": "## Description\n\nPicks up #15665 (closed by the stale bot on 2026-09-22; the change itself had been reviewed as sound) and finishes the remaining review feedback, rebased on current `master` (which now includes Grok Build, #14228).\n\nHermes (Nous Research) is already a recognized `CLIAgent` (command prefix, display name, brand color, skill providers), but `create_handler` had no arm for it, so `is_agent_supported` returned `false` and every structured `warp://cli-agent` OSC 777 event carrying `\"agent\":\"hermes\"` was dropped in `TerminalView::handle_cli_agent_notification` — no tab status badge, no notification mailbox entry.\n\nHermes emits these events natively since NousResearch/hermes-agent@632078bca7 (`hermes_cli/terminal_notify.py`): `stop` at turn end and `permission_request` when blocked on an approval prompt, gated on `TERM_PROGRAM=WarpTerminal` + `WARP_CLI_AGENT_PROTOCOL_VERSION`. So once Warp listens, it works without any plugin.\n\nChanges:\n- `CLIAgent::Hermes` joins the `DefaultSessionListener` arm of `create_handler`.\n- `is_agent_supported` is now `create_handler(agent).is_some()` (Oz suggestion on #15665, 2026-08-30 and 2026-09-07), so the supported-agent list can no longer drift from handler registration.\n- Brand icon stays unwired (`icon() == None`) until a licensed SVG exists — out of scope, see #14844.\n\n## Linked Issue\n\nCloses #15666\n\n- [x] The linked issue is labeled `ready-to-implement`.\n- [x] Where appropriate, screenshots or a short video of the implementation are included below.\n\n### Screenshots\n\n**After (this branch), `permission_request`:** toast with the Hermes summary and the session card flagged in the vertical tabs.\n\n![permission_request](https://gist.githubusercontent.com/majordave/b92d98c65d3f42f3f651dd6023865483/raw/846a47278a4610558999a4006a2429f4fd29d588/hermes-permission-request.png)\n\n**After (this branch), `stop`:** \"Hermes completed\" toast, green check on the session avatar, unread dot on the notification mailbox.\n\n![stop](https://gist.githubusercontent.com/majordave/b92d98c65d3f42f3f651dd6023865483/raw/55ae6dcfaa396fa2d80c5ce702242eb4035f7588/hermes-stop.png)\n\nBefore (Stable): no toast, no tab status, no mailbox entry. Nothing to screenshot.\n\n## Testing\n\nAdded:\n- `hermes_end_to_end_parsing_and_handling` — asserts `is_agent_supported(&CLIAgent::Hermes)`, then round-trips `stop` and `permission_request` payloads **in the exact shape Hermes emits** (`response` on stop, `summary` on permission_request, plus `session_id`/`cwd`/`project`) through `try_parse` + `handle_event`.\n- `test_hermes_variant_properties` — command prefix, display name, brand color, serialized-name round-trip, and pins `icon() == None`.\n\nRan:\n- `cargo test -p warp --lib -- cli_agent` on Windows ARM64 (`aarch64-pc-windows-msvc`, toolchain 1.92.0) — **241 passed, 0 failed** (includes both new Hermes tests).\n\n- [x] I have manually tested my changes locally (built `warp-oss --features gui`, the binary `./script/run` produces without internal channel config).\n\nManual test setup: Windows 11 ARM64, Warp pane running WSL2 (AlmaLinux). A stand-in executable named `hermes` (so `CLIAgent::matches_command` registers the session, and kept alive so the session isn't removed on block completion) writes to `/dev/tty` exactly the OSC 777 payloads Hermes emits: `permission_request`, then `stop` 8 s later.\n\n| Build | Result |\n|---|---|\n| Warp Stable `v0.2026.09.16.08.27.stable_02` | Nothing: no tab status, no mailbox entry (the bug). |\n| This branch (`warp-oss`, `WARP_CLIENT_VERSION=local`) | Tab shows the blocked/needs-attention status on `permission_request`, then the completed status + a mailbox notification on `stop`. |\n\nThe approval itself is still answered inside Hermes' own TUI; Warp only surfaces the status, same as for the other `DefaultSessionListener` agents.\n\nCo-authored with @DarkGenius (original #15665).\n\nCHANGELOG-IMPROVEMENT: Warp now shows tab status and mailbox notifications for the Hermes CLI agent via the warp://cli-agent OSC 777 protocol.\n",
+     "files": [
+      "app/src/terminal/cli_agent.rs",
+      "app/src/terminal/cli_agent_sessions/listener/mod.rs",
+      "app/src/terminal/cli_agent_sessions/listener/mod_tests.rs",
+      "app/src/terminal/cli_agent_tests.rs"
+     ],
+     "agent_written": false,
+     "diff_file": "experiments/m40_eval_diffs/16190.diff",
+     "diff_bytes": 6300
+    }
+   ],
+   "bot": {
+    "created_at": "2026-08-29T21:45:42Z",
+    "body": "@DarkGenius\n\nHere's what I found while triaging this issue:\n\nThis looks like a supported-agent routing gap: Hermes is recognized, but its structured `warp://cli-agent` events are not wired into the CLI-agent session listener. PR #15665 appears to address this exact issue.\n\n<details>\n<summary>Maintainer details</summary>\n\nI concluded that hermes CLI-agent OSC 777 events are parsed as Hermes but dropped because Hermes is not registered as a supported CLI-agent session listener..\n\n## Triage summary\n\nThis is a valid client-side bug in the CLI-agent rich-status event path. `CLIAgent::Hermes` is already recognized by command prefix and metadata in `app/src/terminal/cli_agent.rs`, and `app/src/terminal/cli_agent_sessions/event/v1.rs` resolves `\"agent\": \"hermes\"` to that variant. However, `app/src/terminal/cli_agent_sessions/listener/mod.rs` excludes Hermes from `is_agent_supported()` and routes `CLIAgent::Hermes` to `None` in `create_handler()`, so `TerminalView::handle_cli_agent_notification()` in `app/src/terminal/view.rs` returns before listener registration or session-status updates.\n\nThe supplied reproduction is strong because the same structured `warp://cli-agent` payload shape is already handled for Droid/Pi/OhMyPi/Auggie through `DefaultSessionListener`, while Hermes is rejected at the support gate. PR #15665 is open and appears to address this exact issue by wiring Hermes into the default listener path and adding tests.\n\nDuplicate search found related CLI-agent/OSC and Hermes issues, including #14844 for the missing Hermes icon, but none matched this specific Hermes event-drop behavior closely enough to mark as a duplicate under the two-candidate threshold.\n\n</details>\n\n*This is my automated analysis and may be incorrect. A maintainer will verify the details.*\n\n_Powered by [Oz](https://oz.warp.dev)_\n\n<!-- oz-agent-metadata: {\"type\":\"issue-status\",\"workflow\":\"triage-new-issues\",\"issue\":15666,\"run_id\":\"01a04f7c-4ac1-7346-b1b7-e793f281412e\"} -->",
+    "files_named": [
+     "app/src/terminal/cli_agent.rs",
+     "app/src/terminal/cli_agent_sessions/event/v1.rs",
+     "app/src/terminal/cli_agent_sessions/listener/mod.rs",
+     "app/src/terminal/view.rs"
+    ],
+    "cites_pr": [
+     "15665"
+    ],
+    "diagnosis": true
+   },
+   "opened_before_reader_cutoff": false,
+   "truth_files": [
+    {
+     "pr_path": "app/src/terminal/cli_agent.rs",
+     "head_path": "app/src/terminal/cli_agent.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    },
+    {
+     "pr_path": "app/src/terminal/cli_agent_sessions/listener/mod.rs",
+     "head_path": "app/src/terminal/cli_agent_sessions/listener/mod.rs",
+     "status": "present",
+     "under_module": true,
+     "documented": true
+    }
+   ],
+   "located_by_symbol": [
+    "DefaultSessionListener@app/src/terminal/cli_agent_sessions/listener/mod.rs",
+    "create_handler@app/src/terminal/cli_agent_sessions/listener/mod.rs",
+    "is_agent_supported@app/src/terminal/cli_agent_sessions/listener/mod.rs"
+   ],
+   "specs_naming_truth": [
+    "specs/APP-3637/TECH.md",
+    "specs/APP-3680/TECH.md",
+    "specs/APP-4060/TECH.md",
+    "specs/GH11368/tech.md",
+    "specs/GH11727/tech.md",
+    "specs/GH13147/tech.md",
+    "specs/GH15768/TECH.md",
+    "specs/REMOTE-1254/TECH.md",
+    "specs/REMOTE-1454/TECH.md",
+    "specs/REMOTE-1458/TECH.md",
+    "specs/andy/CODE-1793/TECH.md",
+    "specs/codex-warp-plugin/TECH.md"
+   ]
+  }
+ ],
+ "reader_training_cutoff": "2025-08 (claude-opus-4-6)",
+ "path_rule": "a token names a file when, stripped of backticks and quotes, a leading ./ or either copy's absolute prefix, and a trailing :line[:col] or ::item, it is a path git ls-files lists at the clone's HEAD, or the suffix beginning at a / of exactly one such path; a path HEAD does not list is first followed through its rename record",
+ "exclusion_rule": "a changed path is not truth when a directory segment is tests or test, its stem ends _tests or _test or is test_utils, its name is Cargo.toml or Cargo.lock, or every changed line of its diff registers a test"
+}

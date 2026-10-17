@@ -1,0 +1,223 @@
+diff --git a/app/src/terminal/input/slash_command_model.rs b/app/src/terminal/input/slash_command_model.rs
+index 20ea4d55ac8..5e34917410d 100644
+--- a/app/src/terminal/input/slash_command_model.rs
++++ b/app/src/terminal/input/slash_command_model.rs
+@@ -27,9 +27,10 @@ pub struct DetectedCommand {
+     /// The command in the input.
+     pub command: StaticCommand,
+ 
+-    /// The space-delimited argument to the command, if any. Does not include the leading space.
++    /// The whitespace-delimited argument to the command, if any. Does not include the leading
++    /// delimiter.
+     ///
+-    /// If there is no trailing space after the command, then `None`.
++    /// If there is no trailing whitespace after the command, then `None`.
+     pub argument: Option<String>,
+ }
+ 
+@@ -42,7 +43,7 @@ pub struct DetectedSkillCommand {
+     /// The skill name (without the leading '/').
+     pub name: String,
+ 
+-    /// The space-delimited argument to the skill command (the user's prompt).
++    /// The whitespace-delimited argument to the skill command (the user's prompt).
+     pub argument: Option<String>,
+ }
+ 
+@@ -127,7 +128,7 @@ impl SlashCommandEntryState {
+ pub fn slash_command_composition_filter(input: &str) -> Option<&str> {
+     let pending_command = input.strip_prefix('/')?;
+     let command_token = pending_command
+-        .split_once(' ')
++        .split_once(char::is_whitespace)
+         .map_or(pending_command, |(command, _)| command);
+     if command_token.contains('/') {
+         None
+diff --git a/app/src/terminal/input/slash_command_model_tests.rs b/app/src/terminal/input/slash_command_model_tests.rs
+index cddec160781..85a15f126e8 100644
+--- a/app/src/terminal/input/slash_command_model_tests.rs
++++ b/app/src/terminal/input/slash_command_model_tests.rs
+@@ -40,6 +40,22 @@ fn test_parse_input_requires_slash_at_start() {
+     });
+ }
+ 
++#[test]
++fn test_composition_allows_slashes_in_whitespace_delimited_arguments() {
++    assert_eq!(
++        super::slash_command_composition_filter("/unknown\n/tmp/file"),
++        Some("unknown\n/tmp/file")
++    );
++    assert_eq!(
++        super::slash_command_composition_filter("/unknown\t/tmp/file"),
++        Some("unknown\t/tmp/file")
++    );
++    assert_eq!(
++        super::slash_command_composition_filter("/unknown/command\nargument"),
++        None
++    );
++}
++
+ #[test]
+ fn test_parse_slash_command_handles_argument_rules() {
+     App::test((), |mut app| async move {
+@@ -137,6 +153,30 @@ fn test_parse_rename_tab_slash_command_arguments() {
+                 .parse_slash_command("/rename-tab ")
+                 .expect("expected /rename-tab to parse once the required argument is started");
+             assert_eq!(detected_with_empty_argument.argument.as_deref(), Some(""));
++
++            let detected_with_multiline_argument = data_source
++                .parse_slash_command("/rename-tab\nBackend API")
++                .expect("expected /rename-tab to parse when its argument starts on the next line");
++            assert_eq!(
++                detected_with_multiline_argument.argument.as_deref(),
++                Some("Backend API")
++            );
++
++            let detected_with_tab_argument = data_source
++                .parse_slash_command("/rename-tab\tBackend\nAPI")
++                .expect("expected /rename-tab to parse a tab-delimited argument");
++            assert_eq!(
++                detected_with_tab_argument.argument.as_deref(),
++                Some("Backend\nAPI")
++            );
++
++            let detected_with_unicode_whitespace = data_source
++                .parse_slash_command("/rename-tab\u{2003}Backend API")
++                .expect("expected /rename-tab to parse a Unicode whitespace delimiter");
++            assert_eq!(
++                detected_with_unicode_whitespace.argument.as_deref(),
++                Some("Backend API")
++            );
+         });
+     });
+ }
+@@ -421,6 +461,36 @@ fn test_detect_command_matches_buffer_driven_detection() {
+     });
+ }
+ 
++#[test]
++fn test_buffer_redetects_slash_command_after_multiline_edit() {
++    App::test((), |mut app| async move {
++        initialize_app(&mut app);
++
++        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
++        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
++
++        input.update(&mut app, |input, ctx| {
++            input.set_input_mode_natural_language_detection(ctx);
++            input.user_insert("/plan\nwrite a product spec", ctx);
++        });
++
++        input.update(&mut app, |input, ctx| {
++            input.user_replace_editor_text("/rename-tab\nBackend API", ctx);
++        });
++
++        input.read(&app, |input, ctx| {
++            let state = input.slash_command_model.as_ref(ctx).state();
++            match state {
++                SlashCommandEntryState::SlashCommand(detected) => {
++                    assert_eq!(detected.command.name, commands::RENAME_TAB.name);
++                    assert_eq!(detected.argument.as_deref(), Some("Backend API"));
++                }
++                other => panic!("expected edited multiline input to detect /rename-tab: {other:?}"),
++            }
++        });
++    });
++}
++
+ #[test]
+ fn test_detect_command_parses_queue_with_argument() {
+     App::test((), |mut app| async move {
+diff --git a/app/src/terminal/input/slash_commands/data_source/core.rs b/app/src/terminal/input/slash_commands/data_source/core.rs
+index 0409a0a0d0e..b46bd52c899 100644
+--- a/app/src/terminal/input/slash_commands/data_source/core.rs
++++ b/app/src/terminal/input/slash_commands/data_source/core.rs
+@@ -52,7 +52,7 @@ const CLI_AGENT_INPUT_ALLOWED_COMMANDS: &[&str] = &["/prompts", "/skills"];
+ 
+ fn split_command_and_argument(buffer: &str) -> (&str, Option<&str>) {
+     buffer
+-        .split_once(' ')
++        .split_once(char::is_whitespace)
+         .map_or((buffer, None), |(command, argument)| {
+             (command, Some(argument))
+         })
+@@ -244,7 +244,7 @@ pub trait SlashCommandDataSource {
+     }
+ 
+     /// Matches `buffer` against active slash commands, returning the detected command and
+-    /// space-delimited argument, if provided.
++    /// whitespace-delimited argument, if provided.
+     fn parse_slash_command(&self, buffer: &str) -> Option<DetectedCommand> {
+         let (possible_command, possible_argument) = split_command_and_argument(buffer);
+ 
+@@ -270,7 +270,7 @@ pub trait SlashCommandDataSource {
+     }
+ 
+     /// Matches `buffer` against skills available for the active working directory, returning the
+-    /// detected skill and space-delimited argument, if provided.
++    /// detected skill and whitespace-delimited argument, if provided.
+     fn parse_skill_command(&self, buffer: &str, ctx: &AppContext) -> Option<DetectedSkillCommand> {
+         let (possible_command, possible_argument) = split_command_and_argument(buffer);
+         let skill_name = possible_command.strip_prefix('/')?;
+diff --git a/crates/integration/src/bin/integration.rs b/crates/integration/src/bin/integration.rs
+index 625d88c6b30..297ff4cf68c 100644
+--- a/crates/integration/src/bin/integration.rs
++++ b/crates/integration/src/bin/integration.rs
+@@ -417,6 +417,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
+ 
+     register_test!(test_autosuggestions_are_hidden_when_opening_tab_completions);
+     register_test!(test_latest_buffer_operations);
++    register_test!(test_multiline_slash_command_edit_is_re_detected);
+ 
+     register_test!(test_pass_control_sequences_to_long_running_block);
+     register_test!(test_execution_profiles_load_from_settings_file);
+diff --git a/crates/integration/src/test/input.rs b/crates/integration/src/test/input.rs
+index 727ee1ee623..c23fd7f8fb4 100644
+--- a/crates/integration/src/test/input.rs
++++ b/crates/integration/src/test/input.rs
+@@ -223,6 +223,33 @@ pub fn test_latest_buffer_operations() -> Builder {
+         )
+ }
+ 
++pub fn test_multiline_slash_command_edit_is_re_detected() -> Builder {
++    new_builder()
++        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
++        .with_step(
++            new_step_with_default_assertions("Type initial multiline slash command")
++                .with_typed_characters(&["/plan\nwrite a product spec"])
++                .add_named_assertion(
++                    "Initial multiline slash command is in the input",
++                    input_contains_string(0, "/plan\nwrite a product spec".to_owned()),
++                ),
++        )
++        .with_step(
++            TestStep::new("Replace with another multiline slash command")
++                .with_action(|app, window_id, _step_data| {
++                    let input = single_input_view_for_tab(app, window_id, 0);
++                    input.update(app, |input, ctx| {
++                        input.user_replace_editor_text("/rename-tab\nBackend API", ctx);
++                    });
++                })
++                .add_named_assertion(
++                    "Edited multiline slash command is visible",
++                    input_contains_string(0, "/rename-tab\nBackend API".to_owned()),
++                )
++                .with_take_screenshot("multiline_slash_command_detected.png"),
++        )
++}
++
+ pub fn test_middle_click_paste() -> Builder {
+     new_builder()
+         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+diff --git a/crates/integration/tests/integration/ui_tests.rs b/crates/integration/tests/integration/ui_tests.rs
+index e7b0806b7e3..ebe8299b822 100644
+--- a/crates/integration/tests/integration/ui_tests.rs
++++ b/crates/integration/tests/integration/ui_tests.rs
+@@ -270,6 +270,7 @@ integration_tests! {
+     test_block_filtering_clear_blocklist,
+     test_autosuggestions_are_hidden_when_opening_tab_completions,
+     test_latest_buffer_operations,
++    test_multiline_slash_command_edit_is_re_detected,
+ 
+     test_pass_control_sequences_to_long_running_block,
+     test_execution_profiles_load_from_settings_file,

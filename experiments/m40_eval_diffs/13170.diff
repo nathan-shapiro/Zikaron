@@ -1,0 +1,159 @@
+diff --git a/app/Cargo.toml b/app/Cargo.toml
+index 348f94856d4..aa803f95feb 100644
+--- a/app/Cargo.toml
++++ b/app/Cargo.toml
+@@ -168,6 +168,7 @@ persistence.workspace = true
+ pin-project.workspace = true
+ plist = "1"
+ pprof = { workspace = true, optional = true, features = ["protobuf-codec"] }
++prevent_sleep.workspace = true
+ prost.workspace = true
+ prost-types.workspace = true
+ qrcode.workspace = true
+diff --git a/app/src/terminal/model/terminal_model.rs b/app/src/terminal/model/terminal_model.rs
+index 3d5979c2f56..6c7b83092fb 100644
+--- a/app/src/terminal/model/terminal_model.rs
++++ b/app/src/terminal/model/terminal_model.rs
+@@ -520,6 +520,14 @@ pub struct TerminalModel {
+     /// bootstrap init scripts. Used to validate DCS hook integrity: hooks
+     /// carrying an unrecognized session_id are rejected.
+     registered_session_ids: HashSet<SessionId>,
++
++    /// Held while a foreground command is executing in this terminal. Acquired in
++    /// `on_command_started` (called from the PTY controller on real command writes only,
++    /// not from EOT / non-command writes) and dropped in the `command_finished` ANSI
++    /// handler. Short commands acquire and release within milliseconds and never block
++    /// sleep in practice; long-running commands hold for their full lifetime. Mirrors
++    /// the Agent Mode pattern in `warp_multi_agent_client`. See issue #9056.
++    running_command_sleep_guard: Option<prevent_sleep::Guard>,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -1089,6 +1097,7 @@ impl TerminalModel {
+             // Start mid-way through the u32 range to avoid collisions
+             next_kitty_image_id: 2147483647,
+             registered_session_ids: HashSet::new(),
++            running_command_sleep_guard: None,
+         }
+     }
+ 
+@@ -1640,6 +1649,18 @@ impl TerminalModel {
+         self.block_list.start_active_block();
+     }
+ 
++    /// Called by the PTY controller after a real command write (User / AI / SharedSession /
++    /// EnvVarCollection) — distinct from `start_command_execution`, which is also fired by
++    /// non-command writes like EOT and which therefore can't be trusted to be paired with a
++    /// matching `command_finished`. Holds a `PreventUserIdleSystemSleep` assertion for the
++    /// duration of the command. RAII (Drop) releases it when `command_finished` clears the
++    /// field. Replaces any prior guard so a missed finish doesn't permanently stack assertions.
++    /// See issue #9056.
++    pub fn on_command_started(&mut self) {
++        self.running_command_sleep_guard =
++            Some(prevent_sleep::prevent_sleep("Terminal command in-progress"));
++    }
++
+     pub fn start_command_execution_from_env_var_collection(
+         &mut self,
+         env_var_metadata: BlocklistEnvVarMetadata,
+@@ -2694,6 +2715,12 @@ impl ansi::Handler for TerminalModel {
+     }
+ 
+     fn command_finished(&mut self, data: CommandFinishedValue) {
++        // Release the sleep guard acquired in `start_command_execution`. Done
++        // before the rest of the handler so the system is free to idle as soon
++        // as the command is observed finished, even if downstream work below
++        // takes a moment.
++        self.running_command_sleep_guard = None;
++
+         // If we ssh from a doesn't-understand-bracketed-paste shell into one
+         // that enables it, then get disconnected, we'll be stuck in a state
+         // of bracketed paste being enabled, but the local shell doesn't know
+diff --git a/app/src/terminal/model/terminal_model_tests.rs b/app/src/terminal/model/terminal_model_tests.rs
+index 7308205d4ad..485394c0e9d 100644
+--- a/app/src/terminal/model/terminal_model_tests.rs
++++ b/app/src/terminal/model/terminal_model_tests.rs
+@@ -1194,3 +1194,66 @@ fn cloud_mode_setup_phase_ended_does_not_emit_when_not_sharing() {
+     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+     assert!(events.is_empty());
+ }
++
++// Regression coverage for issue #9056: the terminal must keep the system awake while
++// a foreground command is running, and release the assertion as soon as the shell
++// reports the command finished.
++#[test]
++fn prevent_sleep_guard_is_acquired_on_command_started_and_released_on_finish() {
++    let mut terminal: TerminalModel = TerminalModel::mock(None, None);
++    // `mock`/`new_for_test` calls `command_finished` to land in a quiescent state,
++    // so the guard should be clear before we begin.
++    assert!(terminal.running_command_sleep_guard.is_none());
++
++    terminal.on_command_started();
++    assert!(
++        terminal.running_command_sleep_guard.is_some(),
++        "on_command_started must take a sleep-prevention assertion"
++    );
++
++    terminal.command_finished(CommandFinishedValue {
++        exit_code: ExitCode::from(0),
++        next_block_id: BlockId::new(),
++        session_id: None,
++    });
++    assert!(
++        terminal.running_command_sleep_guard.is_none(),
++        "command_finished must release the sleep-prevention assertion"
++    );
++}
++
++#[test]
++fn prevent_sleep_guard_is_reset_when_on_command_started_called_twice() {
++    // Defensive: if the PTY controller ever signals start without an intervening finish,
++    // the previous guard is replaced rather than leaked. Drop runs on the replaced value.
++    let mut terminal: TerminalModel = TerminalModel::mock(None, None);
++
++    terminal.on_command_started();
++    assert!(terminal.running_command_sleep_guard.is_some());
++
++    terminal.on_command_started();
++    assert!(terminal.running_command_sleep_guard.is_some());
++
++    terminal.command_finished(CommandFinishedValue {
++        exit_code: ExitCode::from(0),
++        next_block_id: BlockId::new(),
++        session_id: None,
++    });
++    assert!(terminal.running_command_sleep_guard.is_none());
++}
++
++#[test]
++fn prevent_sleep_guard_not_acquired_by_start_command_execution_alone() {
++    // EOT (Ctrl-D) and other non-command writes call `start_command_execution` to mark the
++    // active block as started, but no matching `command_finished` follows. The sleep guard
++    // must therefore NOT be acquired by that path — only by `on_command_started`, which the
++    // PTY controller calls only on real command writes. See PR review on issue #9056.
++    let mut terminal: TerminalModel = TerminalModel::mock(None, None);
++    assert!(terminal.running_command_sleep_guard.is_none());
++
++    terminal.start_command_execution();
++    assert!(
++        terminal.running_command_sleep_guard.is_none(),
++        "start_command_execution alone must not take a sleep-prevention assertion"
++    );
++}
+diff --git a/app/src/terminal/writeable_pty/pty_controller.rs b/app/src/terminal/writeable_pty/pty_controller.rs
+index a5a7506425f..81e0b844b41 100644
+--- a/app/src/terminal/writeable_pty/pty_controller.rs
++++ b/app/src/terminal/writeable_pty/pty_controller.rs
+@@ -536,6 +536,12 @@ impl<T: EventLoopSender> PtyController<T> {
+                 }
+             }
+ 
++            // Hold a sleep-prevention assertion for the duration of the command. Distinct from
++            // `start_command_execution` because that path is also reachable from non-command
++            // writes (e.g. EOT in `write_end_of_transmission_char`) that have no matching
++            // `command_finished` — see issue #9056.
++            model.on_command_started();
++
+             // Ensure that the `TerminalModel` doesn't interpret any of the PTY output from the
+             // following commands as in-band command output. If the in-band command output is not
+             // currently being received by the `TerminalModel`, this is a no-op.

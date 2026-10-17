@@ -1,0 +1,101 @@
+diff --git a/app/src/terminal/cli_agent_sessions/listener/mod.rs b/app/src/terminal/cli_agent_sessions/listener/mod.rs
+index 4f05f32bd24..d846286cdf8 100644
+--- a/app/src/terminal/cli_agent_sessions/listener/mod.rs
++++ b/app/src/terminal/cli_agent_sessions/listener/mod.rs
+@@ -36,22 +36,9 @@ trait CLIAgentSessionHandler {
+ }
+ 
+ /// Returns `true` if the given CLI agent has a supported session handler.
++/// Derived from `create_handler` so the two can't drift apart.
+ pub fn is_agent_supported(agent: &CLIAgent) -> bool {
+-    matches!(
+-        agent,
+-        CLIAgent::Claude
+-            | CLIAgent::OpenCode
+-            | CLIAgent::Codex
+-            | CLIAgent::Gemini
+-            | CLIAgent::Auggie
+-            | CLIAgent::Droid
+-            | CLIAgent::Pi
+-            | CLIAgent::OhMyPi
+-            | CLIAgent::Grok
+-            | CLIAgent::Muse
+-            | CLIAgent::WarpTui
+-            | CLIAgent::Antigravity
+-    )
++    create_handler(agent).is_some()
+ }
+ 
+ /// Creates the appropriate handler for the given CLI agent.
+@@ -60,9 +47,10 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
+         // Auggie and Pi are supported via community-maintained plugins
+         // (https://github.com/augmentmoogi/auggie-warp,
+         // https://github.com/badlogic/pi-mono). OhMyPi emits these structured
+-        // OSC 777 events natively. Droid can be supported by user-configured
+-        // hooks or future integrations that emit the same events. We don't ship
+-        // install flows for these agents here — we just listen.
++        // OSC 777 events natively. Droid and Hermes can be supported by
++        // user-configured hooks or future integrations that emit the same
++        // events. We don't ship install flows for these agents here — we just
++        // listen.
+         // WarpTui emits OSC 777 events directly (no external plugin needed).
+         CLIAgent::Claude
+         | CLIAgent::OpenCode
+@@ -72,13 +60,13 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
+         | CLIAgent::Pi
+         | CLIAgent::OhMyPi
+         | CLIAgent::Muse
++        | CLIAgent::Hermes
+         | CLIAgent::WarpTui
+         | CLIAgent::Antigravity => Some(Box::new(DefaultSessionListener)),
+         CLIAgent::Codex | CLIAgent::Grok => {
+             Some(Box::new(Osc9FallbackSessionHandler { agent: *agent }))
+         }
+-        CLIAgent::Hermes
+-        | CLIAgent::Kiro
++        CLIAgent::Kiro
+         | CLIAgent::Amp
+         | CLIAgent::Copilot
+         | CLIAgent::CursorCli
+diff --git a/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs b/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
+index 1e6e06d024f..10d4135be71 100644
+--- a/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
++++ b/app/src/terminal/cli_agent_sessions/listener/mod_tests.rs
+@@ -422,3 +422,37 @@ fn antigravity_notifications_are_supported() {
+     assert_eq!(parsed_prompt_req.event, CLIAgentEventType::NeedsInput);
+     assert!(handler.handle_event(parsed_prompt_req).is_some());
+ }
++
++#[test]
++fn hermes_structured_events_pass_support_gate_and_are_forwarded() {
++    // Exact payloads from GH #15666. The terminal view parses the notification
++    // first and drops it unless the resolved agent passes `is_agent_supported`.
++    let prompt_body =
++        r#"{"v":1,"agent":"hermes","event":"prompt_submit","session_id":"s1","query":"test"}"#;
++    let stop_body = r#"{"v":1,"agent":"hermes","event":"stop","session_id":"s1"}"#;
++
++    let parsed_prompt = parse_event(Some(CLI_AGENT_NOTIFICATION_SENTINEL), prompt_body)
++        .expect("should parse prompt_submit");
++    assert_eq!(parsed_prompt.agent, CLIAgent::Hermes);
++    assert!(is_agent_supported(&parsed_prompt.agent));
++
++    let mut handler = create_handler(&CLIAgent::Hermes).expect("should create handler");
++
++    let prompt = handler
++        .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), prompt_body, false)
++        .expect("should parse prompt_submit");
++    let prompt = handler
++        .handle_event(prompt)
++        .expect("should forward prompt_submit");
++    assert_eq!(prompt.agent, CLIAgent::Hermes);
++    assert_eq!(prompt.event, CLIAgentEventType::PromptSubmit);
++    assert_eq!(prompt.session_id.as_deref(), Some("s1"));
++    assert_eq!(prompt.payload.query.as_deref(), Some("test"));
++
++    let stop = handler
++        .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), stop_body, false)
++        .expect("should parse stop");
++    let stop = handler.handle_event(stop).expect("should forward stop");
++    assert_eq!(stop.agent, CLIAgent::Hermes);
++    assert_eq!(stop.event, CLIAgentEventType::Stop);
++}

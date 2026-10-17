@@ -18,7 +18,8 @@ owns.
   `design/architecture.md` §"The install contract").
 - **A merge is backed up first, and the first backup wins.** `<config>.bak` is written only when
   nothing is there — not even a dangling symlink — because overwriting it on every run would replace
-  the pristine original with the copy the first install had already modified.
+  the pristine original with the copy the first install had already modified. **A merge that
+  changes nothing writes nothing**, backup included, so a re-run leaves the file as it was.
 """
 
 import errno
@@ -36,6 +37,7 @@ from typing import Final, NamedTuple
 
 from zikaron.hook.components import Components
 from zikaron.install.assets import SKILL_NAME
+from zikaron.install.code_knowledge import DOCUMENT_SKILL_NAME, DOCUMENTER_AGENT_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     TOOL_SELECTOR,
@@ -65,7 +67,7 @@ ARRAY_FORMAT_OUTPUT_CAP_NOTE: Final = (
 class Targets:
     """Where **kiro's** shipped artefacts go for one project directory.
 
-    Kiro-specific, and named so rather than generalised: Claude Code's four artefacts live at
+    Kiro-specific, and named so rather than generalised: Claude Code's artefacts live at
     different paths under a different dotdir and are computed by `ClaudeCodeTarget`. A single
     `Targets` covering both would be a union type whose fields are half-null on either harness,
     which is the shape `coding-standards.md` §2 asks us not to build.
@@ -85,13 +87,20 @@ class Targets:
     def skill_file(self) -> Path:
         return self.project / ".kiro" / "skills" / SKILL_NAME / "SKILL.md"
 
+    @property
+    def documenter_config(self) -> Path:
+        return self.agents_dir / f"{DOCUMENTER_AGENT_NAME}.json"
+
+    @property
+    def document_skill_file(self) -> Path:
+        return self.project / ".kiro" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md"
+
 
 class ShippedFile(NamedTuple):
     """One artefact this install owns outright: its path and the exact bytes that belong there.
 
-    The unit both harnesses' writers agree on. Kiro ships two, Claude Code ships two — and the
-    *merged* files are not among them on either harness, because a merge target belongs to the user
-    and a shipped file does not.
+    The unit both harnesses' writers agree on — and the *merged* files are not among them on either
+    harness, because a merge target belongs to the user and a shipped file does not.
     """
 
     path: Path
@@ -116,6 +125,10 @@ class Plan:
     project: Path
     commands: Commands
     model: str
+    #: The code documenter's and Claude Code's code orchestrator's; `model` is every other agent's.
+    #: Kiro ships no orchestrator and ignores its model.
+    documenter_model: str
+    orchestrator_model: str
     hook_format: HookFormat
     force: bool
     trust_tools: bool
@@ -135,6 +148,8 @@ class Report:
     #: file, this one is not.
     kept_unbacked: list[Path] = field(default_factory=list)
     merged: list[Path] = field(default_factory=list)
+    #: Merge targets that already carried every entry, and so were neither backed up nor written.
+    current: list[Path] = field(default_factory=list)
     backed_up: list[Path] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -145,12 +160,14 @@ class MergePlan:
 
     `document` is the finished JSON to write. Holding it as a value is what lets the caller order
     the whole install "check everything, then write everything" — the checks live in the `plan_*`
-    functions, which read and refuse, and every write is in `commit_merge`.
+    functions, which read and refuse, and every write is in `commit_merge`. `unchanged` says the
+    document equals the one on disk as parsed, so a file formatted by hand is kept as it is.
     """
 
     path: Path
     document: dict[str, object]
     notes: tuple[str, ...]
+    unchanged: bool
 
 
 def guard_shipped_targets(files: tuple[ShippedFile, ...], project: Path) -> None:
@@ -434,15 +451,22 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
         )
     if "subagent" not in _string_list(document.get("tools")):
         notes.append(
-            f"{path.name} does not list the `subagent` tool. The zikaron-consolidate skill spawns "
-            "the consolidator through it, so add it to `tools` to be able to consolidate. Granting "
-            "a built-in tool is your decision, so this install does not do it for you."
+            f"{path.name} does not list the `subagent` tool. The {SKILL_NAME} and "
+            f"{DOCUMENT_SKILL_NAME} skills spawn their agents through it, so add it to `tools` to "
+            "be able to run them. Granting a built-in tool is your decision, so this install does "
+            "not do it for you."
         )
-    return MergePlan(path=path, document=merged, notes=tuple(notes))
+    if "shell" not in _string_list(document.get("tools")):
+        notes.append(
+            f"{path.name} does not list the `shell` tool. The {DOCUMENT_SKILL_NAME} skill runs "
+            "its planner as a shell command, so add it to `tools` to be able to document code."
+        )
+    return MergePlan(path=path, document=merged, notes=tuple(notes), unchanged=merged == document)
 
 
 def commit_merge(merge: MergePlan, report: Report) -> None:
-    """Back the config up if nothing is backed up yet, then write the planned document.
+    """Back the config up if nothing is backed up yet, then write the planned document — or, when
+    the file already carries it, touch nothing.
 
     **A file that does not exist yet is not backed up**, and that is not merely an optimisation: a
     backup is a copy of the user's own prior state, and there is none. Kiro never reaches this
@@ -451,6 +475,10 @@ def commit_merge(merge: MergePlan, report: Report) -> None:
     attempting a copy there would refuse the whole install over the absence of a file we are about
     to create.
     """
+    if merge.unchanged:
+        report.current.append(merge.path)
+        report.notes.extend(merge.notes)
+        return
     if merge.path.exists() or merge.path.is_symlink():
         _back_up_once(merge.path, report=report)
     _replace(merge.path, json.dumps(merge.document, indent=_JSON_INDENT) + "\n")
@@ -842,13 +870,14 @@ def _merged_servers(
 def _merged_resources(
     document: dict[str, object], targets: Targets
 ) -> tuple[list[object] | None, list[str]]:
-    """The agent's `resources` with the skill declared, when declaring it is what makes it load.
+    """The agent's `resources` with both skills declared, when declaring them is what makes them
+    load.
 
     Skills reach an agent through `resources`, and by default they *also* arrive without one: the
     harness appends inherited resources (workspace skills among them) to whatever a config declares,
     and only the `chat.disableInheritingDefaultResources` setting turns that off.
 
-    **The entry is written whenever nothing already covers the skill, including when `resources` is
+    **An entry is written whenever nothing already covers its skill, including when `resources` is
     absent.** An earlier version only left a note in that case, reasoning that inheritance covers
     it — which leaves a *deterministically broken* install for the one documented configuration
     where it does not, and a warning is not a delivered skill. Declaring resources does not disable
@@ -856,7 +885,7 @@ def _merged_resources(
     cannot narrow anything; the only cost is a redundant declaration in the common case, against a
     skill that silently fails to load in the uncommon one.
 
-    A `skill://.kiro/skills/**/SKILL.md` glob already covers it, so a config carrying one gains
+    A `skill://.kiro/skills/**/SKILL.md` glob already covers both, so a config carrying one gains
     nothing.
 
     Coverage is tested with `fnmatch`, whose `*` spans separators and so treats the `**` glob above
@@ -865,24 +894,28 @@ def _merged_resources(
     """
     declared = document.get("resources")
     listed: list[object] = list(declared) if isinstance(declared, list) else []
-    target = str(targets.skill_file.relative_to(targets.project))
-    covered = any(
-        isinstance(entry, str)
-        and entry.startswith(_SKILL_SCHEME)
-        and fnmatch(target, entry.removeprefix(_SKILL_SCHEME))
-        for entry in listed
-    )
-    if covered:
+    added: list[object] = []
+    notes: list[str] = []
+    for skill_file, skill in (
+        (targets.skill_file, "consolidation"),
+        (targets.document_skill_file, "code documentation"),
+    ):
+        target = str(skill_file.relative_to(targets.project))
+        covered = any(
+            isinstance(entry, str)
+            and entry.startswith(_SKILL_SCHEME)
+            and fnmatch(target, entry.removeprefix(_SKILL_SCHEME))
+            for entry in listed
+        )
+        if not covered:
+            added.append(_SKILL_SCHEME + target)
+            notes.append(
+                f"Added `{_SKILL_SCHEME}{target}` to `resources`, so the {skill} skill is "
+                "reachable whether or not inherited resources are switched on."
+            )
+    if not added:
         return None, []
-    return [*listed, _skill_resource(targets)], [
-        f"Added `{_skill_resource(targets)}` to `resources`, so the consolidation skill is "
-        "reachable whether or not inherited resources are switched on."
-    ]
-
-
-def _skill_resource(targets: Targets) -> str:
-    """The `skill://` URI for the shipped skill, relative to the project."""
-    return _SKILL_SCHEME + str(targets.skill_file.relative_to(targets.project))
+    return [*listed, *added], notes
 
 
 #: `toolsSettings.crew` gates which agents the `subagent` tool may spawn. `agent_crew` is a
@@ -890,22 +923,29 @@ def _skill_resource(targets: Targets) -> str:
 #: given a second block whose relationship to the first is undefined.
 _CREW_KEYS: Final = ("crew", "agent_crew")
 
+#: The agents Zikaron's skills spawn, each with the skill that spawns it, in the order they are
+#: added to a crew.
+_CREW_AGENTS: Final = (
+    (CONSOLIDATOR_AGENT_NAME, SKILL_NAME),
+    (DOCUMENTER_AGENT_NAME, DOCUMENT_SKILL_NAME),
+)
+
 
 def _merged_tools_settings(
     document: dict[str, object],
 ) -> tuple[dict[str, object] | None, list[str]]:
-    """The agent's `toolsSettings` with the consolidator added to its crew, and what to report.
+    """The agent's `toolsSettings` with the consolidator and the documenter added to its crew, and
+    what to report.
 
-    **Without this the consolidation skill cannot run at all**, which is how the omission was
-    found — in real use, not in review. The skill spawns `zikaron-consolidator` through the
-    `subagent` tool, and `toolsSettings.crew.availableAgents` gates which agents that tool may
-    spawn: a config listing three of its own agents and not ours answers "Agents not available for
-    crew stages".
+    **Without this neither skill can run at all**, which is how the omission was found for the
+    consolidator — in real use, not in review. Each skill spawns its agent through the `subagent`
+    tool, and `toolsSettings.crew.availableAgents` gates which agents that tool may spawn: a config
+    listing three of its own agents and not ours answers "Agents not available for crew stages".
 
     **The two lists are not symmetric, and treating them alike would break working configs.**
     `availableAgents` is a *restriction*: the harness documents that an absent or empty list means
-    every agent is available. So adding our name to an empty one would *narrow* the config from "any
-    agent" to "only the consolidator" and silently break every other subagent the user has. It is
+    every agent is available. So adding our names to an empty one would *narrow* the config from
+    "any agent" to "only ours" and silently break every other subagent the user has. It is
     therefore extended only when it already lists something. **`trustedAgents` is left alone
     entirely** — it grants a *subagent spawn*, which is wider than Zikaron's own tools, so the
     install **reports** its absence and leaves the grant to the operator.
@@ -934,27 +974,33 @@ def _merged_tools_settings(
 
     available = crew_dict.get("availableAgents")
     if isinstance(available, list) and available:
-        if CONSOLIDATOR_AGENT_NAME not in _string_list(available):
-            crew_dict["availableAgents"] = [*available, CONSOLIDATOR_AGENT_NAME]
+        missing = [
+            (agent, skill) for agent, skill in _CREW_AGENTS if agent not in _string_list(available)
+        ]
+        if missing:
+            crew_dict["availableAgents"] = [*available, *(agent for agent, _skill in missing)]
             changed = True
+        for agent, skill in missing:
             notes.append(
-                f"Added `{CONSOLIDATOR_AGENT_NAME}` to "
-                f"`toolsSettings.{crew_key}.availableAgents` — the consolidation skill spawns it "
-                "through the `subagent` tool, and that list gates which agents may be spawned."
+                f"Added `{agent}` to `toolsSettings.{crew_key}.availableAgents` — the {skill} "
+                "skill spawns it through the `subagent` tool, and that list gates which agents may "
+                "be spawned."
             )
     else:
         notes.append(
             f"`toolsSettings.{crew_key}.availableAgents` is unset, which the harness reads as "
-            "*every* agent being available, so it was left alone rather than narrowed to one entry."
+            "*every* agent being available, so it was left alone rather than narrowed to ours."
         )
 
-    if CONSOLIDATOR_AGENT_NAME not in _string_list(crew_dict.get("trustedAgents")):
-        notes.append(
-            f"Starting a consolidation will ask your permission once, because "
-            f"`{CONSOLIDATOR_AGENT_NAME}` is not in `toolsSettings.{crew_key}.trustedAgents`. Add "
-            "it there if you would rather it did not — that grants a subagent spawn, which is a "
-            "wider thing than Zikaron's tools and so is left to you."
-        )
+    trusted = _string_list(crew_dict.get("trustedAgents"))
+    for agent, skill in _CREW_AGENTS:
+        if agent not in trusted:
+            notes.append(
+                f"Running the {skill} skill will ask your permission to spawn `{agent}`, because "
+                f"it is not in `toolsSettings.{crew_key}.trustedAgents`. Add it there if "
+                "you would rather it did not — that grants a subagent spawn, which is a wider "
+                "thing than Zikaron's tools and so is left to you."
+            )
 
     if not changed:
         return None, notes

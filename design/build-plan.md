@@ -6265,6 +6265,268 @@ how a corpus is chunked, embedded or fused. **Not** a migration of `memory.db` b
 **Not** kiro-specific — both harnesses reach this through the same MCP server — and nothing in the
 memory hook but item 13's flag.
 
+## M40 — Documents a model writes and code keeps honest
+
+Normative: **`design/code-knowledge.md`, the whole of it** (D39). `design/knowledge-index.md` §4.1
+and §5.2 for which files a module holds, §7.7 for the front matter, the link and the hash, §8.4 for
+`knowledge_add`; `design/harness.md` §"The installer's two targets", §"Tool names are a substitution
+point" and §"The consolidator's model"; `design/distribution.md` §"The front door". Decisions: D39
+and D7's amendment in `design/overview.md` (operator, 2026-10-14), settled in M40's brainstorm with
+the operator and recorded in the spec beside who took each. Evidence:
+`research/generated-repo-docs-prior-art.md`, `research/code-localization-benchmarks.md`,
+`research/nested-subagent-probe.md`, `research/code-knowledge-sizing.md`,
+`research/m40-eval-repository-candidates.md`, and for the amendment of 2026-10-16
+`research/claude-code-background-subagents.md` and `research/forked-skill-probe.md`. M39 built what
+this writes to: a document whose front matter names its source, and a search that says whether that
+source has moved.
+
+**Amended 2026-10-16 from the playground runs** (operator): the skill runs in a background subagent
+of its own under Claude Code, so the session that invoked it stays free; the documenter and that
+orchestrator hold Zikaron's tools, memory verbs included; and each module is a corpus of its own.
+The items below state the amended build.
+
+**What this is.** Nathan's practice — per-file documentation of a codebase, written by agents and
+searched before the code is read — as primitives: a command that decides deterministically what is
+missing, stale, invalid or orphaned and makes the removals and moves that implies, a skill that has
+the agent spawn documenters for the rest until that command reports the module up to date, and the
+documenter agent. No workflow is built around them. **The risk is measured**: agent-written code
+knowledge cut resolution in CTIM-Rover, and generated repository overviews raised cost 20% without
+finding files faster, so the spec's rule is that the corpus steers and the code decides, and the
+evaluation measures accuracy, tokens and time rather than assuming a benefit.
+
+### What ships
+
+1. **`zikaron code-knowledge plan`** (`design/code-knowledge.md` §3): the arguments, the sources and
+   their document paths, the walk's refusals reported as counts by reason, the hash through
+   `hash_sources` in batches, the documents' classes and the README's digest, the moves, removals
+   and document directories made under `--apply`, and with a README listed its role list, written
+   to `.zikaron/code-knowledge/<module>/roles.md` and named by the item's `roles` — `null` in a dry
+   run — and removed by an `--apply` run that lists no README (§3.6), path order as §3.1 defines
+   it, and the JSON it
+   prints, `root` and `git_mode_effective` among it — run once per invocation over a whole module.
+   Classification is a function of the sources with their hashes and the documents' text, with the
+   walk, git and the filesystem at its edges, so a unit test reaches every class without a
+   repository. It reuses `core/knowledge`'s walk and admission and K14's link reader and hash, and
+   copies none of them. The domain is a new
+   `zikaron/core/code_knowledge/`, the command `zikaron/code_knowledge/` — also reachable as
+   `python -m zikaron.code_knowledge` — and `zikaron/cli/` dispatches. `design/coding-standards.md`
+   §1's tree gains both packages, the gate gains a `--cov` flag for `zikaron/code_knowledge` (the
+   core package is under `zikaron/core`'s), and `design/distribution.md` §"The front door" gains the
+   subcommand.
+2. **The documenter** (§5.1): `zikaron-documenter`'s prompt — §4's format and §5.1's rules, the
+   secrets and injection rules among them — as one shipped constant naming no tool, and its agent
+   definition for each harness, built in `install/entries.py`, whose grant is that harness's
+   `HarnessSpec.file_tools` — a new field with a row in `design/harness.md` §"The table", kiro's
+   spellings those its own working agents run with, since `kiro-cli` lists no tools offline and
+   its validator accepts any name (`design/code-knowledge.md` §5.4) — and Zikaron's server grant,
+   kiro's config carrying the primary server's `mcpServers` entry and no `hooks`, and whose model
+   is the consolidator's field. **The orchestrator** (§5.4), Claude Code's alone: its definition,
+   granted `Agent`, `Bash`, `Read` and Zikaron's server and no editing tool, at `effort: high`
+   beside the documenter's `effort: medium` (operator, 2026-10-16; kiro sets effort only per
+   model), with a short prompt naming no tool and the same model.
+   **The prompt's final wording is memory-reviewer's**, written at build time from the spec, as
+   D38's prompt texts were. Among its rules, the documenter answers with one line, never the
+   document, writes nothing for a source that is not text, and says of each behavior whether a
+   test pins it, documenting it all the same where none does (operator, 2026-10-16).
+3. **The skill** (§5.2): `zikaron-document-code`'s body — the planner always run in batches of 19,
+   never whole, through the `zikaron` beside the project's `zikaron-mcp` and with `--project`, every
+   limit the skill passes growing by one for each item given up on; under Claude Code the whole body
+   run by the orchestrator, through the frontmatter's `context: fork` and `agent:`, and under kiro
+   by the invoking session; documenters spawned by whoever runs the loop, in the foreground; three
+   places per harness, those frontmatter lines, the spawn instruction as the consolidation skill's
+   is, and the fixed file the planner's command is read from — `.mcp.json`, or kiro's
+   `.kiro/agents/zikaron-consolidator.json`; a module that nests in or contains a documented one
+   refused before the first batch; a batch's spawns issued together, waiting for every
+   documenter; batches repeated until `up_to_date`, an item — the README included — given up after
+   three attempts, and the run's end reported by name, a README left unwritten included; a slice ending once its count of distinct
+   items is offered, checked by a dry run without `--apply` to the same three-attempt rule; the
+   README last, its item relayed whole and spawned for only from an `--apply` run; the module's own
+   corpus, `code-knowledge/<module>`, registered with `git_mode: "off"` and §5.2's description, or
+   refreshed; and what the user meets, interactive and headless.
+4. **Installation** (§5.4): the documenter and the skill on both harnesses, and the orchestrator
+   on Claude Code, with the memory store's selection, through each `HarnessTarget`'s
+   `shipped_files`; what an install ships snapshotted for both harnesses
+   under `tests/fixtures/installed/`, rendered by the installer's own functions, and `.kiro/`
+   holding no installer output (operator, 2026-10-16); **kiro's merge** adding
+   `zikaron-documenter` to `toolsSettings.crew.availableAgents` where that list is set, leaving
+   `trustedAgents` alone, and
+   adding the second skill to `resources`, with the documenter's `allowedTools` equal to its grant;
+   the subagent scan and the hook's `SubagentStart` exemption covering the consolidator alone, as
+   `design/harness.md` §Subagents states, since the documenter and the orchestrator hold the
+   memory verbs; and `--model` setting every agent it ships. The prose that
+   enumerates an install moves with it: `design/architecture.md` §"The install contract",
+   `README.md` §Install, `design/harness.md` §"What a Claude Code install writes", and `CLAUDE.md`
+   §Harness's account of the snapshots.
+5. **`README.md`**: the skill, the planner command, the corpus per module the skill registers, §6's
+   prompt, the permissions a run needs interactive and headless, and what a document's
+   `source.state` means to its reader.
+6. **The toy run** (§7), on Warp's `app/src/terminal`:
+   - **first, one interactive invocation in the playground**, since no headless run can show the
+     operator's requirement: that the session answers a prompt while the run proceeds, where the
+     first documenter write prompt surfaced and which agent it named, what auto mode did with the
+     planner's command, what a spawn passing `run_in_background: false` does where fork mode
+     removes the parameter, whether any Zikaron tool call from the fork or a documenter
+     prompted, whether the fork and a documenter were given a handback tool for their final report
+     and whether the orchestrator's report and a documenter's one line reached their callers, and
+     that the report arrived — recorded in `research/forked-skill-probe.md` — and, on a later
+     invocation, whether the session's relay kept the report's opening line;
+   - in a clone of `warpdotdev/warp`, installed into with `--components memory --model
+     claude-sonnet-4-6` over a fresh store — **the build is also installed into
+     `~/Trading/LeibaTrader` itself** (operator, 2026-10-16), where the operator documents its code
+     interactively, and that run is recorded beside the toy run;
+   - under Claude Code headless with `--permission-mode bypassPermissions` and
+     `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` (§5.2), the prompt naming the skill, the
+     orchestrator and the documenter both on `claude-sonnet-4-6`;
+   - about 20 files first, as a slice (§5.2 step 4), then the rest, ending `up_to_date`;
+   - measured: tokens and wall-clock per document as §7 defines them, the orchestrator's own token
+     total from the fork's messages beside the `-p` result's `usage`, what the documenters and the
+     orchestrator recorded in memory, counted and quoted, and ten documents drawn at random by
+     path, read by the build session against their sources and, for each claim of which test pins
+     a behavior, against the tests, each wrong claim quoted beside the line that refutes it;
+   - the planner re-run after an edit, a rename and a deletion in a scratch `cp -a` of the clone,
+     taken once it reports `up_to_date`, so the clone itself stays the documented tree;
+   - recorded in `research/m40-toy-run.md`, with what each re-run listed, the planner's
+     `git_mode_effective`, how the skill was invoked headless, whether a batch's documenters ran
+     concurrently, the model ids and the Claude Code version.
+7. **The evaluation** (§7), `experiments/m40_eval.py` — **issue triage on Warp, replacing the
+   LeibaTrader question set** (operator, 2026-10-16):
+   - the open issues §7's predicate selects, each with its truth and its PRs' diffs frozen at
+     selection and the PRs' head commits recorded, the truth under §7's exclusion rule and mapped
+     to HEAD through the rename record — a path the PR added kept for the judge alone — every
+     mechanical truth path asserted listed at HEAD before the first timed run, and the *located*,
+     *pre-cutoff*, *agent-written* and *undocumented* issues reported apart;
+   - each triaged under Claude Code headless, the reader pinned to `claude-opus-4-6` at `--effort
+     high` under `bypassPermissions`, with `--strict-mcp-config` and the copy's `zikaron` entry
+     verbatim, `alwaysLoad: true` included, its tools §7's allowlist — `--tools
+     Bash,Read,Grep,Glob` and Zikaron's five read verbs, the seven that write denied — asserted
+     exactly in each run's `init`, the `Bash` rules §7 spells denied, and one untimed run showing a
+     refused `tool_use` for every `Bash` rule before the first timed
+     run, a `PreToolUse` hook taking over any rule that does not hold — and every timed run's tool
+     inputs audited by §7's rule for a denied command, paths resolved against its working
+     directory, a refused attempt counted and never a discard, a discarded run replaced once by
+     re-running its pair;
+   - §7's two prompts, both naming the module, the knowledge-base paragraphs in the treatment's
+     alone;
+   - one tree for both arms: the treatment's a `cp -a` of the toy run's clone, its history fetched
+     whole, and the control's a `cp -a` of it with `code-knowledge/` removed, each the only entry
+     of a directory of its own named by a letter the seed assigns, under §7's one base directory,
+     and a run discarded whose tool inputs reach outside its copy into that base or `~/.claude`, or
+     whose control inputs or results show a document; in both,
+     `origin` removed and every ref but `master` deleted, no commit past `HEAD` reachable, every PR head
+     unreachable and no object missing; Warp's `specs/` kept in both, the specs naming each issue's
+     truth recorded and each run's reads of one counted; each copy's HEAD and `git status
+     --porcelain` asserted unchanged before and after every run, a run that moved either discarded
+     and its copy restored from a pristine one taken after the pruning assertions and before
+     `zikaron init`, its service stopped first and the copy provisioned again, the baseline
+     recorded after provisioning; the install's agents and skills removed from both copies; each
+     copy's store removed before anything opens it and created
+     again, the treatment's documents registered with §5.2 step 6's parameters and built as the
+     module's corpus, `knowledge_status` reporting `ok` and `files_indexed` equal to the `.md` files
+     under its directory, before any timed run; the store checked before the first timed run and
+     after every run — memory-free, and its registry exactly that corpus in the treatment and
+     empty in the control;
+     `autoMemoryEnabled: false` written into both and asserted;
+   - each repeat's two arms run concurrently, the issues in a shuffled order recorded with its seed,
+     each repeat running every issue once before the next, three repeats after a slice of one
+     repeat of four issues, every run under the budget and wall-clock ceilings the slice sets;
+   - accuracy as §7 scores it — the `FILES` block against the truth under its one rule for what
+     names a file, and the blind judge's grade under §7's prompt, calibrated by two controls per
+     issue — with Warp's bot's first diagnosis scored and graded beside both arms on the issues it
+     diagnosed; tokens and wall-clock as §7 defines them, reported per issue with their spread and
+     the capped and discarded runs per arm, against no bar, beside each run's Zikaron tool calls,
+     each treatment run's three routes to the documents and its queries as sent, and the service's
+     uptime at each treatment run's start, in `research/m40-evaluation.md` with the model ids, the
+     Claude Code version per run and this repository's commit, the harness refusing to start while
+     the package or `pyproject.toml` has uncommitted changes or has moved since the first start, a
+     move of the harness script or prose recorded and allowed, and writing its own outputs outside
+     this repository.
+
+### Invariants and properties to cover
+
+- **The planner and search agree on a hash**: for every source a run hashes, the blob it prints is
+  what a search's `source.state` compares against — the planner's block, written into a document over
+  an unchanged source, reads `fresh` through the real search.
+- **Each class, from a document's text alone**: a document with no link is foreign; a link naming a
+  source other than the one its location derives, a malformed link, a missing title, a missing role
+  line and a missing heading are each invalid; a wrong blob is stale; a source with no document is
+  missing; and each refusal of the walk and of the attribute pass is counted under its reason.
+- **Nothing without a link is ever removed or moved**, under `--apply` or without it — a foreign file
+  under the documents tree survives every run, including one whose globs admit no source at all.
+- **Without `--apply` the tree is byte-identical after a run.**
+- **A pure rename moves and spends nothing**: the moved document's body is unchanged but for its
+  `zikaron-source` and its title, both naming the new path, and neither that run nor the next lists
+  its source as work. An orphan whose blob matches two undocumented sources, or one of two orphans
+  matching the same source, is removed rather than moved.
+- **A misdirected document returns**: one written at another source's document path is invalid for
+  that path; one written where no source derives is moved to its own source when its blob matches.
+- **`up_to_date` holds exactly when §3.5 says**, and is false on a run held back by `--limit` and on
+  one with an unverifiable source.
+- **The README is listed only once no file work remains**, and again when any source's path or hash
+  moves, when it has no `# ` title, or when it lists files under a `## Files` heading.
+- **Sources whose real paths total more than one batch's 128 KiB are hashed through git in several
+  calls, never the in-process form** — seen red against a single unbounded call.
+- **With git unstartable or no work tree, the object reports `git_mode_effective: off`**, no
+  `.gitignore` is applied, and a new source's width is 40.
+- **A module whose path holds a pruned name is refused** — `build/gen`, `.github/scripts` — before
+  anything is walked or written.
+- **The documents directory is never a source**: a module whose directory contains it lists no file
+  under it.
+- **Under `--apply` a listed item's document directory exists before its item is printed**, and a
+  dry run creates none.
+- **The planner never connects to the service**: a run against a project whose socket nothing
+  listens on starts nothing.
+- **The skill names only tools that exist on its harness**, by the property the installer's existing
+  texts are held to. **The documenter's grant on each harness is exactly that harness's file tools
+  and Zikaron's server grant**, and its prompt holds no `zikaron_` token, no backticked tool name of
+  either harness, none of Claude Code's capitalized tool names as a whole word and no `fs_` token —
+  kiro's aliases are the verbs the prose uses — a test that fails when either changes. **The
+  orchestrator's grant is exactly `Agent`, `Bash`, `Read` and Zikaron's server**, with no
+  editing tool, and its prompt holds no tool name either.
+- **Claude Code's skill forks to the orchestrator and kiro's does not**: `context: fork` and
+  `agent: zikaron-code-orchestrator` are in the one frontmatter and in neither line of the other.
+- **A `SubagentStart` for `zikaron-documenter` or `zikaron-code-orchestrator` receives the write
+  policy**, and with the guards the guard start text, while the consolidator still receives
+  nothing — seen red against the exemption this build first shipped.
+- **A document whose source answers `missing` or `unverifiable` is neither listed nor touched**, and
+  the source is reported under `unverifiable`.
+- **A source whose document path holds a foreign file is never listed**, and is reported under
+  `foreign`; a README written by hand is listed and replaced.
+- **Under `--apply` a listed `stale` or `invalid` document is gone before its item is printed**, and
+  among the documents a documenter would rewrite only the listed items' are, and a listed README —
+  `--limit` bounds those removals; orphans and moves are not bounded by it.
+- **A move never lands on a foreign file**: with a hand-written file at a pure rename's target, the
+  file survives, the orphan is removed, and the source is reported under `foreign`.
+- **A slice's dry-run check changes nothing**, and a stale document past the slice is still there
+  after it.
+
+### Done when
+
+1. Every item of "What ships" is in, and every new test was **seen red** against the mutation it
+   names.
+2. The toy run ends with the planner reporting `up_to_date` over all of Warp's `app/src/terminal`
+   — a file given up on may be excluded, as §8's remedy says, the module's globs then carrying it
+   and the note naming the file and why — and `research/m40-toy-run.md` holds the per-document
+   cost, the wrong-claim sample and the edit, rename and deletion re-runs.
+3. `research/m40-evaluation.md` holds every run's scores and grade with both arms' tokens and
+   wall-clock, and the bot's scores and grade beside them.
+4. `./check.sh` is green, and so is `./check-matrix.sh --parallel` on one tree. The pull request's
+   CI is the version matrix.
+
+### Scope fence
+
+**Not** a workflow: no crew, no agentic loop beyond the skill's own to `up_to_date`, with three
+attempts per item, no escalation, no stop or goal hook (`FINDINGS.md` §"Owed work"). **Not** steering text — nothing injected at session
+start, nothing added to a tool's description; §6's instruction lives in the user's prompt. **Not** a
+change to the knowledge index: no chunking, embedding, fusion or schema change, no change to K14,
+and no change to the `git_mode` default. **Not** reverse dependencies in any form, and not the
+dangling-`Depends on:` check (§8). **Not** the closed-issue stage — closed issues run at the
+commits their fixes merged onto, with the documents rebuilt there — which §7 makes a milestone of
+its own. **Not** a path filter on
+search, git's index as a hashing fast path, or anything else for scale beyond one corpus per
+module (§5.3, §8). **Not** a path scope on the documenter's writes (§8), and not pruned
+directories named one by one (§3.2). **Not** an orchestrator on kiro, whose subagents cannot
+spawn (§5.2).
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

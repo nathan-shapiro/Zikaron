@@ -414,68 +414,17 @@ class TestTheShippedEntriesStateBothLimits:
         assert {member.value for member in HookFormat} == {"object", "array"}
 
 
-class TestTheTrackedArtefactsInThisRepository:
-    """This repository tracks its own installed copies, for dogfooding. They can therefore drift.
-
-    Compared **modulo the absolute command paths**, which are machine-specific by construction: a
-    clone carries whichever venv the last committer had, so an equality test on the whole file would
-    fail on every machine but one. Everything else — the model, the prompt, the tool surface, the
-    skill's whole text — is generated content and must match.
-    """
-
-    @staticmethod
-    def _tracked(name: str) -> Path:
-        return Path(__file__).resolve().parent.parent / ".kiro" / "agents" / name
-
-    def test_the_tracked_consolidator_config_matches_what_the_installer_generates(self) -> None:
-        tracked = self._tracked("zikaron-consolidator.json")
-        if not tracked.is_file():
-            pytest.skip("this checkout has no tracked consolidator config")
-        document = json.loads(tracked.read_text())
-        generated = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
-        assert document["mcpServers"][MCP_SERVER_NAME]["args"] == ["--mode", "consolidator"]
-        for key in ("name", "description", "model", "prompt", "tools", "allowedTools"):
-            assert document[key] == generated[key], f"tracked config has drifted on {key}"
-
-    def test_the_tracked_consolidator_config_is_byte_for_byte_what_the_installer_would_write(
-        self,
-    ) -> None:
-        """The value comparison above cannot see how the file is *written*, and that is the half
-        `CLAUDE.md` actually claims: this file is "the reference for what the shipped product still
-        installs", which is a statement about bytes. `json.loads` normalises away the encoding of
-        every non-ASCII character, the indent, the key order and the trailing newline — so a
-        tracked copy written with `ensure_ascii=False` compares equal to an installer that escapes,
-        for every value, forever.
-
-        **Measured: the committed copy carried literal em dashes where `shipped_files` emits
-        `\\u2014`**, and the guard above was green over it. Its sibling three lines below compares
-        the tracked `SKILL.md` as *text*, which is why the skill half of this pair has never drifted
-        and this half could.
-
-        The one machine-specific value — the absolute path to `zikaron-mcp`, which is a fact about
-        whoever last ran the installer here — is taken from the tracked file itself rather than
-        pinned, so this asserts the *shape* around it without pretending the path is portable.
-        """
-        tracked = self._tracked("zikaron-consolidator.json")
-        if not tracked.is_file():
-            pytest.skip("this checkout has no tracked consolidator config")
-        on_disk = tracked.read_text(encoding="utf-8")
-        mcp = Path(json.loads(on_disk)["mcpServers"][MCP_SERVER_NAME]["command"])
-        generated = consolidator_agent_config(
-            Commands(hook=mcp.with_name("zikaron-hook"), mcp=mcp), model=KIRO.consolidator_model
-        )
-        assert on_disk == json.dumps(generated, indent=2) + "\n"
-
-    def test_the_tracked_skill_matches_the_shipped_text(self) -> None:
-        skill = Path(__file__).resolve().parent.parent / ".kiro/skills/zikaron-consolidate/SKILL.md"
-        if not skill.is_file():
-            pytest.skip("this checkout has no tracked skill")
-        assert skill.read_text(encoding="utf-8") == _KIRO_SKILL
+class TestTheTrackedDogfoodConfig:
+    """This repository tracks one real installed kiro config, the fallback if the migration goes
+    badly. What an install ships is snapshotted under `tests/fixtures/installed/` instead
+    (`tests/install_snapshots.py`)."""
 
     def test_the_tracked_dogfood_config_selects_the_memory_tools(self) -> None:
         """The measured failure this repository would hit first: an agent whose `tools` omits the
         server reports no Zikaron tools at all."""
-        tracked = self._tracked("zikaron-dogfood.json")
+        tracked = (
+            Path(__file__).resolve().parent.parent / ".kiro" / "agents" / "zikaron-dogfood.json"
+        )
         if not tracked.is_file():
             pytest.skip("this checkout has no dogfood config")
         document = json.loads(tracked.read_text())

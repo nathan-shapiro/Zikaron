@@ -6,7 +6,7 @@
 
 # Installer backups. `python -m zikaron.install --agent <config>` copies a config to
 # `<config>.bak` before merging into it; that copy is local recovery state, not a project artifact.
-*.bak
+/.kiro/agents/*.json.bak
 
 # Editor / OS
 *.swp
@@ -14,12 +14,23 @@
 .DS_Store
 
 # Local code-intelligence config: absolute server paths for this machine, not a
-# project convention. The rest of .kiro/ (agents, skills) is tracked deliberately.
+# project convention.
 .kiro/settings/lsp.json
+# What an install into this repository writes: one machine's install, not a project artifact. The
+# reference copy is the snapshot under tests/fixtures/installed/ (CLAUDE.md §Harness). The rest of
+# .kiro/ — the crew configs, the dogfood config, the crew skills — is tracked deliberately.
+/.kiro/agents/zikaron-consolidator.json
+/.kiro/agents/zikaron-documenter.json
+/.kiro/skills/zikaron-consolidate/
+/.kiro/skills/zikaron-document-code/
 
-# Per-machine Claude Code overrides. The rest of .claude/ (agents, skills, shared
-# settings) is tracked deliberately, the same way .kiro/ is.
-.claude/settings.local.json
+# Per-machine Claude Code overrides, and what an install into this repository writes, for the
+# reason above. The rest of .claude/ (agents, skills, shared settings) is tracked deliberately.
+/.claude/settings.local.json*
+/.mcp.json*
+/.claude/agents/zikaron-*
+/.claude/skills/zikaron-consolidate/
+/.claude/skills/zikaron-document-code/
 
 # Python
 .venv/
@@ -62,4 +73,5 @@ target/
 *.db-shm
 *.sqlite
 *.sqlite3
-.zikaron/
+# Anchored: a store anywhere but the top is a session in the wrong directory, better seen than hidden.
+/.zikaron/

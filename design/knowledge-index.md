@@ -36,8 +36,9 @@ embedded, and made searchable; results are fragments with line ranges, not file 
 language awareness whatsoever (§4.4 records what that costs).
 
 **One application, not the definition.** The operator's own use is an `.md` per source file, each
-carrying the source's git hash, forming a "code knowledge" corpus authored by agents. That is *a* use
-of a general file indexer, and the design must not assume it — no markdown parsing and no heading
+carrying the source's git hash, forming a "code knowledge" corpus authored by agents — which D39's
+producer now writes, from outside the index (`design/code-knowledge.md`). That is *a* use of a
+general file indexer, and the design must not assume it — no markdown parsing and no heading
 extraction. **The one structure the index reads is its own** (K14, §7.7): a file whose front matter
 carries Zikaron's two link keys says which file it describes, and search reports whether that file
 has changed since. A file without them is indexed exactly as any other, so nothing is assumed of a
@@ -1354,8 +1355,8 @@ written.** A document derived from another file — a description of a source fi
 long document, a translation — records which file and which version of it; search compares that
 version with the file as it is now. Nothing else about a file's structure is read, and a file without
 the keys is indexed and served exactly as before. Writing the keys is the opt-in, per file, by
-whoever writes the file. `design/code-knowledge.md` is the proposal this came from; §15 holds the
-alternatives considered.
+whoever writes the file. `design/code-knowledge.md` (D39) is where this came from and what writes
+such documents; §15 holds the alternatives considered.
 
 **The front matter, exactly.** It is read from the file's text as the indexer decodes it — UTF-8,
 with any byte-order mark already removed — which is also what the stored chunks hold, so the build,
@@ -1375,7 +1376,8 @@ trimmed, is the key byte for byte — `Zikaron-Source` is neither a key nor rese
 A value is the text after that `:`, trimmed of surrounding whitespace, with one pair of enclosing
 double quotes removed if present and nothing unescaped. Every other line of the block is ignored, so a
 document can carry front matter of its own, and every other key beginning `zikaron-` is reserved for
-later use and ignored now. **The keys are namespaced** because documentation trees built for
+later use and ignored now — `zikaron-module-digest` is taken, by `design/code-knowledge.md` §3.6,
+and the indexer ignores it too. **The keys are namespaced** because documentation trees built for
 static-site generators carry front matter of their own, and an unprefixed `source:` would switch
 linking on there by accident.
 
@@ -1455,8 +1457,8 @@ columns — it updates `content_hash` and leaves the link columns as they were �
 unreached.
 
 **The hash** is computed by one function, which search and the producer of a document both call
-(`design/code-knowledge.md` §"M40 — the producer"; it is specified here for a search-sized batch,
-and how a producer feeds it a whole module is M40's to decide): **`git hash-object -- <path>…`, run with the
+(it is specified here for a search-sized batch; how the producer feeds it a whole module, in
+batches under budgets of its own, is `design/code-knowledge.md` §3.3): **`git hash-object -- <path>…`, run with the
 Zikaron root as its working directory, each source passed as an argument by its absolute real
 path**, once per corpus whose results include a linked one, over every source those results name —
 inside that corpus's search, so its link counters ride the same write as its others (§12). That is
@@ -1477,8 +1479,9 @@ path as given, so a `..` from a subdirectory root, given as written, walks it th
 `.gitattributes` and filters a file `git add` stores raw. The `--` is there because a path may begin
 with `-`. **Where git is not installed the same blob form is computed in-process** — the hash of
 `blob <size>\0` and the raw bytes, SHA-1 or SHA-256 by a width the caller passes — a search each
-source's declared width, a producer SHA-1, git's own object format outside a repository — which is
-what git itself prints outside a work tree, so a directory later put under git keeps its links
+source's declared width, a producer SHA-1, since a git it cannot start cannot report an object
+format either (`design/code-knowledge.md` §3.3) — which is what git itself prints outside a
+work tree, so a directory later put under git keeps its links
 `fresh` unless a filter actually rewrites a file (operator, 2026-10-13); any failure to *start* git —
 not found, not executable — takes that form too. It is not the indexer's `content_hash`, which hashes the raw bytes
 alone. **Nothing raised on the hash path leaves the corpus's search**: every failure there is a

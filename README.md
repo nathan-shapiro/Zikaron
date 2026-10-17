@@ -145,7 +145,7 @@ and never fails your turn.
   nothing. A person running it from a terminal outside a session, into a project that has not been
   set up yet, is the case where nothing says anything and `--harness` is required.
 
-  Under kiro it additionally validates the consolidator's model id against the binary, because kiro
+  Under kiro it additionally validates the shipped agents' model id against the binary, because kiro
   substitutes an unknown model silently; Claude Code refuses one itself, at spawn, so no such check
   is needed there.
 
@@ -283,18 +283,49 @@ exists for. `zikaron doctor` afterwards says whether a Claude Code project's Zik
   (`schema_incompatible`) and loses its memory and knowledge tools until that install is upgraded
   and the session restarts its MCP server.
 
-Finally, if the project is a git repository, tell git to ignore the store — and, under Claude Code,
-the MCP config too:
+Finally, if the project is a git repository, tell git to ignore everything the install wrote.
+**None of it works without a local install**: the subagents call Zikaron's tools, which a clone has
+no server for, and the skills run the `zikaron` beside the `zikaron-mcp` your MCP configuration
+names. A committed copy would show up in a clone-mate's agent and skill lists and fail when used,
+and would pin your Zikaron version's text against theirs. Each clone runs the installer, which
+writes its own. Under Claude Code:
 
 ```bash
-echo '.zikaron/' >> .gitignore
-echo '.mcp.json*' >> .gitignore    # Claude Code only; see below
+cat >> .gitignore <<'EOF'
+/.zikaron/
+/.mcp.json*
+/.claude/settings.local.json*
+/.claude/agents/zikaron-*
+/.claude/skills/zikaron-*/
+EOF
 ```
 
-**The `*` covers `.mcp.json.bak`**, the copy the installer takes of `.mcp.json` before the first
-merge that finds none there (the backup rule is below). It sits at the repository root and holds the
-file as it then stood — the same absolute paths, and whatever the entry held at the time, an `env`
-included — and it is where `--force` sends you to look for a key it dropped.
+and under kiro:
+
+```bash
+cat >> .gitignore <<'EOF'
+/.zikaron/
+/.kiro/agents/zikaron-*
+/.kiro/agents/*.json.bak
+/.kiro/skills/zikaron-*/
+EOF
+```
+
+**Every line starts with `/`, so each matches only at the project's top**, where the install writes.
+A `.zikaron/` anywhere else is a store some session made in the wrong directory, and is better
+seen in `git status` than hidden.
+
+**The agent config you named under kiro is your own file**, so it is not on the list; the hook and
+`mcpServers` entries the install merged into it name your virtualenv by absolute path too. **Nor is
+`code-knowledge/`**: the documents are plain Markdown, readable without Zikaron, and whether you
+commit them is yours ([Code knowledge](#code-knowledge)).
+
+**The `*` and the `.bak` lines cover the installer's backups** — `.mcp.json.bak`,
+`.claude/settings.local.json.bak` and, under kiro, `<your-agent>.json.bak`, each the file as it
+stood before the first merge into it (the backup rule is below); a refreshed agent's or skill's own
+`.bak` falls under the `zikaron-*` lines. Each holds the same absolute
+paths, and whatever the entry held at the time, an `env` included, and it is where `--force` sends
+you to look for a key it dropped.
 
 **`.mcp.json` is the awkward one.** Claude Code intends that file to be committed and shared — that
 is what "project-scoped" means — but the entries Zikaron writes into it name absolute paths inside
@@ -308,9 +339,9 @@ is the clone-mate case.
 
 The installer does not edit `.gitignore` for you; appending to it is not a decision an installer
 should make silently. But it matters and is easy to forget: without it the memory database and its
-write-ahead log, every knowledge base's index and the service logs all show up as untracked, and a
-routine `git add -A` commits the lot. None of it is useful to anyone else, and none of it is
-reproducible from your repository.
+write-ahead log, every knowledge base's index, the service logs and the installed agents and
+skills all show up as untracked, and a routine `git add -A` commits the lot. None of it is useful
+to anyone else, and none of it is reproducible from your repository.
 
 What it writes under **kiro**, relative to the project:
 
@@ -318,7 +349,9 @@ What it writes under **kiro**, relative to the project:
 |---|---|
 | `.kiro/agents/zikaron-consolidator.json` | the consolidation subagent: its model, its four tools, its prompt |
 | `.kiro/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
-| the agent config you named | `hooks` for start and per-message, an `mcpServers` entry, `@zikaron` in `tools` and `allowedTools`, the consolidator in `toolsSettings.crew`, and the skill in `resources` |
+| `.kiro/agents/zikaron-documenter.json` | the documentation subagent: its model, its four file tools and `@zikaron` with its own `mcpServers` entry, its prompt |
+| `.kiro/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
+| the agent config you named | `hooks` for start and per-message, an `mcpServers` entry, `@zikaron` in `tools` and `allowedTools`, the consolidator and the documenter in `toolsSettings.crew`, and both skills in `resources` |
 
 and under **Claude Code**:
 
@@ -326,22 +359,26 @@ and under **Claude Code**:
 |---|---|
 | `.claude/agents/zikaron-consolidator.md` | the consolidation subagent, as frontmatter plus its prompt |
 | `.claude/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
+| `.claude/agents/zikaron-documenter.md` | the documentation subagent, as frontmatter plus its prompt |
+| `.claude/agents/zikaron-code-orchestrator.md` | the subagent the code-documentation skill runs as, in the background |
+| `.claude/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
 | `.claude/settings.local.json` | three hooks — session start, per-message, and per-subagent — plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
 | `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
 
 With `--components guards` the install writes `.claude/settings.local.json` alone, and in it only
 hooks: the session-start and per-subagent hooks, which carry a short note about the guards, and the
 two guard hooks — before each `Bash` or `Monitor` call, after each edit. No server, no approval
-key, no consolidator. With `--components both` you get all of the above together, and the start hooks carry
-the write policy and the guards' note.
+key, no subagent and no skill. With `--components both` you get all of the above together, and
+the start hooks carry the write policy and the guards' note.
 
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
 The third hook is the one with no kiro counterpart — it hands the write policy to each subagent you
 spawn, which kiro achieves by firing its ordinary hooks for subagent sessions instead.
 
-It backs up any file it merges into (`<file>.bak`, and the first backup wins), and **refreshes a
-shipped file whose contents are not what this version ships** — after backing it up, and saying so.
+It backs up any file it merges into (`<file>.bak`, and the first backup wins), leaving one that
+already carries every entry untouched, backup included, and **refreshes a shipped file whose
+contents are not what this version ships** — after backing it up, and saying so.
 That is what makes upgrading work, and the cost is that a hand-edit to a shipped file is reverted on
 the next install rather than kept. **Under Claude Code the same holds inside a file it *merges*
 into**: a Zikaron hook entry whose command is this install's but whose `timeout` or matcher you
@@ -388,29 +425,31 @@ subagent with its own model invocation, four mutation verbs and, under Claude Co
 and the installer does not make it for you. **Under kiro** that grant is
 `toolsSettings.crew.trustedAgents`, which the installer only ever reads: starting a consolidation
 therefore asks your permission once, and adding `zikaron-consolidator` there yourself is what stops
-it. Claude Code has no such key, so there is nothing to add and nothing withheld.
+it. The documentation skill spawns `zikaron-documenter` once per file, so unless you add it there
+too you are asked before each spawn, unless kiro keeps the answer, which is unmeasured. Claude Code
+has no such key, so there is nothing to add and nothing withheld.
 
-**Three keys under kiro only, and Claude Code has none of them.** The consolidator also has to be
-reachable by the `subagent` tool, so if your config already restricts which agents may be spawned
-(`toolsSettings.crew.availableAgents`), the installer adds `zikaron-consolidator` to that list. If
-you have no such restriction it leaves it alone — an empty list means *every* agent is available,
-and writing one entry into it would restrict you to just this one. The skill is also declared in the
-agent's `resources` unless something there already covers it. Skills normally arrive by inheritance,
-so that entry is usually redundant — but it is the only thing that makes the skill loadable if you
-have set `chat.disableInheritingDefaultResources`, and declaring a resource does not disable
-inheritance, so it can only help.
+**Three keys under kiro only, and Claude Code has none of them.** The consolidator and the
+documenter also have to be reachable by the `subagent` tool, so if your config already restricts
+which agents may be spawned (`toolsSettings.crew.availableAgents`), the installer adds
+`zikaron-consolidator` and `zikaron-documenter` to that list. If you have no such restriction it
+leaves it alone — an empty list means *every* agent is available, and writing entries into it would
+restrict you to just these. Both skills are also declared in the agent's `resources` unless
+something there already covers them. Skills normally arrive by inheritance, so those entries are
+usually redundant — but they are the only thing that makes the skills loadable if you have set
+`chat.disableInheritingDefaultResources`, and declaring a resource does not disable inheritance, so
+it can only help.
 
-**One thing the kiro install deliberately does not do:** add the `subagent` tool itself, which the
-consolidation skill needs in order to spawn the consolidator. Its reach is much wider than Zikaron's
-own tools, so that grant stays yours. The installer says so if it is missing. Under Claude Code none
-of this arises — the shipped skill is an ordinary project file, and the consolidator is spawned
-through whatever subagent tool the harness already gives your agent.
+**One thing the kiro install deliberately does not do:** add the `subagent` tool itself, which both
+skills need to spawn their agents, or `shell`, which the documentation skill needs to run its
+planner. Their reach is much wider than Zikaron's own tools, so those grants stay yours. The
+installer says so if either is missing. Under Claude Code none of this arises — the shipped skills
+are ordinary project files, and their agents are spawned through whatever subagent tool the harness
+already gives your agent.
 
-**Installing into a clone of the Zikaron repository itself, under kiro,** finds
-`.kiro/agents/zikaron-consolidator.json` already tracked, carrying whichever virtualenv path the last
-committer had. The installer notices that the file names a different install, backs it up, and
-rewrites it for yours. Under Claude Code there is nothing tracked to collide with — the consolidator
-config is not in this repository — so the installer simply writes it.
+**Installing into a clone of the Zikaron repository itself** finds none of the files an install
+ships already tracked, under either harness: the repository keeps a snapshot of them under
+`tests/fixtures/installed/`, outside both harnesses' dot-directories, and no installed copy.
 
 ### What to know under Claude Code
 
@@ -431,7 +470,9 @@ the next one, because session scope is the only scope that grant has. It is not 
 purpose: a file-reading tool cannot be restricted to one path in subagent config, so this prompt is
 the only point at which that grant is put to you as a question.
 
-`--no-trust-tools` withholds both written keys for *your* tools. It does not withhold them for the
+`--no-trust-tools` withholds both written keys for *your* tools. It withholds them from the
+code-documentation run as well, whose orchestrator and documenters call the same server, so under
+that flag a run asks in your session per Zikaron call. It does not withhold them for the
 consolidator's: a subagent has nobody to answer a permission prompt, so an unapproved **MCP** tool
 there does not ask, it fails at the moment consolidation needs it. The file read above is the
 exception — that one prompts.
@@ -502,10 +543,10 @@ usually shows something else: told the rule when its session starts, it reaches 
 | `--harness {auto,kiro,claude-code}` | which harness to install for. `auto` reads the project, then the `CLAUDECODE` marker; it refuses when the project has **both** dotdirs, and when neither source says |
 | `--agent <path>` | **kiro only.** Merge the hook and MCP entries into that config, after backing it up |
 | `--print-only` | print what would be written and write nothing at all |
-| `--model <id>` | the consolidator's model (default: `claude-sonnet-5` under kiro, `sonnet` under Claude Code) |
+| `--model <id>` | the model of every agent Zikaron ships — the consolidator, the documenter and, under Claude Code, the code orchestrator (default: `claude-sonnet-5` under kiro; under Claude Code `haiku` for the documenter, `opus` for the orchestrator and `sonnet` for the consolidator) |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no consolidator |
+| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no agent |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
@@ -654,6 +695,82 @@ credentials. The databases are `0600`, the same as `memory.db`, and they are und
 the `.gitignore` line above already covers them — but what is *in* one is searchable by every agent
 working in this project.
 
+### Code knowledge
+
+An agent new to a codebase searches it by keyword to find where to start. **Code knowledge** gives
+it a corpus to search instead: one document per source file — what the file is for, every class and
+function it declares with its declaration, its non-trivial behavior, and the files it depends on —
+written by agents, kept as files in your project, and indexed as an ordinary knowledge base. Ask
+for it with the installed skill, naming a directory of your code:
+
+```
+/zikaron-document-code src/billing
+/zikaron-document-code src/billing --slice 20       # just twenty files, to see what it costs
+/zikaron-document-code services/api --exclude '*_generated.go'
+```
+
+**Under Claude Code the skill runs in the background**, as the `zikaron-code-orchestrator`
+subagent, so your session stays free while it works and receives its report when it ends; under
+kiro it runs in your session. Either way it runs a **planner**, `zikaron code-knowledge plan`,
+which decides from hashes which documents are missing, out of date or malformed, removes the ones a
+deleted or renamed source left behind — moving a renamed file's document instead of rewriting it —
+and lists the rest. It then spawns a `zikaron-documenter` subagent per listed file, and runs the
+planner again until it reports the module up to date; the module's `README.md` is written last,
+an overview of the module from its documents, listing no files. Run it again after the code has
+moved and only what moved is rewritten. The planner never starts the service and changes nothing
+outside the documents directory but the list of role lines it hands the README's writer, under
+`.zikaron/`; without `--apply` it changes nothing at all, so you can run it yourself to see where a
+module stands:
+
+```bash
+zikaron code-knowledge plan --module src/billing --limit 10
+```
+
+**Pass the same `--include` and `--exclude` every time** you document a directory: they are part of
+what it is, and a narrower set makes the planner remove the documents it no longer admits.
+
+The documents go under `code-knowledge/`, mirroring your tree —
+`code-knowledge/src/billing/invoice.py.md` describes `src/billing/invoice.py` — and **each module
+is a knowledge base of its own**: the skill registers `code-knowledge/src/billing/` as the knowledge
+base `code-knowledge/src/billing`, or refreshes it, so a search can keep to one module. A directory
+inside one you have documented, or containing one, is refused, since its documents would be
+indexed twice. **Whether you commit them is yours to decide**: each corpus is created with
+`git_mode: off`, so a document is searchable whether it is committed, uncommitted, or fetched from
+somewhere a build published it to.
+
+**What a run needs.** The documenter can read files, write one and correct it in place, and use
+Zikaron's tools — the project's memory, which it may search and add to, and its knowledge bases,
+which it may search, code knowledge's own excepted since a document there can be stale, and
+changes none of — and nothing else; it has no shell. Under Claude Code the background run's
+permission prompts appear in your session, naming the subagent asking: you are asked to approve the
+planner's command when it first runs — allow it for the session, or you are asked again at later
+batches — and the first document a documenter writes. Under auto mode, the interactive default
+since Claude Code 2.1.283, neither is put to you: the classifier decides the command, and an edit
+inside the project is approved outright. One run at a time: invoking the skill again while one runs
+holds your session until the first ends. A headless run asks nothing and so is refused unless you
+give it the permission up front: `--permission-mode bypassPermissions`, best kept to a copy of the
+project, or
+`--allowedTools` naming the planner command, the subagent tool, the file tools and `mcp__zikaron`,
+since a headless run in a folder you never trusted interactively does not read the install's own
+allow rule — and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a headless run that waits
+ten idle minutes on background work is stopped. Under kiro the agent you run needs `subagent` and
+`shell` among its tools — the installer says so if they are missing — and, unless you add
+`zikaron-documenter` to `toolsSettings.crew.trustedAgents`, you are asked before each documenter is
+spawned; the documenter's own config already allows its tools.
+
+**Using it.** Nothing tells your agent to search it unprompted; say so in your prompt, naming the
+module's knowledge base to keep to one module:
+
+> Answer the following question using the knowledge tool, and then verify it against the actual
+> code: …
+
+**Read every result as a lead, not as a fact.** Each one carries `source.state`: `fresh` means the
+file has not changed since its document was written — not that the document is right, since a
+document can be wrong from the day it was written — and `changed` means the file has moved since,
+so the document still says roughly where to look and its particulars are suspect. `missing` means
+the file is gone, and `unverifiable` that it could not be checked. Either way the answer rests on
+the code. `design/code-knowledge.md` is the design, and why the code decides.
+
 ---
 
 ## Configuration
@@ -763,6 +880,8 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   memory.db-shm      SQLite's shared-memory index; part of the store
   knowledge/         one database per knowledge base, named by a generated id.
                      Absent until you create one
+  code-knowledge/    the list of role lines the planner hands a module README's writer, one
+                     directory per module. Present only while that README is owed
   config.toml        your per-project overrides, if you wrote any
   service.log        the background service: startup, resolved config, errors, why it stopped,
                      any request running longer than 30 s, and the stack dumps below
@@ -928,8 +1047,8 @@ project, so `rm -rf .zikaron` does not reach them.
 Then the harness's own artefacts. Under **kiro**:
 
 ```bash
-rm -rf .kiro/skills/zikaron-consolidate
-rm .kiro/agents/zikaron-consolidator.json
+rm -rf .kiro/skills/zikaron-consolidate .kiro/skills/zikaron-document-code
+rm .kiro/agents/zikaron-consolidator.json .kiro/agents/zikaron-documenter.json
 mv .kiro/agents/<your-agent>.json.bak .kiro/agents/<your-agent>.json
 ```
 
@@ -939,8 +1058,9 @@ config, remove the `hooks`, `mcpServers` and `@zikaron` entries by hand instead.
 Under **Claude Code** the artefacts are project files rather than one merged config:
 
 ```bash
-rm .claude/agents/zikaron-consolidator.md
-rm -rf .claude/skills/zikaron-consolidate
+rm .claude/agents/zikaron-consolidator.md .claude/agents/zikaron-documenter.md
+rm .claude/agents/zikaron-code-orchestrator.md
+rm -rf .claude/skills/zikaron-consolidate .claude/skills/zikaron-document-code
 ```
 
 and then remove Zikaron's `hooks`, `enabledMcpjsonServers` and `permissions` entries from
@@ -957,6 +1077,9 @@ the two guard groups and the `--components …` arguments from the two start gro
 
 Note that `rm -rf .zikaron` takes the knowledge bases with it. They are rebuildable — an index is a
 view onto files you still have — but rebuilding one takes minutes per corpus.
+
+Documents the code-documentation skill wrote stay where it wrote them — `code-knowledge/` by
+default — since they are your project's files; `rm -rf .zikaron` above already removed their index.
 
 **The embedding model is not in your project and survives all of the above.** It is per user, not per
 project, so it is deliberately left alone by a single project's uninstall — another project using

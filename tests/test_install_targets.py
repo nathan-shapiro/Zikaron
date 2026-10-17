@@ -189,15 +189,21 @@ class TestKiroArtefactsChangeOnlyWhenSomebodyMeansThemTo:
             project=tmp_path,
             commands=_FIXTURE_COMMANDS,
             model="a-model",
+            documenter_model="a-model",
+            orchestrator_model="a-model",
             hook_format=HookFormat.OBJECT,
             force=False,
             trust_tools=True,
         )
-        by_name = {
-            shipped.path.name: shipped.content for shipped in KiroTarget().shipped_files(plan)
+        by_path = {
+            shipped.path.relative_to(tmp_path).as_posix(): shipped.content
+            for shipped in KiroTarget().shipped_files(plan)
         }
-        assert by_name[f"{CONSOLIDATOR_AGENT_NAME}.json"] == golden["consolidator_config_bytes"]
-        assert by_name["SKILL.md"] == golden["skill_markdown"]
+        assert (
+            by_path[f".kiro/agents/{CONSOLIDATOR_AGENT_NAME}.json"]
+            == golden["consolidator_config_bytes"]
+        )
+        assert by_path[".kiro/skills/zikaron-consolidate/SKILL.md"] == golden["skill_markdown"]
 
     def test_the_skill_is_identical(self, golden: dict[str, object]) -> None:
         rendered = skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)
@@ -530,7 +536,7 @@ class TestSameInstallOlderVersion:
         is the only thing the installer can actually observe about a version it no longer has."""
         project = _project(tmp_path)
         main(["--project", str(project), "--harness", harness_name])
-        skill = next(project.rglob("SKILL.md"))
+        skill = next(project.rglob("zikaron-consolidate/SKILL.md"))
         skill.write_text("# an older Zikaron wrote this\n", encoding="utf-8")
         capsys.readouterr()
 
@@ -769,13 +775,21 @@ class TestClaudeCodeRefusals:
         mcp = _claude_paths(project)["mcp"]
         assert main(["--project", str(project)]) == 0
 
-        def add_key() -> None:
+        def edit_entry(key: str, value: object) -> None:
             document = json.loads(mcp.read_text(encoding="utf-8"))
-            document["mcpServers"][MCP_SERVER_NAME]["env"] = {"THEIRS": "1"}
+            entry = document["mcpServers"][MCP_SERVER_NAME]
+            if value is None:
+                del entry[key]
+            else:
+                entry[key] = value
             mcp.write_text(json.dumps(document), encoding="utf-8")
+
+        def add_key() -> None:
+            edit_entry("env", {"THEIRS": "1"})
 
         if key_added_before_the_backing_up_run:
             add_key()
+        edit_entry("alwaysLoad", None)  # a merge that changes nothing backs nothing up
         assert main(["--project", str(project)]) == 0, "this run takes the only backup"
         if not key_added_before_the_backing_up_run:
             add_key()
@@ -874,6 +888,25 @@ class TestClaudeCodeRefusals:
         assert f"mcp__{MCP_SERVER_NAME}" in document["permissions"]["allow"]
         assert "hooks" in document
 
+    def test_a_rerun_that_changes_nothing_backs_up_and_writes_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Seen in the playground: each re-run wrote a `.bak` byte-identical to the file it backed
+        up. A file formatted by hand with every entry in it is kept as it is too."""
+        project = _project(tmp_path, dotdirs=(".claude",))
+        assert main(["--project", str(project)]) == 0
+        paths = _claude_paths(project)
+        settings, mcp = paths["settings"], paths["mcp"]
+        settings.write_text(json.dumps(json.loads(settings.read_text()), indent=4))
+        before = {path: (path.stat().st_ino, path.read_bytes()) for path in (settings, mcp)}
+        capsys.readouterr()
+        assert main(["--project", str(project)]) == 0
+        printed = capsys.readouterr().out
+        for path, (inode, content) in before.items():
+            assert (path.stat().st_ino, path.read_bytes()) == (inode, content)
+            assert not path.with_name(path.name + ".bak").exists()
+            assert f"kept      {path} (already carries this install's entries)" in printed
+
     def test_an_existing_settings_file_is_backed_up_before_it_is_merged(
         self, tmp_path: Path
     ) -> None:
@@ -970,7 +1003,7 @@ class TestPrintOnly:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """The help text promises "exactly what an install would add", and the fragment shows only
-        the merge entries — so the two shipped files were invisible in a preview of an install that
+        the merge entries — so the shipped files were invisible in a preview of an install that
         writes them."""
         project = _project(tmp_path)
         main(["--project", str(project), "--harness", CLAUDE_CODE.harness.value, "--print-only"])
@@ -1791,6 +1824,8 @@ class TestTheNoteAboutBlindSubagents:
             project=project,
             commands=_FIXTURE_COMMANDS,
             model="a-model",
+            documenter_model="a-model",
+            orchestrator_model="a-model",
             hook_format=HookFormat.OBJECT,
             force=False,
             trust_tools=True,

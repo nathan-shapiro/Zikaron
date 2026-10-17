@@ -11,7 +11,7 @@
   ],
   "mcpServers": {
     "zikaron": {
-      "command": "/home/nathan/Zikaron/.venv/bin/zikaron-mcp",
+      "command": "/venv/bin/zikaron-mcp",
       "args": [
         "--mode",
         "consolidator"

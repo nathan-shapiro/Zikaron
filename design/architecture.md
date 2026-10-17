@@ -641,6 +641,7 @@ draft of this document gave only to the socket.
 | `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
 | `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
+| `code-knowledge/<module>/roles.md` | **0600**, its directories **0700** | the role list `zikaron code-knowledge plan --apply` writes while a module's README is owed, under the store's umask, and removes with its emptied directories once an `--apply` run lists no README (`design/code-knowledge.md` §3.6); each line is a document's own role line, already in the project tree |
 | `knowledge/<uuid4>.db`, `-wal`, `-shm` | **0600** | created under the same explicit umask as `memory.db`, for the same reason. **A knowledge base holds the verbatim text of every file indexed into it**, so it is at least as sensitive as the memory store and is named here rather than left implied — this table enumerated neither until 2026-09-22, while `knowledge-index.md` asserted the mode from a document that is not normative for it |
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
@@ -2513,8 +2514,9 @@ Three rules go with it, and each closes a way the measurement could be lost:
 
 ### The install contract
 
-> **Harness delta (D34).** This contract is kiro's. Claude Code writes four artefacts — two JSON (`.claude/settings.local.json`, `.mcp.json`)
-> and two YAML-frontmatter Markdown files and needs no
+> **Harness delta (D34).** This contract is kiro's. Claude Code writes its own artefacts — two JSON
+> files (`.claude/settings.local.json`, `.mcp.json`) and YAML-frontmatter Markdown files
+> (`design/harness.md` §"What a Claude Code install writes") — and needs no
 > model-id validation; with `--components guards` it writes only hook groups, in
 > `settings.local.json` (`design/guards.md` §5). The collision and backup discipline below is
 > harness-independent, **and so is
@@ -2535,14 +2537,16 @@ Three rules go with it, and each closes a way the measurement could be lost:
 
 Installation is a **program**, not a documented procedure, and the reason is one rule above: "packaging
 validates the id against the installed harness and fails loudly if it is unknown" needs a mechanism, and the
-mechanism turned out to be a command whose output has to be parsed. `python -m zikaron.install` writes four
-things and refuses rather than guesses when it cannot.
+mechanism turned out to be a command whose output has to be parsed. `python -m zikaron.install`
+writes what the table below lists and refuses rather than guesses when it cannot.
 
 | Written | Where | On collision |
 |---|---|---|
 | consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported when its bytes already are what this install ships; otherwise backed up, rewritten, and reported |
 | consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | the same rule — see the note below |
-| `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, and the consolidator in `toolsSettings.crew` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry is owned by another install, unless `--force`; any other difference is rewritten and reported |
+| documenter agent config | `<project>/.kiro/agents/zikaron-documenter.json` | the same rule (`design/code-knowledge.md` §5.4) |
+| code documentation skill | `<project>/.kiro/skills/zikaron-document-code/SKILL.md` | the same rule |
+| `hooks` + `mcpServers` entries, `@zikaron` in `tools` and `allowedTools`, the consolidator and the documenter in `toolsSettings.crew`, and both skills in `resources` | merged into the agent config named by `--agent <path>` | back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry is owned by another install, unless `--force`; any other difference is rewritten and reported; a config that already carries every entry, compared as parsed JSON, is kept and reported, neither backed up nor written |
 | nothing (the entries printed to stdout) | when `--agent` is omitted | n/a |
 
 - **Staleness is a content comparison, and it replaced a narrower predicate in M15.** The rule above

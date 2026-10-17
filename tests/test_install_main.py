@@ -39,8 +39,8 @@ def _snapshot(project: Path) -> dict[str, bytes]:
     """Every file under `project` with its bytes — the state a refusal must leave untouched.
 
     A whole-tree comparison rather than a check on the one file a test is about, because the defect
-    these guard against is not a wrong error message: it is the two shipped files landing in a
-    project whose merge was then refused.
+    these guard against is not a wrong error message: it is the shipped files landing in a project
+    whose merge was then refused.
     """
     return {
         str(path.relative_to(project)): path.read_bytes()
@@ -187,7 +187,7 @@ class TestASuccessfulInstall:
     def test_a_config_from_another_install_is_reported_as_replaced(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """What a cloner of this repository sees: the tracked consolidator config names another
+        """What a cloner of a project that commits its consolidator config sees: it names another
         machine's venv, and the install says it rewrote it rather than reporting success and leaving
         a consolidator that can never start.
         """
@@ -226,11 +226,15 @@ class TestASuccessfulInstall:
         )
         assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
         crew = json.loads(agent.read_text())["toolsSettings"]["crew"]
-        assert crew["availableAgents"] == ["helper-a", "zikaron-consolidator"]
+        assert crew["availableAgents"] == [
+            "helper-a",
+            "zikaron-consolidator",
+            "zikaron-documenter",
+        ]
         assert "trustedAgents" not in crew, "spawn trust is a separate grant, left to the user"
         printed = capsys.readouterr().out
         assert "availableAgents" in printed
-        assert "ask your permission once" in printed
+        assert "will ask your permission" in printed
 
     def test_no_trust_tools_leaves_the_allowlist_alone_and_says_so(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -386,8 +390,8 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
     the writer's own unit tests.
 
     Each case snapshots the whole project tree and compares it byte-for-byte afterwards, because the
-    defect this guards against is not a wrong error message — it is the two shipped files landing
-    in a project whose agent config was then refused, leaving a half-install nobody asked for.
+    defect this guards against is not a wrong error message — it is the shipped files landing in a
+    project whose agent config was then refused, leaving a half-install nobody asked for.
     """
 
     def test_a_malformed_agent_config_leaves_the_project_untouched(
@@ -689,4 +693,5 @@ class TestTheValidationReport:
         project = tmp_path / "project"
         project.mkdir()
         _kiro_install(["--project", str(project)])
-        assert asked == [Targets(project=project).consolidator_config]
+        targets = Targets(project=project)
+        assert asked == [targets.consolidator_config, targets.documenter_config]
