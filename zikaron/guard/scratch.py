@@ -2,10 +2,16 @@
 
 A target is **scratch** when, with its quotes removed and a relative path joined to the payload's
 `cwd` and normalised as a string — no filesystem access — it is or lies under one of the scratch
-roots, compared component-wise; or when it is written as the literal `$TMPDIR/…` or `${TMPDIR…}/…`.
-A target that begins with a variable the same command bound (`S=/tmp/x; … > "$S/a"`) is read with
-that variable's value in its place.
+roots, compared component-wise; or when it is written as the literal `$TMPDIR/…` or `${TMPDIR…}/…`,
+or as a background job's `$CLAUDE_JOB_DIR/tmp/…`. A target that begins with a variable the same
+command bound (`S=/tmp/x; … > "$S/a"`) is read with that variable's value in its place.
 
+>>> job = Location(cwd="/home/u/proj", job_dir="/home/u/.claude/jobs/j")
+>>> [job.is_scratch(t) for t in ("/home/u/.claude/jobs/j/tmp/a", "/home/u/.claude/jobs/j/x")]
+[True, False]
+>>> spelled = ("$CLAUDE_JOB_DIR/tmp", '"${CLAUDE_JOB_DIR}/tmp/a"', "$CLAUDE_JOB_DIR/x")
+>>> [Location(cwd="/home/u/proj").is_scratch(t) for t in spelled]
+[True, True, False]
 >>> here = Location(cwd="/home/u/proj", tmpdir="/var/folders/x/T")
 >>> [here.is_scratch(t) for t in ("/tmp", "/tmpfoo", "'/tmp/a b'", "x", "../../../tmp/x")]
 [True, False, True, False, True]
@@ -37,6 +43,9 @@ _TMPDIR_PREFIX: Final = re.compile(
     r"(?:\$TMPDIR|\$\{TMPDIR\}|\$\{TMPDIR:-(?P<default>[^}]*)\}|(?P<other>\$\{TMPDIR[^}]*\}))"
     r"(?=/|$)"
 )
+_JOB_DIR_VARIABLE: Final = r"\$(?:CLAUDE_JOB_DIR|\{CLAUDE_JOB_DIR\})"
+_JOB_TMP_LITERAL: Final = re.compile(_JOB_DIR_VARIABLE + r"/tmp(?:/|$)")  # noqa: S108 — compared
+_JOB_DIR_PREFIX: Final = re.compile(_JOB_DIR_VARIABLE + r"(?=/|$)")
 #: A variable at a target's start, as `$NAME` or `${NAME}`, ending the target or followed by `/`.
 _LEADING_VARIABLE: Final = re.compile(r"\$(?:\{(\w+)\}|(\w+))(?=/|$)")
 
@@ -63,12 +72,14 @@ def is_under(path: str, root: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Location:
-    """Where a command runs: the payload's `cwd`, the machine's `$TMPDIR`, and the payload's
-    `scratchpad_dir` where a version sends one."""
+    """Where a command runs: the payload's `cwd`, the machine's `$TMPDIR`, the payload's
+    `scratchpad_dir` where a version sends one, and a background job's directory, the hook's
+    `CLAUDE_JOB_DIR`."""
 
     cwd: str
     tmpdir: str | None = None
     scratchpad: str | None = None
+    job_dir: str | None = None
     #: The variables the command bound before the target, as `(name, value)`, latest last.
     bindings: tuple[tuple[str, str], ...] = ()
 
@@ -97,17 +108,26 @@ class Location:
 
     def file_path(self, target: str) -> str | None:
         """Where `target` is on disk, for row 6's one read: `resolve`'s path, except that a
-        leading `$TMPDIR` is this machine's, or `${TMPDIR:-DEFAULT}`'s default when that is unset;
-        `None` where the target names no file the rules can locate.
+        leading `$TMPDIR` is this machine's, or `${TMPDIR:-DEFAULT}`'s default when that is unset,
+        and a leading `$CLAUDE_JOB_DIR` the hook's; `None` where the target names no file the rules
+        can locate.
 
-        >>> here = Location(cwd="/w", tmpdir="/t")
+        >>> here = Location(cwd="/w", tmpdir="/t", job_dir="/j")
         >>> [here.file_path(t) for t in ('"$TMPDIR/a"', "${TMPDIR}/a", "x", "${TMPDIR%/}/a")]
         ['/t/a', '/t/a', '/w/x', None]
+        >>> here.file_path("$CLAUDE_JOB_DIR/tmp/a"), here.file_path("${CLAUDE_JOB_DIR}/tmp/a")
+        ('/j/tmp/a', '/j/tmp/a')
         >>> unset = Location(cwd="/w")
         >>> unset.file_path("${TMPDIR:-/tmp}/a"), unset.file_path("$TMPDIR")
         ('/tmp/a', None)
+        >>> unset.file_path("$CLAUDE_JOB_DIR/tmp/a") is None
+        True
         """
         text = self._substituted(unquote(target))
+        job = _JOB_DIR_PREFIX.match(text)
+        if job is not None:
+            job_dir = self._usable(self.job_dir)
+            return None if job_dir is None else normalise(job_dir + text[job.end() :], self.cwd)
         prefix = _TMPDIR_PREFIX.match(text)
         if prefix is None:
             return normalise(text, self.cwd)
@@ -118,7 +138,8 @@ class Location:
 
     def is_scratch(self, target: str) -> bool:
         """Whether `target` is scratch."""
-        if _TMPDIR_LITERAL.match(self._substituted(unquote(target))):
+        text = self._substituted(unquote(target))
+        if _TMPDIR_LITERAL.match(text) or _JOB_TMP_LITERAL.match(text):
             return True
         path = self.resolve(target)
         return any(is_under(path, root) for root in self.roots)
@@ -136,16 +157,22 @@ class Location:
         """Every scratch root here.
 
         A `$TMPDIR` or scratchpad that is empty or normalises to `/` is ignored, since it would
-        make everything scratch.
+        make everything scratch. A job directory is normalised the same way, and only its `tmp` is
+        scratch: the harness keeps the job's own state beside it.
+
+        >>> Location(cwd="/w", job_dir="/j/").roots[-1], Location(cwd="/w", job_dir="rel").roots[-1]
+        ('/j/tmp', '/w/rel/tmp')
         """
         tmpdir = self._usable(self.tmpdir)
         aliased = (*_PRIVATE_ALIASED, *([tmpdir] if tmpdir else []))
         scratchpad = self._usable(self.scratchpad)
+        job_dir = self._usable(self.job_dir)
         return (
             *FIXED_ROOTS,
             *([tmpdir] if tmpdir else []),
             *(f"/private{root}" for root in aliased),
             *([scratchpad] if scratchpad else []),
+            *([f"{job_dir}/tmp"] if job_dir else []),  # noqa: S108 — compared, not written
         )
 
     def _usable(self, root: str | None) -> str | None:

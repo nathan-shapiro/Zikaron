@@ -7,6 +7,7 @@ platform the self-match rule reads is the process's own).
 
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -228,6 +229,7 @@ def test_main_writes_the_rules_output_and_exits_zero(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("CLAUDE_JOB_DIR", raising=False)
     output = _run_main(json.dumps(_pre_tool_use()), capsys, monkeypatch)
     assert json.loads(output)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -240,12 +242,22 @@ def test_main_reads_tmpdir_from_the_environment(
     assert _run_main(json.dumps(_pre_tool_use(command)), capsys, monkeypatch) == ""
 
 
+@pytest.mark.parametrize("job_dir", ["/home/u/.claude/jobs/j", "/home/u/.claude/jobs/j/"])
+def test_main_reads_a_background_jobs_directory_from_the_environment(
+    job_dir: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_JOB_DIR", job_dir)
+    command = "sed -i 's/a/b/' /home/u/.claude/jobs/j/tmp/f"
+    assert _run_main(json.dumps(_pre_tool_use(command)), capsys, monkeypatch) == ""
+
+
 class TestTheRealProcess:
     """`main()` in a process of its own, as the console script runs it: stdin in, stdout out,
     exit 0."""
 
     @staticmethod
     def _run(stdin: str) -> subprocess.CompletedProcess[str]:
+        environment = {k: v for k, v in os.environ.items() if k != "CLAUDE_JOB_DIR"}
         return subprocess.run(
             [sys.executable, "-c", "from zikaron.guard.main import main; main()"],
             input=stdin,
@@ -253,6 +265,7 @@ class TestTheRealProcess:
             text=True,
             timeout=60,
             check=False,
+            env=environment,
         )
 
     def test_a_deny_reaches_stdout(self) -> None:

@@ -1,10 +1,11 @@
 """The command rules' two properties over generated commands (`design/guards.md` §1).
 
-**Determinism**: the same payload, `$TMPDIR`, platform and scratch scripts always yield the same
-output, and so does the same call with warnings turned into errors (§9.2). And **totality**: no
-command makes a rule raise — a raise would still be an allow, by §6, but a silent one that hides
-every form in the command. Row 6's file read is a stand-in answering one fixed script for every
-path, so a generated `bash /tmp/x` judges a script without touching the machine's own `/tmp`.
+**Determinism**: the same payload, `$TMPDIR`, `CLAUDE_JOB_DIR`, platform and scratch scripts always
+yield the same output, and so does the same call with warnings turned into errors (§9.2). And
+**totality**: no command makes a rule raise — a raise would still be an allow, by §6, but a silent
+one that hides every form in the command. Row 6's file read is a stand-in answering one fixed
+script for every path, so a generated `bash /tmp/x` judges a script without touching the machine's
+own `/tmp`.
 """
 
 import re
@@ -75,6 +76,7 @@ _FRAGMENTS = (
     "open('f','w')",
     "Path('/tmp/x').write_text(s)",
     "/tmp/x",  # noqa: S108 — command text, never opened
+    "$CLAUDE_JOB_DIR/tmp/x",
     "f",
     "s/a/b/",
     " ",
@@ -85,6 +87,7 @@ locations = st.builds(
     Location,
     cwd=st.sampled_from(["/home/u/proj", "/tmp/w"]),  # noqa: S108 — payload values, never opened
     tmpdir=st.sampled_from([None, "", "/", "/var/folders/x/T", "rel"]),
+    job_dir=st.sampled_from([None, "", "/", "/home/u/.claude/jobs/j", "rel"]),
 )
 
 

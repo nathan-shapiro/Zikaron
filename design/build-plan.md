@@ -6527,6 +6527,360 @@ module (§5.3, §8). **Not** a path scope on the documenter's writes (§8), and 
 directories named one by one (§3.2). **Not** an orchestrator on kiro, whose subagents cannot
 spawn (§5.2).
 
+## M40's follow-ups — M40-1 to M40-4
+
+**Numbered M40-N to mark them as follow-ups** (operator, 2026-10-20): each was found while M40 was
+built or run, and each lands as a commit of its own in M40's pull request, in this order, rather
+than as a milestone with a pull request of its own. Each brief below is complete in itself: its
+normative sections, what ships, what its tests cover, done-when and fence. **A feature any of them
+builds for Claude Code alone gets its row in `design/kiro-gaps.md` in the same commit.**
+
+## M40-1 — A background job's own scratch directory, which the edit guard called authored
+
+Normative: **`design/guards.md` §3.3**; §3.2's "Row 6's text" for row 6's read; §2's payload row;
+§1's determinism sentence; §7's known gaps; §8's seed, §8.1's table and the §8.2 that item 4 adds;
+§6 for fail-open. Decision: D38, unchanged — a value in §3.3's list of roots, not a rule.
+Evidence: `research/claude-code-job-dir-hook-probe.md`, `research/m37-guard-transcript-replay.md`.
+
+**What was found.** Claude Code tells a background job (`claude --bg`) to keep its scratch files
+in `$CLAUDE_JOB_DIR/tmp`, `~/.claude/jobs/<the session id's first eight characters>/tmp`, rather
+than in `/tmp`, which parallel jobs share. §3.3 does not count that directory as scratch, so a
+background job that stages a script there is denied: once in M37's pre-install replay, stated in §7
+as an accepted false deny, and twice in one `~/Trading/LeibaTrader` job on 2026-10-18 — as
+`cat > $CLAUDE_JOB_DIR/tmp/leaf_events.py <<'EOF'` and, after the agent spelled the directory out,
+as `cat > /home/nathan/.claude/jobs/86ba5119/tmp/group_book.py <<'EOF'` — whose agent recorded the
+deny as a memory. **Replayed over every local transcript** outside this repository's own (item 5),
+the find-replace rule as it stands denies about a third of the commands that name a job
+directory, most of those for a write into the job's own `tmp`, by its absolute path or through
+the variable; the counts are the probe's note's. **Probed on 2.1.304**: the hook's environment carries `CLAUDE_JOB_DIR`,
+`TMPDIR` is unset there, the command arrives with the variable unexpanded, and the payload now
+sends `scratchpad_dir` — the session's, under `/tmp`, not the job's.
+
+### What ships
+
+1. **A root from the hook's environment.** `Location` gains the job directory, which `main` reads
+   from `CLAUDE_JOB_DIR` as it reads `TMPDIR`, and its roots gain `<that directory>/tmp` — `tmp`
+   alone, since the job directory also holds the harness's own `state.json` and `timeline.jsonl`.
+   The value is normalized as `$TMPDIR`'s is — a trailing `/` dropped, a relative one joined to
+   the `cwd` — before its `tmp` is a root.
+2. **The literal spelling.** A target written `$CLAUDE_JOB_DIR/tmp` or `${CLAUDE_JOB_DIR}/tmp`,
+   alone or followed by `/…`, is scratch in every session, as `$TMPDIR/…` is: where the variable is
+   unset the shell expands it to `/tmp/…`, itself scratch. `$CLAUDE_JOB_DIR` followed by anything
+   else is not.
+3. **Row 6's read** (§3.2's "Row 6's text"): a leading `$CLAUDE_JOB_DIR` or `${CLAUDE_JOB_DIR}`
+   stands for the hook's value, and where the variable is unset the target names no file, as an
+   unset `$TMPDIR`'s does.
+4. **Documents.** In `design/guards.md`: §1's sentence on what fixes the answer, which gains
+   `CLAUDE_JOB_DIR` beside `$TMPDIR`; §3.3's roots and literal forms, its note on
+   `scratchpad_dir`, which 2.1.304 sends, and its closing paragraph on where the scratchpad sits on
+   macOS, which 2.1.304's payload now answers wherever it sits; §2's payload row, which says the
+   payload carries no scratchpad path, to say 2.1.304's does; §3.2's "Row 6's text" as item 3
+   says; §7's accepted false deny removed, and its clause on a `cd` to a directory the rules
+   cannot read as scratch naming `cd "$CLAUDE_JOB_DIR/tmp" && echo y > f` beside `cd "$TMPDIR"` —
+   the replay found that shape in the field and none of it denied, so it stays a stated false deny
+   and no rule moves — and its clause on a `cd` the rules do not follow naming a scanned shell
+   body after a `cd` into the job's `tmp`, which starts from the payload's `cwd`; §8's payload
+   stated with `CLAUDE_JOB_DIR` unset, so its row for the job directory stays a deny, its note
+   saying why, and its list of exceptions naming §8.2's file rows beside §8.1's; and **a §8.2 of
+   its own**, read by the parametrised test as §8 and §8.1 are, its header the four cells
+   ``Files in `<job>/tmp` ``, `Command`, `Expected, unset` and `Expected, set` — the first with its
+   backticks, as §8.1 writes its own. Each row is judged twice under §8's payload, the job
+   directory passed to `respond` as `tmpdir` is: once as none and once as `<job>`. In a row whose
+   files cell is blank, which the reader takes as no files, `<job>` is `/home/u/.claude/jobs/j`,
+   under no root on either platform, and its commands spell that path literally, as §8's row
+   does. In a row listing files, `<job>` is a fresh directory into whose `tmp` the test first
+   writes them in §8.1's forms — sound because such a row reaches its file only through the
+   literal spelling, which is scratch with or without the root, so what it tests is item 3's
+   read, while a fresh directory under `/tmp` would make every absolute row scratch for the wrong
+   reason. `README.md`'s list of exempt paths names the job's `tmp`. The probe's note, with the
+   replay's counts. **Not** the guard start text or the deny message, which are memory-reviewer's
+   wording held by a test; the job's own instructions already name the directory.
+5. **The replay**, `experiments/m40_1_job_dir_replay.py`: every local `Bash` command naming a job
+   directory, outside this repository's transcripts, judged by the find-replace rule of the tree
+   it imports, with each job's directory taken from its session id, and each deny classed as
+   `experiments/m37_guard_replay.py` classes one. It prints counts and classes and, with `--dump`,
+   the commands, which stay out of the repository as the M37 replay's do. The literal rule has no
+   off switch, so the counts before the change are the same script run with `--no-job-dirs` and
+   `PYTHONPATH` naming a checkout of the M40 commit.
+
+**What landing in this tree does.** `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory` run this
+repository's `.venv/bin/zikaron-guard`, so every edit to `zikaron/guard/` is live in all three at
+their next `Bash` call — **so the build is done in a git worktree with its own `.venv`**, as M38's
+was, and reaches this tree only once its gate is green. Nothing needs re-installing, since the
+matcher does not change. Once it is live, LeibaTrader's memory
+`f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` is false, and retiring it is the operator's, through that
+project's agent.
+
+### Invariants and properties to cover
+
+- **§8.2's rows, through the hook's I/O**, `J` below standing for `/home/u/.claude/jobs/j`, which
+  the rows spell out. With no files: the observed
+  `cat > $CLAUDE_JOB_DIR/tmp/leaf_events.py <<'EOF'`, with a body and its `EOF`, silent both ways;
+  the observed `cat > J/tmp/group_book.py <<'EOF'` and `cd J/tmp && cat > stub.py <<'EOF'`, each
+  with a body, silent set and a deny unset; `printf x > $CLAUDE_JOB_DIR/state.json`,
+  `printf x > J/state.json` and `printf x > $CLAUDE_JOB_DIR/tmpx/a` a deny both ways;
+  `cd "$CLAUDE_JOB_DIR/tmp" && cat > stub.py <<'EOF'`, with a body, a deny both ways naming
+  `$CLAUDE_JOB_DIR/tmp/stub.py` under the `cwd`, the stated false deny; the observed
+  `cd J/tmp && python3 - <<'EOF'` / `p = 'fix.py'; open(p, 'w')` / `EOF`, a deny naming
+  `J/tmp/fix.py` unset and silent set, since a body's write is judged where the `cd` left the
+  command; its shell twin `cd J/tmp && bash <<'EOF'` / `echo y > f` / `EOF`, a deny naming `f` both
+  ways, since a scanned body starts from the payload's `cwd` (§3.3); the observed staging and run
+  in one command, `cat > J/tmp/fix.py <<'EOF'` / `open('f', 'w')` / `EOF` / `python3 J/tmp/fix.py`,
+  a deny naming `J/tmp/fix.py` unset and a deny naming `f` set — the staging exempt, the run
+  judged by the staged body — and its spellings through the variable, with `python3` and with
+  `bash` over a `sed -i … f` body, a deny naming `f` both ways; and
+  `python3 -c "open(os.environ['CLAUDE_JOB_DIR']+'/tmp/x','w')"` a deny naming nothing both ways,
+  the value the rules give it today — the expression's head is the unbound `os` — as §7 asks of a
+  conceived edge. With files: `python3 $CLAUDE_JOB_DIR/tmp/fix.py` and its
+  `${CLAUDE_JOB_DIR}` spelling over a `fix.py` that writes `f`, a deny naming `f` set — row 6 read
+  the file — and silent unset, where it names no file and the command stages nothing. That it
+  names no file, rather than a path under the `cwd` that does not exist, is silent through the
+  hook either way, so it is pinned at the unit, beside the unset `$TMPDIR`'s. The table's
+  mutations: the root dropped from `roots` and widened to `<job>`; the literal dropped from
+  `is_scratch` and widened to `$CLAUDE_JOB_DIR/…`; `file_path`'s prefix dropped — each turning at
+  least one row red.
+- **`main` reads the variable**, the twin of `test_main_reads_tmpdir_from_the_environment`:
+  `CLAUDE_JOB_DIR=/home/u/.claude/jobs/j` and `sed -i 's/a/b/' /home/u/.claude/jobs/j/tmp/f`, no
+  output. And the variable is pinned unset wherever §8's payload is assumed — both table fixtures,
+  the rule table's and the self-match table's, `test_main_writes_the_rules_output_and_exits_zero`,
+  and `TestTheRealProcess`, whose
+  subprocess inherits the environment — since the gate may itself run inside a background job.
+- A job directory is normalized as `$TMPDIR` is — a trailing `/` dropped, a relative one joined
+  to the `cwd` — before its `tmp` is a root.
+- **Determinism** (§1): the property test's locations carry the job directory, as
+  `[None, "", "/", "/home/u/.claude/jobs/j", "rel"]`, and its fragments `$CLAUDE_JOB_DIR/tmp/x`, so
+  both new branches are generated rather than reached by chance.
+- The re-read nudge (§4) is silent for an edit under the job's `tmp`, through the same test of
+  scratch, and the same edit with no job directory gets a nudge.
+- Fail-open (§6) unchanged, and the guard still imports nothing outside the standard library.
+
+### Done when
+
+1. Items 1–5 are in, and every new test was **seen red** against the mutation it names.
+2. **The replay is read**, before and after (item 5): the probe's note records both runs' counts
+   and classes; no deny is left in the class of a job's own `tmp` but for the stated false deny of
+   a `cd` through the variable; and a sample of every class still denied is read and found a real
+   edit or the rule's deny of a write it cannot place (§3.3), the note saying whether any of the
+   latter reads the job directory from the environment, which is what the fence's reason rests
+   on. A defect found there is fixed before done-when 3.
+3. **One background job**, in a throwaway project under `~/ZikaronTesting` whose workspace the
+   operator has trusted once, with the guards installed from the worktree's `.venv` and the job
+   run under `--permission-mode bypassPermissions`, where §2 measured that a deny still holds,
+   runs the observed `cat > $CLAUDE_JOB_DIR/tmp/…` and its absolute twin. **Undenied** means
+   each file is there afterwards and no tool result in the job's transcript is a
+   `PreToolUse:Bash hook error`. The same job then **overwrites** one of those files with `Write`
+   at its absolute path — scratch only through the root `main` reads from its environment, and an
+   update, which §4 nudges where a creation it never does, its result seen in the transcript as
+   `type` `update`, since a `Write` the harness refuses fires no `PostToolUse` — and, as the
+   control, overwrites one authored file of the throwaway project with `Write`, in a worktree it
+   enters with `EnterWorktree` first, since Claude Code refuses a background session's edit to the
+   shared checkout until it has one (observed on 2.1.304): the authored overwrite is followed by a
+   re-read reminder in the transcript and the job-tmp overwrite by none, which shows the
+   `PostToolUse` hook's environment carries the variable too. The observation joins the probe's
+   note.
+4. `./check.sh` is green.
+
+### Scope fence
+
+**Not** any other scratch root, and **not** a script's own spelling of the job directory
+(`os.environ['CLAUDE_JOB_DIR']`), which moves only on an observed command (§7). **Not** the start
+text, the deny message, the override, §3.1's grammar or any other §3 form. **Not** kiro, which has
+no guards (`design/kiro-gaps.md`). **Not** re-installed in the three projects that run this tree,
+and nothing in the service, the store or the memory hook.
+
+## M40-2 — A command no one should paste, and a log that keeps why a build died
+
+Normative: **`design/knowledge-index.md` §8.4** (what the build-starting verbs return, and the
+passage beginning *"Every refusal a build can be given before it reads a file"*) and **§8.5**
+(`status`); `design/architecture.md` §"Filesystem security"; `design/schema.md` §"What is
+instrumented, what is not, and why" and §"Migration posture", where they cite the command a build
+result prints. Decision: none — a change to the knowledge index's tool surface within its own
+spec. Evidence: the operator's reading, 2026-10-17: *"it seems like leaking implementation
+detail as well as it might make agent who called it become creative and decide to run command on
+its own"*.
+
+**What was found.** `knowledge_add` and `knowledge_refresh` return, per corpus started, a
+`foreground_command` — the indexer's argv — because a detached build's output is discarded and
+re-running that command is the only way to learn why one died. It hands an agent a command to run
+beside the build the service already started, which is the duplicate-build class M39 closed, and it
+names an implementation detail no agent needs. The spec rejected the alternative, a log per
+knowledge base, as *"several concurrent writers and a retention policy"*. **Neither cost holds for
+the log below**: a corpus's lock already admits one build at a time, so it has one writer, and a
+log emptied at each spawn holds only the latest build, so it needs no retention.
+
+### What ships
+
+1. **The log.** `detach.spawn` opens `knowledge/<uuid4>.log` beside the corpus's database, emptied,
+   at `0600` under the store's umask, and gives it to the child as stdout and stderr in place of
+   `DEVNULL`. A build run by hand writes to its terminal, as before. `knowledge_remove` deletes the
+   log with the database; a log is never a candidate in the orphan scan, which looks at `.db` files
+   alone.
+2. **`status` names it**: `knowledge_status` gains `build_log`, the path when the file exists and
+   `null` otherwise; `zikaron knowledge status` prints it, and `zikaron knowledge`'s note after a
+   build that ended badly points at it.
+3. **`foreground_command` goes**, from both verbs' results and from the wire, with the CLI's
+   `foreground …` line; the CLI's `follow … status` line stays, and `status` now carries the log.
+4. **Documents**: the passages in the normative list; `design/coding-standards.md` §6's account of
+   the detached indexer, whose trade this reverses; and the comments in `zikaron/` that reason from
+   the printed command (`core/events.py`, `project/resolve.py`, `knowledge/scope.py`,
+   `knowledge/indexer/main.py`, `knowledge/indexer/build_log.py`, `knowledge/indexer/detach.py`).
+
+### Invariants and properties to cover
+
+- A spawned build's stdout and stderr reach its log; the log is `0600`, emptied at the next spawn,
+  and deleted by `remove`.
+- `status` reports `build_log` as a path once a spawn has written one, and `null` for a corpus
+  never built.
+- Neither verb's result carries `foreground_command`, and the CLI prints no `foreground` line.
+- A log is never an orphan candidate.
+- An indexer that dies of an exception leaves its traceback in the log — the case the change is
+  for.
+
+### Done when
+
+1. Items 1–4 are in, every new test was **seen red** against the mutation it names, no code
+   writes or reads `foreground_command`, and in `design/` only this brief names it.
+2. `./check.sh` is green.
+
+### Scope fence
+
+**Not** a log for the service, the hook or the MCP client, each of which keeps what it has. **Not**
+a rotation or a size cap: a build's output is a line per real advance and its failure. **Not** a
+change to what a build does, to the lock, to `knowledge_build` rows or to any table. **Not**
+removing the indexer's own entry point, which a person may still run by hand.
+
+## M40-3 — One model for every agent, and a flag for each
+
+Normative: **`design/harness.md` §"The flags, and what each refuses"** and §"The consolidator's
+model"; `design/code-knowledge.md` §5.1 and §5.4 where they say what `--model` sets; `README.md`'s
+table of install options. Decision: D34's split, unchanged — a value per agent, no new shape.
+Evidence: the operator's practice, 2026-10-17 — a strong model orchestrates, a mid one writes, a
+cheap one codes — and the Warp run, whose orchestrator ran Sonnet 4.6 because the one `--model`
+set every agent.
+
+### What ships
+
+1. **`--consolidator-model`, `--documenter-model` and `--orchestrator-model`**, each the model of
+   that agent alone. `--model` is the default for any of them not given; with neither, each agent
+   takes its own (`HarnessSpec.consolidator_model`, `HarnessSpec.documenter_model`,
+   `ORCHESTRATOR_MODEL`), as now.
+2. **Refusals.** Any of the three under `--components guards`, which ships no agent, as `--model`
+   is refused there; and `--orchestrator-model` under kiro, which ships no orchestrator — refused
+   rather than ignored, since a flag that silently does nothing is what the install contract exists
+   to prevent. `--model` under kiro stays accepted, since it sets two agents there.
+3. **The model check**: each distinct model the install ships is checked once against its harness,
+   the orchestrator's included when a flag names it; `ORCHESTRATOR_MODEL` stays unchecked under
+   kiro, which ships no orchestrator.
+4. **Documents**: the passages in the normative list.
+
+### Invariants and properties to cover
+
+- Each flag reaches its own agent's file and no other, on each harness where that agent exists.
+- Precedence: an agent's own flag over `--model` over the agent's default.
+- Both refusals, each with its message, before anything is written.
+- Each distinct model is checked exactly once, counted through a stubbed check.
+- The install snapshots do not move, since no default changes.
+
+### Done when
+
+1. Items 1–4 are in, and every new test was **seen red** against the mutation it names.
+2. `./check.sh` is green.
+
+### Scope fence
+
+**Not** a change to any default model. **Not** a flag for effort. **Not** an orchestrator under
+kiro. **Not** the evaluation's third reader, which stays in `FINDINGS.md` §"Owed work".
+
+## M40-4 — A grep through a documented module, by an agent that forgot its documents
+
+Normative, written by the build: **`design/code-knowledge.md` §6** (navigation) for the reminder,
+§5.1 for why a documenter never receives it; `design/harness.md` §"The table" and §"What a Claude
+Code install writes"; `design/architecture.md` §"Service RPC surface" and §Components on what the
+hook does; `design/schema.md`'s configuration table. Decision: **D39, amended** (operator,
+2026-10-20); D22 and D31 bind the hook. Evidence: the operator, 2026-10-19 — LeibaTrader's agent
+said it forgets the knowledge base as it forgot the edit rules, though its `CLAUDE.md` names both;
+`research/claude-code-tool-hooks-docs.md` for the `if` filter and for `agent_type` in a subagent's
+tool events.
+
+**What it is.** D38's re-read nudge showed that a `PostToolUse` hook's `additionalContext` reaches
+the agent as a reminder after the call ran, canceling nothing (`design/guards.md` §2). The same
+channel, after a search of source the project has documented, can name the corpus that documents
+it, at the moment the agent is looking for what the documents hold. It is a reminder, never a deny:
+the search has already run.
+
+### What ships
+
+1. **Two probes first**, recorded in `research/`: whether a subagent's `PostToolUse` payload
+   carries `agent_type` naming its definition, as the documentation says — if it does not, no
+   subagent's call can be told from the session's, and the build stops there and reports to the
+   operator; and whether a hook
+   entry's `if` filter (`Bash(grep *)`, `Bash(rg *)`) keeps the hook from starting on every other
+   `Bash` call. If the filter does not hold, the hook starts on every `Bash` call and its first
+   check is the command word, and the cost of that start is measured and reported before the build
+   goes on.
+2. **The trigger**: Claude Code's `PostToolUse` on `Grep` and `Glob`, and on `Bash` as the filter
+   allows, carried as data on `HarnessSpec` — `None` under kiro — and installed with the memory
+   component into `.claude/settings.local.json` beside the prompt entry. `zikaron-hook` handles it
+   as an event of its own.
+3. **What counts as a search of a documented module.** The paths searched: `Grep`'s and `Glob`'s
+   `path`, the payload's `cwd` when it has none; for `Bash`, a simple command whose word is `grep`,
+   `egrep`, `fgrep` or `rg`, found in command position as `design/guards.md` §3.1 finds one, and its
+   operands after the pattern that are no option, or the `cwd` when it has none. A search is of
+   module M when a path searched is M or lies under it, **or M lies under a path searched** — a
+   search from the project's root searches every module, and is the commonest form. M ranges over
+   the modules whose corpus, `code-knowledge/<module>`, is registered.
+4. **The service decides, through one method with no tool**, named by §"Service RPC surface"'s
+   rule. It reads the registry, keeps for each session the time of its last reminder — in memory,
+   so a restart costs at most one extra reminder — and answers one line or nothing. **The hook
+   never starts a service for it**: it connects if one is serving and is silent otherwise. Each
+   `memory_surface` call, one per user prompt, resets its session's time, so the first such search
+   of a turn reminds; after that, at most one each `retrieval.code_knowledge_reminder_seconds`, a
+   new configuration key whose default is 300 (operator, 2026-10-19), so a long autonomous turn is
+   reminded again where a call-count throttle would fire every few calls — a treatment run in the
+   Warp slice made about 70 `Grep` calls. **No base rate is measured first** (operator,
+   2026-10-19): LeibaTrader runs short supervised tasks, so its transcripts would not set the
+   interval.
+5. **Never in a `zikaron-documenter` or `zikaron-code-orchestrator` session**, by `agent_type`:
+   the documenter takes nothing from a code-knowledge base (`design/code-knowledge.md` §5.1), and
+   the orchestrator searches no source. Every other subagent is reminded as the session is.
+6. **The line**: deterministic, naming each corpus the search reached and saying that
+   `zikaron_knowledge_search` finds what a file is for and what it depends on, as a lead to check
+   against the code. **Its final wording is memory-reviewer's**, as every shipped prompt's is.
+7. **Fail-open**: any failure is silence and exit 0, as the push hook's are, within an explicit
+   `timeout` on the entry.
+8. **Documents**: those in the normative list; D39's amendment in `design/overview.md` and
+   `FINDINGS.md`; `README.md`'s account of what an install writes; and a row in
+   `design/kiro-gaps.md`, since kiro's `postToolUse` has no documented path to the model.
+
+### Invariants and properties to cover
+
+- **The matching table**: a path in M, under it, above it, beside it, and spanning two documented
+  modules; a `Bash` command that is no search; a search with no path.
+- **The throttle**: the first search of a turn reminds, a second within the interval does not, one
+  after it does, and `memory_surface` resets it.
+- **Never** in a documenter's or an orchestrator's session.
+- With no service serving, the hook is silent and starts nothing.
+- A malformed payload, an unknown tool or a failing call is silent with exit 0.
+- `zikaron-hook` still imports nothing outside the standard library.
+- An install writes the entry for `memory` and `both` and not for `guards`, and a re-run that
+  changes nothing writes nothing.
+- The method's validation and its `call` row, as every method's.
+
+### Done when
+
+1. The probes are recorded, items 2–8 are in, and every new test was **seen red** against the
+   mutation it names.
+2. **One live session** in a throwaway project with a documented module shows the reminder after a
+   grep there and none after a second within the interval; the observation goes in `research/`.
+3. `./check.sh` is green, and the pull request's CI is the version matrix.
+
+### Scope fence
+
+**Not** kiro (item 8). **Not** a deny, or anything that delays the search. **Not** a reminder after
+`Read` or any tool but the three. **Not** the reminder to verify a document against the code after
+a knowledge search, which stays in `FINDINGS.md` §"Owed work" until its decay is measured. **Not**
+steering text at session start, nor a change to search, K14, the push path's budget or the guards.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

@@ -13,6 +13,9 @@ message says: which marker message, the placement clause, and what the deny name
 §8.1, row 6's file reads, adds a first column naming the files each row's `$TMPDIR` holds, in the
 forms its preamble lists; `file_cases` reads it, and any form not listed there raises.
 
+§8.2, a background job's directory, names the files in the same forms, a blank cell for none, and
+gives two `Expected` cells, for `CLAUDE_JOB_DIR` unset and set; `job_cases` reads it.
+
 §9.5, the self-match rule's table, adds a first column naming the platform and the tool where they
 are not `linux` and `Bash`; its items are backticked lines only, and `selfmatch_cases` raises on
 any prose among them.
@@ -30,8 +33,10 @@ from tests.design_tables import DesignTableError, table_with_columns
 DOCUMENT: Final = "guards.md"
 HEADING: Final = "## 8. The test table's seed"
 FILE_READS_HEADING: Final = "### 8.1 Row 6's file reads"
+JOB_DIR_HEADING: Final = "### 8.2 A background job's directory"
 
-#: §8's payload: a `cwd` that is not scratch, `$TMPDIR` unset, no `scratchpad_dir`.
+#: §8's payload: a `cwd` that is not scratch, `$TMPDIR` and `CLAUDE_JOB_DIR` unset, no
+#: `scratchpad_dir`.
 CWD: Final = "/home/u/proj"
 #: The one row that says a relative target resolves under `/tmp/` is judged here.
 SCRATCH_CWD: Final = "/tmp/w"  # noqa: S108 — a payload value, never touched
@@ -308,6 +313,46 @@ def _padded(text: str, size: int) -> bytes:
     if rest:
         filler += b"#" * (rest - 1) + b"\n"
     return filler + tail
+
+
+#: §8.2's `<job>` in a row listing no files.
+JOB_DIR: Final = "/home/u/.claude/jobs/j"
+
+
+@dataclass(frozen=True)
+class JobCase:
+    """One item of §8.2 under one setting of `CLAUDE_JOB_DIR`: the files, the command, whether the
+    variable is set, and the raw `Expected` cell for that setting."""
+
+    row: int
+    files: tuple[ScratchFile, ...]
+    command: str
+    job_dir_set: bool
+    expected: str
+    cwd: str = CWD
+
+    @property
+    def id(self) -> str:
+        setting = "set" if self.job_dir_set else "unset"
+        return f"row8.2-{self.row}-{setting}:{self.command[:60]}"
+
+
+def job_cases() -> list[JobCase]:
+    """Every item of every row of §8.2, once per setting, in order."""
+    found: list[JobCase] = []
+    files_column = "Files in `<job>/tmp`"
+    columns = (files_column, "Command", "Expected, unset", "Expected, set")
+    for number, row in enumerate(table_with_columns(DOCUMENT, JOB_DIR_HEADING, columns), start=1):
+        cell = row[files_column]
+        files = tuple(_scratch_file(item) for item in _items(cell)) if cell else ()
+        for item in _items(row["Command"]):
+            spans, prose = _pieces(item)
+            if prose.replace("/", "").strip():
+                raise DesignTableError(f"§8.2 command {item!r} carries prose")
+            command = "\n".join(spans)
+            for job_dir_set, expected in ((False, "Expected, unset"), (True, "Expected, set")):
+                found.append(JobCase(number, files, command, job_dir_set, row[expected]))
+    return found
 
 
 SELF_MATCH_HEADING: Final = "### 9.5 The test table's seed"

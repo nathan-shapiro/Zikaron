@@ -232,6 +232,7 @@ the `content` was recalled from the `gist` as a permanent one and obeyed after i
 | `design/harness.md` | **the two supported harnesses as one table**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership under a shared MCP process, the consolidator's model | D34, and the harness half of D31/D32 |
 | `design/guards.md` | the two deterministic Claude Code hooks: the find-replace guard, its exemptions and override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f`, the measured hook behaviour, installation by selection, fail-open, known gaps | D38 |
 | `design/code-knowledge.md` | the producer of per-source-file documentation: the planner command and its classes, the document format, the documenter and the skill, installation, navigation, the evaluation, known gaps | D39 |
+| `design/kiro-gaps.md` | what Zikaron does under Claude Code and not under kiro: each gap's kind — not built, or a harness limit — why, and what closing it takes | D34 |
 | `design/distribution.md` | **supported platforms and what rules each out**, acquisition (`uv` recommended, host Python supported) and why install-time only, the version scheme (a minor bump means a schema bump), what CI asserts and what it provably cannot | D35, D36 |
 | `design/prior-art.md` | `~/Memory` as built, what transfers, the four divergences and how each resolved | context for all |
 

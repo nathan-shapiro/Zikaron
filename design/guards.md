@@ -27,8 +27,8 @@ behaviour is §7's count.
 - **Regular expressions over the tool call, and one file read.** No model, no network, no store,
   no service, and no filesystem query beyond the hook's own stdin except one: the text of a
   scratch script the command runs, read once and bounded (§3.2 row 6). The same payload, the same
-  `$TMPDIR` (§3.3), the same platform (§9) and the same contents of that script always give the
-  same answer.
+  `$TMPDIR` and `CLAUDE_JOB_DIR` (§3.3), the same platform (§9) and the same contents of that
+  script always give the same answer.
 - **Stdlib only**, held by `tests/test_hook_stdlib_only.py`, so the cost per call is one Python
   start.
 - **D2 is untouched**: no model at all, and nothing on Zikaron's write path.
@@ -58,7 +58,8 @@ observed, not read from documentation.
 | `PostToolUse` `additionalContext` after a successful edit | Reaches the model, beside an unchanged tool result |
 | `PostToolUse` stdin for `Write` | `tool_response.type` is `"create"` or `"update"` |
 | `PostToolUse` stdin for `Edit` | `tool_response.structuredPatch` carries the changed hunks with line numbers |
-| The payload | Carries `cwd`; carries no scratchpad path |
+| The payload | Carries `cwd`. 2.1.285's carried no scratchpad path; 2.1.304's carries `scratchpad_dir`, the session's scratchpad under `/tmp` (`research/claude-code-job-dir-hook-probe.md`) |
+| The hook's environment in a background job (`claude --bg`) | Carries `CLAUDE_JOB_DIR`, the job's own directory, whose `tmp` the harness tells the job to use for scratch; `TMPDIR` is unset (2.1.304, the same note) |
 
 The documentation (`research/claude-code-tool-hooks-docs.md`) agrees on every row and adds three
 facts the design leans on: a hook `deny` also holds under `--dangerously-skip-permissions`; a hook
@@ -232,8 +233,10 @@ lines, or one scanned body), the latest such body is the text, raw: unexpanded e
 unquoted delimiter, where the shell would first expand any `$…` in it, and untransformed by any
 filter between the heredoc and the `tee`. Otherwise **the file at that path is read, once**. The
 path is the operand's resolved one, except that a leading `$TMPDIR` or `${TMPDIR}` stands for the
-hook's own `$TMPDIR`, and `${TMPDIR:-DEFAULT}` for it or, unset, for `DEFAULT`; any other
-`${TMPDIR…}` names no file. The read takes at most 256 KiB, of a regular file and not a symlink
+hook's own `$TMPDIR`, `${TMPDIR:-DEFAULT}` for it or, unset, for `DEFAULT`, and a leading
+`$CLAUDE_JOB_DIR` or `${CLAUDE_JOB_DIR}` for the hook's own `CLAUDE_JOB_DIR`; any other
+`${TMPDIR…}`, and `$CLAUDE_JOB_DIR` where the hook has none, names no file. The read takes at
+most 256 KiB, of a regular file and not a symlink
 (opened without following one and without blocking), decoded as UTF-8 with undecodable bytes
 replaced. A missing file, any other kind of file, a larger one, or any error reading it means no
 text, and the row does not match (§6). A script staged in the same command by any other means is
@@ -306,16 +309,23 @@ a security boundary.
 
 A target is **scratch** when, after every quote in it is removed (with the backslash escaping it, if
 any) and a relative path is joined to the payload's `cwd` and normalised as a string — no
-filesystem access — it is, or lies under, `/tmp`, `/var/tmp`, `/dev`, the value of `$TMPDIR`, or
-the payload's `scratchpad_dir` where a version sends one (2.1.285 does not) — compared
-component-wise, so `/tmp` itself counts and `/tmpfoo` does not — or is written as the literal
-`$TMPDIR/…` or `${TMPDIR…}/…` (so `"$TMPDIR"/probe` and `${TMPDIR:-/tmp}/probe` count). A
-`$TMPDIR` that is empty or `/` is ignored, since it would make everything scratch, and a relative
-one is joined to the payload's `cwd` first; the same holds for `scratchpad_dir`. **A target that
-begins with a variable the command bound is read with the variable's value in its place**: where a
-target starts `$NAME` or `${NAME}` — after its quotes are removed, and ending there or followed by
-`/` — and a simple command made only of `NAME=value` words, earlier in the same unit (the command's
-own lines, or one scanned body), bound `NAME`, the last such value replaces it. So
+filesystem access — it is, or lies under, `/tmp`, `/var/tmp`, `/dev`, the value of `$TMPDIR`, the
+payload's `scratchpad_dir` where a version sends one (2.1.285 does not, 2.1.304 does), or a Claude
+Code background job's own `tmp`, under the directory the hook's `CLAUDE_JOB_DIR` names (§2) —
+compared component-wise, so `/tmp` itself counts and `/tmpfoo` does not — or is written as the
+literal `$TMPDIR/…` or `${TMPDIR…}/…` (so `"$TMPDIR"/probe` and `${TMPDIR:-/tmp}/probe` count), or
+as `$CLAUDE_JOB_DIR/tmp` or `${CLAUDE_JOB_DIR}/tmp`, alone or followed by `/…`, which is scratch
+whether or not the hook has the variable, since where it is unset the shell writes under `/tmp`.
+A `$TMPDIR` that is empty or `/` is ignored, since it would make everything scratch, and a
+relative one is joined to the payload's `cwd` first; the same holds for `scratchpad_dir` and
+`CLAUDE_JOB_DIR`. Of a job's directory only `tmp` is scratch, since the harness keeps the job's own
+state beside it.
+
+**A target that begins with a variable the command bound is read with the variable's value in its
+place**: where a target starts `$NAME` or `${NAME}` — after its quotes are removed, and ending
+there or followed by `/` — and a simple command made only of `NAME=value` words, earlier in the
+same unit (the command's own lines, or one scanned body), bound `NAME`, the last such value
+replaces it. So
 `S=/tmp/x; echo y > "$S/a"` is scratch, `R=research; echo y > "$R/a"` names `<cwd>/research/a`, and
 `t=$(mktemp); echo x > "$t"` stays a false deny, its value being `$(mktemp)`. A prefix assignment
 (`S=/tmp/x echo y > "$S/a"`) binds nothing, as the shell expands the word before it takes effect,
@@ -422,9 +432,11 @@ scratch and it has at least one. The targets are, per form:
 - **Row 6**: what its script's text yields, judged as §3.2's "Row 6's judging" says — never the
   operand itself, which only has to be scratch for the row to match.
 
-The session scratchpad sits under `/tmp/` on Linux. On macOS, where `$TMPDIR` is under
-`/var/folders/…`, where the scratchpad sits is unmeasured; if it is under `$TMPDIR` it is exempt by
-the same rule, and if not, writes there are a false deny the override answers.
+The session scratchpad sits under `/tmp/` on Linux. 2.1.304's payload names it as
+`scratchpad_dir` (measured on Linux, `research/claude-code-job-dir-hook-probe.md`), so it is exempt
+wherever it sits; under a version that sends none, on macOS, where `$TMPDIR` is under
+`/var/folders/…`, a scratchpad under `$TMPDIR` is exempt by the same rule, and one elsewhere takes
+writes that are a false deny the override answers.
 
 ### 3.4 The override
 
@@ -720,16 +732,19 @@ defect.
     formatting with a scratch name (`'%s/x' % d`, `'{}/x'.format(d)`, where the literal alone
     contributes and is relative); a path returned by a call that is no path function
     (`out = make_path(d)`); `'/'.join([d, 'x'])`, where `'/'` contributes alone and is no scratch
-    root; a subscript receiver (`paths[0].write_text(…)`); a path passed only as a keyword
-    other than `file=`/`path=` (`fileinput.input(files='f', inplace=True)`), which names nothing;
-    and a Claude Code background job's own `~/.claude/jobs/<id>/tmp`, which is no scratch root
-    unless a version's payload names it as `scratchpad_dir` — seen in one session of the
-    pre-install replay (`research/m37-guard-transcript-replay.md`);
+    root; a subscript receiver (`paths[0].write_text(…)`); a script's own spelling of a background
+    job's directory (`open(os.environ['CLAUDE_JOB_DIR']+'/tmp/x','w')`), whose head is the unbound
+    `os`; and a path passed only as a keyword other than `file=`/`path=`
+    (`fileinput.input(files='f', inplace=True)`), which names nothing;
   - **false denies**: a relative target after a `cd` the rules do not follow (§3.3) — in a unit
     holding a `(` subshell (`cd /tmp && (echo y > f)`), or `cd` alone, `cd -` or `cd ~/x` — which
-    resolves against the payload's `cwd`; and one after a `cd` the rules follow to a directory
-    they cannot read as scratch, since `DIR` is read as a path and the `$TMPDIR` literal rule looks
-    only at a target's own text (`cd "$TMPDIR" && echo y > f`, `cd $(mktemp -d) && echo y > f`);
+    resolves against the payload's `cwd`, as does one inside a scanned shell body after a `cd`
+    into a scratch directory (§8.2's `cd /home/u/.claude/jobs/j/tmp && bash <<'EOF'` /
+    `echo y > f`), the body starting from the payload's `cwd`; and one after a `cd` the rules
+    follow to a directory
+    they cannot read as scratch, since `DIR` is read as a path and the literal rules look only at a
+    target's own text (`cd "$TMPDIR" && echo y > f`, `cd "$CLAUDE_JOB_DIR/tmp" && echo y > f`,
+    `cd $(mktemp -d) && echo y > f`);
     `python3 tool.py <<'EOF'` whose body is data containing a
     write call, and `python3 - <<'EOF'` whose body holds a row-1 line Python will not run, since
     the opener's pipeline has an interpreter word and the over-match is accepted. A PR or commit
@@ -802,10 +817,11 @@ here and every edge §7 names with the value §7 gives it; a row found
 during the build is added here in the same change as its test. *Deny* means a deny; *silent* means
 no output; *ack* means no decision plus the override's acknowledgement. `/` separates lines of one
 command (`\|`: §3). **Every row is judged under one payload**: `cwd` is a directory that is not
-scratch (`/home/u/proj`), `$TMPDIR` is unset, the payload carries no `scratchpad_dir`, and **no
-file exists for row 6 to read** — so a row-6 row is judged on what its own command stages, never on
-whatever the machine running the test holds under `/tmp`; the one row saying a relative target
-resolves under `/tmp/` is the exception to the first, and §8.1's rows, which do read files, to the
+scratch (`/home/u/proj`), `$TMPDIR` and `CLAUDE_JOB_DIR` are unset, the payload carries no
+`scratchpad_dir`, and **no file exists for row 6 to read** — so a row-6 row is judged on what its
+own command stages, never on whatever the machine running the test holds under `/tmp`; the one
+row saying a relative target resolves under `/tmp/` is the exception to the first, §8.2's rows to
+the unset `CLAUDE_JOB_DIR`, and §8.1's rows and §8.2's file rows, which do read files, to the
 last. The probe's commands are
 the rows marked *probe*, verbatim, judged under the same `cwd` — the probe itself ran in a
 scratch directory, where these rules would exempt them.
@@ -987,7 +1003,7 @@ scratch directory, where these rules would exempt them.
 | `cd dir && sed -i 's/a/b/' f` | deny, naming `dir/f` (a `cd` in the same command is followed) |
 | `sed -i 's/a/b/' /tmp/my\ file` | deny (stated, §7: an escaped space splits a token) |
 | `cd /tmp/x && sed -i 's/a/b/' f` · `S=/tmp/s; cd $S && cat > p.py <<'EOF'` / `x` / `EOF` · `cd "/tmp/a b"; echo y > f` · `cd /tmp; cd x && echo y > f` | silent (a `cd` in the same command is followed) |
-| `cd /home/u/.claude/jobs/j/tmp && cat > stub.py <<'EOF'` / `x` / `EOF` · `printf 'x\n' > /home/u/.claude/jobs/j/tmp/rows.txt` | deny (stated false denies on scratch, §7: a job's tmp directory is no scratch root) |
+| `cd /home/u/.claude/jobs/j/tmp && cat > stub.py <<'EOF'` / `x` / `EOF` · `printf 'x\n' > /home/u/.claude/jobs/j/tmp/rows.txt` | deny (a job's `tmp` is scratch only through the hook's `CLAUDE_JOB_DIR`, here unset: §3.3, §8.2) |
 | `(cd /tmp && ls); echo y > f` · `cd /tmp && (echo y > f)` · `cd && echo y > f` · `cd - && echo y > f` · `cd ~/x && echo y > f` | deny, naming `f` (a `cd` the rules do not follow; the second a stated false deny) |
 | `echo x > ~/f` | deny, naming `~/f` (parsed as stated: `~` is not expanded) |
 | `echo x > $HOME/f` | deny, naming `$HOME/f` (parsed as stated: `$HOME` is not expanded) |
@@ -1039,6 +1055,28 @@ preceded by `#` comment lines to make up the count), or the byte `0xFF` followed
 | `fix.py`: 262145 bytes ending in `open('f', 'w')` | `python3 "$TMPDIR/fix.py"` | silent (over 256 KiB, not read) |
 | `fix.py`: the byte `0xFF` followed by `open('f', 'w')` | `python3 "$TMPDIR/fix.py"` | deny, naming `f` (an undecodable byte is replaced) |
 | `fix.py`: `open('f', 'w')` | `cd "$TMPDIR" && python3 fix.py` | silent (stated miss, §7: §3.3 reads a `cd`'s `$TMPDIR` as a path) |
+
+### 8.2 A background job's directory
+
+The rows a job's directory decides. Each is judged twice under §8's payload, the hook's
+`CLAUDE_JOB_DIR` given once as unset and once as `<job>`. In a row whose files cell is blank,
+`<job>` is `/home/u/.claude/jobs/j`, under no scratch root on either platform, and the row's
+commands spell that path out; in a row listing files, `<job>` is a fresh directory holding an
+empty `tmp`, into which the test first writes the files in §8.1's forms, and the row's commands
+reach them only through the variable.
+
+| Files in `<job>/tmp` | Command | Expected, unset | Expected, set |
+|---|---|---|---|
+| | `cat > $CLAUDE_JOB_DIR/tmp/leaf_events.py <<'EOF'` / `print(1)` / `EOF` · `cat > "${CLAUDE_JOB_DIR}/tmp/rows.txt" <<'EOF'` / `x` / `EOF` · `printf x > "$CLAUDE_JOB_DIR/tmp/a b"` | silent (the literal spelling; unset, the shell writes under `/tmp`) | silent |
+| | `cat > /home/u/.claude/jobs/j/tmp/group_book.py <<'EOF'` / `print(1)` / `EOF` · `cd /home/u/.claude/jobs/j/tmp && cat > stub.py <<'EOF'` / `x` / `EOF` · `printf x > /home/u/.claude/jobs/j/tmp/rows.txt` | deny | silent (the job's `tmp` is a root) |
+| | `printf x > /home/u/.claude/jobs/j/state.json` · `printf x > $CLAUDE_JOB_DIR/state.json` · `printf x > $CLAUDE_JOB_DIR/tmpx/a` | deny | deny (only the job's `tmp` is scratch) |
+| | `cd "$CLAUDE_JOB_DIR/tmp" && cat > stub.py <<'EOF'` / `x` / `EOF` | deny, naming `$CLAUDE_JOB_DIR/tmp/stub.py` | deny, naming `$CLAUDE_JOB_DIR/tmp/stub.py` (stated false deny, §7: `DIR` is read as a path) |
+| | `cat > /home/u/.claude/jobs/j/tmp/fix.py <<'EOF'` / `open('f', 'w')` / `EOF` / `python3 /home/u/.claude/jobs/j/tmp/fix.py` | deny, naming `/home/u/.claude/jobs/j/tmp/fix.py` | deny, naming `f` (the staging is exempt and the run is judged by the staged body) |
+| | `cat > $CLAUDE_JOB_DIR/tmp/fix.py <<'EOF'` / `open('f', 'w')` / `EOF` / `python3 $CLAUDE_JOB_DIR/tmp/fix.py` · `cat > $CLAUDE_JOB_DIR/tmp/fix.sh <<'EOF'` / `sed -i 's/a/b/' f` / `EOF` / `bash $CLAUDE_JOB_DIR/tmp/fix.sh` | deny, naming `f` | deny, naming `f` (staging and run meet through the spelling either way) |
+| | `cd /home/u/.claude/jobs/j/tmp && python3 - <<'EOF'` / `p = 'fix.py'; open(p, 'w')` / `EOF` | deny, naming `/home/u/.claude/jobs/j/tmp/fix.py` | silent (a body's write is judged where the `cd` left the command) |
+| | `cd /home/u/.claude/jobs/j/tmp && bash <<'EOF'` / `echo y > f` / `EOF` | deny, naming `f` | deny, naming `f` (stated false deny, §7: a scanned body starts from the payload's `cwd`) |
+| | `python3 -c "open(os.environ['CLAUDE_JOB_DIR']+'/tmp/x','w')"` | deny, naming nothing | deny, naming nothing (stated false deny on scratch, §7) |
+| `fix.py`: `open('f', 'w').write('x')` | `python3 $CLAUDE_JOB_DIR/tmp/fix.py` · `python3 "${CLAUDE_JOB_DIR}/tmp/fix.py"` | silent (no file is named, and the command stages nothing) | deny, naming `f` (row 6 read the file) |
 
 ## 9. The self-match rule — the same `PreToolUse` hook
 

@@ -1,9 +1,10 @@
 """The self-match rule against every row of `design/guards.md` §9.5, through the hook's I/O.
 
-Each item is judged as §8's are — `cwd` `/home/u/proj`, `$TMPDIR` unset, no file for row 6 to
-read — on the row's platform and tool, and asserted on what the hook emits: no output at all for
-*silent*, and for a deny, which rule's message, its parts and its appended clauses. The self-match
-message is matched against its own template, so the assertions hold whatever its wording is.
+Each item is judged as §8's are — `cwd` `/home/u/proj`, `$TMPDIR` and `CLAUDE_JOB_DIR` unset, no
+file for row 6 to read — on the row's platform and tool, and asserted on what the hook emits: no
+output at all for *silent*, and for a deny, which rule's message, its parts and its appended
+clauses. The self-match message is matched against its own template, so the assertions hold
+whatever its wording is.
 """
 
 import json
@@ -51,6 +52,7 @@ def _emit(case: SelfMatchCase) -> dict[str, object] | None:
 @pytest.fixture(autouse=True)
 def _no_tmpdir(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("CLAUDE_JOB_DIR", raising=False)
 
 
 def test_section_9_5_yields_items_on_every_platform_and_tool() -> None:

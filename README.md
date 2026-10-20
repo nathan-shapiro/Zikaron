@@ -499,11 +499,12 @@ global and unregisters the tool, after which the consolidator itself refuses to 
 rules, with no model and no store behind them (`design/guards.md`):
 
 - **A find-replace edit to an authored file is refused** — `sed -i`, `perl -pi`, an inline Python
-  or node script that writes a file, a heredoc or `echo` redirected into one, and a script under
-  `/tmp` or `$TMPDIR` that the command runs and that does any of these. The refusal reaches the
+  or node script that writes a file, a heredoc or `echo` redirected into one, and a script in
+  scratch that the command runs and that does any of these. The refusal reaches the
   agent as the tool's result and tells it to use `Read` and `Edit`, or `Write` for a new file.
-  Paths under `/tmp`, `/var/tmp` and `$TMPDIR` are exempt, and so is a command carrying the
-  override the refusal itself describes, for the files whose bytes a program owns.
+  Paths under `/tmp`, `/var/tmp`, `$TMPDIR` and a background job's `$CLAUDE_JOB_DIR/tmp` are
+  exempt, and so is a command carrying the override the refusal itself describes, for the files
+  whose bytes a program owns.
 - **After each edit, the agent is reminded** that the file has not been re-read, and asked for one
   re-read of the edited material once that file's editing is done. A Bash command gets no such
   reminder, so when the agent overrides a refusal, the guard's acknowledgement names what the
