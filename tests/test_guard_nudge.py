@@ -77,6 +77,19 @@ def test_a_scratch_path_gets_no_nudge(path: str) -> None:
     assert _nudge("Edit", {"file_path": path}, tool_response={"structuredPatch": PATCH}) is None
 
 
+@pytest.mark.parametrize(("job_dir", "nudged"), [("/home/u/.claude/jobs/j", False), (None, True)])
+def test_an_edit_in_a_background_jobs_tmp_gets_no_nudge(job_dir: str | None, nudged: bool) -> None:
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Edit",
+        "cwd": "/home/u/proj",
+        "tool_input": {"file_path": "/home/u/.claude/jobs/j/tmp/x.py"},
+        "tool_response": {"structuredPatch": PATCH},
+    }
+    output = respond(json.dumps(payload), tmpdir=None, platform="linux", job_dir=job_dir)
+    assert (output is not None) is nudged
+
+
 @pytest.mark.parametrize("tool_input", [{}, {"file_path": ""}, {"file_path": 3}])
 def test_an_edit_naming_no_path_gets_no_nudge(tool_input: dict[str, object]) -> None:
     assert _nudge("MultiEdit", tool_input) is None

@@ -79,6 +79,7 @@ falsifies, in the one place nobody edits when adding one.
 | **`design/guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` — what Claude Code was measured to deliver, installation by selection, fail-open |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
+| `design/kiro-gaps.md` | What Zikaron does under Claude Code and not under kiro — each gap's kind (not built, or a harness limit), why, and what closing it takes |
 | `design/code-knowledge.md` | **Normative for D39.** The producer of per-source-file documentation: the planner command and what it classifies, removes and moves, the document format, the documenter and the skill, installation, navigation, the evaluation, known gaps. K14, which lets a search say whether a result's source has moved, is specified in `design/knowledge-index.md` §7.7 |
 
 Evidence is separated by kind and stays that way: **`research/`** measured results and literature notes,
@@ -419,6 +420,10 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
   may take a different *shape* rather than a different value; a value that migrates into a
   `HarnessTarget` method is the seam failing, and `design/harness.md` §"The installer's two targets"
   is normative for the split.
+- **A feature built for Claude Code alone gets a row in `design/kiro-gaps.md` in the same change
+  that builds it**, and the change that closes a gap removes its row (operator, 2026-10-20). The
+  gaps are closed together when the operator sets that time aside, so the file is the whole of
+  that work: a gap left out of it is a gap nobody will close.
 - **What an install ships, on both harnesses, is snapshotted under `tests/fixtures/installed/`**,
   one directory per harness with the dot-directory dropped from every path, so neither harness
   loads a snapshot here as an agent or a skill of its own. `tests/test_install_snapshots.py`

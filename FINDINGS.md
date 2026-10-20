@@ -144,14 +144,21 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    branch's first commit over `main`, everything through the documenter's rules against claims
    nothing read supports folded in (`reviews/m40-code-knowledge-build-review.md`); nothing is
    pushed and there is no PR yet. **That PR carries several commits** (operator, 2026-10-20): M40,
-   then each follow-up below as a commit of its own, in this order, each entry in §"Owed work"
-   removed as its commit lands —
-   1. the edit guard exempting a background job's `$CLAUDE_JOB_DIR/tmp`;
-   2. `foreground_command` removed, the indexer's stderr kept in a log;
-   3. a `--model` flag per agent;
-   4. the reminder that a grepped module has a knowledge base.
+   then M40's four follow-ups, each a commit of its own, in this order, each briefed in
+   `design/build-plan.md` §"M40's follow-ups — M40-1 to M40-4":
+   1. **M40-1, committed** — the edit guard exempting a background job's `$CLAUDE_JOB_DIR/tmp`,
+      brief and build APPROVED (`reviews/m40-1-job-dir-review.md`,
+      `reviews/m40-1-job-dir-build-review.md`), measured in
+      `research/claude-code-job-dir-hook-probe.md`. Live in the three projects that run this
+      tree, so LeibaTrader's memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` is now false;
+      retiring it is the operator's.
+   2. **M40-2** — `foreground_command` removed, the indexer's output kept in a log per corpus;
+   3. **M40-3** — a `--model` flag per agent;
+   4. **M40-4** — the reminder that a grepped module has a knowledge base.
 
-   A commit is amended only while it is `HEAD`, its hash checked first. The dependency blob and
+   **Next: M40-2.** A commit is amended only while it is `HEAD`, its hash checked first. A
+   feature built for Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness).
+   The dependency blob and
    the partial-coverage field change K14's format and are brainstormed with the operator first,
    so they are not in this PR. **The
    evaluation's harness now refuses**: `state.json` records `06deae8` as its first start, and
@@ -441,66 +448,11 @@ proposed.
   sleeping and polling would leave only busy-work to wait with. **Next:** read LeibaTrader's next
   regeneration transcript for a `sleep` or a file count; if one recurs, a `PreToolUse` hook denying
   `sleep` to the orchestrator is the cheap enforcement.
-- **Remind an agent that greps a documented module that its knowledge base exists** (operator,
-  2026-10-19: LeibaTrader's agent said it forgets the knowledge base as it forgot the edit rules,
-  though `CLAUDE.md` names both). The harness allows a reminder that cancels nothing: a
-  `PostToolUse` hook's `additionalContext` reaches the agent as a `<system-reminder>` after the
-  call ran, as D38's re-read nudge does (`design/guards.md` §2). **Proposed:** on `Grep`, `Glob`,
-  and a `Bash` `grep` or `rg`, whose path lies inside a module some `code-knowledge/<module>`
-  corpus documents, one deterministic line naming that corpus. **Throttled in time** (operator,
-  2026-10-19): the first such grep of a turn nudges, then at most one every 5 minutes — the
-  operator's ballpark, a config key defaulting to 300 s — so a long autonomous turn is reminded
-  again and a short one once, where a call-count throttle would fire every few calls (a treatment
-  run in the Warp slice made about 70 `Grep` calls). A turn's start is `UserPromptSubmit`, which the
-  memory hook already handles, so its state is one timestamp per session, reset there; whether the
-  payload carries a turn id needs no probe. It needs the registry, so it is the memory hook's, not
-  the guards', which hold no knowledge; installed with the memory component. No base-rate
-  measurement first: LeibaTrader runs short supervised tasks, so its transcripts would not set the
-  interval (operator). Pairs with the verification-decay item above, which nudges after a search
-  rather than instead of one. **Never in a `zikaron-documenter` session** (operator, 2026-10-20):
-  the documenter takes nothing from a code-knowledge base (`design/code-knowledge.md` §5.1), so a
-  reminder there would contradict its prompt; nor the orchestrator's, which searches no source.
-  **Confirm by probe** that a subagent's `PostToolUse` payload carries `agent_type`, as the docs
-  say (`research/claude-code-tool-hooks-docs.md`, its "Subagents" paragraph); if it does not, the
-  reminder fires in the main session only, which is the agent it is for.
-- **Exempt a Claude Code background job's `$CLAUDE_JOB_DIR/tmp` from the edit guard** (operator,
-  2026-10-18). `design/guards.md` §7 states it as an accepted false deny — *"no scratch root
-  unless a version's payload names it as `scratchpad_dir`"* — from one session in M37's
-  pre-install replay (`research/m37-guard-transcript-replay.md`); it was never raised with the
-  reviewer. **It has now recurred** (LeibaTrader, 2026-10-18: `cat > $CLAUDE_JOB_DIR/tmp/group_book.py
-  <<'EOF'` denied), and the cause is systematic: Claude Code's background-session instructions
-  point scratch files at `$CLAUDE_JOB_DIR/tmp`, so every background job that stages a script is
-  denied and routes around it. A job's `tmp` holds only its own scratch, never an authored file.
-  **Proposed:** probe first whether a background job's hook process carries `CLAUDE_JOB_DIR` and
-  whether this Claude Code's payload now sends `scratchpad_dir`; then add `$CLAUDE_JOB_DIR/tmp` to
-  §3.3's roots — its value from the hook's environment and the literal `$CLAUDE_JOB_DIR/tmp/…`
-  spelling, as `$TMPDIR` is read — or, if the variable never reaches the hook, the path
-  `~/.claude/jobs/<id>/tmp`. §3.3, §7 and §8 change with it, the observed command enters
-  `tests/test_guard_rule_table.py`, and LeibaTrader's memory record on the deny
-  (`f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5`) is retired once it ships. A guards change, outside
-  M40, so a small change of its own after it.
-- **Remove `foreground_command` from `knowledge_add` and `knowledge_refresh`** (operator,
-  2026-10-17: *"it seems like leaking implementation detail as well as it might make agent who
-  called it become creative and decide to run command on its own"* — and a second, foreground
-  build beside the detached one is the duplicate-build class M39 guarded against). It exists
-  because the detached indexer's output is discarded, so a build that dies before recording
-  anything leaves no trace (`design/knowledge-index.md` §"Both build-starting verbs carry
-  `foreground_command`"). **Proposed:** send the indexer's stderr to `.zikaron/indexer.log` at
-  `0600` instead of discarding it, have `knowledge_status` name that log for a build that
-  stopped, and drop the field from both verbs' results and the `foreground …` line from
-  `zikaron knowledge`'s output. A knowledge-index change, which M40's fence excludes, so a small
-  change of its own after M40 lands; `design/knowledge-index.md`, `design/schema.md`'s
-  `knowledge_build` row (its `spawned_by_op_id` note) and `design/architecture.md` §"Filesystem
-  security" change with it.
-- **A model per role, and a cheap reader.** Practice reported by the operator (2026-10-17): a strong
-  model orchestrates, a mid one writes documents, a cheap one codes. Two consequences, both
-  proposed: (1) each agent now has a default of its own, but the installer's one `--model` still
-  sets the consolidator, the documenter and the orchestrator alike — Warp's orchestrator ran
-  Sonnet 4.6 for that reason — so it gains a flag per agent, `--model` staying the default for
-  all; (2) the documents may help a cheap reader more
-  than a strong one, since a strong one finds its way unaided, so the triage evaluation gains a
-  third reader, Haiku 5.5, over the same two copies once the harness supports it — a hypothesis to
-  measure, not a result.
+- **A cheap reader in the triage evaluation.** Practice reported by the operator (2026-10-17): a
+  strong model orchestrates, a mid one writes documents, a cheap one codes — the installer's half
+  is M40-3. **Proposed:** the documents may help a cheap reader more than a strong one, since a
+  strong one finds its way unaided, so the triage evaluation gains a third reader, Haiku 5.5, over
+  the same two copies — a hypothesis to measure, not a result.
 
 - **A partial document is partial only where a search seldom lands** — measured on Warp's
   30,181-line `view.rs`, read 3,000 lines deep (`research/m40-toy-run.md` §6). A search result

@@ -41,47 +41,50 @@ def main() -> None:
             tmpdir=os.environ.get("TMPDIR"),
             platform=sys.platform,
             read=read_script,
+            job_dir=os.environ.get("CLAUDE_JOB_DIR"),
         )
         if output is not None:
             sys.stdout.write(output)
     sys.exit(0)
 
 
-def respond(
+def respond(  # noqa: PLR0913 — `tmpdir` and `job_dir` are the hook's environment, read by `main`.
     raw: str,
     *,
     tmpdir: str | None,
     platform: str,
     guards: Guards | None = CLAUDE_CODE.guards,
     read: Reader | None = None,
+    job_dir: str | None = None,
 ) -> str | None:
     """The hook's stdout for one payload on `platform`, a `sys.platform` value, or `None` for no
-    output. `read` is row 6's file read, none by default: `main` is where the hook's I/O is done,
-    and passes `read_script`.
+    output. `tmpdir` and `job_dir` are the hook's own `TMPDIR` and `CLAUDE_JOB_DIR`, and `read` is
+    row 6's file read, none by default: `main` is where the hook's I/O is done, and passes
+    `read_script`.
 
     Raises whatever a malformed payload or a rule defect raises; `main` turns that into silence.
     """
     payload = json.loads(raw)
     if guards is None or not isinstance(payload, dict):
         return None
+    location = _location(payload, tmpdir, job_dir)
     event = payload.get("hook_event_name")
     if event == guards.command.trigger:
-        return _command(payload, tmpdir, platform, tools=guards.command.tools, read=read)
+        return _command(payload, location, platform, tools=guards.command.tools, read=read)
     if event == guards.reread.trigger:
-        return _reread(payload, tmpdir, tools=guards.reread.tools)
+        return _reread(payload, location, tools=guards.reread.tools)
     return None
 
 
 def _command(
     payload: Mapping[str, object],
-    tmpdir: str | None,
+    location: Location | None,
     platform: str,
     *,
     tools: frozenset[str],
     read: Reader | None,
 ) -> str | None:
     command = _field(payload, "tool_input").get("command")
-    location = _location(payload, tmpdir)
     if payload.get("tool_name") not in tools or not isinstance(command, str) or location is None:
         return None
     decision = decide(command, location, platform=platform, read=read)
@@ -101,10 +104,9 @@ def _command(
 
 
 def _reread(
-    payload: Mapping[str, object], tmpdir: str | None, *, tools: frozenset[str]
+    payload: Mapping[str, object], location: Location | None, *, tools: frozenset[str]
 ) -> str | None:
     tool = payload.get("tool_name")
-    location = _location(payload, tmpdir)
     if not isinstance(tool, str) or tool not in tools or location is None:
         return None
     result = payload.get("tool_response")
@@ -114,13 +116,15 @@ def _reread(
     return None if text is None else _hook_output(payload, {"additionalContext": text})
 
 
-def _location(payload: Mapping[str, object], tmpdir: str | None) -> Location | None:
+def _location(
+    payload: Mapping[str, object], tmpdir: str | None, job_dir: str | None
+) -> Location | None:
     """Where the command ran, or `None` when the payload carries no usable `cwd`."""
     cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not cwd.startswith("/"):
         return None
     scratchpad = payload.get("scratchpad_dir")
-    return Location(cwd, tmpdir, scratchpad if isinstance(scratchpad, str) else None)
+    return Location(cwd, tmpdir, scratchpad if isinstance(scratchpad, str) else None, job_dir)
 
 
 def _field(payload: Mapping[str, object], name: str) -> Mapping[str, object]:

@@ -1,12 +1,14 @@
 """The find-replace rule against every row of `design/guards.md` §8, through the hook's I/O.
 
-Each item is judged under §8's payload — `cwd` `/home/u/proj`, `$TMPDIR` unset, no
-`scratchpad_dir`, no file for row 6 to read — and asserted on what the hook emits: the decision,
-which marker message, the placement clause, and what the deny names. `$TMPDIR` is pinned as well
-as passed, because on macOS the OS sets it and a row judged under the runner's own value would
-differ by machine; row 6 reads no file, so a row never depends on what the machine running it
-holds under `/tmp`. §8.1's items read real files, through the hook's own reader, written first
-into a fresh directory that stands as `$TMPDIR`.
+Each item is judged under §8's payload — `cwd` `/home/u/proj`, `$TMPDIR` and `CLAUDE_JOB_DIR`
+unset, no `scratchpad_dir`, no file for row 6 to read — and asserted on what the hook emits: the
+decision, which marker message, the placement clause, and what the deny names. Both variables are
+pinned as well as passed, because on macOS the OS sets `$TMPDIR`, a background job sets
+`CLAUDE_JOB_DIR`, and a row judged under the runner's own value would differ by machine; row 6
+reads no file, so a row never depends on what the machine running it holds under `/tmp`. §8.1's
+items read real files, through the hook's own reader, written first into a fresh directory that
+stands as `$TMPDIR`; §8.2's are judged with the job directory unset and set, a row listing files
+writing them first into the `tmp` of a fresh directory that stands as the job's.
 """
 
 import json
@@ -15,34 +17,48 @@ from pathlib import Path
 
 import pytest
 
-from tests.guard_table import Case, Expected, FileCase, cases, file_cases
+from tests.guard_table import (
+    JOB_DIR,
+    Case,
+    Expected,
+    FileCase,
+    JobCase,
+    cases,
+    file_cases,
+    job_cases,
+)
 from zikaron.guard import messages
 from zikaron.guard.main import respond
 from zikaron.guard.scratch import normalise
-from zikaron.guard.script_file import read_script
+from zikaron.guard.script_file import Reader, read_script
 
 CASES = cases()
 FILE_CASES = file_cases()
+JOB_CASES = job_cases()
 
 
 @pytest.fixture(autouse=True)
 def _no_tmpdir(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.delenv("CLAUDE_JOB_DIR", raising=False)
 
 
-def _emit(case: Case | FileCase, tmpdir: Path | None = None) -> dict[str, object] | None:
+def _emit(
+    case: Case | FileCase | JobCase,
+    *,
+    tmpdir: str | None = None,
+    job_dir: str | None = None,
+    read: Reader | None = None,
+) -> dict[str, object] | None:
     payload = {
         "hook_event_name": "PreToolUse",
         "tool_name": "Bash",
         "cwd": case.cwd,
         "tool_input": {"command": case.command},
     }
-    if tmpdir is None:
-        output = respond(json.dumps(payload), tmpdir=None, platform="linux", read=None)
-    else:
-        output = respond(
-            json.dumps(payload), tmpdir=str(tmpdir), platform="linux", read=read_script
-        )
+    output = respond(
+        json.dumps(payload), tmpdir=tmpdir, platform="linux", read=read, job_dir=job_dir
+    )
     if output is None:
         return None
     envelope = json.loads(output)["hookSpecificOutput"]
@@ -100,7 +116,33 @@ def test_section_8_1_row(case: FileCase, tmp_path: Path) -> None:
     for scratch_file in case.files:
         scratch_file.create(tmp_path)
     expected = Expected.of(case.expected, case.command)
-    envelope = _emit(case, tmpdir=tmp_path)
+    envelope = _emit(case, tmpdir=str(tmp_path), read=read_script)
+    _assert_expected(case, expected, envelope)
+
+
+def test_section_8_2_has_rows() -> None:
+    assert len({case.row for case in JOB_CASES}) > 4
+    assert {case.job_dir_set for case in JOB_CASES} == {False, True}
+
+
+@pytest.mark.parametrize("case", JOB_CASES, ids=[case.id for case in JOB_CASES])
+def test_section_8_2_row(case: JobCase, tmp_path: Path) -> None:
+    job_dir: str | None = None
+    if case.files:
+        (tmp_path / "tmp").mkdir()
+        for scratch_file in case.files:
+            scratch_file.create(tmp_path / "tmp")
+        job_dir = str(tmp_path) if case.job_dir_set else None
+    elif case.job_dir_set:
+        job_dir = JOB_DIR
+    expected = Expected.of(case.expected, case.command)
+    envelope = _emit(case, job_dir=job_dir, read=read_script if case.files else None)
+    _assert_expected(case, expected, envelope)
+
+
+def _assert_expected(
+    case: FileCase | JobCase, expected: Expected, envelope: dict[str, object] | None
+) -> None:
     assert _decision(envelope) == expected.decision, case.expected
     if expected.decision == "deny":
         assert envelope is not None
@@ -109,7 +151,7 @@ def test_section_8_1_row(case: FileCase, tmp_path: Path) -> None:
         _assert_deny_message(case, expected, reason)
 
 
-def _assert_deny_message(case: Case | FileCase, expected: Expected, reason: str) -> None:
+def _assert_deny_message(case: Case | FileCase | JobCase, expected: Expected, reason: str) -> None:
     assert ("It carries #ZIKARON-FORCE" in reason) is expected.invalid_marker
     if expected.placement:
         assert messages.PLACEMENT_CLAUSE in reason
@@ -128,7 +170,7 @@ def _assert_deny_message(case: Case | FileCase, expected: Expected, reason: str)
         assert any(_built_from_command(path, case) for path in named), reason
 
 
-def _built_from_command(path: str, case: Case | FileCase) -> bool:
+def _built_from_command(path: str, case: Case | FileCase | JobCase) -> bool:
     """A named path every one of whose components appears in the command's own text."""
     relative = path.removeprefix(case.cwd + "/")
     return all(part in case.command for part in relative.strip("/").split("/") if part)
