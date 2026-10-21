@@ -152,8 +152,9 @@ def test_the_skill_names_corpora_as_the_reminder_reads_them() -> None:
         identity_vocabulary(),
         spawn_instruction="",
         planner_command=CLAUDE_CODE_PLANNER_COMMAND,
-        fork_agent=None,
+        arguments_source="",
     )
     assert (
-        f"`{CORPUS_NAME}/<module>`, or `{CORPUS_NAME}` when\n`<module>` is `{ROOT_MODULE}`" in skill
+        f"`{CORPUS_NAME}/<module>`, or `{CORPUS_NAME}` when `<module>` is `{ROOT_MODULE}`"
+        in " ".join(skill.split())
     )

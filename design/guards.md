@@ -816,6 +816,11 @@ gated on them. After some sessions with the guards installed, from the session t
   §9.4). A repeat argues that the deny's fix does not land; a route-around, for a §9.5 row on the
   observed command.
 
+**First read 2026-10-21, and nothing in it moves a rule** (`research/m37-guard-field-counts.md`):
+in LeibaTrader, the one project with sessions since the install, the find-replace forms fell from
+13.1% of `Bash` calls to 0.19%, every override's reason says what the command does, and no true
+deny was overridden or routed around.
+
 ## 8. The test table's seed
 
 **The one place the rule table's rows are listed.** The build's parametrised test holds every row

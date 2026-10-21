@@ -349,6 +349,23 @@ class TestACleanClaudeCodeInstall:
         assert _frontmatter(paths["agent"])["name"] == CONSOLIDATOR_AGENT_NAME
         assert _frontmatter(paths["skill"])["name"] == "zikaron-consolidate"
 
+    def test_the_code_knowledge_artefacts_have_frontmatter_that_actually_parses(
+        self, installed: Path
+    ) -> None:
+        """The same parse, over the two agents and the skill code knowledge ships, whose
+        descriptions are as long and as free in their punctuation as the consolidator's."""
+        claude = installed / ".claude"
+        documenter = _frontmatter(claude / "agents" / "zikaron-documenter.md")
+        orchestrator = _frontmatter(claude / "agents" / "zikaron-code-orchestrator.md")
+        skill = _frontmatter(claude / "skills" / "zikaron-document-code" / "SKILL.md")
+        assert documenter["name"] == "zikaron-documenter"
+        assert "background" not in documenter
+        assert orchestrator["name"] == "zikaron-code-orchestrator"
+        assert orchestrator["background"] is True
+        assert orchestrator["tools"] == ["Agent", "Bash", "Read", f"mcp__{MCP_SERVER_NAME}"]
+        assert skill["name"] == "zikaron-document-code"
+        assert set(skill) == {"name", "description"}
+
     def test_the_consolidator_is_granted_the_whole_server_and_read_and_nothing_else(
         self, installed: Path
     ) -> None:

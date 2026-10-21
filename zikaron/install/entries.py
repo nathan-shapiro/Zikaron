@@ -25,6 +25,9 @@ from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.install.assets import consolidator_prompt, identity_vocabulary
 from zikaron.install.code_knowledge import (
+    CLAUDE_CODE_ARGUMENTS_SOURCE,
+    CLAUDE_CODE_PLANNER_COMMAND,
+    CLAUDE_CODE_SPAWN_INSTRUCTION,
     DOCUMENTER_AGENT_NAME,
     DOCUMENTER_DESCRIPTION,
     DOCUMENTER_EFFORT,
@@ -32,7 +35,7 @@ from zikaron.install.code_knowledge import (
     ORCHESTRATOR_AGENT_NAME,
     ORCHESTRATOR_DESCRIPTION,
     ORCHESTRATOR_EFFORT,
-    ORCHESTRATOR_PROMPT,
+    orchestrator_prompt,
 )
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
@@ -487,21 +490,28 @@ def documenter_agent_markdown(*, model: str) -> str:
 
 def orchestrator_agent_markdown(*, model: str) -> str:
     """The whole `.claude/agents/zikaron-code-orchestrator.md`, the agent the code documentation
-    skill forks to (`design/code-knowledge.md` §5.2, §5.4).
+    skill has the session spawn, its prompt followed by the loop (`design/code-knowledge.md` §5.2,
+    §5.4).
 
     Its grant spawns, runs the planner, reads `.mcp.json` and reaches the primary server, and holds
     none of the editing tools: the planner removes and moves documents and the documenters write
     them. `Bash` could write a file, and the prompt is what says it does not.
     `Agent(zikaron-documenter)` would narrow nothing, since a subagent's definition ignores the type
-    list. Its effort is fixed at `ORCHESTRATOR_EFFORT`. Kiro has no counterpart, its subagents
-    having no spawn tool.
+    list. It runs in the background whatever its spawner asks, and its effort is fixed at
+    `ORCHESTRATOR_EFFORT`. Kiro has no counterpart, its subagents having no spawn tool.
     """
     definition = _ClaudeAgent(
         name=ORCHESTRATOR_AGENT_NAME,
         description=ORCHESTRATOR_DESCRIPTION,
         effort=ORCHESTRATOR_EFFORT,
         tools=("Agent", "Bash", "Read", f"mcp__{MCP_SERVER_NAME}"),
-        prompt=ORCHESTRATOR_PROMPT,
+        prompt=orchestrator_prompt(
+            claude_tool_vocabulary(),
+            spawn_instruction=CLAUDE_CODE_SPAWN_INSTRUCTION,
+            planner_command=CLAUDE_CODE_PLANNER_COMMAND,
+            arguments_source=CLAUDE_CODE_ARGUMENTS_SOURCE,
+        ),
+        background=True,
     )
     return definition.markdown(model=model)
 
@@ -514,6 +524,7 @@ class _ClaudeAgent(NamedTuple):
     effort: str
     tools: tuple[str, ...]
     prompt: str
+    background: bool = False
 
     def markdown(self, *, model: str) -> str:
         """The definition: YAML frontmatter, then the prompt as body."""
@@ -524,6 +535,7 @@ class _ClaudeAgent(NamedTuple):
                 f"description: {self.description}",
                 f"model: {model}",
                 f"effort: {self.effort}",
+                *(("background: true",) if self.background else ()),
                 "tools:",
                 *(f"  - {tool}" for tool in self.tools),
                 "---",
