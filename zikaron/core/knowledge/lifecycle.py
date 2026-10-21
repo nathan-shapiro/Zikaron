@@ -365,7 +365,7 @@ async def unlock(
 async def remove(
     store_dir: Path, db: aiosqlite.Connection, config: EffectiveConfig, *, name: str
 ) -> Removed:
-    """Destroy a corpus: delete its registry row, commit, then unlink its three files.
+    """Destroy a corpus: delete its registry row, commit, then unlink its build log and database.
 
     Refuses whenever the corpus's build lock is held by somebody who cannot be shown to be gone —
     the same test a build's own acquisition uses, and the conservative half of it: refusing to
@@ -382,12 +382,13 @@ async def remove(
     asked for — and closing it properly would mean a lock somewhere both databases can see, which
     is a larger change than the outcome justifies.
 
-    Unlinks all three of the `.db`, its `-wal` and its `-shm`, because in WAL mode a live database
-    is three files and a journal left behind would be inherited by whatever is created at that path
-    next. In practice it usually removes one: reading the corpus's state opens and closes it, and
-    SQLite reclaims its own `-wal` and `-shm` on the last close, so the other two are typically
-    already gone by the time this runs. `files_unlinked` reports what was actually there rather
-    than what was attempted, which is why it is normally a single path.
+    The log goes first, so an interruption between the unlinks leaves it beside the orphan database
+    that `status` reports rather than alone, where nothing would. Then all three of the `.db`, its
+    `-wal` and its `-shm`, because in WAL mode a live database is three files and a journal left
+    behind would be inherited by whatever is created at that path next. In practice the database
+    is one file by then: reading the corpus's state opens and closes it, and SQLite reclaims its
+    own `-wal` and `-shm` on the last close. `files_unlinked` reports what was actually there
+    rather than what was attempted.
 
     Raises:
         InvalidNameError: `name` is empty or blank.
@@ -410,10 +411,11 @@ async def remove(
 
     await in_one_transaction(db, _work, failure=propagate)
 
+    log_path = paths.knowledge_log_path(store_dir, registered.id)
     db_path = paths.knowledge_db_path(store_dir, registered.id)
     unlinked = [
         path
-        for path in permissions.database_files(db_path)
+        for path in (log_path, *permissions.database_files(db_path))
         if await asyncio.to_thread(_unlink_if_present, path)
     ]
     return Removed(
@@ -425,7 +427,8 @@ def _unlink_if_present(path: Path) -> bool:
     """Remove `path`, reporting whether it was there.
 
     Absence is an ordinary outcome rather than a fault: a knowledge base that was never built has
-    no `-wal` or `-shm`, and one whose file was deleted by hand has none of the three.
+    no `-wal` or `-shm`, one never spawned for has no log, and one whose files were deleted by hand
+    has none of them.
     """
     try:
         path.unlink()

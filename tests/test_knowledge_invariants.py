@@ -19,6 +19,7 @@ are in `test_knowledge_build_invariants.py`, which needs a built corpus rather t
 
 import sqlite3
 import uuid
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -31,7 +32,8 @@ from zikaron.core.knowledge.state import KnowledgeState
 
 
 class TestNoSuppliedStringReachesAPath:
-    """Every knowledge database path is `knowledge/<id>.db` for a server-generated uuid4."""
+    """Every knowledge database path is `knowledge/<id>.db`, and its build log `knowledge/<id>.log`,
+    for a server-generated uuid4."""
 
     @pytest.mark.parametrize(
         "hostile",
@@ -86,13 +88,16 @@ class TestNoSuppliedStringReachesAPath:
             await lifecycle.remove(store_dir, db, config, name="../memory")
             assert (store_dir / "memory.db").exists()
 
-    def test_the_path_builder_will_not_accept_a_string_at_all(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("build", [paths.knowledge_db_path, paths.knowledge_log_path])
+    def test_a_path_builder_will_not_accept_a_string_at_all(
+        self, tmp_path: Path, build: Callable[[Path, uuid.UUID], Path]
+    ) -> None:
         """The type signature says `UUID`, but an f-string formats whatever it is handed — so a
         string passed by an untyped caller would have become path segments. Measured: it did,
         producing `knowledge/../memory.db`. Re-parsing the id is what closes that, and this is the
         test that found the annotation alone was not enough."""
         with pytest.raises((AttributeError, TypeError, ValueError)):
-            paths.knowledge_db_path(tmp_path, "../memory")  # type: ignore[arg-type]
+            build(tmp_path, "../memory")  # type: ignore[arg-type]
 
 
 class TestNamesAreLowerCasedAndUnique:

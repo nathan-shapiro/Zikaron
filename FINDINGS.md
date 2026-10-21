@@ -146,19 +146,50 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    pushed and there is no PR yet. **That PR carries several commits** (operator, 2026-10-20): M40,
    then M40's four follow-ups, each a commit of its own, in this order, each briefed in
    `design/build-plan.md` §"M40's follow-ups — M40-1 to M40-4":
-   1. **M40-1, committed** — the edit guard exempting a background job's `$CLAUDE_JOB_DIR/tmp`,
-      brief and build APPROVED (`reviews/m40-1-job-dir-review.md`,
+   1. **M40-1, committed as `bed5430`** — the edit guard exempting a background job's
+      `$CLAUDE_JOB_DIR/tmp`, brief and build APPROVED (`reviews/m40-1-job-dir-review.md`,
       `reviews/m40-1-job-dir-build-review.md`), measured in
       `research/claude-code-job-dir-hook-probe.md`. Live in the three projects that run this
       tree, so LeibaTrader's memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` is now false;
       retiring it is the operator's.
-   2. **M40-2** — `foreground_command` removed, the indexer's output kept in a log per corpus;
+   2. **M40-2, committed over `bed5430`** — `foreground_command` gone from both build verbs and
+      the CLI; each build the service spawns writes its output to `knowledge/<id>.log`, which
+      `status` names as `build_log`; brief and build APPROVED
+      (`reviews/m40-2-indexer-log-review.md`, `reviews/m40-2-indexer-log-build-review.md`). Live
+      in the three projects at each build's spawn and each service's next start; a service
+      started before it answers without `build_log` until it restarts. The status tool's
+      description is at 1,896 of the 1,900 characters `tests/test_mcp_tool_descriptions.py`
+      allows, so a sentence added to it later must be paid for.
    3. **M40-3** — a `--model` flag per agent;
    4. **M40-4** — the reminder that a grepped module has a knowledge base.
 
-   **Next: M40-2.** A commit is amended only while it is `HEAD`, its hash checked first. A
-   feature built for Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness).
-   The dependency blob and
+   **Next: M40-3, worked as M40-1 and M40-2 were** (operator, 2026-10-20: review the brief, write
+   the code and tests to the coding standards, pass the done criteria, then review the code —
+   re-read loops mandatory before every round), each step done before the next:
+   1. **The brief alone**, `design/build-plan.md` §"M40-3 — One model for every agent, and a flag
+      for each": first ground it in the code and write into it what it leaves to the builder,
+      re-read loop to a clean pass; then memory-reviewer on M40-3 alone in
+      `reviews/m40-3-model-flag-review.md` to APPROVED, the standing operator lines of §"How the
+      next review should be briefed" in every brief. At the fifth round without approval, report
+      what is open and ask.
+   2. **A worktree only if the brief says one is needed.** M40-1 and M40-2 used one because the
+      three projects import the guard, the service and the indexer from this tree; M40-3 changes
+      the installer, which runs only when someone re-installs, so the brief should say so and
+      build here.
+   3. **The build**: code, tests and documents as the brief's items say; every new test seen red
+      against its mutation, applied in memory by a pytest plugin that patches one named mutation
+      in on load (`PYTHONPATH=<its directory> pytest -p <plugin>`), never by editing a file —
+      M40-2's plugin and runner, `m40_2_mut/` in this session's scratchpad, are the template,
+      and a runner must not add `-q`, since `addopts` already has one and `-qq` drops the
+      summary line it reads. Then `./check.sh`, and `.venv/bin/python
+      experiments/new_line_coverage.py` reporting 0 uncovered.
+   4. **The code review**, in `reviews/m40-3-model-flag-build-review.md`, to APPROVED.
+   5. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is M40-2's commit,
+      then commit `M40-3: …` in the milestone style.
+
+   A commit is amended only while it is `HEAD`, its hash checked first. A feature built for
+   Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The dependency
+   blob and
    the partial-coverage field change K14's format and are brainstormed with the operator first,
    so they are not in this PR. **The
    evaluation's harness now refuses**: `state.json` records `06deae8` as its first start, and

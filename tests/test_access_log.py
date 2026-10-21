@@ -29,7 +29,7 @@ from typing import Final
 import aiosqlite
 import pytest
 
-from tests.knowledge_fixtures import stub_spawned
+from tests.knowledge_fixtures import stub_spawn
 from tests.served_group_fixtures import (
     CONSOLIDATOR,
     write_anchored_pair,
@@ -70,14 +70,7 @@ def no_real_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     Autouse, because a test that merely forgot it would start a real build of a real corpus in a
     test process and outlive the test that caused it.
     """
-
-    def _no_spawn(
-        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> detach.Spawned:
-        del full, spawned_by_op_id
-        return stub_spawned(detach.command(name, project=project, full=False))
-
-    monkeypatch.setattr(detach, "spawn", _no_spawn)
+    monkeypatch.setattr(detach, "spawn", stub_spawn)
 
 
 def _line(method: str, params: dict[str, object], *, kind: str = "mcp") -> bytes:

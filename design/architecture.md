@@ -13,7 +13,7 @@
 | **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DBs. Serves local RPC. Self-stops after idle. | **yes — the only long-running one** |
 | **`zikaron-mcp`** | MCP server, built on the `fastmcp` framework. Translates MCP tool calls to RPC. Starts the service if absent. | no |
 | **`zikaron-hook`** | Thin hook executable for the spawn and user-message triggers. Starts the service if absent. | no |
-| **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8), **always by the service** on a `knowledge_*` call — including the ones `zikaron knowledge` makes, since M31 made that command an RPC client. **A person can still start one directly**, by running the foreground command a build result prints, and that invocation opens the store itself and never goes through RPC: it *is* the build, so there is nothing for a service to do on its behalf. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible; it is now the by-hand case alone.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
+| **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8), **always by the service** on a `knowledge_*` call — including the ones `zikaron knowledge` makes, since M31 made that command an RPC client. **A person can still start one directly**, as `python -m zikaron.knowledge.indexer`, and that invocation opens the store itself and never goes through RPC: it *is* the build, so there is nothing for a service to do on its behalf. A spawned one writes its output to its corpus's build log (§Paths); one started by hand, to its terminal. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible; it is now the by-hand case alone.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
 
 The service exists for exactly one measured reason: cold whole-process `bge-small` is **783 ms**, and D12
 puts retrieval on the critical path of every user message. Keeping the model resident moves that to a warm
@@ -402,7 +402,9 @@ rescuing, because the prefix test is the only test.
   is the repair §"Filesystem security" forbids.
 - **Logs: one file per process.** `<scope>/.zikaron/service.log` (the long-running service),
   `<scope>/.zikaron/warmup.log` (the `agentSpawn` hook's detached warm helper), `<scope>/.zikaron/hook.log` (the
-  `userPromptSubmit` hook's own failure record). Three distinct processes, three distinct files, by design:
+  `userPromptSubmit` hook's own failure record), and per corpus `<scope>/.zikaron/knowledge/<uuid4>.log` —
+  the standard output and error of the last build the service spawned for it, emptied at each spawn and
+  deleted with the corpus (`knowledge-index.md` §8.4). Distinct processes, distinct files, by design:
   Python's `logging.FileHandler` has no cross-process append locking, so two independent processes writing the
   same path through `logging` is a real corruption risk `logging`'s own documentation does not paper over —
   giving each process its own file removes the question entirely rather than requiring proof that concurrent
@@ -412,7 +414,9 @@ rescuing, because the prefix test is the only test.
   `O_APPEND`, and a line that short reaches it in one `write()`, so the two writers interleave whole lines —
   and it lands where an operator reading why a start did not happen already looks. The service and the warm
   helper are both off any latency-critical path, so both use stdlib `logging`. The `userPromptSubmit` hook is
-  not — see §"Degraded modes" for why it does a direct file write instead.
+  not — see §"Degraded modes" for why it does a direct file write instead. A build uses neither: it prints,
+  and the log is its standard streams, opened to append, so the moment two builds can write one log
+  (`knowledge-index.md` §8.4) interleaves their lines rather than overwriting them.
 - **Config:** two layers, resolved per store — see §"Configuration" below.
 
 ## Configuration
@@ -642,6 +646,7 @@ draft of this document gave only to the socket.
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
 | `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
 | `code-knowledge/<module>/roles.md` | **0600**, its directories **0700** | the role list `zikaron code-knowledge plan --apply` writes while a module's README is owed, under the store's umask, and removes with its emptied directories once an `--apply` run lists no README (`design/code-knowledge.md` §3.6); each line is a document's own role line, already in the project tree |
+| `knowledge/<uuid4>.log` | **0600** | the last spawned build's output (`knowledge-index.md` §8.4): counts, paths, refusals and tracebacks, never a memory's prose. Created through `os.open` with the mode supplied and then set on the open descriptor, because a log emptied for the next build keeps whatever mode it was found at |
 | `knowledge/<uuid4>.db`, `-wal`, `-shm` | **0600** | created under the same explicit umask as `memory.db`, for the same reason. **A knowledge base holds the verbatim text of every file indexed into it**, so it is at least as sensitive as the memory store and is named here rather than left implied — this table enumerated neither until 2026-09-22, while `knowledge-index.md` asserted the mode from a document that is not normative for it |
 | `$XDG_RUNTIME_DIR/zikaron/` | 0700 | must be owned by the running uid |
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
@@ -1264,8 +1269,9 @@ So `zikaron-hook` for `userPromptSubmit`, in order:
    machine, measured directly against the same interpreter-cost argument that keeps this client stdlib-thin
    in the first place, and a process that writes exactly one line per invocation and then exits has no log
    lifecycle for `logging`'s formatters and handlers to manage. `hook.log` is its own file, not `service.log`
-   or `warmup.log` — three independent processes, three files, so an operator checks all three rather than
-   one, but none of them can corrupt another by writing at the same instant (§"Paths").
+   or `warmup.log` — three independent processes, three files, and a spawned build's own log under
+   `knowledge/` beside them, so an operator checks each rather than one, but none of them can corrupt another
+   by writing at the same instant (§"Paths").
 
 There is no step 3 or 4. What made the removed fallback tempting is also why it is refused: a BM25-only read
 degrades gracefully in isolation, but the hook has no way to tell *which* failure it is looking at with any

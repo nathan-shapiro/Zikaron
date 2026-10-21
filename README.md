@@ -103,7 +103,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
 | **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
 | **guard** | Claude Code only, installed on request: a single-shot executable the harness runs before each `Bash` or `Monitor` call and after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
-| **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running the foreground command a build result prints. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
+| **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running it by hand. One the service started writes what it prints to the build log `zikaron knowledge status` names. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
 The service exists for one measured reason: loading the embedding model costs about **780 ms**, and
 retrieval sits on the path of every message you send. Keeping the model resident turns that into a
@@ -660,9 +660,11 @@ answers nothing until it finishes. `status` says how far it has got.
 In a script or a CI step, use `zikaron knowledge refresh --wait`: it reports progress and returns
 once every build against those corpora has let go of its corpus — including one an earlier `add`
 started, which it waits for rather than stepping past — exiting non-zero if any build left its corpus
-unusable. By then each build's record of what it cost has been written to `memory.db`, or dropped if
-the store stayed locked; the indexer process itself may still be exiting. Without `--wait` the step
-can finish while an indexer is still running, and whatever kills the step kills the build too.
+unusable, and naming the build log of each one that did, or that never started. By then each build's
+record of what it cost has been written to `memory.db`, or dropped if the store stayed locked; the
+indexer process itself may still be exiting, and still writing the last lines of that log. Without
+`--wait` the step can finish while an indexer is still running, and whatever kills the step kills the
+build too.
 
 **Nothing updates an index on its own.** There is no watcher and no schedule: a corpus drifts from
 its files until somebody refreshes it. A search says so when it can — a result whose file has
@@ -879,7 +881,8 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   memory.db          the store itself — never commit this
   memory.db-wal      SQLite's write-ahead log; part of the store
   memory.db-shm      SQLite's shared-memory index; part of the store
-  knowledge/         one database per knowledge base, named by a generated id.
+  knowledge/         one database per knowledge base, named by a generated id, and beside
+                     each the log of the last build the service spawned for it.
                      Absent until you create one
   code-knowledge/    the list of role lines the planner hands a module README's writer, one
                      directory per module. Present only while that README is owed
@@ -972,7 +975,7 @@ symptoms it cannot see.
 | no memories are being injected | `.zikaron/hook.log`, then `pgrep -af '[z]ikaron.service.main'` |
 | the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval — then check whether that agent's own frontmatter sets `tools:`, which overrides the project-wide registration entirely (below) |
 | every Zikaron tool call asks permission | kiro: add `@zikaron` to the agent's `allowedTools`. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
-| a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it |
+| a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it — and if it does not, the `log` line of `zikaron knowledge status <name>` names where that build wrote why |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
 | `zikaron init` or `zikaron knowledge` refuses: "this project's service … runs …", or "… is older than this command … and names no version" | the running service is another version than the command — usually one started before an upgrade. Do what the message says: stop that process if the command is the newer install, or run the command from the install the project's hook and `.mcp.json` name |
 | "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |

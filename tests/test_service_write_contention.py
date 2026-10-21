@@ -28,7 +28,7 @@ from tests.contention_fixtures import (
     external_writer,
     patch_budget,
 )
-from tests.knowledge_fixtures import stub_spawned
+from tests.knowledge_fixtures import stub_spawn
 from tests.served_group_fixtures import CONSOLIDATOR
 from tests.service_fixtures import open_context
 from tests.test_access_log import _ARMS, _answer, _line, _remembered
@@ -49,14 +49,7 @@ _WRITES: Final = sorted(name for name, method in METHODS.items() if method.acces
 @pytest.fixture(autouse=True)
 def no_real_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     """`knowledge_add` spawns a detached indexer; nothing here wants one."""
-
-    def _no_spawn(
-        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> detach.Spawned:
-        del full, spawned_by_op_id
-        return stub_spawned(detach.command(name, project=project, full=False))
-
-    monkeypatch.setattr(detach, "spawn", _no_spawn)
+    monkeypatch.setattr(detach, "spawn", stub_spawn)
 
 
 def _interleave_commits(

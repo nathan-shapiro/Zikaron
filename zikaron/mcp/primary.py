@@ -210,13 +210,15 @@ def register_primary_tools(mcp: FastMCP, connection: ServiceConnection) -> None:
 
         `lock` is the recorded holder of the build lock, or null. `live: true` means a process on
         that host still answers to that pid, not that the build is still running: a pid is reused.
-        `live: false` means a build died and nothing else will say so; the next
+        `live: false` means a build died, and `build_log` may say why; the next
         `zikaron_knowledge_refresh` takes the lock over. `live: null` means this machine cannot
         tell, as with a lock recorded by another machine.
 
-        `orphans` are index files no knowledge base refers to, left by an interrupted removal.
-        Nothing deletes them and no query reaches them; each is opened read-only, only to read back
-        its registered name.
+        `build_log` is the file the last build `zikaron_knowledge_add` or
+        `zikaron_knowledge_refresh` started wrote to, or null.
+
+        `orphans` are index files no knowledge base refers to, left by an interrupted removal;
+        nothing deletes or searches them.
         """
         return await _call(connection, "knowledge_status", {"knowledge_base": knowledge_base})
 

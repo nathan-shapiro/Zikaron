@@ -783,7 +783,7 @@ same as one that cannot be null — the answer for such a field is a design ques
 | `merge` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | the size fields describe authored prose, and only the `target` row authored any |
 | `promote` | `token_count`, `gist_tokens`, `n_chunks`, `truncated` | as `merge`, except that the authoring row is the `created` or `flipped` one |
 | `call` | `error_code` | null **iff** `ok`. A succeeded call names no refusal |
-| `knowledge_build` | `error_code`, `files_indexed`, `rebuilt`, `spawned_by_op_id` | `error_code` null **iff** `ok`, as above. **`files_indexed` and `rebuilt` are null iff `ok` is false**: both are read off the `ScanResult` that `scan.run` returns only after it completes, so a build that was refused before the scan and one that died inside it alike have no corpus-left-behind to count and no settled answer to whether it rebuilt. **0 means a completed scan indexed nothing**, which is why neither defaults. `spawned_by_op_id` is null **iff** no spawning `op_id` was in the build's environment — which a re-run of the printed `foreground_command` never has, since the token travels outside the argv |
+| `knowledge_build` | `error_code`, `files_indexed`, `rebuilt`, `spawned_by_op_id` | `error_code` null **iff** `ok`, as above. **`files_indexed` and `rebuilt` are null iff `ok` is false**: both are read off the `ScanResult` that `scan.run` returns only after it completes, so a build that was refused before the scan and one that died inside it alike have no corpus-left-behind to count and no settled answer to whether it rebuilt. **0 means a completed scan indexed nothing**, which is why neither defaults. `spawned_by_op_id` is null **iff** no spawning `op_id` was in the build's environment — which a build run by hand never has, since only a spawn sets it |
 
 `group_served.version_served` and `knowledge_build.knowledge_base_id` are the detail fields this document
 declares **NOT NULL** outright, and they are absent from the table above for that reason rather than by
@@ -1165,13 +1165,14 @@ nothing joins to nothing.
 
 The record of such a child is only that a build was asked for: the spawning verb's `call` row, **which
 names no corpus**, and in the race a `remove` row near it in time — and after that `remove` the
-registry row is gone, so nothing in `memory.db` says which corpus it was. **For a foreground run the
-operator's terminal names it; for a spawned child nothing durable does** — `detach.spawn` opens it
-with `stderr=DEVNULL`, so its `refused: no knowledge base named …` goes nowhere, and the name was last
-seen in the `refresh` result's `foreground_command`, in the caller's context and on no disk. Both
-cases are ordinary: a foreground re-run with a typo, and a corpus removed while a build for it was
-still resolving its name — the window being *before* the child's `require`, since a `remove` landing
-after it is the written case above.
+registry row is gone, so nothing in `memory.db` says which corpus it was. **For a run by hand the
+operator's terminal names it; for a spawned child its build log does, while it lasts** — the
+child's `refused: no knowledge base named …` reaches the log `detach.spawn` gave it
+(`knowledge-index.md` §8.4), which a `remove` landing after the spawn deletes with the corpus, and
+which one landing before it leaves behind under an id nothing in `memory.db` names. Both cases are
+ordinary: a run by hand with a typo, and a corpus removed while a build for it was still resolving
+its name — the window being *before* the child's `require`, since a `remove` landing after it is the
+written case above.
 
 **The absence of the join proves nothing, and that is worth stating before somebody queries it.** A
 `refresh` or `add` `call` row at `ok=true` with no `knowledge_build` row carrying its `op_id` is what
@@ -1195,12 +1196,12 @@ history as a clean build history.
 
 **`spawned_by_op_id` travels in the environment, and every part of that is load-bearing.** Without the
 edge nothing joins a build's cost to its requester, since the build mints a label of its own and only
-the spawning `call` row knows whether an agent or a person asked. It is **not** on the argv because
-`detach.spawn` returns the argv the child actually ran and `knowledge-index.md` §8.4 prints that as the
-command to reproduce a build — a flag the printed form stripped would break that identity. `spawn`
-passes `env` as a **per-spawn copy, never an assignment into the service's own environment**: a
-long-lived service spawning many builds would otherwise attribute every later one to the first caller,
-and the row would look complete while being wrong. **The copy omits the variable when no token is
+the spawning `call` row knows whether an agent or a person asked. It is **not** on the argv because an
+attribution token is not an input that changes what a build does — a person running the indexer by
+hand sets none and gets the same build — so the command line is the wrong place for it
+(`knowledge-index.md` §8.4). `spawn` passes `env` as a **per-spawn copy, never an assignment into the
+service's own environment**: a long-lived service spawning many builds would otherwise attribute every
+later one to the first caller, and the row would look complete while being wrong. **The copy omits the variable when no token is
 passed**, rather than inheriting one, or a service started from a shell that exported it would
 attribute every unattributed build to that value. `ZIKARON_SPAWNED_BY_OP_ID` is declared once in
 `detach.py`, which already owns the argv, and read by the indexer's entry point.
@@ -1912,8 +1913,9 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 ## File permissions
 The store is durable, unencrypted, plain-text knowledge about a project. `.zikaron/` is mode **0700** and
 `memory.db`, its `-wal` and `-shm`, **every `knowledge/<uuid4>.db` and its `-wal`/`-shm`** (the
-`knowledge/` directory itself 0700), and each of `service.log`, `warmup.log` and `hook.log` are mode **0600**,
-created with an explicit umask rather than inherited. `design/architecture.md` §"Filesystem security" carries
+`knowledge/` directory itself 0700), each corpus's build log `knowledge/<uuid4>.log`, and each of
+`service.log`, `warmup.log` and `hook.log` are mode **0600**, created with an explicit umask or mode
+rather than inherited. `design/architecture.md` §"Filesystem security" carries
 the full rule, including the socket and the `/tmp` fallback, because those live outside the store directory.
 
 **Erasing a row is not a `DELETE FROM memory`.** `memory_fts` is an external-content FTS5 table, so deleting
@@ -1971,11 +1973,11 @@ schema 4").
 
 **So the indexer can meet a store whose `CHECK` refuses `knowledge_build`, and a build must not fail
 for it.** A build reached through `zikaron knowledge` is spawned by the service, which has therefore
-already migrated; a build run directly — the argv `detach.command` returns, which a verb reports as
-`foreground_command` — has no such guarantee. **The build therefore decides from
-`meta.schema_version`, which `OpenStore` carries for it, and attempts no row below version 3** —
-rather than writing one and catching the constraint, which would report an ordinary state as a
-failure on every foreground build against an unmigrated store.
+already migrated; a build run directly — `python -m zikaron.knowledge.indexer`, by hand — has no
+such guarantee. **The build therefore decides from `meta.schema_version`, which `OpenStore` carries
+for it, and attempts no row below version 3** — rather than writing one and catching the constraint,
+which would report an ordinary state as a failure on every build run by hand against an unmigrated
+store.
 
 **A build waits for its row where `call` refuses to, and the asymmetry is the point.** `call` declines to
 wait because a caller is holding a response; a build has no latency budget — it has just spent minutes — and

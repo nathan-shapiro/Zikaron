@@ -200,11 +200,10 @@ class BuildLog:
 
 
 def _report(message: str) -> None:
-    """Say one line about a row that was not written, on the stream a foreground build prints to.
+    """Say one line about a row that was not written, on the build's own standard error.
 
     Never a raise: this writer exists to record somebody else's outcome, and an exception escaping
-    it would replace the very outcome it was recording. Detached, all three streams are `DEVNULL`,
-    so this reaches a person only in the foreground — which is where a build is re-run to find out
-    why.
+    it would replace the very outcome it was recording. A spawned build's standard error is its
+    corpus's build log, and a build run by hand prints to the terminal it was run from.
     """
     print(message, file=sys.stderr)

@@ -89,9 +89,8 @@ def resolve(explicit: Path | None) -> Project:
     other direction (`architecture.md` §"Store identity is verified, not assumed"). Resolving also
     fixes `nearest_store_above`, whose `parents` would otherwise begin at a sibling.
 
-    The service resolves nothing, outlives this shell, and stringifies the value into the
-    `foreground` command a build result prints, which would act on a different project when pasted
-    from elsewhere.
+    The service resolves nothing and outlives this shell, so a relative value would be read against
+    whatever directory it, and every build it spawns, happens to run in.
 
     **The rung is read from whether the variable answered, never from comparing directories.** A
     variable exported by hand to the directory the reader is standing in resolves to that directory

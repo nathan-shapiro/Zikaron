@@ -88,9 +88,9 @@ class TestWhichRungAnswered:
     def test_an_explicit_project_is_resolved_and_says_so(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Absolute at minimum, because the service outlives this shell and stringifies the value
-        into the foreground command a build result prints — which would act on a different project
-        when pasted from elsewhere. The tests below pin the stronger property."""
+        """Absolute at minimum, because the service outlives this shell and resolves nothing, so a
+        relative value would be read against whatever directory it and its builds run in. The tests
+        below pin the stronger property."""
         monkeypatch.chdir(tmp_path)
         resolved = resolve(Path())
         assert resolved.directory.is_absolute()

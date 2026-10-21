@@ -16,7 +16,7 @@ import aiosqlite
 import pytest
 
 from tests.contention_fixtures import call, error_of, external_writer, patch_budget
-from tests.knowledge_fixtures import stub_spawned
+from tests.knowledge_fixtures import stub_spawn
 from tests.service_fixtures import open_context
 from zikaron.core.knowledge import registry
 from zikaron.core.knowledge.database import KnowledgeDatabase
@@ -35,14 +35,7 @@ _STORE_UNAVAILABLE = -32025
 @pytest.fixture(autouse=True)
 def no_real_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     """`knowledge_add` spawns a detached indexer; nothing here wants one."""
-
-    def _no_spawn(
-        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> detach.Spawned:
-        del full, spawned_by_op_id
-        return stub_spawned(detach.command(name, project=project, full=False))
-
-    monkeypatch.setattr(detach, "spawn", _no_spawn)
+    monkeypatch.setattr(detach, "spawn", stub_spawn)
 
 
 async def _memory_count(ctx: ServiceContext) -> int:

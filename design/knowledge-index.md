@@ -58,13 +58,15 @@ right**, doing D13's triage job one level up, and it is exposed to the agent (§
       memory.db                     ← the memory store, plus the knowledge_bases registry (§3.1a)
       knowledge/
           7f3a9c21-….db             ← one SQLite file per KB, named by generated id, not by KB name
+          7f3a9c21-….log            ← the last spawned build's output (§8.4)
           b04e15da-….db
           c9182f77-….db
 ```
 
 - A **knowledge base** is a named corpus over a root path, with filters. Its **name and description**
   live in the registry in `memory.db`; everything else — configuration, file table, chunks, FTS index,
-  vectors, indexing progress — lives in **one SQLite file** named by a generated id.
+  vectors, indexing progress — lives in **one SQLite file** named by a generated id, beside which a
+  build the service spawned leaves its output.
 - **KB names are free-form strings**, lower-cased on write, because no supplied string ever reaches a
   filesystem path.
 - **Deleting a KB is a registry `DELETE` then an `unlink`**, in that order, so an interrupted delete
@@ -167,9 +169,9 @@ What the registry buys:
 **Its cost is that creation and deletion are each two operations that can desync**, where a scheme keyed
 on filenames makes deletion one `unlink`. **The registry is always mutated first** (§8.4), which leaves
 each interrupted case in the better of its two possible states: `remove` deletes the registry row,
-commits, and only then unlinks
-the file and its `-wal`/`-shm` siblings, so a crash leaves an **orphaned file that nothing references**
-— invisible to every query and reported by `status` (§11).
+commits, and only then unlinks the corpus's build log and then the file and its `-wal`/`-shm`
+siblings, so a crash leaves an **orphaned file that nothing references** — invisible to every query
+and reported by `status` (§11).
 
 The reverse would be materially worse rather than merely untidy: unlinking first would leave a name with
 no file, which §11 defines as an empty knowledge base — so the caller who asked for the corpus to be
@@ -191,8 +193,9 @@ it rather than against this document.
 not incidental: §4.6 and §6.3 promise that a search serves committed state *while* the indexer writes,
 and under SQLite's default rollback journal readers contend with the writer instead. WAL means a live
 database is **three** files (`.db`, `-wal`, `-shm`). Every operation that moves or removes a database
-must handle all three: `remove` unlinks all three, and any future backup guidance must use
-`VACUUM INTO` or `Connection.backup()` rather than copying the `.db` — the lesson FINDINGS records from
+must handle all three: `remove` unlinks them and the corpus's build log (§8.4), and any future backup
+guidance must use `VACUUM INTO` or `Connection.backup()` rather than copying the `.db` — the lesson
+FINDINGS records from
 a truncated `cp memory.db` that opened cleanly and answered every query while missing an entire session.
 
 **Knowledge queries obey the same off-event-loop rule** `design/architecture.md` makes normative for the
@@ -1063,9 +1066,10 @@ multi-minute one this section describes.
 ### 6.2 Lifecycle
 
 The indexer is spawned by the service handling `add`/`refresh` (§8.4), whichever surface asked — the
-CLI's verbs are RPC calls to those same methods (§9) — or run **by hand**, which is the foreground
-command a build result prints and the one invocation that opens its store directly. There is no
-scheduler in v0 (§10). Either way it is **detached**: it outlives the invoking command. At most **one indexer per KB**, enforced by an advisory lock row in
+CLI's verbs are RPC calls to those same methods (§9) — or run **by hand**, as
+`python -m zikaron.knowledge.indexer`, the one invocation that opens its store directly. A spawned
+build writes its output to its corpus's build log (§8.4); one run by hand, to its terminal. There is
+no scheduler in v0 (§10). Either way it is **detached**: it outlives the invoking command. At most **one indexer per KB**, enforced by an advisory lock row in
 `meta` carrying `lock_pid`, `lock_host` and `lock_started_at` (§3.2). A lock whose pid is not alive is **stale and
 reclaimable**.
 
@@ -1958,18 +1962,27 @@ no lock was recorded — which is not a failure but the state the caller wanted,
 call acting. **No rendered sentence travels with those three**: a caller wanting one rebuilds the
 holder and renders it, so the wording exists once rather than once per surface that prints it.
 
-**Both build-starting verbs carry `foreground_command` per corpus, and `add` carries `database_path`.**
-A detached build's output is discarded, so running the identical command in the foreground is the only
-way to recover *why* one failed. It is the argv the spawn reported, never a second construction of it —
-a command that merely resembles what ran answers a different question than the one being asked — and it
-is `null` for a corpus no build was started for, since there is nothing to reproduce.
-**The argv carries no attribution token, and that is why this rule needs no exception.** A build records
-`knowledge_build.spawned_by_op_id` (`schema.md`), and the spawning `op_id` reaches it through the
-environment rather than the command line — so the argv this returns is byte-for-byte what ran, with nothing
-filtered out of it. A person re-running the printed command inherits no variable and their build is
-attributed to no verb, which is correct: they are not that call, and one `op_id` across two unrelated units
-of work would be worse than none. An attribution token is not an input that changes what a build does, so
-the command line is the wrong place for it.
+**A spawned build writes its output to a log of its own, and `add` carries `database_path`.** Each
+build the service spawns has its standard output and error in `knowledge/<uuid4>.log`, beside its
+corpus's database and named by the same registry id; `status` names it as `build_log` (§8.5), and
+`remove` unlinks it — first, so an interrupted `remove` never leaves a log without the orphan database
+`status` reports. The log is emptied at each spawn, so it holds the latest build alone and needs no
+retention, and opened to append as well. A service spawns at most one live child per corpus until
+that child releases the corpus's lock — invariant 19's table until the child takes it, the lock after —
+so one build writes the log, but for two short overlaps whose lines then follow one another rather
+than overwrite: the previous child still printing its last lines after releasing the lock when the
+next spawn empties the log, which a scripted `refresh --wait` followed by another `refresh` reaches,
+and a service restarted in the second before its child takes the lock, whose fresh table does not know
+that child. **One log can outlive its corpus, and that is accepted**: a `remove` landing after an `add`
+created the corpus or a `refresh` observed it, and before either spawned, leaves that spawn to create a
+log no registry row names, holding the child's one-line refusal, which nothing reports or sweeps
+(§11). **Neither verb's result names a command to run**: one printed beside a build the service has
+already started invites a second build of the same corpus, the case invariant 19 exists for.
+**The spawning `op_id` travels in the environment rather than the argv.** A build records
+`knowledge_build.spawned_by_op_id` (`schema.md`), and an attribution token is not an input that changes
+what a build does, so the command line is the wrong place for it. A person running the indexer by hand
+inherits no variable and their build is attributed to no verb, which is correct: they are not that
+call, and one `op_id` across two unrelated units of work would be worse than none.
 
 `add` creates the database, writes `meta`, spawns a detached indexer, and **returns immediately** with
 the KB's name and a note that indexing has started — never blocking on a walk that may take minutes.
@@ -2254,8 +2267,8 @@ never meet this state, since a fresh KB seeds both keys from config (§10).
   transaction, so every route that moves either moves both. It covers a `meta` and a table that came
   from different builds — a database file restored from a backup, a row edited by hand — where the
   corpus would otherwise report `ok` and every later build would die inserting a vector of the
-  recorded width into a table declared for another, one rejected insert per file in a process whose
-  output nobody reads. The same read does both jobs for that case: `state` reports it, and
+  recorded width into a table declared for another, one rejected insert per file in a process nobody
+  is watching. The same read does both jobs for that case: `state` reports it, and
   `repair.rebuilt_identity` declares the table back at the identity the corpus still claims.
 
 **A rebuild interrupted after its drop is reported by the second cause, and by that cause alone
@@ -2323,9 +2336,11 @@ every corpus in the store. `remove` is the exception and carries the diagnostic 
 snapshot is the last one there will ever be.
 `remove` returns a final snapshot of what was destroyed plus `removed: true`, since its
 KB no longer exists to be polled, and **`files_unlinked`** — the paths that were actually on disk
-rather than the three that were attempted. Normally it is one: reading a corpus's state opens and
-closes its database, and SQLite reclaims its own `-wal` and `-shm` on the last close, so the other
-two are usually gone before the unlink runs.
+rather than the four that were attempted: the build log, if a build was ever spawned, then the
+database. The database is normally one file by then: reading a corpus's state opens and closes it,
+and SQLite reclaims its own `-wal` and `-shm` on the last close, so those two are usually gone before
+the unlink runs. The snapshot carries no `build_log`, since the log is one of the files this call
+deletes.
 
 **`add` reports the git probe it just ran as `requested_git_mode` and `effective_git_mode`, beside
 `knowledge_bases` rather than inside it.** A caller asking for `tracked` over a directory outside a
@@ -2542,8 +2557,9 @@ thing.
 **What `list` omits** is the diagnostic half of `status`: `root_path`, the `include`/`exclude`/
 `git_mode` echo, `git_mode_effective`, `chunks`, `bytes_indexed`, `max_file_bytes`, `files_seen`,
 `files_skipped`, `files_linked`, the §12 counters, the `skipped` breakdown, `last_scan_started_at`,
-`last_scan_completed_at`, and `lock`. Those answer *why is this corpus the way it is*, which is a
-different question from *which corpus should I search*.
+`last_scan_completed_at`, and `lock` — and `build_log`, which stands outside that half (below). Those
+answer *why is this corpus the way it is*, which is a different question from *which corpus should I
+search*.
 
 **The split is about response size, not about data access.** Both calls open every knowledge-base
 database — reading a handful of `meta` rows from a small SQLite file is single-digit milliseconds, noise
@@ -2597,10 +2613,10 @@ establish.
 `state` cannot tell a caller about. A **cross-host** lock is never reclaimed automatically, so it
 reports `indexing` and persists until a human clears it — the holder is what says which machine to
 look at, and the age whether it is plausibly still working. A **local** holder whose process is gone
-is not reported as `indexing` at all (see the rule below), which leaves *nothing* to say a detached
-build died: its output went nowhere, and every counter it left behind is indistinguishable from one
-still climbing. `live: false` is that signal, and it also says the state is self-correcting, since
-the next build reclaims.
+is not reported as `indexing` at all (see the rule below), which leaves nothing else in the corpus to
+say a detached build died: every counter it left behind is indistinguishable from one still
+climbing. `live: false` is that signal, and it also says the state is self-correcting, since the next
+build reclaims; why the build died is in its `build_log`, where the service spawned it.
 
 **"A build is running" is one test, and `state`, `files_remaining` and every refusal use it.** A
 lock is *running* unless this machine has watched its process disappear — so no lock at all and a
@@ -2690,6 +2706,14 @@ report about a single corpus would be attaching it arbitrarily. The field is alw
 when there are none, so a caller reads its contents rather than testing for the key — the same rule
 §8.3 already applies to `known_knowledge_bases`.
 
+**`status` also reports `build_log` per corpus**: the path of the log the last build the service
+spawned for it wrote its standard output and error to (§8.4), or `null` when there is no such file.
+**It stands outside the diagnostic half**, because it rests on no database: a corpus whose database
+will not open — `state: error`, the case it is most wanted for — still reports it. **It is
+`status`'s alone.** `list` and the build verbs answer in the choosing fields, and `remove`'s snapshot,
+though at `status`'s detail, describes a corpus whose log that same call deletes, so the log appears
+in its `files_unlinked` instead.
+
 **Tool description** for `zikaron_knowledge_status`:
 
 > The detail behind one knowledge base's state, or every one of them: where it indexes, what it
@@ -2714,13 +2738,15 @@ when there are none, so a caller reads its contents rather than testing for the 
 >
 > `lock` is the recorded holder of the build lock, or null. `live: true` means a process on
 > that host still answers to that pid, not that the build is still running: a pid is reused.
-> `live: false` means a build died and nothing else will say so; the next
+> `live: false` means a build died, and `build_log` may say why; the next
 > `zikaron_knowledge_refresh` takes the lock over. `live: null` means this machine cannot
 > tell, as with a lock recorded by another machine.
 >
-> `orphans` are index files no knowledge base refers to, left by an interrupted removal.
-> Nothing deletes them and no query reaches them; each is opened read-only, only to read back
-> its registered name.
+> `build_log` is the file the last build `zikaron_knowledge_add` or
+> `zikaron_knowledge_refresh` started wrote to, or null.
+>
+> `orphans` are index files no knowledge base refers to, left by an interrupted removal;
+> nothing deletes or searches them.
 
 ### 8.6 Path validation on `add`
 
@@ -2874,8 +2900,8 @@ several virtualenvs it is the one that says *which* interpreter's Zikaron is act
 what a reader should be shown first, because under the recommended `uv tool install` no interpreter
 is on `PATH` at all. `design/distribution.md` §"The front door".
 
-`remove` deletes the registry row, then unlinks the database and its `-wal`/`-shm` siblings, after
-confirmation (§3.1a). `rename` changes the registry's `name` and touches no file. `refresh` scans and
+`remove` deletes the registry row, then unlinks the corpus's build log and the database and its
+`-wal`/`-shm` siblings, after confirmation (§3.1a). `rename` changes the registry's `name` and touches no file. `refresh` scans and
 indexes changes; `--full` reindexes every candidate with change detection bypassed, **with the exact
 mechanics §8.4 states** — it is not a discard and rebuild.
 
@@ -2902,7 +2928,10 @@ a corpus to be built, not for a process to be supervised. It exits on each corpu
 `ok` alone being success. **What it guarantees on return is narrower than "no indexer is running"**:
 `--wait` returns once the build's lock is gone — and, since the build attempts its `knowledge_build`
 row before it releases the lock (`schema.md` §"What is instrumented, what is not, and why"), once that
-row has landed or been dropped as best-effort; the indexer process may still be exiting. Waiting on the
+row has landed or been dropped as best-effort; the indexer process may still be exiting, and still
+writing the last lines of its build log (§8.4) — its report, a refusal or a traceback — so a log read
+the instant a wait returns can be missing them for a moment. A wait that fails names that log for
+each corpus it failed on that `status` still lists. Waiting on the
 holder's pid instead would race, since a build that finishes between two polls is never seen and its
 pid never known.
 
@@ -2954,14 +2983,12 @@ do fixes it), a root that has gone, and a lock that cannot be shown to be dead. 
 worst: a missing root is refused *before* the lock is taken, so a detached build refusing it leaves
 not even the dead holder that says a build died.
 The build re-establishes each of them for itself, since it is a separate
-process and the two are not one transaction, but by then there is nobody to tell: a detached build's
-output is discarded. **What that costs, stated rather than left to be met**: a build that fails after
-detaching is visible as a fact, and its reason only as a name. Its corpus goes on reporting that it has
-not been built, `status`'s `lock` (§8.5) shows a holder whose process is gone, and its `knowledge_build`
-row records `ok=false` with the failure's wire name as `error_code`. The full reason is recovered by
-running the same command in the foreground, which both commands print for that purpose. The rejected
-alternative is a log file per knowledge base: several concurrent writers and a retention policy, for
-a diagnostic one re-run produces on demand.
+process and the two are not one transaction, but by then nobody is waiting: a detached build's output
+reaches only its build log (§8.4). **What that costs, stated rather than left to be met**: a build
+that fails after detaching is visible as a fact at once and its reason only on reading. Its corpus goes
+on reporting that it has not been built, `status`'s `lock` (§8.5) shows a holder whose process is gone,
+its `knowledge_build` row records `ok=false` with the failure's wire name as `error_code`, and the full
+reason — the refusal's sentence or the traceback — is in the log `status` names as `build_log`.
 
 `--force-unlock` clears a stale indexer lock (§6.2) and **refuses when the lock is same-host with a live
 pid**. It is served by `knowledge_unlock`, the only **knowledge method with no tool**, because an agent cannot
@@ -3023,12 +3050,13 @@ reader assumes owns it.
 | KB database present but **unreadable** (corrupt, permissions) | `list` and `status` report `state: "error"`; search returns that group with `state: "error"` and no results, others answer normally. **Not** `reindex_required` — `refresh` does not obviously repair a corrupt file, and the operator needs the difference |
 | KB database **absent** | **an empty knowledge base, not an error**, for everything that reads: `list` and `status` both report `state: reindex_required` with `files_indexed: 0`, and search returns an empty group (§7.4). **`refresh` refuses**, because the file that is missing is the only place this corpus's definition was ever written (§8.4) — the remedy is `remove` and `add`, and it loses nothing, since a KB in this state has never indexed anything |
 | `knowledge/*.db` with no registry row (orphan) | reported by `status` with the file's breadcrumb name and size; never opened for search, never auto-deleted. The residue of an interrupted **`remove`** — under §8.4's registry-first ordering an interrupted `add` leaves the absent-database case above instead |
+| `knowledge/*.log` with no registry row | never reported and never swept: the log of a spawn a `remove` raced, landing after an `add` created the corpus or a `refresh` observed it and before either spawned, holding the child's one-line refusal (§8.4). An interrupted `remove` leaves none without the orphan `.db` the row above reports, since it unlinks the log first |
 | `memory.db` unreadable | **no KB is discoverable**, though every corpus is intact — the coupling §3.1a names. **One route since M31, where there were two**: the CLI is an RPC client and meets this as `zikaron-mcp` does — `ServiceConnection`'s identity read fails before any service is asked to start, so the failure arrives while the connection is being established rather than from a listing. A `memory.db` that is not a database at all raises the driver's own `sqlite3.DatabaseError` from that read, which both of those clients catch and report verbatim, since nothing invented at that boundary would say it better; the hook makes no such read and meets this as a service that will not start (`architecture.md` §"Degraded modes"). `registry_unavailable` is **not** a `KnowledgeState`, which is the closed set of five above; what the refusal preserves is the distinction that matters, since an empty list would be indistinguishable from "no KBs configured" |
 | KB database at **schema 1** | brought forward on open, by the service or a build whose `memory.db` is at version 4 or later, and otherwise served and built at schema 1 (§7.7.1). A migration that cannot complete — the write lock not had within `busy_timeout`, a full disk — fails that open as the unreadable row above does, and the next open tries again |
 | embed model/dim in `meta` ≠ configured | that KB refuses to serve and reports `reindex_required`; it does **not** answer with mismatched vectors |
 | a rebuild interrupted after its drop | refuses to serve and reports `reindex_required`, and goes on doing so under a reverted configuration — the drop cleared `last_scan_completed_at`. `meta` names the model the dead run was writing, so the next build **resumes** it where configuration is unchanged and **redoes** it whole where the revert made that an encoder mismatch (§8.4). Either way one model's vectors, never two |
 | an indexer is running (§8.5) | search answers from committed state with `state: "indexing"` and `files_remaining` |
-| indexer died holding the lock | next scan reclaims after a liveness check on the pid — **same host only** (§6.2). A cross-host lock is never auto-reclaimed: it reports `state: "indexing"` with the lock's age, and the exit is `refresh --force-unlock` |
+| indexer died holding the lock | next scan reclaims after a liveness check on the pid — **same host only** (§6.2). A cross-host lock is never auto-reclaimed: it reports `state: "indexing"` with the lock's age, and the exit is `refresh --force-unlock`. When `add` or `refresh` started the build, its output, and so why it died, is in the log `status` names as `build_log` (§8.5) |
 | root path gone | `state: "root_missing"`; the index is **retained, not deleted**, ready for the root's return. Search answers that group **empty** rather than serving chunks whose files cannot be read (§5.6) |
 | no KBs configured | search returns `groups: []`, not an error |
 
@@ -3132,11 +3160,11 @@ or an actor — the same gap FINDINGS open question 16 records for the memory si
 10. Every KB named in the request appears in the response — as a populated, empty, errored, or
     `dropped: true` stub group (§8.7). No named KB is ever silently absent.
 11. **No caller-supplied string is ever interpolated into a path under `.zikaron/`.** Every knowledge
-    database path is `knowledge/<id>.db` where `id` is a server-generated uuid4 from the registry
-    (§3.1a). The corpus root (§8.6) is the one caller-supplied path in the system: it is validated and
-    walked, and it is never combined with a name. The security invariant, holding by construction
-    rather than by validation — which is what keeps `remove(name="../memory")` from reaching
-    `memory.db` (§15).
+    database path is `knowledge/<id>.db`, and its build log `knowledge/<id>.log`, where `id` is a
+    server-generated uuid4 from the registry (§3.1a). The corpus root (§8.6) is the one
+    caller-supplied path in the system: it is validated and walked, and it is never combined with a
+    name. The security invariant, holding by construction rather than by validation — which is what
+    keeps `remove(name="../memory")` from reaching `memory.db` (§15).
 12. A path in `pending` names a file whose `files` row, if any, predates the current walk phase.
     `pending` is emptied by the **index phase disposing of every path** — by reindex, deletion, or a
     recorded skip, whether text detection or the size cap refused it (§5.5, §7.5) — never by the

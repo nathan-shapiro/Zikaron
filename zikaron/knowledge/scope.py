@@ -3,8 +3,8 @@
 **The indexer opens `memory.db` directly, and it is the only thing here that does.** It *is* the
 build — it holds the embedding model for the duration and writes a corpus's own database — so
 routing it through the service would mean the service either doing that work itself or proxying
-every write of it. It is also the service's own detached child, spawned rather than typed, and the
-one case a person runs by hand is the foreground command a build result prints.
+every write of it. It is also the service's own detached child, spawned rather than typed, though
+a person may still run it by hand.
 
 `zikaron knowledge` is a thin client of the service (`zikaron/knowledge/client.py`), so it reaches
 no store through here at all. A project that has never had one is `zikaron init`'s to create, since
@@ -50,7 +50,7 @@ class OpenStore:
     because it may meet a store this build never migrated — a direct run does not migrate (D37) —
     and a row it tries to write into a narrower `CHECK` would fail. Deciding from the version rather
     than by catching the constraint is what keeps *an ordinary state for a direct run* from being
-    printed as a failure on every foreground build against an unmigrated store.
+    printed as a failure on every build run by hand against an unmigrated store.
     """
 
     project: Path

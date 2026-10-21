@@ -1,11 +1,11 @@
-"""Where a knowledge base's file lives, as pure functions of their inputs.
+"""Where a knowledge base's files live, as pure functions of their inputs.
 
 Every function takes what it needs as an argument rather than reading `os.environ` or
 `Path.cwd()` itself, the same way `zikaron.service.paths` does — so a test states the layout it is
 checking instead of mutating the process's.
 
 **The security property this module carries: no caller-supplied string ever becomes a path
-segment under `.zikaron/`.** It takes both halves to enforce. `knowledge_db_path`
+segment under `.zikaron/`.** It takes both halves to enforce. Each path builder
 takes a `UUID` rather than a string, so no caller-supplied name reaches a path under `.zikaron/`
 even by mistake — but an annotation alone is a *static* promise, and this one was measured not to
 hold at runtime: the filename is interpolated, and interpolation formats whatever it is handed, so
@@ -20,10 +20,11 @@ from uuid import UUID
 
 _KNOWLEDGE_DIR_NAME = "knowledge"
 _DB_SUFFIX = ".db"
+_LOG_SUFFIX = ".log"
 
 
 def knowledge_dir(store_directory: Path) -> Path:
-    """The directory holding every knowledge-base database for one store."""
+    """The directory holding every knowledge base's database and build log for one store."""
     return store_directory / _KNOWLEDGE_DIR_NAME
 
 
@@ -40,6 +41,15 @@ def knowledge_db_path(store_directory: Path, kb_id: UUID) -> Path:
             the untyped one whose value would otherwise become path segments.
     """
     return knowledge_dir(store_directory) / f"{UUID(str(kb_id))}{_DB_SUFFIX}"
+
+
+def knowledge_log_path(store_directory: Path, kb_id: UUID) -> Path:
+    """Where the last build the service spawned for this knowledge base wrote its output.
+
+    Raises:
+        ValueError: `kb_id` is not a uuid, re-parsed for the reason `knowledge_db_path` gives.
+    """
+    return knowledge_dir(store_directory) / f"{UUID(str(kb_id))}{_LOG_SUFFIX}"
 
 
 def orphan_candidates(store_directory: Path) -> tuple[Path, ...]:

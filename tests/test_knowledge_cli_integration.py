@@ -14,7 +14,6 @@ file costs.
 
 import json
 import os
-import shlex
 import signal
 import socket
 import subprocess
@@ -32,6 +31,9 @@ from zikaron.project.initialize import main as initialize
 from zikaron.service import paths
 
 _REAP_DEADLINE_SECONDS: Final = 10.0
+
+#: How long a build may take, after releasing its lock, to print the report that ends its log.
+_REPORT_DEADLINE_SECONDS: Final = 30.0
 
 
 def _service_pid(store_dir: Path) -> int | None:
@@ -221,22 +223,16 @@ def test_the_module_exits_non_zero_on_a_refusal(initialized: Path) -> None:
     assert "refused" in result.stderr
 
 
-def test_the_foreground_command_the_verb_prints_actually_builds_the_corpus(
+def test_a_spawned_build_writes_its_report_to_the_log_status_names(
     initialized: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """One implementation reached two ways, so a build means the same thing however it was asked.
+    """A real service spawning a real build, whose output reaches the one place a reader can find
+    why a build failed.
 
-    The management verb does not run a build — it asks the service to start one detached — so the
-    parity claim is about the **command it prints**, which is the argv that spawn reported. A
-    detached build's output goes nowhere, so that line is the only way to recover why one failed;
-    a line that did not reproduce the build would be worse than no line at all.
-
-    **`--wait` is what makes the *run* deterministic rather than a race.** `add` starts a detached
-    build, so the printed command run straight afterwards would be a second build of one corpus,
-    refused for the lock the first holds. Waiting first exercises the argv against a corpus nothing
-    is building. It does **not** make which lines get printed deterministic: the `refresh` finds
-    `add`'s build under way unless that build has already finished, which is why the argv is taken
-    from `add`.
+    **Polled rather than read once.** The build prints its report after releasing the lock
+    `--wait` watches, so the wait can return a moment before the last lines land. Whichever build
+    the `refresh` ended on — `add`'s, found still running, or one of its own, which emptied the
+    log as it started — wrote the report last.
     """
     corpus = initialized / "docs"
     corpus.mkdir()
@@ -256,23 +252,16 @@ def test_the_foreground_command_the_verb_prints_actually_builds_the_corpus(
         )
         == 0
     )
-    # **Taken from `add`, not from the `refresh`.** A fresh corpus always answers `started`, so
-    # `add` always prints this line; the `refresh` prints one only if it started a build of its
-    # own, and while `add`'s indexer is still running it answers `already_indexing` and prints
-    # none. That outcome is correct — and waited for — but it would leave nothing here to unpack.
-    added = capsys.readouterr().out
-
     assert main(["--project", str(initialized), "refresh", "docs", "--wait"]) == 0
-    printed = capsys.readouterr().out
-    assert "built     'docs' is ok" in printed, "the wait outlasts the build it started or found"
+    assert "built     'docs' is ok" in capsys.readouterr().out
 
-    (line,) = [one for one in added.splitlines() if one.startswith("foreground ")]
-    argv = shlex.split(line.removeprefix("foreground "))
-    completed = subprocess.run(  # noqa: S603 — the argv the command under test printed.
-        argv, capture_output=True, text=True, timeout=300, check=False
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert "built     'docs'" in completed.stdout
+    assert main(["--project", str(initialized), "status", "docs"]) == 0
+    (line,) = [one for one in capsys.readouterr().out.splitlines() if one.startswith("  log ")]
+    log = Path(line.removeprefix("  log").strip())
+    deadline = time.monotonic() + _REPORT_DEADLINE_SECONDS
+    while "built     'docs'" not in log.read_text(encoding="utf-8"):
+        assert time.monotonic() < deadline, log.read_text(encoding="utf-8")
+        time.sleep(0.1)
 
 
 def test_rename_and_remove_reach_a_real_service(

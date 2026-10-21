@@ -73,8 +73,9 @@ class LockReport:
     local process probe says nothing about a foreign one — so it reports `indexing` and persists
     until somebody clears it by hand, and the holder is what tells them which machine to look at.
     A **local** holder whose process is gone does *not* keep the corpus reported as mid-scan, which
-    leaves nothing at all to say a detached build died: its output went nowhere, and the counters it
-    left behind are indistinguishable from a build still climbing. `live: false` is that signal.
+    leaves nothing else in the corpus to say a detached build died: the counters it left behind are
+    indistinguishable from a build still climbing. `live: false` is that signal, and the build's
+    log, where the service spawned it, says why.
 
     `live` is `None` wherever the question cannot be answered from here — a foreign host, or a pid
     that is not a number. `age_seconds` is `None` when the recorded instant cannot be read as one,
@@ -136,10 +137,15 @@ class Status:
 
     Composition rather than one wide dataclass, so "`list` is `status` projected down" is a fact
     about the types rather than a convention two constructors have to keep.
+
+    `build_log` is the file the last spawned build wrote its output to, or `None` when there is
+    none. It stands beside `details` rather than in it because it rests on no database: a corpus
+    whose database will not open is the one whose log is most wanted.
     """
 
     summary: Summary
     details: Details | None
+    build_log: Path | None
 
     @property
     def scan_mark(self) -> str | None:
@@ -289,13 +295,15 @@ async def files_remaining(db: aiosqlite.Connection, raw: Mapping[str, str]) -> i
     return await pending.count(db)
 
 
-async def gather(
+async def gather(  # noqa: PLR0913 — `build_log` rests on no database, so it arrives from the
+    # caller rather than being read beside the rest.
     registered: KnowledgeBase,
     db: aiosqlite.Connection,
     current_meta: meta.KnowledgeMeta,
     raw: Mapping[str, str],
     *,
     corpus_state: state.KnowledgeState,
+    build_log: Path | None,
 ) -> Status:
     """Everything reportable about one open knowledge base.
 
@@ -345,10 +353,13 @@ async def gather(
             last_scan_completed_at=raw.get(meta.LAST_SCAN_COMPLETED_AT_KEY),
             lock=_lock_report(raw),
         ),
+        build_log=build_log,
     )
 
 
-def without_details(registered: KnowledgeBase, corpus_state: state.KnowledgeState) -> Status:
+def without_details(
+    registered: KnowledgeBase, corpus_state: state.KnowledgeState, *, build_log: Path | None
+) -> Status:
     """What to report for a knowledge base whose database is absent or could not be read.
 
     `files_indexed` is `0` because a corpus with no readable database has indexed nothing that can
@@ -365,6 +376,7 @@ def without_details(registered: KnowledgeBase, corpus_state: state.KnowledgeStat
             files_remaining=None,
         ),
         details=None,
+        build_log=build_log,
     )
 
 
@@ -378,13 +390,17 @@ async def observe(
     will not open.
     """
     db_path = paths.knowledge_db_path(store_dir, registered.id)
+    log_path = paths.knowledge_log_path(store_dir, registered.id)
+    build_log = log_path if log_path.is_file() else None
     if not db_path.is_file():
-        absent = without_details(registered, state.KnowledgeState.REINDEX_REQUIRED)
+        absent = without_details(
+            registered, state.KnowledgeState.REINDEX_REQUIRED, build_log=build_log
+        )
         return Observed(status=absent, blocker=None)
     try:
         opened = await database.KnowledgeDatabase.open(store_dir, registered.id, migrate=migrate)
     except (aiosqlite.Error, ZikaronError, OSError) as error:
-        broken = without_details(registered, state.KnowledgeState.ERROR)
+        broken = without_details(registered, state.KnowledgeState.ERROR, build_log=build_log)
         # No lock can be read out of a database that will not open, and reporting one anyway would
         # be a guess in the direction that stops a caller repairing it.
         return Observed(status=broken, blocker=None, unreadable_because=error)
@@ -393,7 +409,12 @@ async def observe(
         blocker = lock.running_holder(raw, host=lock.this_host())
         resolved = state.resolve(state.inputs_for_open(opened, raw, config))
         gathered = await gather(
-            registered, opened.connection, opened.meta, raw, corpus_state=resolved
+            registered,
+            opened.connection,
+            opened.meta,
+            raw,
+            corpus_state=resolved,
+            build_log=build_log,
         )
     return Observed(status=gathered, blocker=blocker)
 
