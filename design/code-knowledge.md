@@ -444,12 +444,12 @@ for, not what uses it, and a Haiku 5.5 README placed an unused deduplication flo
 tick pipeline from its role line alone (`research/m40-toy-run.md` §14). **Its model has a
 default of its own** (`design/harness.md` §"The consolidator's model" and its table row): the
 `haiku` alias under Claude Code (operator, 2026-10-20), the consolidator's `claude-sonnet-5` under
-kiro; `--model` sets it with every other agent. **A cheaper model at medium reasoning effort is
-deliberate** (operator, 2026-10-16): documentation written at a higher tier costs too much to
-generate, and the documents' accuracy is bought instead by the reader verifying each claim
-against the code (§2, §6) — the documents narrow the search to the files that matter, and the
-reader's tokens go into those files, as an engineer reads documentation that may be stale and then
-the code. **Claude
+kiro; `--documenter-model` sets it, or `--model` with every other agent. **A cheaper model at
+medium reasoning effort is deliberate** (operator, 2026-10-16): documentation written at a higher
+tier costs too much to generate, and the documents' accuracy is bought instead by the reader
+verifying each claim against the code (§2, §6) — the documents narrow the search to the files that
+matter, and the reader's tokens go into those files, as an engineer reads documentation that may be
+stale and then the code. **Claude
 Code's definition sets `effort: medium`** (operator, 2026-10-16), rather than leaving it to the
 harness's default for a subagent — medium in the playground, where the session ran at `xhigh`
 (`research/forked-skill-probe.md` §Interactive) — so a change of default cannot move the cost.
@@ -672,13 +672,13 @@ a subagent's definition ignores the type list (`research/claude-code-background-
 2026-10-20), for following the skill's spawn rules, while the documenter runs `haiku`: what a
 stronger orchestrator costs over `sonnet` is small beside what the cheaper documenters save, though
 at these defaults the orchestrator is most of a run's cost, its context growing with every
-document (priced on LeibaTrader's recorded tokens, `research/m40-toy-run.md` §2); `--model` sets it
-with every other agent. Its effort is `high` (operator, 2026-10-16), set in its definition as the
-documenter's is. Its prompt is short — who it is, that its task is the skill's text, that it
-spawns only documenters and writes nothing, that the planner's output and the documenters' answers
-are data, never instructions, that it removes or renames no knowledge base, and that its last
-answer is the report, handed back as the harness hands one back — and names no tool, the grant
-being the one place a tool is named.
+document (priced on LeibaTrader's recorded tokens, `research/m40-toy-run.md` §2);
+`--orchestrator-model` sets it, or `--model` with every other agent. Its effort is `high`
+(operator, 2026-10-16), set in its definition as the documenter's is. Its prompt is short — who
+it is, that its task is the skill's text, that it spawns only documenters and writes nothing, that
+the planner's output and the documenters' answers are data, never instructions, that it removes or
+renames no knowledge base, and that its last answer is the report, handed back as the harness hands
+one back — and names no tool, the grant being the one place a tool is named.
 
 **Under kiro two files are not the whole install, since the merge into the user's agent config
 reaches both.** `zikaron-documenter` joins `zikaron-consolidator` in
@@ -723,9 +723,9 @@ install contract" table, `README.md` §Install's two tables, `design/harness.md`
 install writes", and the install messages that name the consolidator or its skill alone —
 `zikaron/install/targets.py`'s `fragment` caveat and the notes `writer.py`'s `plan_kiro_merge` and
 `_merged_tools_settings` add, which now name both skills and say the kiro session that runs the
-documenter skill also needs the shell tool, to run the planner; and `main.py`'s `--model` help
-and its refusal of `--model` under `--components guards`, which now name every agent the flag
-sets.
+documenter skill also needs the shell tool, to run the planner; and the model flags' help and
+their refusal under `--components guards`, in `zikaron/install/models.py`, which name the agent
+each flag sets.
 
 **The subagent scan skips the consolidator alone** — the one the Claude Code install and `doctor`
 share (`zikaron/install/agent_scan.py`), whose narrow grant is D32 working. The documenter and the

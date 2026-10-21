@@ -33,7 +33,7 @@ ORCHESTRATOR_AGENT_NAME: Final = "zikaron-code-orchestrator"
 DOCUMENTER_EFFORT: Final = "medium"
 ORCHESTRATOR_EFFORT: Final = "high"
 
-#: The orchestrator's model when `--model` is not given, for following the skill's spawn rules
+#: The orchestrator's model when no model flag sets it, for following the skill's spawn rules
 #: (operator, 2026-10-20). Its premium over `sonnet` is small beside what `haiku` documenters save,
 #: though at these defaults the orchestrator is most of a run's cost.
 ORCHESTRATOR_MODEL: Final = "opus"

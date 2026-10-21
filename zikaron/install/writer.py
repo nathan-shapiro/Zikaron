@@ -116,17 +116,16 @@ class Plan:
     they travel together to every writer below, and bundling them means a new option is added in one
     place instead of in four signatures.
 
-    `hook_format` is kiro's and is ignored by the Claude Code target, which has one hook shape. It
-    stays on the shared value rather than being pushed into a kiro-only bag because the alternative
-    — a per-harness options type — would make `main.py` build its arguments differently depending on
-    a flag it has not resolved yet.
+    `hook_format` is kiro's, Claude Code having one hook shape, and `orchestrator_model` is Claude
+    Code's, kiro shipping no orchestrator; each target reads only its own. Both stay on the shared
+    value rather than being pushed into a per-harness bag because the alternative — a per-harness
+    options type — would make `main.py` build its arguments differently depending on a flag it has
+    not resolved yet.
     """
 
     project: Path
     commands: Commands
-    model: str
-    #: The code documenter's and Claude Code's code orchestrator's; `model` is every other agent's.
-    #: Kiro ships no orchestrator and ignores its model.
+    consolidator_model: str
     documenter_model: str
     orchestrator_model: str
     hook_format: HookFormat

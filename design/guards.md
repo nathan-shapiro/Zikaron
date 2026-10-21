@@ -598,10 +598,10 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
   else** in `settings.local.json` — no `enabledMcpjsonServers`, no `permissions.allow` entry — writes no
   `.mcp.json`, ships no agent and no skill, and reports none of the memory install's
   notes. A memory install removes none of the guards'.
-- A guards-only install needs no store, no service and no model. `--model` names the model of the
-  agents the selection does not ship, so it is **refused** under `guards`, as `--agent` is
-  refused under Claude Code rather than silently discarded; `--no-trust-tools` asks for nothing to
-  be done and is accepted as a no-op.
+- A guards-only install needs no store, no service and no model. `--model` and each agent's own
+  model flag name the model of agents the selection does not ship, so each is **refused** under
+  `guards`, as `--agent` is refused under Claude Code rather than silently discarded;
+  `--no-trust-tools` asks for nothing to be done and is accepted as a no-op.
 
 ## 6. Failure behaviour
 

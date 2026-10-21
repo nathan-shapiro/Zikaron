@@ -544,11 +544,19 @@ usually shows something else: told the rule when its session starts, it reaches 
 | `--harness {auto,kiro,claude-code}` | which harness to install for. `auto` reads the project, then the `CLAUDECODE` marker; it refuses when the project has **both** dotdirs, and when neither source says |
 | `--agent <path>` | **kiro only.** Merge the hook and MCP entries into that config, after backing it up |
 | `--print-only` | print what would be written and write nothing at all |
-| `--model <id>` | the model of every agent Zikaron ships — the consolidator, the documenter and, under Claude Code, the code orchestrator (default: `claude-sonnet-5` under kiro; under Claude Code `haiku` for the documenter, `opus` for the orchestrator and `sonnet` for the consolidator) |
+| `--model <id>` | the model of every agent Zikaron ships whose own flag below is not given — the consolidator, the documenter and, under Claude Code, the code orchestrator (default: `claude-sonnet-5` under kiro; under Claude Code `haiku` for the documenter, `opus` for the orchestrator and `sonnet` for the consolidator) |
+| `--consolidator-model <id>` | the consolidator's model, over `--model` |
+| `--documenter-model <id>` | the code documenter's model, over `--model` |
+| `--orchestrator-model <id>` | **Claude Code only.** The code orchestrator's model, over `--model`. Refused under kiro, which ships no orchestrator |
 | `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; `--model` is refused with `guards`, which ships no agent |
+| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; every model flag is refused with `guards`, which ships no agent |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
+
+A model id is the harness's own: under kiro, one `kiro-cli chat --list-models` lists, which the
+install checks; under Claude Code, an alias such as `sonnet` or a full id, which Claude Code itself
+refuses at spawn if it does not know it. An install is for one harness, so a project set up for
+both installs twice, each run with that harness's ids.
 
 Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
 rewrites a config in whichever format it read, so mixing them in one file has no defined meaning.
