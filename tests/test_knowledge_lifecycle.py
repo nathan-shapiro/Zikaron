@@ -89,13 +89,14 @@ class TestTheWholeLifecycle:
         self, tmp_path: Path
     ) -> None:
         """In WAL mode a live database is three files, and a journal left behind would be inherited
-        by whatever is created at that path next. So the property asserted is the postcondition —
-        nothing named for this corpus survives — rather than a count of unlink calls.
+        by whatever is created at that path next; beside them is the build log. So the property
+        asserted is the postcondition — nothing named for this corpus survives — rather than a
+        count of unlink calls.
 
         The count would in fact be misleading. Reading a knowledge base's state opens and closes
         it, and SQLite reclaims its own `-wal` and `-shm` on the last close, so by the time the
-        unlink runs there is usually only one file left to remove. `files_unlinked` reports what
-        was actually there, which is why it is normally one rather than three.
+        unlink runs the database is usually one file. `files_unlinked` reports what was actually
+        there.
         """
         async with open_store(tmp_path) as (store_dir, db):
             config = config_for(tmp_path)
@@ -105,7 +106,8 @@ class TestTheWholeLifecycle:
                 config,
                 lifecycle.AddRequest(name="docs", root=corpus_root(tmp_path), description="a"),
             )
-            stem = created.database_path.name
+            stem = created.database_path.stem
+            created.database_path.with_suffix(".log").write_text("built\n", encoding="utf-8")
 
             removed = await lifecycle.remove(store_dir, db, config, name="docs")
 

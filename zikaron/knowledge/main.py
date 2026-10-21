@@ -322,12 +322,6 @@ async def _refresh(args: argparse.Namespace, client: KnowledgeClient) -> int:
     if not plan.expected and not plan.running:
         return 1 if plan.failed else 0
     failed_waits = await _await_builds(client, plan.expected, running=plan.running, only=args.name)
-    if failed_waits & set(plan.started):
-        # The one moment the foreground command is most wanted: a build **this call started** has
-        # ended badly and its own output went nowhere. Intersected rather than merely non-empty,
-        # because the note points at a line `_report_build` prints for `started` alone — a corpus
-        # that was already being built has none, and pointing at it would send a reader looking.
-        _explain_detachment()
     return 1 if failed_waits or plan.failed else 0
 
 
@@ -501,6 +495,7 @@ async def _await_builds(
         if absent and time.monotonic() > deadline:
             for name in absent:
                 stderr(f"failed    {name}: no build started within {_APPEARANCE_DEADLINE_SECONDS}s")
+                _report_build_log(reports.get(name))
                 dead.add(name)
             continue
         await asyncio.sleep(_POLL_SECONDS)
@@ -542,11 +537,7 @@ def _show_progress(name: str, entry: Mapping[str, object], shown: dict[str, str]
 def _report_terminal_states(
     reports: Mapping[str, Mapping[str, object]], names: Sequence[str]
 ) -> set[str]:
-    """Say how each waited-for corpus ended, and return the ones that ended unusable.
-
-    The names rather than a count, because the caller's next decision is about *which*: the note
-    pointing at a foreground command is worth printing only for a corpus this call started one for.
-    """
+    """Say how each waited-for corpus ended, and return the ones that ended unusable."""
     unusable: set[str] = set()
     for name in names:
         state = str(reports[name].get("state")) if name in reports else "gone"
@@ -555,7 +546,19 @@ def _report_terminal_states(
             continue
         unusable.add(name)
         stderr(f"failed    {name}: the build left it {state}")
+        _report_build_log(reports.get(name))
     return unusable
+
+
+def _report_build_log(entry: Mapping[str, object] | None) -> None:
+    """Name the log a failed build wrote its reason to, when the corpus still has one.
+
+    Its last lines are written moments after the lock the wait watches is released, so a reader
+    arriving at once may find them still landing.
+    """
+    log = None if entry is None else entry.get("build_log")
+    if isinstance(log, str):
+        stderr(f"log       {log}")
 
 
 def _report_unlock(payload: Mapping[str, object]) -> None:
@@ -585,11 +588,6 @@ def _report_build(
     The return value answers that narrower question rather than *is a build running*, because a
     corpus already being built has one running and none started here; `_refresh` reads the outcome
     itself to decide what a wait should cover.
-
-    A started build prints the command that reproduces it in the foreground, because a detached
-    build's output is discarded and running the identical command is the only way to recover why
-    one failed. That command is the argv the service's own spawn reported, carried on the wire
-    rather than rebuilt here, so the two cannot differ.
     """
     name = str(entry.get("name"))
     outcome = str(entry.get("outcome"))
@@ -600,9 +598,6 @@ def _report_build(
         # `prog` rather than a literal: under `uv tool install` no interpreter is on `PATH`, so a
         # hard-coded `python -m` line is a command that fails with `No module named zikaron`.
         print(f"follow    {prog} status {shlex.quote(name)}")
-        command = entry.get("foreground_command")
-        if isinstance(command, list):
-            print(f"foreground {shlex.join(str(part) for part in command)}")
         return True
     prefix, _fails = _OUTCOMES.get(outcome, ("refused", True))
     if prefix == "building":
@@ -622,8 +617,8 @@ def _report_build(
 
 def _explain_detachment() -> None:
     """The one note every started build shares, printed after them rather than once per build."""
-    print("\nA detached build's output is discarded. To watch one, or to see why one failed, run")
-    print("the foreground command printed beside it.")
+    print("\nA detached build writes its output to the build log its status names. To watch one,")
+    print("or to see why one failed, read that log.")
 
 
 async def _remove(args: argparse.Namespace, client: KnowledgeClient) -> int:
@@ -672,6 +667,11 @@ def _print_listing(payload: Mapping[str, object], *, detailed: bool, project: Pa
         _print_summary(entry)
         if detailed:
             _print_details(entry)
+            # Outside the diagnostic half, whose lines a corpus with no readable database lacks:
+            # that corpus is the one whose log is most wanted.
+            log = entry.get("build_log")
+            if isinstance(log, str):
+                print(f"  log       {log}")
     _print_orphans(payload.get("orphans"))
 
 

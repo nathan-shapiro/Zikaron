@@ -18,7 +18,6 @@ what was delivered. Nothing here is under a cap, so every shape is built field b
 what makes a renamed field a type error rather than a `KeyError` in front of a model.
 """
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from zikaron.core.knowledge import lock, reporting
@@ -147,6 +146,10 @@ class KnowledgeStatusResult(RpcResult):
     `orphans` is empty when a single corpus was named, since an orphan belongs to no knowledge base
     and attaching one to a report about a named corpus would be attaching it arbitrarily. The key
     is present either way, so a caller reads its contents rather than testing for it.
+
+    `build_log` is this call's alone, outside the diagnostic half, so a corpus whose database will
+    not open still names it. `remove`'s snapshot is built at the same detail and does not carry it,
+    because the log is one of the files that call deletes.
     """
 
     reports: tuple[reporting.Status, ...]
@@ -154,14 +157,19 @@ class KnowledgeStatusResult(RpcResult):
 
     def as_json(self) -> dict[str, object]:
         return {
-            "knowledge_bases": [
-                KnowledgeBaseJson(status=report, detailed=True).as_json() for report in self.reports
-            ],
+            "knowledge_bases": [_status_entry(report) for report in self.reports],
             "orphans": [OrphanJson(orphan=one).as_json() for one in self.orphans],
         }
 
 
-def _build_entry(entry: PlannedBuild, argv: Sequence[str] | None) -> dict[str, object]:
+def _status_entry(report: reporting.Status) -> dict[str, object]:
+    """One corpus's line in a `status` result: the full report, and where its last build wrote."""
+    payload = KnowledgeBaseJson(status=report, detailed=True).as_json()
+    payload["build_log"] = None if report.build_log is None else str(report.build_log)
+    return payload
+
+
+def _build_entry(entry: PlannedBuild) -> dict[str, object]:
     """One corpus's line in a build result: what it is, and what this call did about it.
 
     `started` is read off the absence of an obstacle rather than from a record of which spawns
@@ -169,11 +177,6 @@ def _build_entry(entry: PlannedBuild, argv: Sequence[str] | None) -> dict[str, o
     this function after a failed spawn. What that does *not* claim is that a sweep is atomic — the
     corpora ahead of the failure have live indexers against them, and they keep running. It claims
     only that no entry reporting `started` describes a corpus whose spawn was never made.
-
-    `foreground_command` is the argv the spawn **reported**, never a second construction of it. A
-    detached build's output is discarded, so running that identical command in the foreground is
-    the only way to recover why one failed — and a command that merely resembles what ran would
-    answer a different question than the one being asked.
 
     `reason` is the sentence behind an `outcome` that is not `started`, and it is for a person:
     `outcome` is the closed set anything automated keys on, so rewording this changes no
@@ -188,7 +191,6 @@ def _build_entry(entry: PlannedBuild, argv: Sequence[str] | None) -> dict[str, o
     payload = KnowledgeBaseJson(status=entry.status, detailed=False).as_json()
     obstacle = entry.obstacle
     payload["outcome"] = "started" if obstacle is None else obstacle.value
-    payload["foreground_command"] = None if argv is None else list(argv)
     payload["reason"] = None if entry.refusal is None else str(entry.refusal)
     payload["last_scan_started_at"] = entry.status.scan_mark
     if obstacle is BuildObstacle.ALREADY_INDEXING:
@@ -218,24 +220,15 @@ class KnowledgeBuildResult(RpcResult):
     across two calls is the seam this avoids.
 
     `database_path` is `add`'s too, and absent for a refresh, whose corpora all have one already.
-
-    `spawned` maps a corpus's name to the argv its indexer was actually started with, and carries
-    only those this call started. It is keyed by name rather than positional because a sweep's
-    planned entries and its spawns are not the same list — an obstacle produces an entry and no
-    spawn.
     """
 
     planned: tuple[PlannedBuild, ...]
-    spawned: Mapping[str, Sequence[str]]
     git_modes: tuple[str, str] | None = None
     database_path: str | None = None
 
     def as_json(self) -> dict[str, object]:
         payload: dict[str, object] = {
-            "knowledge_bases": [
-                _build_entry(entry, self.spawned.get(entry.knowledge_base.name))
-                for entry in self.planned
-            ]
+            "knowledge_bases": [_build_entry(entry) for entry in self.planned]
         }
         if self.git_modes is not None:
             requested, effective = self.git_modes
@@ -270,10 +263,10 @@ class KnowledgeRemoveResult(RpcResult):
     The status is a final snapshot taken before the row was deleted, since the corpus no longer
     exists to be polled. It carries the diagnostic half, because it is the last chance to see what
     was destroyed. `files_unlinked` reports what was actually on disk rather than what was
-    attempted. A live database in WAL mode is three files, but reading a corpus's state opens and
-    closes it and SQLite reclaims its own `-wal` and `-shm` on the last close — so one path is the
-    ordinary answer whether or not the corpus was ever built, and the length says nothing about
-    what it held.
+    attempted: the build log, if a build was ever spawned, and the database. A live database in
+    WAL mode is three files, but reading a corpus's state opens and closes it and SQLite reclaims
+    its own `-wal` and `-shm` on the last close — so the length says nothing about what the corpus
+    held.
     """
 
     status: reporting.Status

@@ -112,7 +112,7 @@ class TestTheStateAndItsReasonAreOneFact:
         registered = KnowledgeBase(
             id=uuid.uuid4(), name="docs", description="a corpus", created_at=timestamp()
         )
-        return reporting.without_details(registered, corpus_state)
+        return reporting.without_details(registered, corpus_state, build_log=None)
 
     def test_an_error_with_no_reason_is_refused(self) -> None:
         with pytest.raises(ValueError, match="disagree"):
@@ -344,7 +344,7 @@ def test_a_knowledge_base_with_no_database_reports_no_diagnostics_rather_than_ze
     backs. `files_indexed` is the exception, and it is a claim about availability: a corpus with no
     readable database has nothing that can be served."""
     registered = KnowledgeBase(id=uuid.uuid4(), name="docs", description="d", created_at="now")
-    report = reporting.without_details(registered, KnowledgeState.REINDEX_REQUIRED)
+    report = reporting.without_details(registered, KnowledgeState.REINDEX_REQUIRED, build_log=None)
     assert report.details is None
     assert report.summary.files_indexed == 0
     assert report.summary.files_remaining is None

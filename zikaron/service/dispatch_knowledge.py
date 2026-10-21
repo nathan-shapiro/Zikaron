@@ -60,6 +60,7 @@ from zikaron.core.knowledge import (
     reporting,
     state,
 )
+from zikaron.core.knowledge import paths as corpus_paths
 from zikaron.core.knowledge.errors import (
     DanglingKnowledgeBaseError,
     DuplicateNameError,
@@ -362,7 +363,7 @@ def _spawn(
     *,
     full: bool,
     op_id: str,
-) -> tuple[tuple[builds.PlannedBuild, ...], dict[str, list[str]]]:
+) -> tuple[builds.PlannedBuild, ...]:
     """Start a detached indexer for every corpus nothing stops, and return without waiting.
 
     **A corpus whose last spawned build is still alive and has not yet taken its lock answers
@@ -371,32 +372,31 @@ def _spawn(
     for one corpus one spawns and the other sees it. The mark recorded is the one this call's own
     observation read.
 
-    Returns every entry as this call answers it, and each started corpus's argv as the spawn
-    reported it, so the command that reproduces a build in the foreground is never constructed a
-    second time.
-
-    `op_id` is this call's, which each child records on its own event row. It travels in the
-    environment rather than the argv precisely so the returned command stays the one that reproduces
-    the build: an attribution token is not an input that changes what a build does.
+    Returns every entry as this call answers it. Each child writes its output to its corpus's build
+    log, which `status` names, and records `op_id` — this call's — on its own event row.
     """
     project = paths.scope_of(ctx.store_directory)
     answered: list[builds.PlannedBuild] = []
-    spawned: dict[str, list[str]] = {}
     for entry in planned:
         if not entry.may_start:
             answered.append(entry)
             continue
+        kb_id = entry.knowledge_base.id
         mark = entry.status.scan_mark
-        loading = ctx.spawned_builds.loading(entry.knowledge_base.id, mark=mark)
+        loading = ctx.spawned_builds.loading(kb_id, mark=mark)
         if loading is not None:
             answered.append(entry.still_loading(loading))
             continue
-        name = entry.knowledge_base.name
-        started = detach.spawn(name, project=project, full=full, spawned_by_op_id=op_id)
-        ctx.spawned_builds.record(entry.knowledge_base.id, started.process, mark=mark)
-        spawned[name] = started.argv
+        process = detach.spawn(
+            entry.knowledge_base.name,
+            project=project,
+            log=corpus_paths.knowledge_log_path(ctx.store_directory, kb_id),
+            full=full,
+            spawned_by_op_id=op_id,
+        )
+        ctx.spawned_builds.record(kb_id, process, mark=mark)
         answered.append(entry)
-    return tuple(answered), spawned
+    return tuple(answered)
 
 
 async def knowledge_add(
@@ -430,10 +430,9 @@ async def knowledge_add(
         names=[created.knowledge_base.name],
         migrate=_migrates(ctx),
     )
-    answered, spawned = _spawn(ctx, planned, full=False, op_id=envelope.op_id)
+    answered = _spawn(ctx, planned, full=False, op_id=envelope.op_id)
     return KnowledgeBuildResult(
         planned=answered,
-        spawned=spawned,
         git_modes=(created.git_mode.value, created.git_mode_effective.value),
         database_path=str(created.database_path),
     )
@@ -466,8 +465,8 @@ async def knowledge_refresh(
             names=None if name is None else [name],
             migrate=_migrates(ctx),
         )
-    answered, spawned = _spawn(ctx, planned, full=full, op_id=envelope.op_id)
-    return KnowledgeBuildResult(planned=answered, spawned=spawned)
+    answered = _spawn(ctx, planned, full=full, op_id=envelope.op_id)
+    return KnowledgeBuildResult(planned=answered)
 
 
 async def knowledge_unlock(

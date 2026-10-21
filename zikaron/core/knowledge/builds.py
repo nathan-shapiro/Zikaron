@@ -1,10 +1,10 @@
 """What must hold before a build is worth starting, and what stops one.
 
-**A build is usually not run by the process that asked for one.** It is spawned detached, with its
-output discarded and nowhere to report a refusal to, so every refusal decidable without reading a
-file is decided here, in front of whoever asked. The build re-establishes each of them for itself,
-because this and the build are not one transaction and the second is the one whose answer is acted
-on — but by then there is nobody to tell.
+**A build is usually not run by the process that asked for one.** It is spawned detached, and a
+refusal it raises reaches only its log, which nobody is reading as the asking call returns — so
+every refusal decidable without reading a file is decided here, in front of whoever asked. The
+build re-establishes each of them for itself, because this and the build are not one transaction
+and the second is the one whose answer is acted on.
 
 **One classification, two callers, and they differ only in what they do with it.** A caller naming
 one knowledge base wants the refusal *raised*, because with one corpus named there is nothing else

@@ -21,7 +21,7 @@ from typing import Final
 import aiosqlite
 import pytest
 
-from tests.knowledge_fixtures import StubProcess, config_for, corpus_root, stub_spawned
+from tests.knowledge_fixtures import StubProcess, config_for, corpus_root
 from tests.service_fixtures import context_over, envelope
 from zikaron.core.errors import Disposition, ErrorCode, ZikaronError
 from zikaron.core.knowledge import lock, registry, reporting
@@ -81,13 +81,16 @@ def started(monkeypatch: pytest.MonkeyPatch) -> list[_Started]:
     asked: list[_Started] = []
 
     def _record(
-        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> detach.Spawned:
-        del (
-            spawned_by_op_id
-        )  # An attribution the child records; this command's tests read the argv.
+        name: str,
+        *,
+        project: Path,
+        log: Path,
+        full: bool = False,
+        spawned_by_op_id: str | None = None,
+    ) -> StubProcess:
+        del log, spawned_by_op_id
         asked.append(_Started(name=name, project=project, full=full))
-        return stub_spawned(detach.command(name, project=project, full=full))
+        return StubProcess()
 
     monkeypatch.setattr(detach, "spawn", _record)
     return asked
@@ -220,6 +223,19 @@ def _database_of(project_dir: Path, name: str) -> Path:
         async with await Store.open(store_dir, config_for(project_dir)) as store:
             registered = await registry.require(store.connection, name)
             return knowledge_paths.knowledge_db_path(store_dir, registered.id)
+
+    return asyncio.run(_go())
+
+
+def _log_of(project_dir: Path, name: str) -> Path:
+    """One corpus's build log, resolved through the registry as `_database_of` resolves its
+    database."""
+
+    async def _go() -> Path:
+        store_dir = project_dir / ".zikaron"
+        async with await Store.open(store_dir, config_for(project_dir)) as store:
+            registered = await registry.require(store.connection, name)
+            return knowledge_paths.knowledge_log_path(store_dir, registered.id)
 
     return asyncio.run(_go())
 
@@ -786,25 +802,24 @@ class TestStartingABuild:
         assert _run(project, "refresh", "docs", "--full") == 0
         assert started == [_Started(name="docs", project=project, full=True)]
 
-    def test_the_command_that_reproduces_a_failed_build_is_printed(
+    def test_a_started_build_points_at_its_log_rather_than_a_command(
         self, project: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A detached build's output goes nowhere, so the one way back to *why* it failed is to run
-        the identical command where its output can be seen."""
+        """A command printed beside a build the service already started is an invitation to start
+        a second; where the first one's output goes is what a reader needs."""
         _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
         capsys.readouterr()
 
         assert _run(project, "refresh", "docs", "--full") == 0
         printed = capsys.readouterr().out
-        assert "zikaron.knowledge.indexer" in printed
-        assert "--full" in printed
-        assert str(project) in printed
+        assert not [line for line in printed.splitlines() if line.startswith("foreground")]
+        assert "writes its output to the build log its status names" in printed
 
     def test_an_unknown_name_refuses_in_the_foreground_and_starts_nothing(
         self, project: Path, started: list[_Started], capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The build detaches with its output discarded, so a refusal it raised would reach nobody.
-        Everything decidable without reading a file is decided here instead."""
+        """A refusal the detached build raised would reach only its log, which nobody is reading as
+        the command returns. Everything decidable without reading a file is decided here instead."""
         assert _run(project, "refresh", "absent") == 1
         assert started == []
         assert "refused" in capsys.readouterr().err
@@ -962,8 +977,8 @@ class TestWhatStatusSaysAboutABuild:
     def test_a_build_whose_process_is_gone_says_so(
         self, project: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """The only evidence a detached build died: its output went nowhere, and every counter it
-        left behind looks exactly like one still climbing."""
+        """The one thing in the corpus that says a detached build died: every counter it left
+        behind looks exactly like one still climbing."""
         _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
         _hold_the_lock(project, pid=_DEAD_PID, host=lock.this_host())
         capsys.readouterr()
@@ -991,6 +1006,58 @@ class TestWhatStatusSaysAboutABuild:
 
         assert _run(project, "status", "docs") == 0
         assert "build     " not in capsys.readouterr().out
+
+
+class TestWhatStatusSaysAboutTheBuildLog:
+    def test_it_names_the_log_a_spawned_build_wrote(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        log = _log_of(project, "docs")
+        log.write_text("built     'docs'\n", encoding="utf-8")
+        capsys.readouterr()
+
+        assert _run(project, "status", "docs") == 0
+        assert f"  log       {log}" in capsys.readouterr().out
+
+    def test_it_names_it_for_a_corpus_whose_database_will_not_open(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """That corpus prints none of the diagnostic lines, and is the one whose log is most
+        wanted."""
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        _corrupt_database(project, "docs")
+        log = _log_of(project, "docs")
+        log.write_text("failed: file is not a database\n", encoding="utf-8")
+        capsys.readouterr()
+
+        assert _run(project, "status", "docs") == 0
+        printed = capsys.readouterr().out
+        assert "cannot be read" in printed
+        assert f"  log       {log}" in printed
+
+    def test_a_corpus_with_no_log_prints_no_log_line(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run(project, "add", "docs", "--path", str(project / "docs"), "--description", "d")
+        capsys.readouterr()
+
+        assert _run(project, "status", "docs") == 0
+        assert "  log " not in capsys.readouterr().out
+
+    def test_an_answer_without_the_field_names_no_log(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A service started before this command's build carries no `build_log` and still answers
+        it, since the two share a version."""
+        entry: dict[str, object] = {"name": "docs", "description": "d", "state": "error"}
+        cli._print_listing(
+            {"knowledge_bases": [entry], "orphans": []}, detailed=True, project=tmp_path
+        )
+        assert cli._report_terminal_states({"docs": entry}, ["docs"]) == {"docs"}
+        printed = capsys.readouterr()
+        assert "log " not in printed.out
+        assert "log " not in printed.err
 
 
 class TestAStoreThatCannotBeRead:
@@ -1216,9 +1283,10 @@ class TestWaitingForABuild:
         capsys.readouterr()
         database = _database_of(project, "docs")
 
-        def _finish(name: str, **_spawned: object) -> detach.Spawned:
+        def _finish(name: str, **_spawned: object) -> StubProcess:
+            del name
             _mark_scan_complete(database)
-            return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", name])
+            return StubProcess()
 
         monkeypatch.setattr(detach, "spawn", _finish)
         assert _run(project, "refresh", "docs", "--wait") == 0
@@ -1285,17 +1353,24 @@ class TestASweepWhereOnlySomeBuildsStart:
         capsys.readouterr()
 
         building = _database_of(project, "docs")
+        logs: dict[str, Path] = {}
 
-        def _only_docs_starts(name: str, **_spawned: object) -> detach.Spawned:
+        def _only_docs_starts(name: str, *, log: Path, **_spawned: object) -> StubProcess:
+            logs[name] = log
             if name == "docs":
                 _mark_scan_complete(building)
-            return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", name])
+            else:
+                log.write_text(f"refused: no knowledge base named {name!r}\n", encoding="utf-8")
+            return StubProcess()
 
         monkeypatch.setattr(detach, "spawn", _only_docs_starts)
         assert _run(project, "refresh", "--wait") == 1
         printed = capsys.readouterr()
         assert "no build started" in printed.err
         assert "runbooks" in printed.err
+        assert f"log       {logs['runbooks']}" in printed.err, (
+            "a spawn refused before it took the lock is the refusal the log exists for"
+        )
         assert "built     'docs' is ok" in printed.out, (
             "giving up on the spawn that died must not abandon the build that started: the call "
             "fails because of the dead one, not instead of reporting the live one"
@@ -1336,10 +1411,10 @@ class TestASweepWhereOnlySomeBuildsStart:
                     _mark_scan_complete(building)
             return await real_call(self, method, params)
 
-        def _only_docs_starts(name: str, **_spawned: object) -> detach.Spawned:
+        def _only_docs_starts(name: str, **_spawned: object) -> StubProcess:
             if name == "docs":
                 _begin_a_build(building, pid=os.getpid(), host=lock.this_host())
-            return stub_spawned(["python", "-m", "x", name])
+            return StubProcess()
 
         monkeypatch.setattr(_InProcessClient, "call", _counted)
         monkeypatch.setattr(detach, "spawn", _only_docs_starts)
@@ -1450,18 +1525,21 @@ class TestWaitingForABuildSomebodyElseStarted:
         capsys.readouterr()
         database = _database_of(project, "docs")
 
-        def _dies_mid_build(name: str, **_spawned: object) -> detach.Spawned:
+        logs: list[Path] = []
+
+        def _dies_mid_build(name: str, *, log: Path, **_spawned: object) -> StubProcess:
+            del name
+            logs.append(log)
             _begin_a_build(database, pid=_DEAD_PID, host=lock.this_host())
-            return stub_spawned(["python", "-m", "x", name])
+            log.write_text("RuntimeError: the reason it died\n", encoding="utf-8")
+            return StubProcess()
 
         monkeypatch.setattr(detach, "spawn", _dies_mid_build)
         assert _run(project, "refresh", "docs", "--wait") == 1
         printed = capsys.readouterr()
         assert "the build left it" in printed.err
-        assert "foreground command printed beside it" in printed.out, (
-            "a build this call started ended badly, and its own output went nowhere — the note "
-            "pointing at the command that reproduces it is what recovers the reason"
-        )
+        (log,) = logs
+        assert f"log       {log}" in printed.err, "the reason a build died is in its log"
 
     def test_a_full_rebuild_says_it_did_not_start_when_one_is_already_running(
         self, project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1536,9 +1614,8 @@ class TestWaitingForABuildSomebodyElseStarted:
         printed = capsys.readouterr()
         assert "the build left it" in printed.err
         assert polls >= 3
-        assert "foreground command" not in printed.out, (
-            "the note points at a line printed only for a build this call started, and this one "
-            "was found already running — pointing at it would send a reader looking for nothing"
+        assert "log " not in printed.err, (
+            "no spawn wrote a log for this corpus, so there is none to point a reader at"
         )
 
 
@@ -1552,9 +1629,9 @@ class TestWaitingForABuildTheServiceSpawnedEarlier:
         """Spawns whose processes stay alive, as builds loading their model do; each is recorded."""
         asked: list[str] = []
 
-        def _spawn_alive(name: str, **_spawned: object) -> detach.Spawned:
+        def _spawn_alive(name: str, **_spawned: object) -> StubProcess:
             asked.append(name)
-            return stub_spawned(["python", "-m", "x", name], StubProcess(returncode=None))
+            return StubProcess(returncode=None)
 
         monkeypatch.setattr(detach, "spawn", _spawn_alive)
         return asked
@@ -1679,9 +1756,9 @@ class TestTheProjectHandedToTheService:
     def test_a_relative_project_is_resolved_before_it_is_sent(
         self, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The service outlives this shell, resolves nothing itself, and stringifies the value into
-        the `foreground` command this command prints — a line that would act on a different project
-        when pasted from elsewhere. So a relative `--project` is resolved before it is sent."""
+        """The service outlives this shell and resolves nothing itself, so a relative value would
+        be read against whatever directory it and its builds run in — which is why a relative
+        `--project` is resolved before it is sent."""
         asked: list[Path] = []
 
         @asynccontextmanager

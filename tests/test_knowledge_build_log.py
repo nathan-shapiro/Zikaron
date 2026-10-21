@@ -212,9 +212,8 @@ class TestAttribution:
         assert row["spawned_by_op_id"] == _SPAWNING_OP_ID
 
     def test_a_foreground_run_records_no_attribution(self, tmp_path: Path) -> None:
-        """Null rather than invented. A re-run of a printed `foreground_command` never carries the
-        token, because it travels outside the argv — which is what keeps that printed command the
-        one that reproduces the build."""
+        """Null rather than invented. A build run by hand never carries the token, which only a
+        spawn sets — a person is not the call that asked for some earlier build."""
         project = _project(tmp_path)
         _build(project)
         (row,) = _rows(project)
@@ -241,7 +240,9 @@ class TestAttribution:
         monkeypatch.setattr(subprocess, "Popen", _record)
         for token in (_SPAWNING_OP_ID, None):
             with pytest.raises(_SpawnStoppedError):
-                detach.spawn("docs", project=tmp_path, spawned_by_op_id=token)
+                detach.spawn(
+                    "docs", project=tmp_path, log=tmp_path / "build.log", spawned_by_op_id=token
+                )
 
         first, second = spawned
         assert first is not None

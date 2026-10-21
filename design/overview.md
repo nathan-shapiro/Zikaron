@@ -90,8 +90,8 @@ is absent, **and since M31 the `zikaron` commands a person types, which reach it
 **detached indexer** ~~the service spawns~~ **spawned** per knowledge-base build, which outlives its
 caller (K8). **The service is the only spawner since M31** — `detach.spawn`'s one caller is
 `service/dispatch_knowledge.py`, and `zikaron knowledge`'s verbs reach it by RPC like every other
-client. What a person can still start by hand is the indexer *itself*, through the foreground
-command a build result prints; that invocation opens the store directly and goes through no RPC,
+client. What a person can still start by hand is the indexer *itself*, as
+`python -m zikaron.knowledge.indexer`; that invocation opens the store directly and goes through no RPC,
 because it is the build rather than a request for one. So a shell-started indexer with no service in
 the `ps` tree remains possible, and is now exactly that case
 (`design/architecture.md` §"Components").

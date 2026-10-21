@@ -926,10 +926,9 @@ class KnowledgeBuildDetail(EventDetail):
     cost somebody paid and the load is not constant across a cold and a warm cache.
 
     `spawned_by_op_id` is the `op_id` of the verb that spawned this build, null when none was set —
-    which a re-run of a printed `foreground_command` never has, since the token travels in the
-    environment rather than the argv. Without the edge nothing joins a build's cost to its
-    requester, since the build mints a label of its own and only the spawning `call` row knows
-    whether an agent or a person asked.
+    which a build run by hand never has, since only a spawn sets it, in the environment rather than
+    the argv. Without the edge nothing joins a build's cost to its requester, since the build mints
+    a label of its own and only the spawning `call` row knows whether an agent or a person asked.
     """
 
     kind: ClassVar[EventKind] = EventKind.KNOWLEDGE_BUILD

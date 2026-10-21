@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.knowledge_fixtures import DEAD_PID, StubProcess, corpus_root, stub_spawned, write_meta
+from tests.knowledge_fixtures import DEAD_PID, StubProcess, corpus_root, write_meta
 from tests.service_fixtures import envelope, open_context
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import lock, meta, registry
@@ -38,10 +38,11 @@ class _Spawns:
     alive: bool = True
     pid: int = DEAD_PID
 
-    def spawn(self, name: str, **_options: object) -> detach.Spawned:
+    def spawn(self, name: str, **_options: object) -> StubProcess:
+        del name
         process = StubProcess(pid=self.pid, returncode=None if self.alive else 0)
         self.processes.append(process)
-        return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", "--", name], process)
+        return process
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +111,6 @@ class TestARefreshWhileASpawnedBuildLoads:
         assert len(spawns.processes) == 1
         assert entry["lock"] is None
         assert entry["last_scan_started_at"] is None
-        assert entry["foreground_command"] is None
 
     async def test_the_reason_names_the_process_add_spawned(self, tmp_path: Path) -> None:
         """The pid is what a person stops when a build never reaches its lock, so a plain

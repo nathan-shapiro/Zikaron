@@ -422,12 +422,13 @@ The rule, stated plainly so a future change has to name it rather than drift int
 long-running or off the critical path; a direct minimal write for anything that is neither; and
 *nothing at all* for a process nobody is positioned to read.**
 
-**The third case is the detached indexer, and it was missing until 2026-09-22 — shipped code
-falsifying a binding rule.** `zikaron.knowledge.indexer` runs with all three streams sent to
-`DEVNULL` (`knowledge/indexer/detach.py`). It is off the critical path, so the two-case rule as
-written predicted it would use `logging`. The trade it actually makes: a log file per knowledge base
-is several concurrent writers and a retention policy, bought for a diagnostic that one foreground
-re-run produces on demand.
+**The detached indexer is the exception, and it is stated rather than left to be found.** It is off
+the critical path, so the rule predicts `logging`, and it uses none: `zikaron.knowledge.indexer`
+prints its account and its failures to its own standard streams, as a command run by hand at a
+terminal must, and a spawned one has both streams opened onto its corpus's build log
+(`knowledge/indexer/detach.py`). So one output reaches a terminal or a file with no logging layer in
+either, and the moment two builds can write one log, their streams append (`knowledge-index.md`
+§8.4).
 
 ## 7. Errors
 

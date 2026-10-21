@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.knowledge_fixtures import config_for, corpus_root, stub_spawned
+from tests.knowledge_fixtures import config_for, corpus_root, stub_spawn
 from zikaron.core.knowledge import candidates, git, lifecycle, lock
 from zikaron.core.knowledge.errors import UnknownKnowledgeBaseError
 from zikaron.core.knowledge.meta import GitMode
@@ -45,10 +45,9 @@ def _no_detached_builds(monkeypatch: pytest.MonkeyPatch) -> None:
 
     `add` starts one, and every project here is made with `add`. Left alone, each test would leave
     a real detached build running over a real corpus — outliving the test, competing for the lock
-    the test then takes, and reaching the machine long after the suite had moved on. The one test
-    that wants the command it *would* have started replaces this with a recorder.
+    the test then takes, and reaching the machine long after the suite had moved on.
     """
-    monkeypatch.setattr(detach, "spawn", lambda *_args, **_keywords: stub_spawned([]))
+    monkeypatch.setattr(detach, "spawn", stub_spawn)
 
 
 @pytest.fixture
@@ -338,7 +337,7 @@ class TestWhatIsDecidedBeforeTheModelLoads:
     ) -> None:
         """Loading the model is a second of CPU and the most expensive thing this command does. It
         is wasted on any build that will be refused — in the foreground it is the operator's second,
-        and detached it is spent on a refusal nobody will ever see."""
+        and detached it is spent on a refusal nobody is waiting for."""
 
         async def _must_not_load(*_args: object, **_keywords: object) -> None:
             raise AssertionError("the encoder was loaded before the refusal was decided")

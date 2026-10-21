@@ -6690,14 +6690,18 @@ and nothing in the service, the store or the memory hook.
 
 ## M40-2 — A command no one should paste, and a log that keeps why a build died
 
-Normative: **`design/knowledge-index.md` §8.4** (what the build-starting verbs return, and the
-passage beginning *"Every refusal a build can be given before it reads a file"*) and **§8.5**
-(`status`); `design/architecture.md` §"Filesystem security"; `design/schema.md` §"What is
-instrumented, what is not, and why" and §"Migration posture", where they cite the command a build
-result prints. Decision: none — a change to the knowledge index's tool surface within its own
-spec. Evidence: the operator's reading, 2026-10-17: *"it seems like leaking implementation
-detail as well as it might make agent who called it become creative and decide to run command on
-its own"*.
+Normative: **`design/knowledge-index.md` §8.4** (what the build-starting verbs return and what
+`remove` unlinks), **§8.5** (`status`, and its tool description, to which
+`tests/test_mcp_tool_descriptions.py` holds the code's copy), §9 (the passage beginning *"Every
+refusal a build can be given before it reads a file"*) and §6.2 (who starts an indexer);
+`design/overview.md` §"2. Shape of the system, in one page", its sentence on what a person starts by
+hand; `design/architecture.md` §"Filesystem security" and the indexer row of §"Components";
+`design/schema.md` §"File permissions", the `knowledge_build` row of §"The `event` log, per kind"'s
+nullability table, and §"What is instrumented, what is not, and why" and §"Migration posture", where
+they cite the command a build result prints. Decision: none — a change to the knowledge index's tool
+surface within its own spec. Evidence: the operator's reading, 2026-10-17: *"it seems like leaking
+implementation detail as well as it might make agent who called it become creative and decide to run
+command on its own"*.
 
 **What was found.** `knowledge_add` and `knowledge_refresh` return, per corpus started, a
 `foreground_command` — the indexer's argv — because a detached build's output is discarded and
@@ -6705,49 +6709,174 @@ re-running that command is the only way to learn why one died. It hands an agent
 beside the build the service already started, which is the duplicate-build class M39 closed, and it
 names an implementation detail no agent needs. The spec rejected the alternative, a log per
 knowledge base, as *"several concurrent writers and a retention policy"*. **Neither cost holds for
-the log below**: a corpus's lock already admits one build at a time, so it has one writer, and a
-log emptied at each spawn holds only the latest build, so it needs no retention.
+the log below**: a service spawns at most one live child per corpus until that child releases the
+corpus's lock — invariant 19's table until the child takes it, the lock after — and only a spawn
+writes the log, so it has one writer but for the two short overlaps item 1 names, which append
+rather than overwrite; and a log emptied at each spawn holds only the latest build, so it needs no
+retention.
 
 ### What ships
 
-1. **The log.** `detach.spawn` opens `knowledge/<uuid4>.log` beside the corpus's database, emptied,
-   at `0600` under the store's umask, and gives it to the child as stdout and stderr in place of
-   `DEVNULL`. A build run by hand writes to its terminal, as before. `knowledge_remove` deletes the
-   log with the database; a log is never a candidate in the orphan scan, which looks at `.db` files
-   alone.
-2. **`status` names it**: `knowledge_status` gains `build_log`, the path when the file exists and
-   `null` otherwise; `zikaron knowledge status` prints it, and `zikaron knowledge`'s note after a
-   build that ended badly points at it.
+1. **The log.** A build the service spawns writes its stdout and stderr to
+   `knowledge/<uuid4>.log`, beside the corpus's database and named by the same registry id, its
+   path built beside `knowledge_db_path` in `core/knowledge/paths.py` and re-parsing the id as that
+   function does. `detach.spawn` is handed the path by its caller, the service's dispatcher, which
+   already holds the store directory and the id. It opens the file emptied and to append
+   (`O_TRUNC | O_APPEND`), through `os.open` with mode `0600`, and sets `0600` on the open file,
+   since emptying a file left at a wider mode keeps that mode — so the mode `os.open` is given
+   covers only the instant before that, on a file already empty. Appending is for the two cases of
+   two writers — the previous build's child still printing its last lines after releasing the lock
+   when the next spawn empties the log, which a scripted `refresh --wait` followed by another
+   `refresh` reaches; and a service restarted in the second or so before its child takes the lock,
+   whose fresh table does not know that child and spawns another — whose lines then append rather
+   than overwrite, so a log can open with the previous build's last lines. It gives the descriptor
+   to the child as both streams in place of `DEVNULL`, stdin staying `DEVNULL`; sets
+   `PYTHONUNBUFFERED=1` in the per-spawn copy of the environment, so the two streams' lines land in
+   the order they were printed; and closes its own copy of the descriptor whether or not `Popen`
+   succeeds. A log that cannot be opened fails the
+   spawn as an interpreter that cannot be started does: an `OSError`, which the dispatcher reports
+   as `store_unavailable`, and no build starts. A build run by hand writes to its terminal, as
+   before. **The indexer's code is unchanged**, its docstrings aside (item 4): a refusal or a
+   predictable failure already prints its one line on stderr (`knowledge/scope.py`'s `execute`),
+   and an exception nothing catches reaches Python's own handler, which prints its traceback there.
+   `knowledge_remove` unlinks the log, then the database's three files, so an interrupted `remove`
+   never leaves a log without the orphan `.db` `status` reports; `files_unlinked` names the log
+   when it was there. A log is never a candidate in the orphan scan, which looks at `.db` files
+   alone. **One log can outlive its corpus, and that is accepted**: a `remove` landing after an
+   `add` created the corpus or a `refresh` observed it, and before either spawned, leaves that
+   spawn to create a log no registry row names, holding the child's one-line refusal, which
+   nothing reports or sweeps.
+2. **`status` names it.** Each corpus in `knowledge_status`'s result gains `build_log`: the log's
+   path when the file exists, `null` otherwise. It is reported whether or not the corpus's database
+   can be read — a database that will not open is when the log is most wanted — so it stands
+   outside §8.5's diagnostic half, which is absent then: `reporting.observe` computes it from the
+   store directory and the id, a stat whether or not the database opened, and carries it on
+   `Status` beside `details`. `list` does not carry it, being the choosing fields alone, and nor
+   does `remove`'s snapshot, whose `files_unlinked` names the log it deleted — and since that
+   snapshot is serialized at `status`'s own detail, `build_log` is emitted by `knowledge_status`'s
+   result alone rather than by that detail level. `zikaron knowledge status` prints it, for a
+   corpus whose database will not open too, where the diagnostic lines are not printed. The status
+   tool's description changes in three places, within the 1,900 characters
+   `tests/test_mcp_tool_descriptions.py` allows a description, which it stood 47 under: in `lock`'s
+   paragraph, *"`live: false` means a build died and nothing else will say so"* becomes
+   *"`live: false` means a build died, and `build_log` may say why"* — *may*, since a build run by
+   hand wrote to a terminal; one paragraph follows `lock`'s:
+
+   > `build_log` is the file the last build `zikaron_knowledge_add` or
+   > `zikaron_knowledge_refresh` started wrote to, or null.
+
+   and the `orphans` paragraph's last sentence, on how an orphan is opened, gives way to *"nothing
+   deletes or searches them"*.
 3. **`foreground_command` goes**, from both verbs' results and from the wire, with the CLI's
-   `foreground …` line; the CLI's `follow … status` line stays, and `status` now carries the log.
-4. **Documents**: the passages in the normative list; `design/coding-standards.md` §6's account of
-   the detached indexer, whose trade this reverses; and the comments in `zikaron/` that reason from
-   the printed command (`core/events.py`, `project/resolve.py`, `knowledge/scope.py`,
-   `knowledge/indexer/main.py`, `knowledge/indexer/build_log.py`, `knowledge/indexer/detach.py`).
+   `foreground …` line; the `follow … status` line stays. What existed only to carry it goes too —
+   `Spawned.argv`, the dispatcher's map of each started corpus's argv and the build result's
+   `spawned` — so `spawn` returns the child's handle alone. The spawning `op_id` still travels in
+   the environment, for the reason that survives — an attribution token is not an input that
+   changes what a build does. The note the CLI prints after a started build says instead that a
+   detached build writes its output to the log `status` names, and under `--wait` a build this call
+   started that ended unusable or never appeared is reported with its log's path, which the wait's
+   last `status` poll carries when `status` still lists the corpus. The log's last lines — the
+   report, a refusal, a traceback — are written moments after the lock `--wait` watches is
+   released, and §9 says so, so a log read the instant a wait returns is not taken for one that is
+   missing them.
+4. **Documents**: the passages in the normative list; §8.4's `remove` paragraph, whose
+   `files_unlinked` is the paths that were on disk "rather than the three that were attempted";
+   §6.2's sentence on the by-hand build; §9's `remove` sentence; §2's layout diagram, gaining a
+   `.log` beside a `.db`, and its sentence that everything but the registry lives in one SQLite
+   file; the paragraph on a live database's three files (*"One file" is true at rest …*), where
+   `remove` now unlinks all three and the corpus's build log; §11's row for an indexer that died
+   holding the lock, gaining that when `add` or `refresh` started it, its output is in the log
+   `status` names, and a row for a `knowledge/*.log` no registry row names — item 1's accepted
+   case, which nothing reports or sweeps, an interrupted `remove` leaving none without its orphan
+   `.db`; the indexer row of `README.md`'s components table, and its `--wait` paragraph, which
+   gains that a build that left its corpus unusable is reported with its log's path and that the
+   log's last lines land moments after the wait returns;
+   `design/architecture.md` §"Paths"' `Logs` bullet and §"Degraded modes"' sentence on three logs,
+   each gaining the per-corpus build log;
+   `design/coding-standards.md` §6's account of the detached indexer, whose trade this reverses;
+   `design/schema.md`'s account of a spawned child whose corpus a `remove` took while it resolved
+   the name, whose refusal now reaches its log — deleted by a `remove` that lands after the spawn,
+   and left behind by one that lands before it, as item 1 says — and the nullability row's
+   reworded cell, whose field-names column `tests/test_event_kinds.py` parses; and the comments and
+   docstrings, in `zikaron/` and `tests/` alike, that reason from the printed command, from a
+   detached build's output being discarded, or from the three files, wherever they stand — in the
+   modules items 1–3 touch, and outside them at least `core/knowledge/builds.py`'s module
+   docstring, `core/knowledge/reporting.py`'s `LockReport`, `core/events.py`'s
+   `KnowledgeBuildEvent`, `knowledge/scope.py`'s module docstring, `knowledge/indexer/main.py`'s
+   `build`, `knowledge/indexer/build_log.py`'s `_report`, `project/resolve.py`, and the docstrings
+   of `tests/test_project_scope.py`, `tests/test_knowledge_indexer.py`,
+   `tests/test_knowledge_build_log.py`, `tests/test_knowledge_cli.py` and
+   `tests/test_knowledge_lifecycle.py` — besides the assertions on `foreground_command` in
+   `tests/test_service_spawned_builds.py` and `tests/test_service_knowledge_management.py`, which
+   go with the field.
+   **`design/write-policy.md`'s erasure procedure is unchanged**: the log is the indexer's own
+   account — counts, paths, refusals, tracebacks — and quotes no memory's prose. **No row in
+   `design/kiro-gaps.md`**: the change is the same under both harnesses.
+
+**What landing in this tree does.** `~/Trading/LeibaTrader`, `~/Dividends` and `~/Memory` run this
+repository's `.venv`: every build their services spawn runs `zikaron.knowledge.indexer` from the
+tree as it stands, and each service imports `detach` and the dispatcher at its next start — **so
+the build is done in a git worktree with its own `.venv`**, as M40-1's was, and reaches this tree
+only once its gate is green. A service started before the landing keeps returning
+`foreground_command` and discarding its builds' output until it restarts, and since its version is
+this tree's, `zikaron knowledge` talks to it: the command reads a `status` entry without
+`build_log` as one naming no log.
 
 ### Invariants and properties to cover
 
-- A spawned build's stdout and stderr reach its log; the log is `0600`, emptied at the next spawn,
-  and deleted by `remove`.
-- `status` reports `build_log` as a path once a spawn has written one, and `null` for a corpus
-  never built.
-- Neither verb's result carries `foreground_command`, and the CLI prints no `foreground` line.
-- A log is never an orphan candidate.
-- An indexer that dies of an exception leaves its traceback in the log — the case the change is
-  for.
+Each with the mutation, applied in memory by a pytest plugin, that its test must be seen red
+against.
+
+- **A spawned build's stdout and stderr both reach its log** (either stream left at `DEVNULL`).
+- **The log is `0600`, including one found at a wider mode** (the `fchmod` dropped, with a
+  leftover log at `0644`).
+- **It is emptied at the next spawn** (`O_TRUNC` dropped), **and two descriptors open on it at once
+  both land their writes** — both opened, then each writes (`O_APPEND` dropped).
+- **A child's stdout and stderr lines land in the order it printed them** (`PYTHONUNBUFFERED` not
+  set, with the test stripping it from the inherited environment first).
+- **A log that cannot be opened fails the spawn** (the open's failure swallowed and the child
+  started on `DEVNULL`), **and no descriptor is left open by a `Popen` that raises** (the close
+  skipped when `Popen` raises).
+- **`remove` deletes it and names it in `files_unlinked`** (the log left out of what `remove`
+  unlinks).
+- **`status` reports `build_log`** as the path once a spawn has opened the log, `null` for a corpus
+  none was ever spawned for, and the path for a corpus whose database will not open (`build_log`
+  always `null`; `build_log` carried inside the diagnostic half); **`list`'s entries — and so
+  `add`'s and `refresh`'s — and `remove`'s snapshot carry none** (`build_log` emitted by every
+  projection); **`zikaron knowledge status` prints it for a corpus whose database will not open**
+  (the line placed inside the diagnostic half's guard); **and `zikaron knowledge status` and a
+  `--wait`'s report read an entry without the key as naming no log** (the CLI indexing `build_log`
+  outright).
+- **Neither verb's result carries `foreground_command`** (the field restored to a started entry),
+  **and the CLI prints no `foreground` line** (a `foreground` line printed for a `started` entry);
+  its note after a started build and its report of a failed wait name the log, for a build that
+  ended unusable and for one that never appeared (the note's old wording restored; either case's
+  path line dropped).
+- **A log is never an orphan candidate** (the scan widened to every file in `knowledge/`).
+- **A spawned build that dies of an exception leaves its traceback in the log** — the case the
+  change is for — seen with a spawn whose command is replaced by one that raises (the child's
+  stderr left at `DEVNULL`); and `tests/test_knowledge_cli_integration.py`'s test that ran the
+  printed `foreground` line against a real service becomes one that reads a real started build's
+  report from the log `status` names, polling the log for the `built` line to a deadline rather
+  than reading it once, since the report is printed after the lock `--wait` watches is released.
 
 ### Done when
 
-1. Items 1–4 are in, every new test was **seen red** against the mutation it names, no code
-   writes or reads `foreground_command`, and in `design/` only this brief names it.
-2. `./check.sh` is green.
+1. Items 1–4 are in, and every new test was **seen red** against the mutation it names.
+2. No code writes or reads `foreground_command`; and no passage in `design/`, `README.md`,
+   `zikaron/` or `tests/` says that a build result prints a command, that a detached build's
+   output is discarded or goes nowhere, or that `remove`'s `files_unlinked` is normally one path —
+   other than this brief and the briefs before it in `design/build-plan.md`, which record what each
+   milestone shipped as it stood.
+3. `./check.sh` is green, and `.venv/bin/python experiments/new_line_coverage.py` names no line
+   added under `zikaron/` that no test executes.
 
 ### Scope fence
 
 **Not** a log for the service, the hook or the MCP client, each of which keeps what it has. **Not**
 a rotation or a size cap: a build's output is a line per real advance and its failure. **Not** a
-change to what a build does, to the lock, to `knowledge_build` rows or to any table. **Not**
-removing the indexer's own entry point, which a person may still run by hand.
+change to what a build does or prints, to the lock, to `knowledge_build` rows or to any table.
+**Not** removing the indexer's own entry point, which a person may still run by hand.
 
 ## M40-3 — One model for every agent, and a flag for each
 

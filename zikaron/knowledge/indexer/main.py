@@ -2,8 +2,7 @@
 
 The whole of the command is here; `__main__` only turns its status into an exit. The management
 command **spawns this module** rather than calling `build`, so a build means one thing however it
-was asked for — and `detach.command` is the argv it spawns, which is also what it prints for
-anybody who has to run the same build where its output can be seen.
+was asked for — spawned, with its output in the corpus's build log, or run by hand at a terminal.
 """
 
 import argparse
@@ -64,8 +63,8 @@ async def build(store: scope.OpenStore, *, name: str, full: bool = False) -> int
 
     **The refusals are decided before the model is loaded**, which is a second of CPU and the most
     expensive thing this command does. It is wasted either way when a build is refused — in the
-    foreground it is the operator's second, and detached it is spent on a refusal nobody will ever
-    see. The build itself re-establishes each refusal, since the check and the build are not one
+    foreground it is the operator's second, and detached it is spent on a refusal nobody is waiting
+    for. The build itself re-establishes each refusal, since the check and the build are not one
     transaction.
 
     **The corpus is resolved here, before `prepare`, and the rule for which failures get a row is

@@ -8,7 +8,7 @@ in-process extension rather than a service.
 """
 
 import dataclasses
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +24,6 @@ from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.store.connection import open_connection
 from zikaron.core.store.embedder import FakeEmbedder
 from zikaron.core.store.store import Store
-from zikaron.knowledge.indexer import detach
 
 #: A pid no process can have, so *not running* is a fact in a test rather than a race with the
 #: scheduler. Shared, because every suite that plants a dead build needs the same one and a second
@@ -48,9 +47,12 @@ class StubProcess:
         return self.returncode
 
 
-def stub_spawned(argv: Sequence[str], process: StubProcess | None = None) -> detach.Spawned:
-    """What `detach.spawn` returns, for a stub standing in for it."""
-    return detach.Spawned(argv=list(argv), process=StubProcess() if process is None else process)
+def stub_spawn(
+    name: str, *, project: Path, log: Path, full: bool = False, spawned_by_op_id: str | None = None
+) -> StubProcess:
+    """Stands in for `detach.spawn` where a test wants no build: starts nothing, writes no log."""
+    del name, project, log, full, spawned_by_op_id
+    return StubProcess()
 
 
 def config_for(tmp_path: Path) -> EffectiveConfig:

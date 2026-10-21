@@ -25,7 +25,7 @@ from tests.knowledge_fixtures import (
     add_request,
     build_settings,
     open_corpus,
-    stub_spawned,
+    stub_spawn,
     write_tree,
 )
 from tests.service_fixtures import envelope, open_context
@@ -248,7 +248,7 @@ class TestTheGate:
     async def test_remove_and_rename_migrate_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(detach, "spawn", lambda name, **_: stub_spawned([name]))
+        monkeypatch.setattr(detach, "spawn", stub_spawn)
         write_tree(tmp_path / "docs", _documents())
         async with open_context(tmp_path) as ctx:
             await _dispatch(

@@ -18,9 +18,9 @@ import pytest
 from tests.fake_encoder import FakeEncoder
 from tests.knowledge_fixtures import (
     DEAD_PID,
+    StubProcess,
     build_settings,
     corpus_root,
-    stub_spawned,
     write_meta,
     write_tree,
 )
@@ -64,10 +64,16 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> Spawns:
     recorded: Spawns = []
 
     def fake_spawn(
-        name: str, *, project: Path, full: bool = False, spawned_by_op_id: str | None = None
-    ) -> detach.Spawned:
+        name: str,
+        *,
+        project: Path,
+        log: Path,
+        full: bool = False,
+        spawned_by_op_id: str | None = None,
+    ) -> StubProcess:
+        del log
         recorded.append((name, project, full, spawned_by_op_id))
-        return stub_spawned(["python", "-m", "zikaron.knowledge.indexer", "--", name])
+        return StubProcess()
 
     monkeypatch.setattr(detach, "spawn", fake_spawn)
     return recorded
@@ -113,6 +119,12 @@ async def _database_of(ctx: ServiceContext, name: str) -> Path:
     """
     registered = await registry.require(ctx.store.connection, name)
     return knowledge_paths.knowledge_db_path(ctx.store_directory, registered.id)
+
+
+async def _log_of(ctx: ServiceContext, name: str) -> Path:
+    """One corpus's build log, resolved as `_database_of` resolves its database."""
+    registered = await registry.require(ctx.store.connection, name)
+    return knowledge_paths.knowledge_log_path(ctx.store_directory, registered.id)
 
 
 class TestAdd:
@@ -448,7 +460,7 @@ class TestStatus:
         self, tmp_path: Path
     ) -> None:
         """Absent rather than zeroed: a zero no stored value backs is a confident answer to a
-        question nothing could answer."""
+        question nothing could answer. `build_log` rests on no database, so it stays."""
         async with open_context(tmp_path) as ctx:
             await _add(ctx, tmp_path)
             (await _database_of(ctx, "docs")).write_bytes(b"this is not a SQLite database")
@@ -460,6 +472,7 @@ class TestStatus:
                 "state",
                 "files_indexed",
                 "files_remaining",
+                "build_log",
             }
 
     async def test_a_blank_knowledge_base_names_the_parameter_that_was_sent(
@@ -1152,16 +1165,33 @@ class TestUnlock:
             assert excinfo.value.data["field"] == "knowledge_base"
 
 
-class TestTheForegroundCommand:
-    """The argv a build result carries is the spawn's own, never a second construction."""
-
-    async def test_add_reports_the_argv_the_spawn_returned(self, tmp_path: Path) -> None:
+class TestWhatABuildResultCarries:
+    async def test_no_entry_carries_a_command_to_run(self, tmp_path: Path) -> None:
+        """A command beside a build the service already started invites a second build of the
+        same corpus, and names an implementation detail no caller needs."""
         async with open_context(tmp_path) as ctx:
-            entry = _only(await _add(ctx, tmp_path))
-            assert (
-                entry["foreground_command"]
-                == detach.spawn("docs", project=paths.scope_of(ctx.store_directory)).argv
-            )
+            added = _only(await _add(ctx, tmp_path))
+            refreshed = _only(await _call(ctx, "knowledge_refresh", {"name": "docs"}))
+        assert added["outcome"] == "started"
+        assert refreshed["outcome"] == "started"
+        assert "foreground_command" not in added
+        assert "foreground_command" not in refreshed
+
+    async def test_each_spawn_writes_to_its_own_corpus_log(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logs: list[Path] = []
+
+        def _record(name: str, *, log: Path, **_options: object) -> StubProcess:
+            del name
+            logs.append(log)
+            return StubProcess()
+
+        monkeypatch.setattr(detach, "spawn", _record)
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path, "docs")
+            await _add(ctx, tmp_path, "runbooks")
+            assert logs == [await _log_of(ctx, "docs"), await _log_of(ctx, "runbooks")]
 
     async def test_add_reports_the_database_it_created(self, tmp_path: Path) -> None:
         async with open_context(tmp_path) as ctx:
@@ -1175,20 +1205,73 @@ class TestTheForegroundCommand:
             await _add(ctx, tmp_path)
             assert "database_path" not in await _call(ctx, "knowledge_refresh", {})
 
-    async def test_a_corpus_no_build_started_for_carries_no_command(self, tmp_path: Path) -> None:
-        """`foreground_command` describes a build that was started. An obstacle means none was, so
-        offering a command to reproduce it would be offering one that reproduces nothing."""
+
+class TestTheBuildLog:
+    """`status` names where the last spawned build wrote its output; nothing else does."""
+
+    async def test_status_names_none_before_a_build_has_written_one(self, tmp_path: Path) -> None:
         async with open_context(tmp_path) as ctx:
             await _add(ctx, tmp_path)
-            await write_meta(
-                await _database_of(ctx, "docs"),
-                lock_pid=str(os.getpid()),
-                lock_host=lock.this_host(),
-                lock_started_at=timestamp(),
-            )
-            entry = _only(await _call(ctx, "knowledge_refresh", {"name": "docs"}))
-            assert entry["outcome"] == "already_indexing"
-            assert entry["foreground_command"] is None
+            entry = _only(await _call(ctx, "knowledge_status", {"knowledge_base": "docs"}))
+        assert entry["build_log"] is None
+
+    async def test_status_names_it_once_it_exists(self, tmp_path: Path) -> None:
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            log = await _log_of(ctx, "docs")
+            log.write_text("built     'docs'\n", encoding="utf-8")
+            entry = _only(await _call(ctx, "knowledge_status", {"knowledge_base": "docs"}))
+        assert entry["build_log"] == str(log)
+
+    async def test_a_corpus_whose_database_will_not_open_still_names_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Such a corpus has no diagnostic half, and is the one whose log is most wanted."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            (await _database_of(ctx, "docs")).write_bytes(b"this is not a SQLite database")
+            log = await _log_of(ctx, "docs")
+            log.write_text("failed: file is not a database\n", encoding="utf-8")
+            entry = _only(await _call(ctx, "knowledge_status", {"knowledge_base": "docs"}))
+        assert entry["state"] == "error"
+        assert "root_path" not in entry
+        assert entry["build_log"] == str(log)
+
+    async def test_no_other_answer_carries_it(self, tmp_path: Path) -> None:
+        """`list` and the build verbs answer in the choosing fields, and `remove`'s snapshot
+        describes a corpus whose log that same call deletes."""
+        async with open_context(tmp_path) as ctx:
+            added = _only(await _add(ctx, tmp_path))
+            (await _log_of(ctx, "docs")).write_text("built\n", encoding="utf-8")
+            listed = _only(await _call(ctx, "knowledge_list", {}))
+            refreshed = _only(await _call(ctx, "knowledge_refresh", {"name": "docs"}))
+            removed = _only(await _call(ctx, "knowledge_remove", {"name": "docs", "confirm": True}))
+        for entry in (added, listed, refreshed, removed):
+            assert "build_log" not in entry
+
+    async def test_remove_deletes_it_before_the_database(self, tmp_path: Path) -> None:
+        """First, so a `remove` interrupted between the two leaves the log beside the orphan
+        database `status` reports, rather than alone where nothing would."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            log = await _log_of(ctx, "docs")
+            log.write_text("built\n", encoding="utf-8")
+            database = await _database_of(ctx, "docs")
+            payload = await _call(ctx, "knowledge_remove", {"name": "docs", "confirm": True})
+        assert payload["files_unlinked"] == [str(log), str(database)]
+        assert not log.exists()
+
+    async def test_a_log_is_never_an_orphan(self, tmp_path: Path) -> None:
+        """An orphan is a database somebody may want back; a log beside it is not one."""
+        async with open_context(tmp_path) as ctx:
+            await _add(ctx, tmp_path)
+            database = await _database_of(ctx, "docs")
+            (await _log_of(ctx, "docs")).write_text("built\n", encoding="utf-8")
+            await registry.delete(ctx.store.connection, name="docs")
+            await ctx.store.connection.commit()
+            orphans = (await _call(ctx, "knowledge_status", {}))["orphans"]
+        assert isinstance(orphans, list)
+        assert [Path(str(one["path"])).name for one in orphans] == [database.name]
 
 
 class TestListCarriesOrphans:
