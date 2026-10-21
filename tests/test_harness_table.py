@@ -203,6 +203,24 @@ class TestTheCodeTableMatchesTheDesignTable:
         )
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_search_reminder(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """The reminder's trigger, each arm's matcher and filters in order, or that the harness has
+        no reminder — which is what a memory install's absent entry reads."""
+        cell = _cell(rows, "Search reminder (`search_reminder`)", spec)
+        reminder = spec.search_reminder
+        if reminder is None:
+            assert _identifier(cell) is None
+            return
+        expected = (
+            reminder.trigger,
+            reminder.files.matcher,
+            *reminder.files.filters,
+            reminder.shell.matcher,
+            *reminder.shell.filters,
+        )
+        assert tuple(_BACKTICKED.findall(cell))[: len(expected)] == expected
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_harness_binary(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         """What the installer looks for on `PATH` before writing anything.
 
@@ -263,6 +281,18 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert KIRO.subagent_start_trigger is None
         assert CHANNELS[HookEvent.SUBAGENT_START] is OutputChannel.ADDITIONAL_CONTEXT
 
+    def test_the_search_reminder_goes_out_on_the_tool_events_structured_channel(
+        self, rows: dict[str, dict[str, str]]
+    ) -> None:
+        """A tool event's plain stdout goes to the debug log alone
+        (`research/claude-code-tool-hook-probe.md`); `additionalContext` reaches the agent, measured
+        with a nonce in the main session and a subagent alike (`research/m40-4-hook-probes.md`)."""
+        kiro_cell = _cell(rows, "Output channel, tool event", KIRO).lower()
+        assert any(marker in kiro_cell for marker in _ABSENT_MARKERS)
+        assert "additionalContext" in _cell(rows, "Output channel, tool event", CLAUDE_CODE)
+        assert KIRO.search_reminder is None
+        assert channel_for(HookEvent.SEARCH) is OutputChannel.ADDITIONAL_CONTEXT
+
     def test_the_harness_firing_hooks_for_subagents_is_the_one_without_a_subagent_trigger(
         self, rows: dict[str, dict[str, str]]
     ) -> None:
@@ -291,6 +321,8 @@ class TestTheTableIsInternallyConsistent:
             CLAUDE_CODE.prompt_trigger: HookEvent.PROMPT,
             CLAUDE_CODE.subagent_start_trigger: HookEvent.SUBAGENT_START,
         }
+        assert CLAUDE_CODE.search_reminder is not None
+        expected[CLAUDE_CODE.search_reminder.trigger] = HookEvent.SEARCH
         assert expected == TRIGGERS
 
     def test_each_harnesss_own_trigger_names_resolve_to_the_events_they_mean(self) -> None:
@@ -299,6 +331,8 @@ class TestTheTableIsInternallyConsistent:
             assert event_for(spec.prompt_trigger) is HookEvent.PROMPT
             if spec.subagent_start_trigger is not None:
                 assert event_for(spec.subagent_start_trigger) is HookEvent.SUBAGENT_START
+            if spec.search_reminder is not None:
+                assert event_for(spec.search_reminder.trigger) is HookEvent.SEARCH
 
     def test_the_other_harnesss_spawn_name_is_a_synonym_rather_than_an_unknown_trigger(
         self,

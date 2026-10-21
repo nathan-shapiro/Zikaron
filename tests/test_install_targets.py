@@ -314,14 +314,20 @@ class TestACleanClaudeCodeInstall:
         for name, path in _claude_paths(installed).items():
             assert path.is_file(), name
 
-    def test_the_settings_file_is_json_and_carries_all_three_triggers(
+    def test_the_settings_file_is_json_and_carries_every_memory_trigger(
         self, installed: Path
     ) -> None:
-        """Three, not two. `SubagentStart` has no kiro counterpart and is not optional: it carries
-        the write-policy-per-subagent path behind it, and registering only kiro's two triggers
-        would leave that path dead with nothing anywhere failing."""
+        """`SubagentStart` and the search reminder's trigger have no kiro counterpart and neither
+        is optional: the first carries the write-policy-per-subagent path, the second the reminder,
+        and leaving either out would leave its path dead with nothing anywhere failing."""
         document = json.loads(_claude_paths(installed)["settings"].read_text(encoding="utf-8"))
-        assert set(document["hooks"]) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
+        assert CLAUDE_CODE.search_reminder is not None
+        assert set(document["hooks"]) == {
+            "SessionStart",
+            "UserPromptSubmit",
+            "SubagentStart",
+            CLAUDE_CODE.search_reminder.trigger,
+        }
 
     def test_the_mcp_file_is_json_and_registers_both_modes(self, installed: Path) -> None:
         """Two servers, session-wide. A server must be registered session-wide to be reachable by
@@ -1058,10 +1064,10 @@ class TestTheSettingsMergeLeavesTheUsersOwnHooksAlone:
     def test_a_hook_on_a_trigger_we_do_not_touch_survives(self, tmp_path: Path) -> None:
         project = _project(tmp_path, dotdirs=(".claude",))
         theirs = {"hooks": [{"type": "command", "command": "/usr/local/bin/their-linter"}]}
-        settings = self._settings_with(project, {"hooks": {"PostToolUse": [theirs]}})
+        settings = self._settings_with(project, {"hooks": {"Stop": [theirs]}})
 
         assert main(["--project", str(project)]) == 0
-        assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PostToolUse"] == [theirs]
+        assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]["Stop"] == [theirs]
 
     def test_another_installs_hook_is_recognised_and_refused(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1386,7 +1392,7 @@ class TestAgainstTheRealShippedCommands:
             for entry in group["hooks"]
         ]
 
-        assert len(commanded) == 5, "two servers and three hooks"
+        assert {path.name for path in commanded} == {"zikaron-mcp", "zikaron-hook"}
         for path in commanded:
             assert path.is_absolute(), path
             assert path.is_file(), path

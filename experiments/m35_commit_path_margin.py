@@ -73,7 +73,7 @@ for index in range({pushes} + 3):
             prompt=prompts[index % len(prompts)],
             limit=5,
             envelope=envelope.build_envelope(session_id="margin-probe", pid=1),
-            deadline=rpc.PushDeadline(
+            deadline=rpc.HookDeadline(
                 at_ms=int((time.time() + 4.0) * 1000), by=time.monotonic() + 30
             ),
         )

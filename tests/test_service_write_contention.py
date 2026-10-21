@@ -123,6 +123,7 @@ def test_the_method_table_classifies_every_method_as_the_design_does() -> None:
         "knowledge_status": Access.READ,
         "knowledge_refresh": Access.READ,
         "knowledge_unlock": Access.READ,
+        "knowledge_remind": Access.READ,
     }
 
 

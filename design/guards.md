@@ -594,6 +594,12 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
   shared start entry takes the union** of what it already carries and what is being installed:
   `guards` over a memory install writes `--components both`, and `memory` over a guards or both
   install keeps `--components both`, so neither install ever drops the other's start text.
+  **`PostToolUse` carries a group of each selection's**: the re-read nudge, and the memory store's
+  search reminder (`design/code-knowledge.md` §6). A group belongs to the selection whose program
+  it runs, so each install replaces only its own there and copies the other's verbatim, whoever
+  installed it; within its own selection, a group is this install's when every command in it runs
+  a program this install writes on that trigger, and one beside a user's command, or at another
+  install's path, is refused, and replaced under `--force` (`zikaron/install/settings_hooks.py`).
 - **The guards selection writes the guard groups and the start entry under `hooks` and nothing
   else** in `settings.local.json` — no `enabledMcpjsonServers`, no `permissions.allow` entry — writes no
   `.mcp.json`, ships no agent and no skill, and reports none of the memory install's
@@ -1167,8 +1173,9 @@ of ancestors unless `-a` is given, and has no `-A`. The guard takes the platform
   `-F` says otherwise, with `-i`/`--ignore-case` honored; `-A -B -C -m -d -D` consume the rest of
   their cluster or, when last, the next token, as do the long `--max-count --context
   --after-context --before-context --include --exclude --exclude-dir --label --devices
-  --directories --binary-files` unless written with `=value`; and `-f`/`--file` consumes it as a
-  file of patterns, which is not read, so that `grep` exempts nothing. A `grep` pattern that is
+  --directories --binary-files` unless written with `=value`; `--` ends its options, every token
+  after it an operand; and `-f`/`--file` consumes it as a file of patterns, which is not read, so
+  that `grep` exempts nothing. A `grep` pattern that is
   not literal by §9.1's test — a variable the command binds included, which §9.1 reads for the
   `pgrep` pattern alone — or that `re` cannot compile, exempts nothing — so `grep -v $$` is
   not read as the regular expression `$$`, which would match any text. The replay held 65 such

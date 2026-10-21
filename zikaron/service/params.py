@@ -1,9 +1,9 @@
 """Reading one method's raw JSON `params` into the typed value its handler needs.
 
-Shared by `dispatch.py` and `dispatch_consolidation.py` so a malformed request produces the
-identical `bounds` shape regardless of which dispatch module handles the method — a second,
-independently-written set of these checks is how one dispatch module comes to accept a value the
-other refuses for the same field name.
+Shared by every dispatch module so a malformed request produces the identical `bounds` shape
+regardless of which dispatch module handles the method — a second, independently-written set of
+these checks is how one dispatch module comes to accept a value another refuses for the same field
+name.
 
 Every function raises `ZikaronError(BOUNDS, ...)` rather than a bare `TypeError`/`KeyError`: an
 RPC parameter that fails these checks is exactly `architecture.md`'s rung-1 `bounds` rejection —
@@ -13,6 +13,7 @@ than a protocol-level failure that would suggest the transport itself misbehaved
 """
 
 from collections.abc import Awaitable, Callable
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final
 
 import aiosqlite
@@ -153,6 +154,28 @@ def require_uuid_list(params: dict[str, object], name: str) -> list[str]:
             actual=len(value),
         )
     return value
+
+
+#: How many paths one `knowledge_remind` may name (`schema.md` §Bounds) — the `uuids` figure, since
+#: nothing about a search sets a number of its own and a hook builds the list.
+PATHS_MIN: Final = 1
+PATHS_MAX: Final = 50
+
+
+def require_path_list(params: dict[str, object], name: str) -> tuple[str, ...]:
+    """`params[name]` as `PATHS_MIN` to `PATHS_MAX` absolute paths, else `bounds`."""
+    value = params.get(name)
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and PurePosixPath(item).is_absolute() for item in value
+    ):
+        raise ZikaronError(
+            ErrorCode.BOUNDS, field=name, limit="a list of absolute paths", actual=value
+        )
+    if not PATHS_MIN <= len(value) <= PATHS_MAX:
+        raise ZikaronError(
+            ErrorCode.BOUNDS, field=name, limit=f"{PATHS_MIN}-{PATHS_MAX}", actual=len(value)
+        )
+    return tuple(value)
 
 
 def optional_str_list(params: dict[str, object], name: str) -> tuple[str, ...] | None:

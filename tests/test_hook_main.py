@@ -22,7 +22,8 @@ import pytest
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import main as main_module
-from zikaron.hook import push, spawn_warm, subagent_policy
+from zikaron.hook import push, reminder, spawn_warm, subagent_policy
+from zikaron.hook.components import Components
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.service import paths
 
@@ -317,6 +318,53 @@ def _run_capturing_stdout(payload: object, monkeypatch: pytest.MonkeyPatch) -> s
     monkeypatch.setattr(sys, "stdout", written)
     _run_with_payload(payload, monkeypatch)
     return written.getvalue()
+
+
+class TestTheSearchEvent:
+    """A search reminder's tool event (`design/code-knowledge.md` §6)."""
+
+    @pytest.fixture
+    def reminded(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+        called: list[dict[str, object]] = []
+
+        def _fake_run(payload: dict[str, object], **_kwargs: object) -> str:
+            called.append(payload)
+            return "the line"
+
+        monkeypatch.setattr(reminder, "run", _fake_run)
+        return called
+
+    def _payload(self, tmp_path: Path) -> dict[str, object]:
+        assert CLAUDE_CODE.search_reminder is not None
+        return {
+            "hook_event_name": CLAUDE_CODE.search_reminder.trigger,
+            "cwd": str(tmp_path),
+            "tool_name": "Grep",
+            "tool_input": {"pattern": "x"},
+        }
+
+    def test_its_line_goes_out_as_additional_context_echoing_the_trigger(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reminded: list[dict[str, object]]
+    ) -> None:
+        written = json.loads(_run_capturing_stdout(self._payload(tmp_path), monkeypatch))
+        assert written == {
+            "hookSpecificOutput": {
+                "hookEventName": self._payload(tmp_path)["hook_event_name"],
+                "additionalContext": "the line",
+            }
+        }
+        assert len(reminded) == 1
+
+    def test_a_guards_only_command_never_reminds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reminded: list[dict[str, object]]
+    ) -> None:
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(self._payload(tmp_path))))
+        main_module._run(Components.GUARDS)
+        assert reminded == []
+
+    def test_no_line_writes_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(reminder, "run", lambda _payload, **_kwargs: None)
+        assert _run_capturing_stdout(self._payload(tmp_path), monkeypatch) == ""
 
 
 class TestTriggerNamesNormalizeAcrossBothHarnesses:

@@ -12,7 +12,7 @@
 | **`zikaron-core`** | Library. All logic for **both stores**: the memory store (retrieval, chunking, embedding, dedup, consolidation grouping) and the knowledge index (`core/knowledge/` — KB storage, scan, git change detection, its own chunker and retrieval arms). No process concerns, no transport. | yes, on demand |
 | **`zikaron-service`** | Long-running process. Holds the warm embedder and the open DBs. Serves local RPC. Self-stops after idle. | **yes — the only long-running one** |
 | **`zikaron-mcp`** | MCP server, built on the `fastmcp` framework. Translates MCP tool calls to RPC. Starts the service if absent. | no |
-| **`zikaron-hook`** | Thin hook executable for the spawn and user-message triggers. Starts the service if absent. | no |
+| **`zikaron-hook`** | Thin hook executable for the spawn and user-message triggers, and under Claude Code the subagent start and the search reminder's tool event. Starts the service if absent — directly for a push, through the detached warm helper on spawn (§Warming) — while the reminder only connects to one already serving (§"Degraded modes"). | no |
 | **`zikaron-knowledge-indexer`** | Detached process spawned per knowledge-base build (K8), **always by the service** on a `knowledge_*` call — including the ones `zikaron knowledge` makes, since M31 made that command an RPC client. **A person can still start one directly**, as `python -m zikaron.knowledge.indexer`, and that invocation opens the store itself and never goes through RPC: it *is* the build, so there is nothing for a service to do on its behalf. A spawned one writes its output to its corpus's build log (§Paths); one started by hand, to its terminal. Outlives its caller and exits when the build finishes. *Naming only the service made a shell-started indexer with no service in the `ps` tree look impossible; it is now the by-hand case alone.* | **yes** — which is why the service's cell above says *long-running* rather than *only* |
 
 The service exists for exactly one measured reason: cold whole-process `bge-small` is **783 ms**, and D12
@@ -595,9 +595,10 @@ the identity check rather than spellings; re-derive the premise with
 - **A client verifies `store_path` and `store_id` against the store it resolved, before it sends any read or
   write.** A mismatch is not a retry: the client ~~logs it, treats~~ **treats** the socket as foreign,
   and — for the hook — goes through the same degraded path as any other failure (§"Degraded modes"):
-  one line to `hook.log` plus a model-facing relay on stdout, never a read. **Only the hook logs**,
-  which is the same split §"Idle self-stop" already draws between the hook's fallback and every
-  other client's — `zikaron/mcp/` imports no logger, so there the mismatch propagates and surfaces as an MCP
+  one line to `hook.log`, never a read, and for a push a model-facing relay on stdout besides, which
+  the search reminder does not send. **Only the hook logs**, which is the same split §"Idle
+  self-stop" already draws between the hook's fallback and every other client's — `zikaron/mcp/`
+  imports no logger, so there the mismatch propagates and surfaces as an MCP
   tool error the calling model sees, recorded nowhere. The mismatch is not special-cased into a
   fallback read of a store the client has no way to know is the right one.
 - **Nothing is adopted from an unverified service, session labels included.** This is why `health()` is outside
@@ -642,7 +643,7 @@ draft of this document gave only to the socket.
 |---|---|---|
 | `<scope>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it ~~and logs~~ **silently — `permissions.py` imports no logger, and on the service's own path it could not: `ensure_store_dir` runs in `service/main.py` as the argument to `configure_service_log`, so the correction happens before any handler is attached** |
 | `memory.db`, `-wal`, `-shm` | **0600** | created under an explicit umask (`os.umask(0o077)`) around store creation, because SQLite creates the WAL/SHM itself and will otherwise inherit a permissive umask |
-| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
+| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on, and a search reminder's line the word `remind` after its kind, which tells it from a push's (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
 | `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
 | `code-knowledge/<module>/roles.md` | **0600**, its directories **0700** | the role list `zikaron code-knowledge plan --apply` writes while a module's README is owed, under the store's umask, and removes with its emptied directories once an `--apply` run lists no README (`design/code-knowledge.md` §3.6); each line is a document's own role line, already in the project tree |
@@ -1369,6 +1370,19 @@ gets relayed in its own response — while not visibly delivering on the channel
   is a start that never reached its first poll — never bound, or bound and blocked. The minute is longer
   than the bound above because the phase before the bind is where a first run fetches its model, which
   over a slow link can run past the cold-start deadline.
+
+**And `zikaron-hook` for the search reminder's tool event** (`design/code-knowledge.md` §6), in order,
+silent at every step that finds nothing to do: the agent's type, silent for the documenter and the
+orchestrator; the paths the search covered, from the tool's `path` or the shell command's operands;
+**a listing of the store's knowledge directory**, silent when it holds no corpus database; the
+session label; a connect **only to a service already serving**, with the store-identity check and
+never a start, since a reminder is worth no wait; one `knowledge_remind`, the whole exchange inside
+1 s; exit 0. **Listing a directory for corpus files is outside this section's rule that the hook
+never reads the store**, which is about opening a database: the listing reads file names and opens
+nothing. It fails open, as the guards do (`design/guards.md` §6), so it relays nothing to the model:
+a serving service's error, or a failure once connecting began, writes one `hook.log` line, carrying
+the word `remind` after its kind (§Paths), and no service, no corpus and a malformed payload write
+none.
 
 ### A push the agent never saw is never recorded as shown
 
@@ -2357,13 +2371,13 @@ Non-errors worth naming: a near-duplicate is not an error; a group with no candi
 
 **A wire method is its tool's name without the leading `zikaron_`**, so the subsystem segment
 survives into it: `zikaron_memory_search` is `memory_search`, `zikaron_knowledge_search` is
-`knowledge_search`. Six methods depart from that, for two reasons, and each says why below —
-`memory_surface`, `memory_plan_groups` and `knowledge_unlock` have no tool, the first being called
-by the hook, the second by the consolidator's own client and the third by `zikaron knowledge`; and
-the three consolidator write
-verbs carry an extra `apply_` because the RPC applies a decision the tool merely names. `health` is
-the one method with no subsystem segment at all, since it speaks for the service rather than for
-either store.
+`knowledge_search`. Methods depart from that for two reasons, and each says why below. A method
+with no tool is one an agent must not call itself, so it keeps its subsystem segment and is
+called by the hook, the consolidator's own client or `zikaron knowledge` instead —
+`memory_surface` and `knowledge_remind` by the hook, `memory_plan_groups` by the consolidator's
+client and `knowledge_unlock` by `zikaron knowledge`. The consolidator's write verbs carry an extra
+`apply_` because the RPC applies a decision the tool merely names. `health` is the one method with
+no subsystem segment at all, since it speaks for the service rather than for either store.
 
 **Everywhere else in this corpus a bare verb name — `merge`, `promote`, `discard`, `next_group`,
 `surface` — denotes the *operation*, not the wire method.** This section is the one place the wire
@@ -2412,8 +2426,8 @@ The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `me
   `knowledge_status(knowledge_base)`, `knowledge_add(...)`, `knowledge_remove(name, confirm)`,
   `knowledge_rename(name, new_name)`, `knowledge_refresh(name, full)` and
   `knowledge_unlock(knowledge_base)` — the knowledge index's read path and its management verbs,
-  specified in full by `design/knowledge-index.md` §§8.3–8.5. The last has **no tool**: clearing a
-  build lock is an operator's judgement about what else is running, so it is
+  specified in full by `design/knowledge-index.md` §§8.3–8.5. `knowledge_unlock` has **no tool**:
+  clearing a build lock is an operator's judgement about what else is running, so it is
   `zikaron knowledge refresh --force-unlock`'s method and an agent's business never (§9).
   Named here because they are served by this socket and
   belong on any list of what this service answers; not described here, because one tool surface
@@ -2422,6 +2436,17 @@ The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `me
   it — the access log's `call` row, written by the seam rather than by these handlers, is the one
   thing any of them adds to `memory.db` outside the registry, which `add`, `remove` and `rename`
   write by definition.
+- `knowledge_remind(paths, agent_id?, deadline_at_ms?)` — the search reminder's
+  (`design/code-knowledge.md` §6), with **no tool**, since an agent never asks for its own reminder:
+  the hook calls it after a search, naming the absolute paths that search covered, 1–50 of them
+  (`schema.md` §Bounds), and a subagent's `agent_id`. Returns `{text}`, the line when a path reaches
+  a module whose code-knowledge corpus is registered and the agent is due one, or `null`. It reads
+  the registry and nothing else of the store, and touches no encoder, so it answers while the model
+  loads. Each agent's last reminder is kept in the service's memory: a `memory_surface` clears the
+  session's on receipt, before its deadline is read or its connection obtained, whatever it then
+  answers; a `knowledge_search` whose scope reaches code knowledge sets it. Past `deadline_at_ms`,
+  less the margin, it answers `deadline_passed` and records no reminder, and the read and the stamp
+  have no `await` between them, so two requests for one agent at once yield one line.
 
 Every method takes the `client` envelope described under §RPC **except `health()`**, the one unlabelled
 primitive named above — the `knowledge_*` methods included. None of them writes a *semantic* event:
@@ -2433,8 +2458,9 @@ given, and a corpus build by a `knowledge_build` row under a label the indexer m
 ## Distribution artefacts
 Shipping Zikaron means shipping more than a server: the `zikaron-consolidator` agent config (whose
 allowlist is the only one carrying the four consolidation tools), the D10 skill that invokes it, the
-`agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text — and, for a Claude Code
-project that asks for them, the guards' two hook entries (`design/guards.md` §5).
+`agentSpawn` and `userPromptSubmit` hook entries, and D30's write-policy text — under Claude Code also
+the search reminder's entry (`design/code-knowledge.md` §6) — and, for a Claude Code project that asks
+for them, the guards' two hook entries (`design/guards.md` §5).
 
 ### Two hook formats, both inside the stable agent config
 
@@ -2529,8 +2555,10 @@ Three rules go with it, and each closes a way the measurement could be lost:
 > the refuse-on-difference rule: both targets refuse only on ownership** (`zikaron/install/ownership.py`)
 > — `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for a server entry, whether
 > `.mcp.json`'s or kiro's `mcpServers`; a kiro hook entry's command; and under Claude Code a settings
-> hook group's **programs** — each command's first shell word — as a list equal to ours rather than
-> merely containing it. So a field this
+> hook group's **programs** — each command's first shell word — judged by membership: a group of this
+> selection's is ours when every one of its commands runs a program this install writes on that
+> trigger, and a group running only the other selection's script is copied verbatim
+> (`zikaron/install/settings_hooks.py`). So a field this
 > installer changes is an upgrade rather than a conflict, and **not refusing does not mean not
 > saying**: a server entry merges per key, so a user's own key on Zikaron's entry survives and is
 > reported alongside anything set — added or overwritten — while a Zikaron hook entry or group of

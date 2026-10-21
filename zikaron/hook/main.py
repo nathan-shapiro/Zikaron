@@ -1,8 +1,9 @@
 """The process entry point a harness's own hook configuration invokes.
 
 A hook receives its event as JSON on **stdin** — `{hook_event_name, cwd, session_id}` always, plus
-`prompt` for the prompt trigger and `agent_type` for the subagent trigger — and it dispatches on
-`hook_event_name` from the payload itself rather than on an argv flag.
+`prompt` for the prompt trigger, `agent_type` for the subagent trigger, and `tool_name` and
+`tool_input` for a tool event, with `agent_type` and `agent_id` inside a subagent — and it
+dispatches on `hook_event_name` from the payload itself rather than on an argv flag.
 
 Both harnesses would accept a per-trigger flag, so this is a choice rather than a constraint: the
 payload's own `hook_event_name` cannot disagree with the event that fired it, while a flag copied
@@ -12,7 +13,7 @@ triggers, selects what is said rather than which event is served, and reads as t
 whenever it does not read cleanly.
 
 **Trigger names are normalized before anything branches on them.** `zikaron.harness.spec` owns the
-vocabulary; this module knows only the three events it resolves to. That is what keeps one
+vocabulary; this module knows only the `HookEvent` members it resolves to. That is what keeps one
 implementation serving both harnesses instead of two ladders of string comparisons drifting apart.
 
 **Output channel is a property of the event, not a constant.** An earlier version of this module
@@ -39,7 +40,7 @@ from pathlib import Path
 from zikaron.guard.start_text import GUARD_START_TEXT
 from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
-from zikaron.hook import push, spawn_warm, subagent_policy
+from zikaron.hook import push, reminder, spawn_warm, subagent_policy
 from zikaron.hook.components import Components
 
 
@@ -78,6 +79,8 @@ def _dispatch(event: HookEvent, payload: dict[str, object], components: Componen
     """
     if event is HookEvent.PROMPT:
         return _push(payload) if components.memory else None
+    if event is HookEvent.SEARCH:
+        return _remind(payload) if components.memory else None
     parts = [_start_policy(event, payload) if components.memory else None]
     if components.guards and not _is_consolidator(event, payload):
         parts.append(GUARD_START_TEXT)
@@ -102,6 +105,12 @@ def _push(payload: dict[str, object]) -> str | None:
         payload_session_id=payload.get("session_id"),
         prompt=prompt,
         pid=os.getpid(),
+    )
+
+
+def _remind(payload: dict[str, object]) -> str | None:
+    return reminder.run(
+        payload, scope_dir=_scope_dir(payload), spec=detect.current_spec(), pid=os.getpid()
     )
 
 

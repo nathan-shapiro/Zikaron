@@ -6998,13 +6998,18 @@ stays in `FINDINGS.md` §"Owed work".
 ## M40-4 — A grep through a documented module, by an agent that forgot its documents
 
 Normative, written by the build: **`design/code-knowledge.md` §6** (navigation) for the reminder,
-§5.1 for why a documenter never receives it; `design/harness.md` §"The table" and §"What a Claude
-Code install writes"; `design/architecture.md` §"Service RPC surface" and §Components on what the
-hook does; `design/schema.md`'s configuration table. Decision: **D39, amended** (operator,
+§5.1 for why a documenter never receives it, §8 for the searches it misses; `design/harness.md`
+§"The table"; for what an install owns on a trigger two selections write, `design/guards.md` §5,
+`design/harness.md` §"What a Claude Code install writes" and §"The installer's two targets", and
+`design/architecture.md` §"The install contract"; `design/architecture.md` §"Service RPC
+surface", §Components on what the hook does, §"Degraded modes" for the order it does it in, and
+§Paths for its `hook.log` line; `design/schema.md`'s configuration table and §Bounds;
+`README.md`'s "Using it" paragraph on code knowledge. Decision: **D39, amended** (operator,
 2026-10-20); D22 and D31 bind the hook. Evidence: the operator, 2026-10-19 — LeibaTrader's agent
 said it forgets the knowledge base as it forgot the edit rules, though its `CLAUDE.md` names both;
 `research/claude-code-tool-hooks-docs.md` for the `if` filter and for `agent_type` in a subagent's
-tool events.
+tool events; `research/m40-4-search-tool-use.md` for which tools agents search with;
+`research/m40-4-hook-probes.md` for what the hook sees and delivers, measured.
 
 **What it is.** D38's re-read nudge showed that a `PostToolUse` hook's `additionalContext` reaches
 the agent as a reminder after the call ran, canceling nothing (`design/guards.md` §2). The same
@@ -7014,76 +7019,307 @@ the search has already run.
 
 ### What ships
 
-1. **Two probes first**, recorded in `research/`: whether a subagent's `PostToolUse` payload
-   carries `agent_type` naming its definition, as the documentation says — if it does not, no
-   subagent's call can be told from the session's, and the build stops there and reports to the
-   operator; and whether a hook
-   entry's `if` filter (`Bash(grep *)`, `Bash(rg *)`) keeps the hook from starting on every other
-   `Bash` call. If the filter does not hold, the hook starts on every `Bash` call and its first
-   check is the command word, and the cost of that start is measured and reported before the build
-   goes on.
+1. **The probes — done, 2026-10-21** (`research/m40-4-hook-probes.md`, four headless runs in
+   `~/ZikaronTesting/m40-4-probe`, each hook returning a nonce the agent quoted back):
+   - **Who is calling.** A subagent's payload carries `agent_type`, naming its definition, and
+     `agent_id`, one value across a subagent's calls and another for the next subagent; the main
+     session's carries neither. Inside a subagent the payload's `session_id` and the hook
+     process's `CLAUDE_CODE_SESSION_ID` are both the parent's. So the build goes on, and item 4's
+     key is the session label plus `agent_id`.
+   - **The `if` filter holds**, a string on each handler; a list-valued `if` is silently never
+     matched. `ls` started no filtered handler, while `LC_ALL=C grep …`, `git log | grep …`,
+     `cd src && grep …`, `git grep …` and `git -C src grep …` each started theirs;
+     `timeout 5 grep …` and `bash -c 'grep …'` did not, so a search behind a wrapper or inside
+     `bash -c` is a known miss. A leading wildcard matches: `Bash(*grep *)` started for `grep`,
+     `egrep`, `git grep` and `git -C … grep`, and for `pgrep`, which the parser reads as no
+     search. A handler with `if: "Grep"` or `if: "Glob"` starts for that tool, so **one group
+     serves both arms**: matcher `Grep|Glob|Bash`, with four handlers whose `if`s are `Grep`,
+     `Glob`, `Bash(*grep *)` and `Bash(rg *)`.
+   - **A command the filter cannot read starts every filtered `Bash` handler**, whether or not
+     it searches: a heredoc did, with a `grep` after it and without one, and `$(grep …)` started
+     some. The handlers start together, within 7 ms, so the wall cost is one start and the
+     process count is the handler count — two in the shipped group.
+   - **A search that finds nothing is a successful call**: Claude Code reads a search command's
+     exit 1 as "No matches found", so `grep`, `egrep`, `rg` and `git grep` misses fire
+     `PostToolUse`, as the `Grep` tool's does. Only a search that errors — exit 2, a missing path —
+     fires `PostToolUseFailure`, which is not registered, so it is a known miss.
+   - **Delivery**: every nonce reached the agent whose call produced it, main session and
+     subagent alike.
 2. **The trigger**: Claude Code's `PostToolUse` on `Grep` and `Glob`, and on `Bash` as the filter
-   allows, carried as data on `HarnessSpec` — `None` under kiro — and installed with the memory
-   component into `.claude/settings.local.json` beside the prompt entry. `zikaron-hook` handles it
-   as an event of its own.
+   allows, carried as data on `HarnessSpec` as one field in `Guards`' shape — its trigger, its
+   matchers and its `if` patterns — `None` under kiro, and installed with the memory component into
+   `.claude/settings.local.json` as the one group item 1 describes, measured in parts: one
+   three-handler group carrying `if: "Grep"`, `if: "Glob"` and a `Bash` pattern, and one carrying
+   the two `Bash` patterns. The installer writes the group from that field and nothing else, its
+   `matcher` the members' matchers joined with `|`. The field has one named member per arm, so
+   the hook reads `tool_input.path` or `tool_input.command` by which member's matcher names the
+   tool, as
+   `zikaron-guard` picks its rule by member (`design/guards.md` §5), and no tool name is spelled
+   downstream of the seam. §"The table"'s row carries all three, read by a parser of its own in
+   `tests/test_harness_table.py`, whose guards cell is read positionally. `zikaron-hook` handles
+   it as an event of its own, on the `additionalContext` channel, echoing the trigger that fired
+   as `_emit` does. **Both arms are needed**: in this Claude Code build a main session has
+   no `Grep` or `Glob` tool and searches through `Bash`, almost always with `grep`, while a
+   subagent granted them without `Bash`, as memory-reviewer and the documenter are, searches
+   through them alone. **`PostToolUse` is then a trigger two selections write**, since the
+   guards' re-read nudge runs `zikaron-guard` there, and today's merge assumes no such trigger:
+   `claude_hooks_value` keeps one group per trigger, so `both` would write only the guard's, and
+   `_plan_settings` judges every Zikaron group on a trigger it writes, so a memory install over the
+   guards would refuse, reading the nudge as another install's, and under `--force` remove it.
+   **So a Zikaron group belongs to the selection whose program it runs, and ownership is
+   membership rather than list equality**: a group on a trigger is ours when every one of its
+   commands runs a program this install writes there, whatever their number and their `if`s, and
+   one that differs from what the install writes is rewritten and reported; a group carrying our
+   program beside a command of the user's own is still refused, since that command's program is
+   not ours, which is the case the list rule existed for. A group of this selection's running its
+   program at any other path is another install's, and is refused as today, replaced under
+   `--force` — matched by path, as `_program` returns it, never by file name alone. A group
+   running only the other selection's program is copied verbatim, whatever its path, as a trigger
+   this install does not write is: an install touches only its own selection, and judging the
+   other's would have a memory install refuse over guards installed from elsewhere. `both` writes
+   both selections' groups. Today `_is_ours` compares a group's programs,
+   one per handler, as a list equal to a trigger's expected groups flattened, so under `both` an
+   existing memory group would compare unequal to the memory and guard groups together, and a
+   four-handler group would refuse every existing install the first time its `if` set changed.
+   On the start triggers, whose one program is `zikaron-hook`, the outcome is today's. The
+   normative sections on what an install owns state it — the "as a list equal to ours" sentences
+   of `design/harness.md` §"The installer's two targets" and `design/architecture.md` §"The
+   install contract" among them — and the guards' hooks themselves do not change.
 3. **What counts as a search of a documented module.** The paths searched: `Grep`'s and `Glob`'s
-   `path`, the payload's `cwd` when it has none; for `Bash`, a simple command whose word is `grep`,
-   `egrep`, `fgrep` or `rg`, found in command position as `design/guards.md` §3.1 finds one, and its
-   operands after the pattern that are no option, or the `cwd` when it has none. A search is of
-   module M when a path searched is M or lies under it, **or M lies under a path searched** — a
-   search from the project's root searches every module, and is the commonest form. M ranges over
-   the modules whose corpus, `code-knowledge/<module>`, is registered.
-4. **The service decides, through one method with no tool**, named by §"Service RPC surface"'s
-   rule. It reads the registry, keeps for each session the time of its last reminder — in memory,
-   so a restart costs at most one extra reminder — and answers one line or nothing. **The hook
-   never starts a service for it**: it connects if one is serving and is silent otherwise. Each
-   `memory_surface` call, one per user prompt, resets its session's time, so the first such search
-   of a turn reminds; after that, at most one each `retrieval.code_knowledge_reminder_seconds`, a
-   new configuration key whose default is 300 (operator, 2026-10-19), so a long autonomous turn is
-   reminded again where a call-count throttle would fire every few calls — a treatment run in the
-   Warp slice made about 70 `Grep` calls. **No base rate is measured first** (operator,
-   2026-10-19): LeibaTrader runs short supervised tasks, so its transcripts would not set the
-   interval.
-5. **Never in a `zikaron-documenter` or `zikaron-code-orchestrator` session**, by `agent_type`:
-   the documenter takes nothing from a code-knowledge base (`design/code-knowledge.md` §5.1), and
-   the orchestrator searches no source. Every other subagent is reminded as the session is.
-6. **The line**: deterministic, naming each corpus the search reached and saying that
-   `zikaron_knowledge_search` finds what a file is for and what it depends on, as a lead to check
-   against the code. **Its final wording is memory-reviewer's**, as every shipped prompt's is.
-7. **Fail-open**: any failure is silence and exit 0, as the push hook's are, within an explicit
-   `timeout` on the entry.
+   `path`, the payload's `cwd` when it has none. For `Bash`, a simple command whose word is `grep`,
+   `egrep`, `fgrep` or `rg` in command position, found by the guard's own parser as
+   `design/guards.md` §3.1 finds one — standard-library code, imported on the `Bash` path alone —
+   with its operands read by `zikaron/guard/grep_filter.py`'s `read_grep`, extended to keep the
+   operands it now discards and given `rg`'s own options that take an argument, which differ from
+   `grep`'s (`rg -r` replaces where `grep -r` recurses): the first operand is the pattern unless an
+   `-e` or `-f` names one, and every other is a path; `--` ends the options. An option neither
+   table knows is read as taking no argument. With no path, a recursive `grep` (`-r`, `-R`,
+   `--recursive`, `--dereference-recursive`) and an `rg` search the `cwd`; any other `grep`, and an
+   `rg` after a `|`, reads its input and searches no module, so `git log | grep fix` is no search;
+   and one given no pattern — `rg --version`, `rg --help` — searches nothing. **`git grep` too** (operator, 2026-10-20): the word `git` in command position whose
+   subcommand — its first word that is no option, once `-C <dir>` and `-c <name=value>` are passed
+   over — is `grep`, its operands read as `grep`'s are with `git grep`'s own options that take an
+   argument, such as `--max-depth` and `--threads`. Measured on a scratch repository: with no
+   pathspec it searches the `cwd` and below, `-C <dir>` moves that directory, and `:/` names the
+   repository's top, read as the project's directory; any other magic pathspec, such as `:!…`, is
+   read as no path. A revision is told from a path only by a `--`: every operand before it but the
+   pattern is a revision and dropped, and with no `--` a revision is read as a path under the
+   `cwd`, which reaches only the modules at or above the `cwd` — a known miss, since nothing
+   lexical tells the two apart; a `--` before any pattern only ends the options, as git reads it.
+   A `git grep` pathspec is read up to its first component with a wildcard, since git's globs
+   cross directories. `rg --files` lists files rather than searching, so every operand is a path.
+   A leading `~` is expanded and a relative path resolved against the payload's `cwd`, so a `cd`
+   earlier in the same command is not followed. Paths are compared lexically, normalized and
+   absolute, touching no file, and without regard to case, since a registered name is lower-cased
+   while a search's path keeps the directory's case: a glob operand such as `src/*.py` lies under
+   `src`, and a path need not exist. A search is of module M when a path searched is M or lies
+   under it, **or M lies under a path searched** — a search from the
+   project's root searches every module, and is the commonest form. M ranges over the modules
+   whose corpus is registered, as `code-knowledge/<module>` with `<module>` relative to the
+   project's directory, or as `code-knowledge`, the root module `.` (`design/code-knowledge.md`
+   §5.2 step 6), which every search inside the project reaches. **Known misses**, entered in
+   `design/code-knowledge.md` §8: a search whose paths come from elsewhere — a `{}`, `+`, `;` or
+   `-` among its operands, as `find … -exec grep … {} +` gives, or `xargs` before it — read as no
+   search rather than as one of the `cwd`; a `cd` earlier in the same command, since the payload's `cwd` follows only the `cd`s of
+   earlier calls; a search behind `timeout`, as measured, or any wrapper the filter does not see
+   through, though the parser would read it; a search inside `bash -c '…'`; a search that errors,
+   and one after an environment assignment that finds nothing, whose exit 1 the harness then reads
+   as an error — both fire `PostToolUseFailure`, as measured; and a project directory reached
+   through a symbolic link, against a `cwd` that names its real path. **`Bash(rg *)` needs no
+   leading wildcard**: the filter is matched per subcommand with its assignments stripped, so it
+   starts for `cd src && rg …`, `ls; rg …` and `LC_ALL=C rg …`, as measured, where `Bash(*rg *)`
+   would add only false starts such as `jq --arg`; `grep`'s has one for `egrep`, `fgrep` and `git
+   grep`, whose words do not begin with `grep`.
+4. **The service decides, through one method with no tool**, `knowledge_remind(paths, agent_id?,
+   deadline_at_ms)` returning `{text}`, the line or `null`, served beside the knowledge index's
+   other methods; §"Service RPC surface" names it, and its sentence counting the methods that
+   depart from the naming rule is rewritten without the count. It reads the registry and touches
+   no encoder, so it answers while the embedding model is still loading.
+   - **The throttle's key is an agent**: the envelope's session label, resolved as every hook call
+     resolves it, and inside a subagent the payload's `agent_id` — the hook sends none for a
+     payload without `agent_type`, so the main session's entry is always the one `memory_surface`
+     clears. `paths` is bounded at 1–50 per call, the `uuids` row's figure, in a new row of
+     `design/schema.md` §Bounds, and the hook sends at most 50, the first in command order — a
+     search of those paths is still a search of their modules, and the line is one whatever the
+     count — so a refused `bounds` is unreachable from what the hook builds. The list is never
+     empty: a search with no path sends the `cwd` (item 3), and one that names no module asks
+     nothing. A subagent starts with a fresh context, without the reminder its parent was shown,
+     so its first such search reminds whatever its parent saw, and its time never moves its
+     parent's. The times live in memory, on the service's context beside the builds it spawned, so
+     a restart costs at most one extra reminder; an entry older than the interval is dropped
+     whenever a reminder is decided, so it holds only agents still searching.
+   - **A hook that resolves no label asks nothing**: a label the service minted per request would
+     give every search a key of its own, and remind on every one. Item 1 found the environment's
+     label present and equal to the payload's `session_id` in a subagent's tool events, as the
+     comment on `CLAUDE_CODE`'s `fires_hooks_for_subagent_sessions` asserts, so this is the
+     degraded case, not the common one.
+   - **What moves the time.** A reminder sets its agent's. Each `memory_surface` call, one per user
+     prompt, clears the main session's on receipt — before its deadline check, whatever it then
+     answers — so the first such search of a turn reminds even when the push is refused; a
+     subagent's needs no reset, since its first search reminds and its life bounds the rest. A
+     `knowledge_search` whose scope reaches a code-knowledge corpus — no `knowledge_bases`, or one
+     naming `code-knowledge` or a `code-knowledge/…` corpus — sets its label's main-session time,
+     since the agent has just used the documents: the README's own workflow searches a corpus and
+     then greps to check it. The MCP client's envelope carries no `agent_id`, so a subagent's
+     knowledge search sets the main session's time too. A search that reaches no module moves
+     nothing. After a reminder, at most one each `retrieval.knowledge_reminder_interval`, so a long
+     autonomous turn is reminded again where a call-count throttle would fire every few calls — a
+     treatment run in the Warp slice made about 70 `Grep` calls. It is a new configuration key in
+     seconds, as `run_lease` is, default 300 (operator, 2026-10-19), range 0–86,400, where 0
+     reminds on every such search. **No base rate is measured first** (operator, 2026-10-19):
+     LeibaTrader runs short supervised tasks, so its transcripts would not set the interval.
+   - **A reminder the agent never saw is never recorded as shown**: the hook sends
+     `deadline_at_ms`, the instant it stops waiting, as the push sends its own, and past it, less
+     the margin, the service answers `deadline_passed` and moves no time
+     (`design/architecture.md` §"A push the agent never saw is never recorded as shown").
+   - **The hook never starts a service for it**: before connecting it lists the store's
+     `.zikaron/knowledge/` — the store directory as `HarnessSpec.store_scope_dir` resolves it,
+     never the payload's `cwd` — where every corpus database lives, and is silent when it holds no
+     `.db`; that is a directory listing, not a store read. Otherwise it connects if one is serving,
+     by `zikaron/hook/connect.py`'s connect and store-identity check without the start under its
+     lock, and is silent if none is.
+   - **The cost of a search, then**: in a project with no corpus, the hook's process start; in one
+     with any, that start, a connect, `health()`, `knowledge_remind` and one `call` row. The hook
+     gives the whole exchange 1 s, under the entry's `timeout` of `HOOK_TIMEOUT_SECONDS`, so a
+     wedged service delays the turn by at most that second. **A `Bash` command the filter cannot
+     read** — any heredoc, measured — starts both `Bash` handlers together, about one start's wall
+     time in every memory install; the parser then finds no search in most such commands and the
+     hook asks nothing. So does any simple command whose text carries `grep ` beyond a search —
+     `pgrep`, an `echo`, a commit message — at one start and no connect. All of this is as
+     measured on Claude Code 2.1.304.
+   - **Two hooks for one call yield one line**: the two `Bash` handlers can both start for one
+     command, as an unreadable one does or `grep … | rg …` would, so the service reads and stamps
+     an agent's time in one synchronous step after the registry read, with no `await` between,
+     and the second request finds the first one's stamp.
+5. **Never in a `zikaron-documenter` or `zikaron-code-orchestrator` session**, by `agent_type`,
+   decided in the hook before it connects, from copies of the two names a test holds equal to the
+   installer's, as `subagent_policy.CONSOLIDATOR_AGENT_TYPE` is. The process still starts, since
+   a matcher selects a tool and not an agent: about 95 ms a call where it was measured, over the 1,835
+   documenter calls LeibaTrader made from 2026-10-01 (`research/m40-4-search-tool-use.md`). The
+   documenter takes nothing from a code-knowledge base (`design/code-knowledge.md` §5.1), and the
+   orchestrator searches no source. Every other subagent is reminded on its own key (item 4).
+   `agent_type` is this path's only subagent exclusion, and `agent_id` is read for the key and
+   compared with nothing: the path compares no session ids and never calls `tripwire`, so a
+   payload `session_id` that differs from the environment's is neither suppressed nor logged.
+6. **The line**: deterministic, a statement rather than an instruction, opening by naming where it
+   comes from — the project's Zikaron hook — since text framed as an out-of-band instruction can
+   trip a model's injection defenses (`research/claude-code-tool-hooks-docs.md` §3.3), and this
+   path has no start text to explain it as the guards' nudge has. It names up to five corpora the
+   search reached, the deepest module first and then by name, so the most specific comes first,
+   and how many more there are, and says that `zikaron_knowledge_search` finds what a file is for
+   and what it depends on, as a lead to check against the code. A corpus is named whatever its
+   state, which the search reports. The tool goes by its bare name, as the push
+   block's `zikaron_memory_fetch` does, since the service that builds the line knows no harness.
+   **Its final wording is memory-reviewer's**, as every shipped prompt's is.
+7. **Fail-open, as the guards are** (`design/guards.md` §6): exit 0 always. No service serving, no
+   corpus, a search of no documented module and a malformed payload write nothing; a serving
+   service that answers an error, or a transport failure after connecting, writes one `hook.log`
+   line in that file's closed vocabulary, so a reminder that stopped working says so somewhere.
+   The line carries the fixed word `remind` after its kind, as `starting`'s carries one word, so
+   it is told from a push's failure; it holds no path and no corpus name, so the file still holds
+   no secret. §Paths and §"Degraded modes" in `design/architecture.md` name it, and the latter
+   states this path's order — `agent_type`, the listing, a connect only to a service serving, one
+   request, exit 0, never a start — and that listing a directory for corpus files is outside its
+   rule that the hook never reads the store, which is about opening a database.
 8. **Documents**: those in the normative list; D39's amendment in `design/overview.md` and
-   `FINDINGS.md`; `README.md`'s account of what an install writes; and a row in
-   `design/kiro-gaps.md`, since kiro's `postToolUse` has no documented path to the model.
+   `FINDINGS.md`; `README.md`'s account of what an install writes, and its "Using it" paragraph,
+   whose *"Nothing tells your agent to search it unprompted"* goes false — it then says what the
+   reminder does and does not do, that the prompt's instruction stays the way to have a reader use
+   the documents, and that kiro has no reminder; and a row in `design/kiro-gaps.md`, since kiro's `postToolUse` has no documented path to the model.
+   **Every count this change moves is restated as its predicate**, not as the next number
+   (`CLAUDE.md` §"How this project works"): `design/harness.md`'s and `HookEvent`'s
+   "many-to-three", `zikaron/hook/main.py`'s "three events", `zikaron/install/entries.py`'s "three
+   triggers", and the "three hooks" of `README.md` and `tests/test_install_targets.py`; and two
+   enumerations, `zikaron/service/dispatch.py`'s list of the methods with no tool and
+   `zikaron/hook/main.py`'s account of the payload's fields, which the tool events extend with
+   `tool_name`, `tool_input` and, inside a subagent, `agent_id`. The sentences that make
+   `knowledge_unlock` the one method with no tool, each restated as its predicate — a method with
+   no tool is one an agent must not call itself, the lock a human judges and the reminder a hook
+   asks for: `design/knowledge-index.md` §8's *"an eighth RPC method with no tool beside it"* and
+   §9's *"the only knowledge method with no tool"*, touched for those two sentences alone, and
+   `design/architecture.md` §"Service RPC surface"'s *"The last has no tool"*. And
+   `zikaron/service/methods.py`'s `Method` docstring, *"Every method but `memory_surface` takes
+   the service's budget"*, and `design/schema.md` §"Configuration keys"' *"four belong to the
+   knowledge index"*, restated as the `knowledge_`-prefixed keys, whichever section they sit in.
+   And five more: `zikaron/install/entries.py`'s *"The memory groups carry no `matcher`"*;
+   `design/harness.md`'s *"Three hook entries, because M14 built a third path"*;
+   the comment on `CHANNELS` in `zikaron/harness/spec.py`, whose *"one unreachable cell"* becomes
+   two; `zikaron/hook/failure.py`'s *"exactly one line per failed `userPromptSubmit`"*; and
+   `design/architecture.md`'s *"one line to `hook.log` plus a model-facing relay on stdout"*,
+   since the reminder path logs an identity mismatch with no relay.
+   **The Warp evaluation's copies are not re-installed**, so its repeats run without the reminder;
+   this change moves `zikaron/hook` and `zikaron/service`, which §7's package check covers, so the
+   choice `FINDINGS.md` records before the repeats — narrow the check or re-`prepare` — must cover
+   those two packages too.
 
 ### Invariants and properties to cover
 
 - **The matching table**: a path in M, under it, above it, beside it, and spanning two documented
-  modules; a `Bash` command that is no search; a search with no path.
+  modules; the root module; a `Bash` command that is no search; a search with no path; a pipe
+  filter, and a `grep` with neither a path nor `-r`; a path after an `-e`, after `--`, and with a
+  leading `~`; `git grep` with no pathspec, with `-C`, with `-c` and `--no-pager` before the
+  subcommand, with `:/`, and with `-- <path>`; a `grep` after a heredoc.
 - **The throttle**: the first search of a turn reminds, a second within the interval does not, one
-  after it does, and `memory_surface` resets it.
-- **Never** in a documenter's or an orchestrator's session.
-- With no service serving, the hook is silent and starts nothing.
-- A malformed payload, an unknown tool or a failing call is silent with exit 0.
+  after it does, a search reaching no module leaves it alone, `memory_surface` resets it, and an
+  interval of 0 reminds on every such search; with no label the hook asks nothing; a subagent's
+  first search reminds whatever its parent was shown, and a subagent's reminder moves no time of
+  its parent's; a `knowledge_search` sets the main session's time; an answer past the hook's
+  `deadline_at_ms` moves no time; and an entry older than the interval is dropped.
+- **The line**: six modules reached name five, deepest first and then by name, and say there is
+  one more.
+- **Never** in a documenter's or an orchestrator's session; a payload `session_id` differing from
+  the environment's is neither suppressed nor logged.
+- The hook reads no result: a search that found nothing is reminded as one that found something.
+- With no `.db` under `.zikaron/knowledge/`, the hook makes no connection; with no service serving,
+  it is silent and starts nothing.
+- A malformed payload or an unknown tool is silent; a serving service's error writes one `hook.log`
+  line, told from a push's by its `remind`; each exits 0.
+- The new event maps to the `additionalContext` channel and echoes the trigger that fired; the
+  hook's tool names and the installer's matchers are read from the one `HarnessSpec` field, as
+  `tests/test_guard_main.py`'s `test_the_tool_sets_are_the_spec_fields_matchers` holds for the
+  guards.
+- A search naming more than 50 paths sends the first 50; a `knowledge_search` scoped to
+  hand-written corpora alone moves no time; `memory_surface` clears the time even when it answers
+  `deadline_passed`.
 - `zikaron-hook` still imports nothing outside the standard library.
-- An install writes the entry for `memory` and `both` and not for `guards`, and a re-run that
-  changes nothing writes nothing.
-- The method's validation and its `call` row, as every method's.
+- An install writes the entry for `memory` and `both` and not for `guards`; memory over guards,
+  guards over memory, and `both`, each leave both selections' `PostToolUse` groups, with and
+  without `--force`, whose note names only the groups it replaced; an installed memory group
+  with a handler more or fewer than the install writes is rewritten and reported, not refused,
+  while one carrying a user's command beside ours is refused; and a re-run that changes nothing
+  writes nothing.
+- Under a non-zero interval, two `knowledge_remind` requests for one agent at once yield one line.
+- An installed group of this selection's at another install's path is refused, and replaced under
+  `--force`; one of the other selection's is copied verbatim, whatever its path.
+- The method's validation and its `call` row, as every method's, and its answer while the model
+  loads.
 
 ### Done when
 
-1. The probes are recorded, items 2–8 are in, and every new test was **seen red** against the
-   mutation it names.
-2. **One live session** in a throwaway project with a documented module shows the reminder after a
-   grep there and none after a second within the interval; the observation goes in `research/`.
+1. Items 2–8 are in, and every new test was **seen red** against the mutation it names.
+2. **One live session** in a throwaway project with a documented module shows, in order: the
+   reminder after a main-session `Bash` `grep` there that matches nothing; within the interval,
+   the reminder after a subagent's first `Grep` tool call there, on its own key, and none after
+   its second — the subagent granted `Grep` without `Bash`, as memory-reviewer is, since a main
+   session in this build has no `Grep`; and, after the next user prompt, the reminder after the
+   main session's next search there. It reports the hook's wall time per call, there and in a
+   project with no corpus, without a bar; whether each transcript records the line — the
+   session's, and the subagent's under `subagents/`; and, with the command that counts it, the
+   quantity that later says whether the line earns its place: how often a
+   `zikaron_knowledge_search` naming a reminded corpus follows a reminder within the next few tool
+   calls, against the same window after a search of that module the throttle left unreminded. The
+   observation goes in `research/`.
 3. `./check.sh` is green, and the pull request's CI is the version matrix.
 
 ### Scope fence
 
-**Not** kiro (item 8). **Not** a deny, or anything that delays the search. **Not** a reminder after
-`Read` or any tool but the three. **Not** the reminder to verify a document against the code after
-a knowledge search, which stays in `FINDINGS.md` §"Owed work" until its decay is measured. **Not**
-steering text at session start, nor a change to search, K14, the push path's budget or the guards.
+**Not** kiro (item 8). **Not** a deny: the hook runs after the search and delays the turn by its
+wall time, which item 4 bounds and done-when 2 measures. **Not** a reminder after `Read` or any
+tool but the three. **Not** the reminder to verify a document against the code after a knowledge
+search, which stays in `FINDINGS.md` §"Owed work" until its decay is measured. **Not** steering
+text at session start, nor a change to what a search returns — a `knowledge_search` only sets the
+reminder's time (item 4) — to K14, to the push path's budget or to what the guards do; only what
+their install owns on a shared trigger is restated (item 2).
 
 ## Standing notes for whoever picks this up
 

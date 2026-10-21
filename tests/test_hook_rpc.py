@@ -1,4 +1,5 @@
-"""`zikaron.hook.rpc.surface_once`: frame one `memory_surface` request, parse its one response line.
+"""`zikaron.hook.rpc`: frame one `memory_surface` or `knowledge_remind` request, parse its one
+response line.
 
 Uses `socket.socketpair()` as a fake service: a real, connected pair of sockets, so `surface_once`
 exercises real `sendall`/`recv` against real file descriptors rather than a mock of the socket API
@@ -14,15 +15,21 @@ import time
 import pytest
 
 from zikaron.hook.envelope import HookEnvelope
-from zikaron.hook.rpc import NotSentError, PushDeadline, SurfaceRejectionError, surface_once
+from zikaron.hook.rpc import (
+    HookDeadline,
+    NotSentError,
+    ServiceRejectionError,
+    remind_once,
+    surface_once,
+)
 
 _ENVELOPE = HookEnvelope(session_id="a-session", kind="hook", pid=1234, op_id=None)
 _DEADLINE = 1_900_000_000_000
 
 
-def _soon() -> PushDeadline:
+def _soon() -> HookDeadline:
     """A deadline no test here reaches unless it means to, sent as `_DEADLINE`."""
-    return PushDeadline(at_ms=_DEADLINE, by=time.monotonic() + 5.0)
+    return HookDeadline(at_ms=_DEADLINE, by=time.monotonic() + 5.0)
 
 
 def _respond(server: socket.socket, response: dict[str, object]) -> None:
@@ -87,7 +94,7 @@ def test_raises_surface_rejection_on_an_error_response() -> None:
                 "error": {"code": -32020, "message": "store busy", "data": {"verb": "surface"}},
             },
         )
-        with pytest.raises(SurfaceRejectionError) as excinfo:
+        with pytest.raises(ServiceRejectionError) as excinfo:
             surface_once(
                 client,
                 prompt="p",
@@ -131,6 +138,45 @@ def test_raises_connection_error_when_the_result_has_no_text_field() -> None:
                 envelope=_ENVELOPE,
                 deadline=_soon(),
             )
+    finally:
+        client.close()
+        server.close()
+
+
+@pytest.mark.parametrize("text", [None, 7], ids=["null", "not a string"])
+def test_a_push_answered_with_no_text_string_is_a_connection_error(text: object) -> None:
+    """`null` is a reminder's answer for none due; a push always has a block to give."""
+    client, server = socket.socketpair()
+    try:
+        _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": text}})
+        with pytest.raises(ConnectionError):
+            surface_once(client, prompt="p", limit=5, envelope=_ENVELOPE, deadline=_soon())
+    finally:
+        client.close()
+        server.close()
+
+
+@pytest.mark.parametrize(("text", "expected"), [(None, None), ("a line", "a line")])
+def test_a_reminder_s_text_is_a_string_or_null(text: object, expected: str | None) -> None:
+    client, server = socket.socketpair()
+    try:
+        _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": text}})
+        answered = remind_once(
+            client, paths=["/a"], agent_id=None, envelope=_ENVELOPE, deadline=_soon()
+        )
+        assert answered == expected
+        assert "agent_id" not in json.loads(server.recv(65536))["params"]
+    finally:
+        client.close()
+        server.close()
+
+
+def test_a_reminder_s_text_that_is_neither_is_a_connection_error() -> None:
+    client, server = socket.socketpair()
+    try:
+        _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": 7}})
+        with pytest.raises(ConnectionError):
+            remind_once(client, paths=["/a"], agent_id="a1", envelope=_ENVELOPE, deadline=_soon())
     finally:
         client.close()
         server.close()
@@ -224,7 +270,7 @@ def test_an_answer_arriving_in_pieces_cannot_outrun_the_deadline() -> None:
                 prompt="p",
                 limit=5,
                 envelope=_ENVELOPE,
-                deadline=PushDeadline(at_ms=_DEADLINE, by=started + 0.3),
+                deadline=HookDeadline(at_ms=_DEADLINE, by=started + 0.3),
             )
         assert time.monotonic() - started < 2.0
     finally:
@@ -245,7 +291,7 @@ def test_a_deadline_already_past_times_out_without_sending() -> None:
                 prompt="p",
                 limit=5,
                 envelope=_ENVELOPE,
-                deadline=PushDeadline(at_ms=_DEADLINE, by=time.monotonic() - 1.0),
+                deadline=HookDeadline(at_ms=_DEADLINE, by=time.monotonic() - 1.0),
             )
         server.setblocking(False)
         with pytest.raises(BlockingIOError):

@@ -1,4 +1,5 @@
-"""`hook.log`: exactly one line per failed `userPromptSubmit`, written without `logging`.
+"""`hook.log`: one line per failed push or reminder, written without `logging`, in the closed
+vocabulary `classify` names.
 
 `architecture.md` §"Degraded modes": on any failure, the hook must log to `hook.log` — "a **direct
 file write, not `logging`**: `open(path, "a")` and one `.write()` call, then close."
@@ -19,7 +20,46 @@ import os
 import time
 from pathlib import Path
 
+from zikaron.core.errors import ZikaronError
 from zikaron.core.store.permissions import ensure_store_dir
+from zikaron.hook import connect, rpc
+
+#: The wire codes a hook's request can be answered with, by the `hook.log` kind each is recorded
+#: as — the vocabulary `architecture.md` §"Errors" already uses, rather than a second one. An
+#: identity mismatch is not here: it is caught inside `connect.py`, before any request. Literals,
+#: because this package is stdlib-only; a guard test holds each to its `ErrorCode`'s wire name.
+REJECTION_KINDS: dict[int, str] = {
+    -32020: "store_busy",
+    -32022: "reindexing",
+    -32023: "bad_config",
+    -32024: "schema_incompatible",
+    -32026: "deadline_passed",
+}
+
+
+def classify(error: Exception) -> tuple[str, int | None]:
+    """A failure to connect or to be answered, as the `(kind, code)` pair a `hook.log` line names.
+
+    A wire code the design's error table does not name (a programming error in the service, or a
+    future addition neither side has been told about yet) still gets something identifiable
+    rather than an uninformative default — `rejected_<code>`.
+    """
+    # Both subclasses are checked before the `HookTransportError` base they share, which is
+    # otherwise `transport`.
+    if isinstance(error, connect.ServiceStartingError):
+        return error.waited_on, None
+    if isinstance(error, connect.StoreIdentityError):
+        return "store_identity", -32030
+    if isinstance(error, rpc.ServiceRejectionError):
+        return REJECTION_KINDS.get(error.code, f"rejected_{error.code}"), error.code
+    if isinstance(error, ZikaronError):
+        # A refused runtime directory or socket path. It keeps its numeric code beside its name,
+        # since `architecture.md` names both wherever one exists.
+        return str(error.code.wire_name), int(error.code)
+    # No server became reachable: the one spawned for a push exited before answering, or the
+    # start it was queued behind has stalled. A timeout waiting for an answer is `unanswered`,
+    # decided by the caller around that call.
+    return "transport", None
 
 
 def record_failure(

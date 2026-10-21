@@ -338,6 +338,11 @@ async def _knowledge_unlock_arms(ctx: ServiceContext) -> _Arms:
     )
 
 
+async def _knowledge_remind_arms(ctx: ServiceContext) -> _Arms:
+    del ctx
+    return _Arms(succeeding={"paths": ["/a"]}, refused={"paths": []}, kind="hook")
+
+
 #: One entry per dispatched method. A method added to `METHODS` without one fails
 #: `test_every_dispatched_method_has_a_recipe`, which is what keeps the sweep exhaustive rather than
 #: merely long.
@@ -361,6 +366,7 @@ _ARMS: Final[dict[str, _Setup]] = {
     "knowledge_rename": _knowledge_rename_arms,
     "knowledge_refresh": _knowledge_refresh_arms,
     "knowledge_unlock": _knowledge_unlock_arms,
+    "knowledge_remind": _knowledge_remind_arms,
 }
 
 

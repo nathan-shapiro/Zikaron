@@ -326,6 +326,7 @@ async def _registry_exists(ctx: ServiceContext) -> bool:
         ("knowledge_refresh", {}, None),
         ("knowledge_status", {"knowledge_base": "docs"}, -32040),
         ("knowledge_unlock", {"knowledge_base": "docs"}, -32040),
+        ("knowledge_remind", {"paths": ["/a"]}, None),
         ("knowledge_refresh", {"name": "docs"}, -32040),
         ("knowledge_rename", {"name": "docs", "new_name": "notes"}, -32040),
         ("knowledge_remove", {"name": "docs", "confirm": True}, -32040),

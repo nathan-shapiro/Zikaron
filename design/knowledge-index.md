@@ -1953,7 +1953,9 @@ async def zikaron_knowledge_rename(name: str, new_name: str) -> object
 async def zikaron_knowledge_refresh(name: str | None = None, full: bool = False) -> object
 ```
 
-**`knowledge_unlock(knowledge_base)` is an eighth RPC method with no tool beside it** (§9). Clearing a
+**`knowledge_unlock(knowledge_base)` is an RPC method with no tool beside it** (§9), as a method an
+agent must not call itself is: the lock is a human's to judge, as the search reminder's
+`knowledge_remind` is the hook's to ask for (`design/code-knowledge.md` §6). Clearing a
 build lock is a judgement about what else is running on a machine, which is the operator's: an agent
 meeting a held lock is meant to wait or report it, not to decide the holder is dead. So the method
 exists for `zikaron knowledge refresh --force-unlock` and the tool surface is unchanged. It answers
@@ -2991,7 +2993,7 @@ its `knowledge_build` row records `ok=false` with the failure's wire name as `er
 reason — the refusal's sentence or the traceback — is in the log `status` names as `build_log`.
 
 `--force-unlock` clears a stale indexer lock (§6.2) and **refuses when the lock is same-host with a live
-pid**. It is served by `knowledge_unlock`, the only **knowledge method with no tool**, because an agent cannot
+pid**. It is served by `knowledge_unlock`, a **knowledge method with no tool**, because an agent cannot
 distinguish a stale foreign lock from a live one any better than the service can — §8.2's parity claim
 is stated over the management verbs, and this is a recovery action for an operator who knows what else
 is running. `--wait` is the other flag §8.2 excepts, and it needs no method at all: it polls
@@ -3008,9 +3010,11 @@ New keys, in the existing two-TOML-layer scheme (**D33**), all overridable per p
 | `knowledge_max_chunks_per_file` | 2 | per group |
 | `knowledge_snippet_max_chars` | 1200 | **Unicode code points**, stated because this corpus has measured "characters" to be the ambiguous word (FINDINGS current-state item 5). Only the mid-line cut position depends on it; the 24,000-byte response cap is enforced by group-dropping regardless |
 | `knowledge_scan_on_session_start` | false | **reserved and inert in v0**, see below. Filesystem watching is deliberately not offered (§15) |
+| `knowledge_reminder_interval` | 300 s | in `[retrieval]`: how long an agent goes unreminded after the search reminder names a code-knowledge corpus (`code-knowledge.md` §6) |
 
-**The first four are declared keys in `schema.md`'s own configuration table, which is where their
-ranges live; `knowledge_scan_on_session_start` is deliberately not declared at all.** A key in that
+**Every row but `knowledge_scan_on_session_start` is a declared key in `schema.md`'s own
+configuration table, which is where their ranges live; `knowledge_scan_on_session_start` is
+deliberately not declared at all.** A key in that
 table is a key the resolver accepts in a project's TOML, and accepting a setting that nothing acts on
 is worse than not offering it: an operator who sets it is owed the behaviour. It is described here,
 reserved by name so nothing else claims it, and becomes a declared key in the same change that gives it
@@ -3019,10 +3023,10 @@ an owner.
 `chunk_max_tokens`, `rrf_k`, `fusion_depth` and `max_file_bytes` are read **per KB from its `meta`**, seeded from config
 at creation, so changing a global default does not silently invalidate an existing index.
 
-The other three are read from configuration at the moment they are used rather than seeded, because
-none of them describes how an index was *built*: `knowledge_embed_batch` is how much work goes into one
-forward pass, and the two search keys shape one response. Changing any of them invalidates nothing
-already stored.
+The others are read from configuration at the moment they are used rather than seeded, because none
+of them describes how an index was *built*: `knowledge_embed_batch` is how much work goes into one
+forward pass, the two search keys shape one response, and `knowledge_reminder_interval` paces a
+line no index holds. Changing any of them invalidates nothing already stored.
 
 **`embed_model` and `embed_dim` are likewise recorded at creation**, from the configured encoder
 identity — which is what lets §8.4 state that `add` can never produce a mismatched KB. **But for these

@@ -558,12 +558,10 @@ value moved on the strength of a level from that report would be moved on a misr
 
 **The taxonomy, without a running total — the table below is the count.** Nineteen keys moved out of
 `meta` outright; three are **dual-homed** (`embed_model`, `embed_dim`, `chunk_max_tokens`), persisting
-in `meta` as the record of what the existing index was actually built with; four belong to the
-knowledge index rather than to the memory store (every `knowledge_`-prefixed key), which is why they
-carry that prefix inside a shared section; and later keys are added without any of these figures
-moving. *(This read "Twenty-six file keys" against a table of 27 rows: 19 + 3 + 4 = 26 left
-`consolidation.spill_threshold` in no bucket at all, in the document `README.md` and
-`architecture.md` both defer to for the key list.)*
+in `meta` as the record of what the existing index was actually built with; the
+`knowledge_`-prefixed keys, whichever section they sit in, belong to the knowledge index rather than
+to the memory store, which is why they carry that prefix inside a shared section; and later keys are
+added without either figure moving.
 Resolved from the two TOML layers per `architecture.md` §"Configuration". Ranges and defaults are unchanged
 from when the nineteen lived in `meta`; only their home moved. The dual-homed three are the reason the file can be said to express *intent* while `meta` records
 *what was done* — without a file key there would be no way to state the intent at all, and the
@@ -608,6 +606,8 @@ fts_query_max_terms    = 64
 # returned fragment may be before it is cut at a line boundary
 knowledge_max_chunks_per_file = 2
 knowledge_snippet_max_chars   = 1200
+# seconds an agent's searches of documented modules go unreminded after a reminder
+knowledge_reminder_interval   = 300
 
 [dedup]
 dedup_threshold = 0.80
@@ -647,6 +647,7 @@ signal_horizon_days = 30
 | `retrieval` | `fts_query_max_terms` | int | 1–512 | `64` | cap on quoted terms per lexical query (§Bounds, `retrieval.md` §"Query construction") |
 | `retrieval` | `knowledge_max_chunks_per_file` | int | 1–20 | `2` | how many chunks of one file may appear in one knowledge-search group (`knowledge-index.md` §7.3), so a single large document cannot fill it. Its **maximum** is the cap on that call's own `limit_per_kb`: above 20 the key could never bind, and a range admitting values that cannot take effect is a range that misleads |
 | `retrieval` | `knowledge_snippet_max_chars` | int | 80–24000 | `1200` | how long a returned fragment may be before it is cut at a line boundary and flagged (`knowledge-index.md` §8.3), counted in Unicode code points — which is why the **ceiling** is a sanity bound rather than a derivation: the response cap is in *bytes*, and 24,000 code points can be four times that many bytes, so this borrows that number as an order-of-magnitude limit past which a single snippet is undeliverable whatever the encoding. The **floor** still shows a line or two of context |
+| `retrieval` | `knowledge_reminder_interval` | seconds int | 0–86400 | `300` | after the hook reminds an agent that a search reached a documented module, how long that agent's next such searches go unreminded (`code-knowledge.md` §6); a user prompt ends it for the main session, and **0** reminds on every such search. The default is the operator's, set without a base rate; the ceiling bounds a typo rather than a use |
 | `dedup` | `dedup_threshold` | float | [0, 1] | `0.80` | floor on `s(new row → candidate)` for D15's advisory near-duplicate list |
 | `dedup` | `dedup_max` | int | 0–20 | `3` | how many near-duplicates `remember` hands back |
 | `consolidation` | `mutual_k` | int | 2–50 | `5` | orphan-clustering top-K, both directions |
@@ -908,10 +909,11 @@ caller's latency** behind a lock it has no stake in.
   in hand. For these, a store held continuously by another writer fails **the handler** — at
   `store_busy`, or for a `surface` carrying `deadline_at_ms` at `deadline_passed` — so a test that
   merely holds the lock throughout proves nothing about the access log, and that is the trap.
-- **Five of the knowledge verbs do not.** `knowledge_list`, `knowledge_status` and `knowledge_search`
-  read the registry and write only a corpus database; `knowledge_refresh`'s plan and `knowledge_unlock`
-  touch `memory.db` read-only. For those five the `call` row is **the call's only `memory.db` write**,
-  on every store, and a held lock isolates it exactly: no read path creates the registry table
+- **The knowledge verbs that only read `memory.db` do not.** `knowledge_list`, `knowledge_status`
+  and `knowledge_search` read the registry and write only a corpus database; `knowledge_refresh`'s
+  plan and `knowledge_unlock` touch `memory.db` read-only, and `knowledge_remind` reads the registry
+  and writes nothing. For those the `call` row is **the call's only `memory.db` write**, on every
+  store, and a held lock isolates it exactly: no read path creates the registry table
   (§"Additive tables and the version gate").
 
   ~~`registry.ensure_table` records the measurement that makes this hold — `CREATE TABLE IF NOT
@@ -1581,6 +1583,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 | `content` | non-empty, **no upper limit** | D4 stores content untruncated. Length is handled by chunking, never by refusal. |
 | `limit` on `search`/`surface` | 1–50, default 5 | The **output** budget: how many memories come back. It does *not* set retrieval depth. |
 | `uuids` on `fetch` | 1–50 per call | The **bound** is all-or-nothing — a call naming 0 or >50 uuids is rejected whole and returns nothing. The **contents** are not: a well-formed call answers partially, returning every known record and reporting unknown uuids in `missing`, because a dead handle is something the agent needs told rather than a reason to fail the batch (`architecture.md` §`zikaron_memory_fetch`). All-or-nothing in the error table means *mutating* batches. |
+| `paths` on `knowledge_remind` | 1–50 absolute paths per call | The `uuids` figure, since nothing about a search sets a number of its own. Never empty, because a search with no path covered its working directory and a command that runs no search asks nothing; the hook sends the first 50 of a longer list, so a `bounds` refusal is unreachable from what it builds (`code-knowledge.md` §6). |
 | `absorb` on consolidator verbs | 1 row minimum, ≤ the group's member count | An empty list cannot complete a group, and a verb may never touch a row outside the group it was handed. |
 | FTS5 query terms | ≤ `fts_query_max_terms` (**64**) quoted terms, deduplicated, longest-first | Bounds worst-case lexical cost on a pathological prompt or a long memory. A "term" is one maximal run of Unicode alphanumerics, quoted as an FTS5 string literal and handed to FTS5's **own** tokenizer — see `retrieval.md` §"Query construction". The tie-break for "longest-first" is `(−length, first occurrence)`, so the cap is deterministic |
 | Internal lexical query | the querying memory's `gist + content`, through the same constructor and the same 64-term cap | An internal query (dedup, anchor, orphan edge) has no user text; its lexical side is the memory itself. The cap keeps the longest tokens, which for technical prose is where the identifiers are — `retrieval.md` §"Two kinds of query" |

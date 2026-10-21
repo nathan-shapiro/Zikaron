@@ -29,10 +29,10 @@ things one figure must not be quoted for both.
 **Every method here carries a `memory_` prefix, and it is the same prefix its tool carries** — a
 wire method is its tool's name without the leading `zikaron_`. The subsystem segment is what keeps
 `memory_search` and `knowledge_search` from being one name that two dispatch tables both claim.
-`memory_surface`, `memory_plan_groups` and `knowledge_unlock` are the methods with no tool — the
-hook calling the first directly, the consolidator's own client the second and `zikaron knowledge`
-the third; `health` is the one method with no subsystem,
-since it speaks for the service rather than for either store, and it carries no tool either.
+A method with no tool is one an agent must not call itself — the hook, the consolidator's own
+client or `zikaron knowledge` does — and here that is `memory_surface`, which the hook calls;
+`health` is the one method with no subsystem, since it speaks for the service rather than for
+either store, and it carries no tool either.
 """
 
 import os
@@ -160,18 +160,18 @@ def _read_call(
     )
 
 
-#: How far ahead of a push's own deadline the service stops trying to answer it. It covers the path
+#: How far ahead of a hook's own deadline the service stops trying to answer it. It covers the path
 #: from the check before `COMMIT` to the hook's `recv` returning — the `COMMIT` and its WAL `fsync`,
 #: the worker-to-loop handoff, the `call` row attempt, encoding, the socket and the hook's wake —
-#: because a commit that lands inside the deadline and whose answer arrives after it is a push
+#: because an answer recorded inside the deadline and arriving after it is a push or a reminder
 #: recorded as shown that nobody saw. Set above the largest such path
 #: `experiments/m35_commit_path_margin.py` measured under the host's working load, rather than at a
 #: percentile of it; `research/m35-implementation-evidence.md` has the distribution.
 DEADLINE_MARGIN_MS: Final = 20
 
 
-def surface_deadline(params: dict[str, object]) -> Deadline:
-    """`memory_surface`'s wait budget: its caller's `deadline_at_ms` less the margin, if sent.
+def caller_deadline(params: dict[str, object]) -> Deadline:
+    """A hook-called method's wait budget: its caller's `deadline_at_ms` less the margin, if sent.
 
     `deadline_at_ms` is the caller's own deadline as an absolute wall-clock instant in milliseconds
     since the epoch, so a request read late by a busy loop is not given a fresh budget. Validated
@@ -340,7 +340,7 @@ async def surface(
 ) -> SurfaceResult:
     """`memory_surface(prompt, limit?, deadline_at_ms?) -> {text}` — the push path's block.
 
-    `deadline_at_ms` is read by the dispatcher, through `surface_deadline`, before this runs.
+    `deadline_at_ms` is read by the dispatcher, through `caller_deadline`, before this runs.
     """
     text = await core_surface(
         db,
@@ -349,6 +349,13 @@ async def surface(
         limit=require_int(params, "limit", default=5),
     )
     return SurfaceResult(text=text)
+
+
+def _open_the_turn(ctx: ServiceContext, envelope: ResolvedEnvelope) -> None:
+    """A push is one per user prompt, so its arrival opens the session's turn, and the turn's first
+    search of a documented module reminds (`design/code-knowledge.md` §6) — whatever the push then
+    answers, since a refused push opened the turn all the same."""
+    ctx.reminders.clear(envelope.session_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +399,8 @@ PRIMARY_METHODS: dict[str, Method] = {
     "memory_amend": Method(amend, Access.WRITE),
     "memory_retire": Method(retire, Access.WRITE),
     "memory_search": Method(search, Access.READ),
-    "memory_surface": Method(surface, Access.READ, deadline=surface_deadline),
+    "memory_surface": Method(
+        surface, Access.READ, deadline=caller_deadline, on_receipt=_open_the_turn
+    ),
     "memory_fetch": Method(fetch, Access.WRITE),
 }

@@ -1082,9 +1082,10 @@ class TestTheMethodTable:
         client sends is a method that answers `METHOD_NOT_FOUND` in production and passes every
         test that calls the Python function directly.
 
-        `knowledge_unlock` is here and is deliberately not an MCP tool — clearing a build lock is
-        the operator judgement `lifecycle.unlock` describes — so this set is larger than the tool
-        surface, which `zikaron.mcp.tool_names` declares and `test_mcp_server.py` asserts.
+        `knowledge_unlock` and `knowledge_remind` are here and are deliberately not MCP tools —
+        clearing a build lock is the operator judgement `lifecycle.unlock` describes, and a search
+        reminder is the hook's to ask for — so this set is larger than the tool surface, which
+        `zikaron.mcp.tool_names` declares and `test_mcp_server.py` asserts.
         """
         assert set(dispatch_knowledge.KNOWLEDGE_METHODS) == {
             "knowledge_search",
@@ -1095,6 +1096,7 @@ class TestTheMethodTable:
             "knowledge_rename",
             "knowledge_refresh",
             "knowledge_unlock",
+            "knowledge_remind",
         }
 
 

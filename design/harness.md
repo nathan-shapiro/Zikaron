@@ -63,6 +63,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Subagent triggers | none — hooks fire *for* subagent sessions instead | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3) |
 | Output channel, spawn/prompt | exit-0 stdout | exit-0 stdout (§5) |
 | Output channel, subagent | n/a | **`hookSpecificOutput.additionalContext` only** — plain stdout reaches nobody (§7b) |
+| Output channel, tool event | n/a | **`hookSpecificOutput.additionalContext`** — plain stdout goes to the debug log alone (`tool-hook-probe`), measured reaching the main session and a subagent alike (`m40-4-hook-probes`) |
 | Injection budget | `max_output_size`, stated as 65536, **bytes** | fixed **10,000 characters**, no field to raise it — and *which* kind of character is now measured rather than inferred: see §"Injection budgets" (§5, §7a) |
 | Overrun behaviour | silent truncation | loud: notice + 2 KB preview + path to full text (§5) |
 | Subagent budget | n/a | `additionalContext` ≥12,000 characters, ceiling unmeasured (§7f) |
@@ -75,6 +76,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Hook timeout overrun | silent | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
 | Hook `command` | a shell command line, measured, so the path is shell-quoted | a **shell command line** too — an unquoted path containing a space does not run at all, so the path is shell-quoted and a start entry's `--components` is its arguments (`hook-command-shell-probe`) |
 | Guard hooks (`guards`) | none — not offered: its post-edit hook has no documented path to the model, so the installer refuses the guards here (guards §2) | `PreToolUse` matcher `Bash\|Monitor`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/guards.md` §5) |
+| Search reminder (`search_reminder`) | none — its post-tool hook has no documented path to the model, so a memory install writes no reminder (kiro-gaps) | `PostToolUse`; files matcher `Grep\|Glob`, a handler for each of `Grep` and `Glob`; shell matcher `Bash`, a handler for each of `Bash(*grep *)` and `Bash(rg *)` — installed as one group whose matcher joins the two, each handler's filter a string, since a list is never matched (`m40-4-hook-probes`) |
 | MCP tool-call duration | a 330 s call **completed**, with no `timeout` on the server entry: kiro reported `status: Completed` and the model's reply carried the tool's own `slept 330.1s` (`spikes/m34_tool_call_duration_stub.py`, 2026-09-29) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
 | Consolidator tool grant | `tools: ["@zikaron"]` in the agent config, server registered in that same config | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
 | Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
@@ -92,13 +94,11 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
 | Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, the skill run by the session that invoked it | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill's `context: fork` runs it as, in the background (`design/code-knowledge.md` §5.2, §5.4) |
 
-Trigger names normalize **many-to-three** internally: spawn, prompt, and subagent start — which is
-what `HookEvent`'s own docstring says, and what `hook/main.py` says it resolves to.
-*(This read "many-to-two" from M13, when there were two. M14 added the third event and appended it
-to the end of this paragraph as a sentence instead of moving the count — the number and its own
-counter-example sitting three lines apart for two milestones.)* Kiro's array format already accepts
-`SessionStart` as an alias for `agentSpawn`, so this is one vocabulary with synonyms rather than two
-languages. `SubagentStart` is a third internal event, Claude-Code-only, carrying the policy and nothing else.
+Trigger names normalize internally onto `HookEvent`'s members, each name to the one member it
+means: spawn and prompt under both harnesses, and under Claude Code alone the subagent start,
+which carries the policy and nothing else, and the search reminder's `PostToolUse`
+(`design/code-knowledge.md` §6). Kiro's array format already accepts `SessionStart` as an alias
+for `agentSpawn`, so this is one vocabulary with synonyms rather than two languages.
 
 ## Detection, session identity, and the nesting limit
 
@@ -597,11 +597,14 @@ table" and a drift-guard test; a *shape* that differs (which files exist, how th
 installer changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a server entry — `.mcp.json`'s or kiro's
 `mcpServers` — and a hook's command. Under Claude Code that is a settings hook group's **programs** —
 each command's first shell word, since a start entry's `--components` is a selection the install
-unions with rather than a sign of another install — as a list equal to ours rather than merely
-containing it, so a group carrying our command beside one of the user's is refused, not rewritten.
-Anything else is rewritten and reported. The rule is written once, in
-`zikaron/install/ownership.py`, and both targets import it; `architecture.md` §"The install
-contract" states the predicates and the merge.
+unions with rather than a sign of another install — judged by membership: a group of this
+selection's is this install's when every one of its commands runs a program this install writes
+on that trigger, whatever their number and their `if` filters, so a group carrying our command
+beside one of the user's is refused, not rewritten. Anything else is rewritten and reported. A
+group running only the other selection's script is that selection's and is copied verbatim, since
+two selections write one trigger (`zikaron/install/settings_hooks.py`). The server rule is written
+once, in `zikaron/install/ownership.py`, and both targets import it; `architecture.md` §"The
+install contract" states the predicates and the merge.
 
 ### What a Claude Code install writes
 
@@ -613,6 +616,7 @@ or both:
 |---|---|---|---|
 | Prompt entry | `.claude/settings.local.json`, merged, under `UserPromptSubmit` | memory | `zikaron-hook`, the per-message push; with the start entries, a memory install's hooks — see below |
 | Start entries | the same file's `SessionStart` and `SubagentStart` | every selection | `zikaron-hook`, carrying `--components guards\|both` beside the guards — the union of what is installed |
+| Search reminder entry | the same file's `PostToolUse`, beside the guards' group there | memory | `zikaron-hook`, one group, the seam's matcher and a handler per `if` filter (§"The table", `design/code-knowledge.md` §6) |
 | Guard entries | the same file's `PreToolUse` and `PostToolUse` | guards | `zikaron-guard`, each group with its matcher and its own `timeout` |
 | Tool approval | the same `settings.local.json` | memory | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
 | MCP servers | `.mcp.json` | memory | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
@@ -622,9 +626,10 @@ or both:
 | Code orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | memory | YAML frontmatter with `effort: high` and `tools:` `Agent`, `Bash`, `Read` and `mcp__zikaron`, prompt as body |
 | Code documentation skill | `.claude/skills/zikaron-document-code/SKILL.md` | memory | YAML frontmatter carrying `context: fork` and `agent: zikaron-code-orchestrator`, body |
 
-**An install touches only its own selection.** Triggers it does not write are copied verbatim, so
-the guards over a memory install keep every memory hook and both approval keys byte-identical, and
-the reverse; nothing removes a selection.
+**An install touches only its own selection.** Triggers it does not write are copied verbatim, and
+so is the other selection's group on `PostToolUse`, which both write, so the guards over a memory
+install keep every memory hook and both approval keys byte-identical, and the reverse; nothing
+removes a selection.
 
 **`settings.local.json`, never `settings.json`.** The installer writes absolute venv paths — machine-local by
 construction, for the reason §"The install contract" gives about console scripts — and `settings.json` is the
@@ -641,11 +646,13 @@ servers at all. It degrades safely rather than silently: a clone-mate's install 
 differing `command` rather than merging over it, and the README tells them to ignore the file or re-run
 the installer.
 
-**Three hook entries, because M14 built a third path.** `SessionStart`, `UserPromptSubmit` **and
-`SubagentStart`** — `hook/main.py`'s dispatch falls through to `subagent_policy.run` for the third, routed to
-the `additionalContext` channel. Registering only the two triggers kiro has would leave that path dead with
-nothing anywhere failing: no error, no log line, just subagents that never receive the write policy. Kiro
-needs no analogue because it fires the ordinary hooks *for* a subagent session instead.
+**A memory install's hook entries are a trigger each for the start, the prompt, the subagent start
+and the search reminder.** `hook/main.py`'s dispatch falls through to `subagent_policy.run` for
+`SubagentStart`, routed to the `additionalContext` channel, as the reminder's `PostToolUse` is.
+Registering only the triggers kiro has would leave both paths dead with nothing anywhere failing: no
+error, no log line, just subagents that never receive the write policy and searches never reminded.
+Kiro needs no analogue of the first because it fires the ordinary hooks *for* a subagent session
+instead.
 
 **The timeout is stated in seconds and this is the third unit in the family.** Kiro's `timeout_ms` carries
 **10000**; Claude Code's `timeout` is **seconds** (measured, `installer-probe` §2). Copying the integer
