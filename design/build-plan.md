@@ -6527,7 +6527,7 @@ module (§5.3, §8). **Not** a path scope on the documenter's writes (§8), and 
 directories named one by one (§3.2). **Not** an orchestrator on kiro, whose subagents cannot
 spawn (§5.2).
 
-## M40's follow-ups — M40-1 to M40-4
+## M40's follow-ups
 
 **Numbered M40-N to mark them as follow-ups** (operator, 2026-10-20): each was found while M40 was
 built or run, and each lands as a commit of its own in M40's pull request, in this order, rather
@@ -7320,6 +7320,297 @@ search, which stays in `FINDINGS.md` §"Owed work" until its decay is measured. 
 text at session start, nor a change to what a search returns — a `knowledge_search` only sets the
 reminder's time (item 4) — to K14, to the push path's budget or to what the guards do; only what
 their install owns on a shared trigger is restated (item 2).
+
+## M40-5 — A second documentation run the harness ran in the foreground, where it could not wait
+
+Normative, written by the build: **`design/code-knowledge.md` §5.2** (the skill, who runs its
+loop, and what the user meets) and **§5.4** (the orchestrator's definition), `design/harness.md`'s
+table rows for the documenter and its skill, for the code orchestrator and for the code
+documentation skill, and its paragraph on why the consolidation skill does not fork; `README.md`'s
+section on code knowledge; and `design/kiro-gaps.md`'s row for the run that leaves the session
+free. Decision: **D39, amended**
+(operator, 2026-10-21) — under Claude Code the session spawns the orchestrator in the background,
+as the consolidation skill has it spawn the consolidator, rather than the skill forking to it;
+recorded in `design/overview.md`'s D39 row, the forking it replaces struck beside it. Evidence:
+`research/m40-5-spawned-orchestrator-probe.md`; `research/claude-code-background-subagents.md`
+§Q3 and §Q8(c).
+
+**What was found.** In a field run with two sessions in one project, a session asked to document
+two directories fifteen seconds apart invoked `/zikaron-document-code` for each. The first fork ran
+in the background. **The second ran in the foreground** — its `meta.json` says
+`"requestShape":"foreground"` — as Claude Code documents a forked skill to run *"when you invoke a
+forked skill while an earlier invocation of the same skill is still running"*, and §5.2 says
+already, as "one run at a time". A foreground fork ends at its first turn's end, and the
+orchestrator waits for its documenters by ending its turn, so the run ended after one document,
+reporting *"Still waiting on the `.gitignore` documenter"*; that documenter handed back to the
+session. Nothing in the fork could tell: its spawns all answered *"Async agent launched"*. **18 of
+its 19 spawns had also been refused**, *"Concurrent subagent limit reached. You can run 20 subagents
+at once. Do not retry."*, the first run's batch holding the session's slots; the skill says a
+refused spawn is no attempt, and nothing about the batch after it. The session recovered on its own,
+invoking the skill again once the first run reported. Probed interactively, two overlapping
+subagents the session spawned both ran in the background, each waited out its own spawn and handed
+back, and the fork's foreground could not be reproduced (the note's §2). **A spawned orchestrator
+holds a slot the fork did not**: LeibaTrader's first batch of 20 all started beside its fork
+(`research/m40-toy-run.md` §13), where a subagent the session spawns is, on the documentation's
+wording, one of the 20 like any other — which done-when 5 measures. **And documenting the whole
+project needs `.` as the module** — the planner and the skill both take it, the corpus then
+named `code-knowledge` — which no user asking to "create code documentation" would type; and in
+a project whose modules are documented already, the loop's nesting rule refuses `.`, since every
+module's corpus lies inside `code-knowledge/`.
+
+**Built in this tree, not a worktree.** It changes what an install writes and nothing a running
+session imports: the hook, the guard, the MCP server, the service, the indexer and the planner
+import nothing from `zikaron/install/`, as for M40-3.
+
+### What ships
+
+1. **Under Claude Code, the session launches the run.** The skill's `SKILL.md` carries `name` and
+   `description` only — no `context: fork`, no `agent:` — and its body tells the session that
+   invoked it:
+   - the invocation, `/zikaron-document-code [<module>]... [--include GLOB]... [--exclude GLOB]...
+     [--slice N]`, **any number of modules, none included**, and what that means (item 3);
+   - **to spawn `zikaron-code-orchestrator`** through whichever tool the harness gives it for
+     delegating to a subagent, with `subagent_type: zikaron-code-orchestrator` and, wherever the
+     tool offers it, `run_in_background: true` — interactively it offers none and every spawn runs
+     in the background — giving it **a fenced prompt to hand over as written**, as the
+     consolidation skill does: a line saying to run one documentation run with exactly these
+     arguments, and `$ARGUMENTS` on the line below, which Claude Code substitutes as typed, so a
+     glob reaches the planner as the user wrote it and an empty line is the no-arguments case,
+     leaving the choice of modules to the orchestrator; one request is one spawn, however many
+     modules it names;
+   - to run nothing of the loop itself: no planner, no documenter;
+   - **one run at a time in a session, queued rather than held**: a request that comes while a
+     run of this session's is out is not spawned then — the session says so and spawns it when that
+     run's report arrives, so a second run never shares the subagents with the first, which hold
+     19 of the 20 while a batch is out, and never documents a module the first is documenting;
+   - that a spawn refused because too many subagents are running is made again when the session's
+     next subagent reports — the harness's *"Do not retry"* kept, since nothing is spawned again
+     at once, only once a report of the session's has freed a slot — or, when the session has none
+     out, is answered by telling the user that something else holds them; and that **a report
+     saying the run stopped because the session's subagents were all in use is answered the same
+     way**, the request repeated as it was given, a module already up to date costing one planner
+     run;
+   - to relay each report when it arrives, with its opening lines, one per module the run was
+     asked for, each naming the module, whether it is up to date and its knowledge base, a refused
+     module's saying it was refused and why;
+   - the Claude Code half of the permissions paragraph the skill carries now, less its "one run at
+     a time": where a run's prompts surface, auto mode, and what a headless run needs,
+     `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` among it.
+
+   **The description is one text on both harnesses**, `_SKILL_DESCRIPTION`, and keeps its opening,
+   per-source-file documentation into a knowledge base, ahead of what it answers: a request to
+   create, write or update the code's documentation, a module's or the project's — and that with no
+   directory named it updates every documented module, or documents the whole project where none
+   is.
+2. **The orchestrator's definition carries the loop.** Its system prompt is its own short prompt —
+   reworded so that its task is the loop that follows, over the arguments its spawn prompt gives —
+   then the loop: the text that was the forked skill's body, without the permissions paragraph,
+   rendered for Claude Code as the body is now, with its spawn instruction, its planner command and
+   Zikaron's verbs in Claude Code's form, so it names no built-in tool, the spawn instruction
+   naming none as now — and the planner command's *"Read `.mcp.json` there"* reworded, so the
+   whole-word check the preamble passes runs on the definition's body, everything after its
+   frontmatter, whose `tools:` grant names the built-ins it holds. Its tools, model and effort
+   are unchanged, and **it gains `background: true`**, which Claude Code documents as keeping a
+   subagent in the background even when it is asked for the foreground
+   (`research/claude-code-background-subagents.md` §Q3), so the background is the definition's and
+   not the session model's choice; `_ClaudeAgent` gains the field as optional, and the documenter,
+   asked for the foreground under `-p`, does not set it. **Its description is rewritten**:
+   `ORCHESTRATOR_DESCRIPTION`'s *"Started by that skill, never directly"* was written to keep a
+   session from spawning it outside the fork, and the skill now has the session spawn it — the new
+   one says it runs one documentation run in the background, spawned by the session when the
+   `zikaron-document-code` skill says so, and never on the session's own judgment.
+3. **The loop, on both harnesses**, gains four rules, and its batch one less:
+   - **The modules of a run**: the ones named, documented in turn; **with none named, every
+     documented module, or else the whole project.** Step 1's `zikaron_knowledge_status` listing,
+     which the nesting check already reads, decides the second: where knowledge bases named
+     `code-knowledge/<module>` are registered, the run documents each of those modules in turn —
+     **each module read from its corpus's `root_path`**, `<root>/code-knowledge/` stripped, and
+     never from its name, which the registry stores lower-cased while a directory keeps its case; a
+     `code-knowledge/…` corpus whose `root_path` lies outside `<root>/code-knowledge/` is another
+     directory's, reported as step 7 reports one and passed over — registered all the same, so a
+     run that passes over every one documents nothing and says so. Where none is registered, the
+     module is the whole project — the planner's `--module .`, its knowledge base `code-knowledge`,
+     as step 1 and §5.2 step 6 already name it — and a project documented whole, whose
+     `code-knowledge` corpus is registered, is updated by this same branch. Each module runs
+     against its own knowledge base, and the report opens with one line per module the run was
+     asked for, before anything else, in step 8's form — a refused module's saying it was refused
+     and why, a passed-over corpus's saying whose directory it is — then step 8's content for each
+     module in the same order. The
+     usage line shows the modules as optional, and the sentence on where the arguments come from
+     names the skill's invocation under kiro and, under Claude Code, the line after the spawn
+     prompt's first, empty for none.
+   - **Globs and `--slice` need a run of one module**: a run that names two or more modules, or
+     names none and finds any `code-knowledge/<module>` registered, refuses a glob or a slice before
+     the planner first runs, and reports it, since nothing says which module they are for. So a run
+     over registered modules passes no globs, and a module first documented with `--include` or
+     `--exclude` is documented more widely unless it is named alone with them; its opening report
+     line says *"globs: none"*, so the widening shows where it happens.
+   - **In a run of several modules, a module refused is reported and the run goes on**: one the
+     planner refuses for the module — its standard error opening `refused: --module`, whatever
+     follows: a registered module renamed or removed since it was documented is *no such
+     directory*, and the report names its corpus and documents as the user's to remove — or one
+     the nesting check refuses. Any other failure of the planner — a `failed:`, a project without a
+     store, a configuration error, `<zikaron>` not found — stops the run as now, rather than
+     failing once per module; and a run of one module stops on any refusal, as now.
+   - **A spawn refused because too many subagents are running is expected and never a reason to
+     stop** — any other agent the session runs may hold the slots. It is no attempt, as now, and
+     the harness's *"Do not retry"* is kept: no refused spawn is made again, the item is listed by
+     the next planner run, as step 4 says, and spawned in a later, smaller batch. The
+     orchestrator waits for the documenters of that batch that did start, then runs the planner
+     with `--limit` the number that started — or 1, when none did — plus the items given
+     up on, and returns to the full batch once a batch has none refused. A batch that starts none
+     has nothing to wait for, so that batch of one follows at once; if it is refused too, the run
+     stops and reports that the session's subagents were all in use, and that invoking the skill
+     again resumes where this run stopped — the contention stop, never step 4's end of a run.
+   - **The batch is 18**, `_BATCH_SIZE`, on both harnesses: the 20 slots less the orchestrator's,
+     which a spawned orchestrator now holds, and less the slot a straggler still holds when the next
+     batch goes out, which set 19 (operator, 2026-10-20). Kiro has no fixed limit, so 18 serves it as
+     19 did.
+
+   Under kiro the skill keeps the loop and its own permissions paragraph, its session running the
+   loop as now.
+4. **Code**: `zikaron/install/code_knowledge.py` renders the loop into two texts — kiro's skill
+   and Claude Code's orchestrator definition — so it is written once, and Claude Code's skill is
+   the short text of item 1; the forking parameter goes, and the names of the functions are the
+   build's.
+   `zikaron/install/entries.py`'s orchestrator definition takes the rendered prompt, and
+   `zikaron/install/targets.py`'s Claude Code target writes the new skill and orchestrator; what
+   each target writes stays the shape difference `design/harness.md` §"The installer's two
+   targets" allows. Docstrings that say the skill forks are rewritten, and the module docstring's
+   claim that neither agent's prompt names a tool, so neither is rendered, goes with them.
+5. **Tests**: the hermetic installer tests and the install snapshots, re-rendered with
+   `python -m tests.install_snapshots`, so the diff shows both harnesses' texts move — the loop's
+   phrase tests in `tests/test_install_code_knowledge.py`, which run over both harnesses' skills
+   now, running over the two texts that carry the loop, kiro's skill and the orchestrator's body,
+   and `tests/test_code_knowledge_reminder.py`'s read of the corpus's naming taking whichever
+   function renders the loop; a test that runs the planner against an absent module and asserts
+   its standard error opens with the prefix the rendered loop names, read out of the loop text, so
+   the two cannot drift apart; and
+   `tests/test_code_knowledge_claude_live.py`, which now invokes `/zikaron-document-code` with no
+   argument in its toy project and asserts that the session spawned `zikaron-code-orchestrator` —
+   the session's `tool_use` whose input carries that `subagent_type` — that a message whose
+   `parent_tool_use_id` is that call's id spawned a `zikaron-documenter`, that the planner reports
+   the whole project `up_to_date`, that each source's document under `code-knowledge/` carries its
+   K14 link, that `code-knowledge/README.md` exists, and that the corpus registered is
+   `code-knowledge`; its timeout's comment counts the documents a whole project now has, `.mcp.json`'s
+   among them. **Headless, this shape is unmeasured**: the toy run's `-p` fork ran as a foreground
+   wait, and a background orchestrator spawning foreground documenters under `-p` is first measured
+   here, as is `$ARGUMENTS` substituted with nothing after the skill's name, so a red run is read
+   as a finding about the harness before it is read as a defect.
+6. **Documents**: the passages in the normative list. §5.2's invocation line shows the modules as
+   optional and repeatable, and its "one run at a time" says that a session queues a second
+   request until the first run reports, rather than being held by it (item 1); its batch
+   arithmetic moves to 18; and it states item 3's rules on a run's modules,
+   with their cost: a run of several modules spends one context on all of them — the
+   orchestrator's under Claude Code, about 2,000 tokens a document as §5.2 prices it, and the
+   session's own under kiro, where the cost per document is unmeasured — cheap where little moved,
+   as in an update,
+   while several modules that are all stale are cheaper asked for one by one; and its sentence on
+   where the skill's text differs per harness names the places — the spawn instruction, the file
+   the planner's command is read from, the sentence on where the arguments come from — and states
+   no count. §5.4's paragraph on
+   the orchestrator as "the forked skill's agent" says its definition carries the loop and
+   carries `background: true`, and its sentence that the orchestrator's prompt *"names no tool"*
+   says that it names no built-in tool and names Zikaron's verbs, as the skill did.
+   `design/harness.md`'s paragraph on the consolidation skill no longer contrasts it with the
+   documentation skill's fork, both now spawned by their session. `README.md`'s section on code
+   knowledge shows the module as optional and what no module means, and that a second request
+   waits for the first run; its rule to pass the same `--include` and `--exclude` every time says
+   that a module documented with globs is updated by naming it with them, that the plain update
+   passes none and documents such a module in full, and that the next run naming it with its
+   globs removes what the update added; and its §Install table's row for the orchestrator, *"the
+   subagent the code-documentation skill runs as"*, says the session spawns it.
+   `design/kiro-gaps.md`'s row says the session spawns the orchestrator, and its column on what
+   closes the gap keeps a kiro subagent that can spawn and drops a skill that runs in a context of
+   its own.
+
+### Invariants and properties to cover
+
+Each with the mutation, applied in memory by a pytest plugin, that its test must be seen red
+against.
+
+- **Claude Code's skill forks to nothing**: its frontmatter is `name` and `description` alone
+  (`context: fork` and `agent:` put back).
+- **Claude Code's skill launches the orchestrator in the background and runs no loop**: it names
+  `subagent_type: zikaron-code-orchestrator` and `run_in_background: true` (the value `false`; the
+  orchestrator's name replaced), carries `$ARGUMENTS` inside the fenced prompt it tells the session
+  to give (moved outside the block), names what a headless run needs (the
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` clause dropped), and carries none of the loop — no planner
+  command (the loop appended to it).
+- **Claude Code's skill queues a request while a run is out, is one spawn per request, retries a
+  refused spawn and answers a contention stop**, and relays every opening line of a report (any of
+  them dropped).
+- **The orchestrator's definition keeps it in the background, and the documenter's does not**
+  (the `background: true` line dropped; set on the documenter too).
+- **The skill's description, on both harnesses, says what no directory named means** (the clause
+  dropped).
+- **The orchestrator's description lets the session spawn it** (the old description put back in
+  place of the new).
+- **The orchestrator's definition carries the loop once, rendered for Claude Code**: the loop's
+  steps, the planner command read from `.mcp.json`, and Zikaron's verbs in Claude Code's form
+  (kiro's planner command rendered in; the loop left out; a bare `zikaron_knowledge_add` left
+  unrendered; kiro's `subagent` spawn instruction rendered in). **Its body names no built-in tool
+  as a whole word** — `TestThePromptsNameNoTool`'s tests run on everything after the frontmatter,
+  preamble and rendered loop, rather than on the preamble alone (*"Read `.mcp.json`"* put back).
+- **Kiro's skill carries the loop and is launched by nobody**: the loop, its own permissions
+  paragraph, no mention of the orchestrator (Claude Code's skill body written for kiro).
+- **Both harnesses' loops carry item 3's rules** — named modules in turn, the report opening with
+  a line per module, the no-module rule and both of its branches, its modules read from
+  `root_path` (the module taken from the corpus's name), the *"globs: none"* report line, the
+  refusal of globs or a slice over several modules, a module refused with `refused: --module`
+  skipped in a run of several (the prefix dropped, so any failure is skipped) and given its own
+  opening line, and the throttling rule with its *"or 1"* and its *"Do not retry"* clause (any of
+  them dropped from the loop).
+- **The planner's refusal opens with the prefix the loop names** (`zikaron.code_knowledge.main`'s
+  `stderr` wrapped in memory to reword the line it prints).
+- **The batch is 18 wherever the loop states it** (`_BATCH_SIZE` back at 19).
+
+### Done when
+
+1. Items 1–6 are in, and every new test was **seen red** against the mutation it names.
+2. Every passage in `design/`, `README.md`, `FINDINGS.md`, `zikaron/` and `tests/` that says the
+   documentation skill forks, runs in a fork, or is one run at a time, or that its batch is 19, is
+   rewritten — judged by meaning, not by match — other than the briefs in `design/build-plan.md`,
+   which record what each milestone shipped as it stood, and `design/code-knowledge.md` §7's record
+   of how the toy run's orchestrator total was summed over the fork's messages, which says how a
+   number was computed then.
+3. `./check.sh` is green, and `.venv/bin/python experiments/new_line_coverage.py` names no line
+   added under `zikaron/` that no test executes.
+4. `tests/test_code_knowledge_claude_live.py` passes against a real `claude`
+   (`.venv/bin/pytest -m integration_claude tests/test_code_knowledge_claude_live.py`).
+5. **The operator drives an interactive test** (operator, 2026-10-21: most users run it
+   interactively), in a project installed from this tree: two modules asked for in two requests
+   fifteen seconds apart, the second queued and spawned when the first reports, each reaching
+   `up_to_date` with its knowledge base registered; the whole project asked for in plain words in
+   a project with nothing documented, documented into `code-knowledge`; and the same plain words in
+   a project with one module documented, which updates that module — on Linux, the module's path
+   carrying a capital letter, so the leg tells a module read from `root_path` from one read from
+   the lower-cased name; and, in the two-module project once both are `up_to_date`, a plain-words
+   request naming one of them, which passes when the report opens with one line, that module's,
+   where a dropped argument would open with two. The field run's session put a module named in
+   plain words into the skill's arguments (*"Document module `go`"* became `args: "go"`), so this
+   leg confirms it on the new skill; were the argument dropped, the launcher would need a clause
+   re-invoking with what the user named. **Whether the orchestrator
+   holds a slot** is read from one lone run over a module that owes at least 20 documents, its
+   installed orchestrator's step 2 batch set to 20 by hand, in that test project alone, with no
+   other subagent of the session's out when the first batch goes: one spawn of that batch refused
+   says it does and 18 stands, none says it does not and 19 returns; whether the orchestrator ran
+   the next planner batch after a refusal is read from the same run; the project is re-installed
+   after. `experiments/m40_run_cost.py` tells an
+   orchestrator by the fork's opening, so it lists a spawned one as `other`, its counts per
+   `--apply` still printed. What it shows goes in the probe note.
+
+### Scope fence
+
+**Not** the planner, which takes `.` already. **Not** what a whole-project run admits: its walk is
+the root module's as specified, so a directory whose name begins with a dot, `.claude/` and
+`.zikaron/` among them, is pruned, and a file such as `.mcp.json` is documented like any other.
+**Not** more files per documenter (`FINDINGS.md` §"Owed work"). **Not** a record of a module's
+globs, which the planner keeps nowhere, so the no-module rule passes none (item 3). **Not** two
+sessions documenting one module at once, which the field run did not do and nothing here changes.
+**Not** the consolidation skill, which already spawns. **Not** an orchestrator under kiro, whose
+session keeps the loop. **Not** a reproduction of what puts a fork in the foreground, which no
+longer matters once nothing forks.
 
 ## Standing notes for whoever picks this up
 

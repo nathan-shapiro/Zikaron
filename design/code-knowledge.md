@@ -67,7 +67,11 @@ none (`research/generated-repo-docs-prior-art.md` §4, §9).
   orphaned is a deterministic comparison of hashes and paths, and the removals it implies are made by
   code; a model is needed only to write a file's document and the module README.
 - **Dependencies are forward edges only**, with no transitive closure. A file's own imports are in
-  the file, so its hash covers them. **Who depends on a file is never written in its document**
+  the file, so its hash covers them. **A dependency is described as a black box** — what this file
+  uses from it and why — so a change behind its interface leaves the description true, and a change
+  to its interface changes this file's code and so its hash (operator, 2026-10-21;
+  `research/m40-toy-run.md` §15). A dependency that moves while its users' bytes do not escapes
+  both (§8). **Who depends on a file is never written in its document**
   (operator, 2026-10-14): listing `AuthorizationHandler`'s users in its own document goes stale as
   soon as one of them changes, so each user lists it among its own dependencies, and the question is
   answered by searching for those lines. Search returns at most 20 results per corpus, so for a widely
@@ -383,7 +387,11 @@ module does and how its parts relate, and lists no files (§3.6).
 
 **`zikaron-documenter`**, an agent definition whose grant is its harness's file tools — read,
 search and write, and under Claude Code edit — and Zikaron's own, the memory verbs and the
-knowledge verbs alike; no shell and no spawn tool. **Claude Code's carries `Edit`** (operator,
+knowledge verbs alike; no shell and no spawn tool. **No shell, not even one for checking paths**
+(operator, 2026-10-21): a `Bash(ls:*)` on its `tools:` line would grant the whole tool
+(`research/claude-code-agent-tools-pattern-probe.md`), and a shell would let a documenter run the
+tests it is asked about and turn an instruction planted in a source into a command, for less than
+a dollar a run of saved searches. **Claude Code's carries `Edit`** (operator,
 2026-10-20): Haiku 5.5 documenters wrote their document more than once in 47 of 96 cases and
 called an `Edit` they did not have 59 times, where Sonnet 5.5's rewrote 14 of 441
 (`research/m40-toy-run.md` §13), and a whole rewrite can drop what an edit in place keeps; the
@@ -427,9 +435,8 @@ format and these rules:
   no use for them, where a removal costs a rebuild;
 - **it searches no code-knowledge base, and takes nothing from one a wider search returns**
   (operator, 2026-10-20) — no corpus named `code-knowledge` or beginning `code-knowledge/`, since
-  such documents were written by documenters, perhaps before their code changed, and one that
-  reads `fresh` says nothing of its dependencies (§8); what a dependency does it reads in the
-  dependency's source. The documents a README item has it open by path are the exception, each
+  such documents were written by documenters, perhaps before their code changed; what a dependency
+  does it reads in the dependency's source. The documents a README item has it open by path are the exception, each
   current by the time the planner lists the README (§3.6). Any other knowledge base is a lead, as
   a memory is. Haiku 5.5 documenters reached the corpus they were rewriting, by name or among
   all, in 34 of the 41 searches they ran (`research/m40-toy-run.md` §13). For the same reason no
@@ -463,31 +470,57 @@ memory-reviewer's**, written at build time from this section, as D38's prompt te
 **`zikaron-document-code`**, invoked as
 
 ```
-/zikaron-document-code <module> [--include GLOB]… [--exclude GLOB]… [--slice N]
+/zikaron-document-code [<module>]… [--include GLOB]… [--exclude GLOB]… [--slice N]
 ```
 
-— `--slice` the skill's own word for step 4, never passed to the planner — the one form the skill's
-body, `README.md` and the toy run's prompt use. **Its body is one loop, and who runs it is the
-harness's difference:**
-- **Under Claude Code, a subagent of its own, in the background** (operator, 2026-10-16: a run
-  must not hold the session that invoked it). The skill's frontmatter sets `context: fork` and
-  `agent: zikaron-code-orchestrator`, so the harness runs the body as that agent's task in a fresh
-  context, the invocation's arguments appended, and the session stays free; the fork's last answer,
-  step 3's report, reaches the session when the fork ends
-  (`research/claude-code-background-subagents.md` §Q8) — under auto mode through the handback tool
-  the harness gives a subagent for its final report whatever its `tools:` list says (§Q5 there;
-  `research/m30-docker-end-to-end.md` saw the consolidator use it), so both prompts name the
-  channel and not the tool. Measured headless: the fork holds exactly
-  its agent's grant, receives the arguments, and spawns a documenter in the foreground and uses its
-  answer (`research/forked-skill-probe.md`). The documenters run two layers below the session,
-  inside the harness's default limit of three (§Q6 there).
+— any number of modules, none included; `--slice` the skill's own word for step 4, never passed
+to the planner — the one form the skill's text, `README.md` and the toy run's prompt use. **The
+loop is one text, and who runs it is the harness's difference:**
+- **Under Claude Code, a subagent the session spawns, in the background** (operator, 2026-10-16:
+  a run must not hold the session that invoked it; operator, 2026-10-21: spawned as the
+  consolidation skill spawns its consolidator, so as not to depend on how the harness runs a
+  forked skill). The skill's text tells the session to run nothing of the loop and to spawn
+  `zikaron-code-orchestrator` — `run_in_background: true` where the spawn tool offers it, and
+  interactively every spawn is in the background, while the definition's `background: true` keeps
+  it there whatever is asked — with a fenced prompt carrying `$ARGUMENTS`, which Claude Code
+  replaces with the invocation's arguments as typed, so a glob reaches the planner as the user
+  wrote it. The orchestrator's definition carries the loop after its own prompt (§5.4), and its
+  last answer, step 3's report, reaches the session through the handback tool the harness gives a
+  subagent for its final report whatever its `tools:` list says
+  (`research/claude-code-background-subagents.md` §Q5; `research/m30-docker-end-to-end.md` saw the
+  consolidator use it), so both prompts name the channel and not the tool. Measured
+  interactively: two overlapping subagents the session spawned each waited out their own spawn
+  and handed back (`research/m40-5-spawned-orchestrator-probe.md` §2). The documenters run two
+  layers below the session, inside the harness's default limit of three (§Q6 there). **Not a
+  forked skill** (`context: fork`): Claude Code runs a fork in the foreground when it is invoked
+  while an earlier invocation of the same skill still runs (§Q8(c) there), and a foreground fork
+  ends at its first turn's end, which the orchestrator reaches by waiting — in a field run, a
+  second module's fork ended after one document (the probe note §1).
 - **Under kiro, the session that invoked it**: a kiro-cli subagent has its `subagent` tool
   stripped (`research/nested-subagent-probe.md`), so an orchestrator there could not spawn a
-  documenter. Its skill carries neither frontmatter line.
+  documenter. Its skill is the loop.
 
-The body tells whoever runs it:
-1. **Run the planner in batches, never whole**: `zikaron code-knowledge plan --apply --limit 19`, for
-   the module and globs the skill was invoked with.
+**The modules of a run** (operator, 2026-10-21): the ones named, documented in turn; with none
+named, every knowledge base whose name begins `code-knowledge/` — its module its `root_path` with
+`<root>/code-knowledge/` taken off, never its name, which the registry stores lower-cased while a
+directory keeps its case (`design/knowledge-index.md` §3.1) — and where none is registered, the
+whole project, `.`, documented into `code-knowledge`. A `code-knowledge/…` corpus rooted outside
+`<root>/code-knowledge/` is another directory's, given its own report line and passed over, and
+stays registered, so a run that passes over every one documents nothing and says so. **Globs and
+`--slice` need a run of one module**: a run that names two or more modules, or names none and finds
+any knowledge base named `code-knowledge/…` registered, given one is refused before the planner
+first runs, since nothing says which module they are for — so a run
+over registered modules passes no globs, a module first documented with them is documented more
+widely, and each of its report lines says `globs: none`. **In a run of several modules, a module
+refused is reported and the run goes on**: one refused for nesting, or one the planner refuses,
+its standard error opening `refused: --module` — a registered module renamed or removed since it
+was documented, whose corpus and documents the report names as the user's to remove. Any other
+failure of the planner stops the run, and a run of one module stops on any refusal. Each module
+runs the steps below in turn.
+
+The loop tells whoever runs it:
+1. **Run the planner in batches, never whole**: `zikaron code-knowledge plan --apply --limit 18`, for
+   the module and its globs.
    - **But first, refuse a module that nests**: if a corpus whose name is `code-knowledge` or begins
      `code-knowledge/` (step 6) has a `root_path`, as `knowledge_status` reports each corpus's, that
      contains this module's documents directory or lies inside it, and is not that directory itself,
@@ -505,23 +538,32 @@ The body tells whoever runs it:
    A whole module's `work` overflows what a harness shows of a command's output: Claude Code
    middle-truncates past `BASH_MAX_OUTPUT_LENGTH`, whose documented default is 30,000 characters,
    an item runs about 360, so the toy's 123 would be about 44,000, and a truncated object cannot be
-   parsed. A batch of 19 is about 6,800; kiro's cap is unmeasured, and the toy run confirms Claude
-   Code's in passing. **The batch is 19, one fewer than Claude Code runs at once** (operator,
-   2026-10-16 and 2026-10-20): every batch waits for its slowest documenter, so fewer, larger
-   batches spend less time waiting on stragglers — for the toy's 123 files seven batches where ten
-   a batch would take thirteen — and Claude Code refuses a spawn past 20 concurrent subagents,
-   measured in LeibaTrader, where a batch of 32 had twelve refused: *"Concurrent subagent limit
-   reached. You can run 20 subagents at once. Do not retry"*, raised only by
-   `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`. **Not 20**, because a batch issued as the previous one
-   returns finds a slot still held: on Claude Code 2.1.304 every batch of 20 after the first had one
-   spawn refused (`research/m40-toy-run.md` §13), so 20 ran 19 a batch anyway, with a refusal for
-   the orchestrator to read. Kiro has no fixed limit: a spawn past its capacity is throttled and
-   fails after three retries (operator, 2026-10-16), so 19 serves it too. A spawn refused, or
-   failed to start, for capacity is not one of an item's three attempts (step 3), since no
-   documenter ran, and the next run lists the item again.
-   **Every `--limit` the skill passes — a batch's 19, a slice's last batch, a retry's count, a dry
-   run's 19 — is that number plus the number of items given up on** (step 3), since those still
-   lead every listing in path order and would otherwise crowd out the work behind them.
+   parsed. A batch of 18 is about 6,500; kiro's cap is unmeasured, and the toy run confirms Claude
+   Code's in passing. **The batch is 18** (operator, 2026-10-16 and 2026-10-20): every batch waits
+   for its slowest documenter, so fewer,
+   larger batches spend less time waiting on stragglers — for the toy's 123 files seven batches
+   where ten a batch would take thirteen — and Claude Code refuses a spawn past 20 concurrent
+   subagents, measured in LeibaTrader, where a batch of 32 had twelve refused: *"Concurrent
+   subagent limit reached. You can run 20 subagents at once. Do not retry"*, raised only by
+   `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`. **Not 20, less two**: a batch issued as the previous one
+   returns finds a slot still held — on Claude Code 2.1.304 every batch of 20 after the first had
+   one spawn refused (`research/m40-toy-run.md` §13) — and the orchestrator the session spawns
+   holds one of the 20 itself, where a fork held none: beside a spawned orchestrator a first batch
+   of 20 had one spawn refused (`research/m40-5-spawned-orchestrator-probe.md` §2a), beside a fork
+   a first batch of 20 all started (§13 of the toy run's note). Kiro has no fixed limit: a
+   spawn past its capacity is throttled and fails after three retries (operator, 2026-10-16), so
+   18 serves it too. A spawn refused, or failed to start, for capacity is not one of an item's
+   three attempts (step 3), since no documenter ran, and the next run lists the item again.
+   **Nor is it a reason to stop** (operator, 2026-10-21: *"it shouldn't give up - it should keep
+   trying with smaller batches"*): any other agent the session runs may hold the slots. The
+   harness's *"Do not retry"* is kept, since no refused spawn is made again: the loop waits for the
+   documenters of that batch that did start, runs the next with `--limit` the number that started
+   — 1 when none did — and returns to 18 once a batch has none refused; a batch of one refused too
+   ends the run, its report saying the session's subagents were all in use, which the session
+   answers by invoking the skill again once one of its subagents has reported.
+   **Every `--limit` the loop passes — a batch's 18 or fewer, a slice's last batch, a retry's
+   count, a dry run's 18 — is that number plus the number of items given up on** (step 3), since
+   those still lead every listing in path order and would otherwise crowd out the work behind them.
 2. Spawn one `zikaron-documenter` per `work` item, giving it the `root`, the item's source and
    document as absolute paths joined from it, and its front-matter block — **spawned by whoever runs
    the loop, never by a documenter** — and **wait for every one to return** before going on. Under
@@ -533,11 +575,11 @@ The body tells whoever runs it:
    whatever is asked, answers that it is running in the background — *Async agent launched*, in
    the playground — and delivers its result later as a message, which its launcher waits for
    (`research/claude-code-background-subagents.md` §Q3, §Q4), without sleeping, which the harness
-   blocked once in the playground, or polling, which spends turns on nothing. **The skill's text
-   differs per harness in three places**: the frontmatter's `context: fork` and `agent:` lines,
-   Claude Code's alone; the spawn instruction, as the consolidation skill's does — kiro's naming
-   `subagent`, Claude Code's naming none (`zikaron/install/assets.py`); and the file step 1 reads
-   the planner's command from.
+   blocked once in the playground, or polling, which spends turns on nothing. **The loop's text
+   differs per harness** where it says how a documenter is spawned, as the consolidation skill's
+   does — kiro's naming `subagent`, Claude Code's naming none (`zikaron/install/assets.py`); which
+   file step 1 reads the planner's command from; and where the arguments come from, the skill's
+   invocation under kiro and the spawn prompt's second line under Claude Code.
    **A batch's spawns are issued together, in one message** (operator, 2026-10-16). Under Claude
    Code the harness starts a subagent only once the message carrying its call is complete, and the
    orchestrator writes a call in about 2 s, so in LeibaTrader a batch's documenters started together
@@ -566,8 +608,12 @@ The body tells whoever runs it:
    has no document — and **how many sources `skipped` counts under `over_size_cap`**, with the
    `knowledge_max_file_bytes` key that would document them: Warp's largest file was skipped so
    while the report called the module fully documented (`research/m40-toy-run.md` §1). **The
-   report opens with one line** naming the module, whether it is up to date and its corpus's
-   name, since the session that receives it may pass on that line alone.
+   report opens with one line per module the run was asked for**, each naming the module, whether
+   it is up to date and its corpus's name — a refused module's saying why, a passed-over corpus's
+   whose directory it is, a module the run stopped before reaching saying so, and in a run over
+   registered modules `globs: none` — since the session
+   that receives it may pass on those lines alone; each module's account follows in the same
+   order.
 4. **A slice** — a number of documents the user asked for, rather than the module — stops offering
    once that many distinct items have been offered, its last batch limited to what the slice has
    left. **Its check is a dry run**, without `--apply`, which touches nothing: an `--apply` run
@@ -593,9 +639,10 @@ The body tells whoever runs it:
    background; the corpus is searchable once `knowledge_status` reports it `ok`.
 
 **What the user meets.** Under Claude Code the session is free as soon as the skill is invoked, and
-the report arrives when the run ends — measured in the playground, where the session answered an
-unrelated question while a 45-second run went on, and the report arrived through the harness's
-handback (`research/forked-skill-probe.md` §Interactive). That session relayed the report in one
+the report arrives when the run ends — measured in the playground with the forked skill this
+replaced, where the session answered an unrelated question while a 45-second run went on, and the
+report arrived through the harness's handback (`research/forked-skill-probe.md` §Interactive), and
+for a spawned subagent in `research/m40-5-spawned-orchestrator-probe.md` §2. That session relayed the report in one
 line, without the knowledge base's name, which is why the report opens with a line carrying it
 (step 3). The planner's command and a documenter's write go through the session's permission mode,
 and a background subagent's prompts surface in the session that invoked it, naming the agent
@@ -609,16 +656,24 @@ approved outright (§Q1 there) — and the playground run, under auto mode, put 
 operator at all. The memory and knowledge verbs are already allowed by the install's
 `mcp__zikaron` grant, unless the install was made with `--no-trust-tools`, which withholds it from
 the orchestrator and the documenters too, so each of their Zikaron calls then asks in the session.
-**One run at a time**: a second invocation while one runs holds the session's turn until the first
-ends (§Q8 there). **A headless run is asked nothing and so is refused**: the orchestrator's planner
+**One run at a time in a session, queued rather than held** (operator, 2026-10-21): a request that
+comes while a run is out is spawned when that run reports, since a second run would share the
+session's 20 subagents with the first, which holds 19 of them while a batch is out, and could
+document a module the first is documenting; one request is one spawn, however many modules it
+names. A run of several modules spends one context on all of them — the orchestrator's under
+Claude Code, about 2,000 tokens a document as step 2 prices it, and the session's own under kiro,
+where the cost per document is unmeasured — cheap where little moved, as in an update, while
+several modules that are all stale are cheaper asked for one by one. **A headless run is asked
+nothing and so is refused**: the orchestrator's planner
 call and spawns need permission too, which `acceptEdits` does not give, so a headless run passes
 `--permission-mode bypassPermissions` — every headless experiment in this corpus's precedent, and
 safe in a copy — or `--allowedTools` naming the planner command, the spawn tool, the file tools and
 `mcp__zikaron`, the install's own allow rule, which a `-p` run in a folder never trusted
 interactively does not read (§Q2a there). A headless run also sets
 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`: `-p` stops waiting for background work after ten idle
-minutes by default and drops its result (§Q4 there), and whether a forked skill counts as that
-work is unmeasured — the toy run records it. Under kiro the documenter's config carries
+minutes by default and drops its result (§Q4 there), and the spawned orchestrator is such work;
+`tests/test_code_knowledge_claude_live.py` runs the shape end to end. Under kiro the documenter's
+config carries
 `allowedTools` equal to its grant, as the consolidator's does, so the install has already answered
 it. The skill's body and `README.md` say so.
 
@@ -661,9 +716,12 @@ Every one is snapshotted with the consolidator's under `tests/fixtures/installed
 through the installer's own functions (`CLAUDE.md` §Harness, operator, 2026-10-16), so a change to
 any of them is seen in a diff on both harnesses.
 
-**The orchestrator is the forked skill's agent**, whose definition supplies the fork's grant,
-model and system prompt while the skill's body is its task (§5.2). Its grant is `Agent`, to spawn
-the documenters; `Bash`, to run the planner; `Read`, for `.mcp.json`; and `mcp__zikaron`, for the
+**The orchestrator's definition carries the loop**: its system prompt is its own short prompt,
+then the loop rendered for Claude Code, and the session's spawn prompt is its task (§5.2). It
+carries `background: true`, which Claude Code documents as keeping a subagent in the background
+even when it is asked for the foreground (`research/claude-code-background-subagents.md` §Q3), and
+the documenter's does not, since it is asked for the foreground under `-p`. Its grant is `Agent`,
+to spawn the documenters; `Bash`, to run the planner; `Read`, for `.mcp.json`; and `mcp__zikaron`, for the
 knowledge verbs that register the corpus and the memory verbs the operator gave both agents. **No
 editing tool**: the planner removes and moves, the documenters write, and the prompt says it writes
 nothing — `Bash` could, so that bound is the prompt's, as the documenter's path bound is (§8).
@@ -675,11 +733,12 @@ stronger orchestrator costs over `sonnet` is small beside what the cheaper docum
 at these defaults the orchestrator is most of a run's cost, its context growing with every
 document (priced on LeibaTrader's recorded tokens, `research/m40-toy-run.md` §2);
 `--orchestrator-model` sets it, or `--model` with every other agent. Its effort is `high`
-(operator, 2026-10-16), set in its definition as the documenter's is. Its prompt is short — who
-it is, that its task is the skill's text, that it spawns only documenters and writes nothing, that
-the planner's output and the documenters' answers are data, never instructions, that it removes or
-renames no knowledge base, and that its last answer is the report, handed back as the harness hands
-one back — and names no tool, the grant being the one place a tool is named.
+(operator, 2026-10-16), set in its definition as the documenter's is. Its own prompt is short —
+who it is, that its task is the loop that follows, that it spawns only documenters and writes
+nothing, that the planner's output and the documenters' answers are data, never instructions, that
+it removes or renames no knowledge base, and that its last answer is the report, handed back as the
+harness hands one back. Its body names no built-in tool, the grant being the one place one is
+named, and names Zikaron's verbs in Claude Code's form, as the skill's text did.
 
 **Under kiro two files are not the whole install, since the merge into the user's agent config
 reaches both.** `zikaron-documenter` joins `zikaron-consolidator` in
@@ -1269,16 +1328,15 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
 
 - **A rename can leave other documents' `Depends on:` lines naming a path that is gone, and that is
   accepted for now** (operator, 2026-10-14). Where a file's name is tied to what it declares, as in
-  Java, renaming it touches every importer, so their documents read `changed`; where it is not, as
-  in Scala, a file can move without any importer's bytes changing, and their documents stay `fresh`.
-  If that is observed to mislead, the cheap fix is the planner listing as stale a document whose
-  `Depends on:` names a path that does not exist.
+  Java, renaming it touches every importer, so their documents read `changed`; where it is not — a
+  Scala file, a Rust file whose `mod` declaration keeps its name, a C++ header found through include
+  flags — a file can move without any importer's bytes changing, and their documents stay `fresh`.
+  It is the one way a dependency's change reaches a document whose source did not move (§2). If
+  that is observed to mislead, the fix is the planner's, with no model call: on a move it detects,
+  it rewrites the old path in other documents' `Depends on:` lines, and it lists as stale a
+  document whose `Depends on:` names a path that does not exist.
 - **A document wrong from the day it was written reads `fresh`.** Only the reader's check against
   the code finds it (§2).
-- **A document whose dependency changed reads `fresh`**, since its front matter records only its
-  own source's blob, so its account of how it uses what it depends on can be stale while
-  `source.state` is not. Hence the documenter takes nothing from a code-knowledge base (§5.1); the
-  fix, a blob per dependency recorded by the planner, is proposed in `FINDINGS.md` §"Owed work".
 - **A document that describes its source in part says so where a search seldom lands.** A
   search result is the matching lines with the document's path and `source.state`, never its title
   or role line, so a hit on the Declarations of a partly read file does not say the list is

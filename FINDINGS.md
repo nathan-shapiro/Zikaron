@@ -69,7 +69,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x`, ~~with an artefact-shape rule~~ — **amended 2026-10-11**: a minor bump means a schema bump, nothing else |
 | D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back — **amended 2026-10-13 (M39)**: a corpus database is brought forward by whichever process opens it with `memory.db` at version 4 or later, and a corpus schema move moves `memory.db`'s too; a corpus schema version is the `memory.db` version that introduced its shape (corpora go 1 → 4), so a corpus is never ahead of its store |
 | D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform |
-| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code the skill forks to a background orchestrator subagent; one corpus per module; the documenter and orchestrator hold Zikaron's tools — **amended 2026-10-20 (M40-4)**: under Claude Code a search of a documented module is followed by one line naming its knowledge bases, at most once per agent each `retrieval.knowledge_reminder_interval` |
+| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code a background orchestrator subagent runs the loop — the session spawns it since **2026-10-21 (M40-5)**, where the skill had forked to it; one corpus per module; the documenter and orchestrator hold Zikaron's tools — **amended 2026-10-20 (M40-4)**: under Claude Code a search of a documented module is followed by one line naming its knowledge bases, at most once per agent each `retrieval.knowledge_reminder_interval` |
 
 ## Current state — resume here
 
@@ -140,12 +140,12 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    5. **done** — the build APPROVED by memory-reviewer (`reviews/m40-code-knowledge-build-review.md`),
       every new line executed by a test.
 
-   **▶ RESUME HERE (2026-10-20).** **M40 is committed locally** on `m40-code-knowledge`, the
+   **▶ RESUME HERE (2026-10-21).** **M40 is committed locally** on `m40-code-knowledge`, the
    branch's first commit over `main`, everything through the documenter's rules against claims
    nothing read supports folded in (`reviews/m40-code-knowledge-build-review.md`); nothing is
    pushed and there is no PR yet. **That PR carries several commits** (operator, 2026-10-20): M40,
-   then M40's four follow-ups, each a commit of its own, in this order, each briefed in
-   `design/build-plan.md` §"M40's follow-ups — M40-1 to M40-4":
+   then M40's follow-ups, each a commit of its own, in this order, each briefed in
+   `design/build-plan.md` §"M40's follow-ups":
    1. **M40-1, committed as `bed5430`** — the edit guard exempting a background job's
       `$CLAUDE_JOB_DIR/tmp`, brief and build APPROVED (`reviews/m40-1-job-dir-review.md`,
       `reviews/m40-1-job-dir-build-review.md`), measured in
@@ -165,57 +165,38 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       refused under `guards`, `--orchestrator-model` under kiro (`HarnessTarget.ships_orchestrator`);
       brief and build APPROVED (`reviews/m40-3-model-flag-review.md`,
       `reviews/m40-3-model-flag-build-review.md`). Live at a project's next re-install only.
-   4. **M40-4** — the reminder that a grepped module has a knowledge base.
+   4. **M40-4, committed as `4e0fc1e`** — under Claude Code a `Grep`, `Glob` or `Bash` search
+      of a documented module is followed by one line naming its knowledge bases, through
+      `knowledge_remind`, a method no tool carries, at most once per agent each
+      `retrieval.knowledge_reminder_interval`; `PostToolUse` is a trigger the memory and guard
+      selections share, owned by program path. Brief and build APPROVED
+      (`reviews/m40-4-grep-reminder-review.md`, `reviews/m40-4-grep-reminder-build-review.md`),
+      measured in `research/m40-4-search-tool-use.md`, `research/m40-4-hook-probes.md` and
+      `research/m40-4-live-session.md`; `experiments/m40_4_reminder_followon.py` counts the
+      follow-on knowledge searches, against LeibaTrader's pre-reminder baseline of 4 in 1,358.
+      Live in the three projects that run this tree at each one's next service and hook start;
+      the reminder itself only after a re-install writes its `PostToolUse` entry.
 
-   **Next: M40-4, worked as M40-1 to M40-3 were** (operator, 2026-10-20: review the brief, write
-   the code and tests to the coding standards, pass the done criteria, then review the code —
-   re-read loops mandatory before every round), each step done before the next:
-   1. **Done — the brief**, `design/build-plan.md` §"M40-4 — A grep through a documented module,
-      by an agent that forgot its documents": **grounded in the code and rewritten** (2026-10-20) —
-      `PostToolUse` becomes a trigger the memory and guard selections share, so the settings
-      merge owns a group by the program it runs; the hook connects without ever spawning; `grep`
-      and `rg` operands are read by an extended `read_grep`; the method is `knowledge_remind`.
-      **`git grep` is supported too** (operator, 2026-10-20) — measured: no pathspec searches the
-      `cwd` down, `git -C <dir>` moves it, `:/` is the repository's top, a miss exits 1.
-      **APPROVED** (`reviews/m40-4-grep-reminder-review.md`, 2026-10-21), round 7's nitpicks
-      applied. Ownership on a trigger is membership by program path. Also settled in review: the
-      throttle keys on the session label plus a subagent's `agent_id`; a code-knowledge
-      `knowledge_search` counts as a reminder; the hook sends `deadline_at_ms`; the key is
-      `retrieval.knowledge_reminder_interval`; `paths` is bounded at 1–50.
-   2. **Done — the probes** (2026-10-21, `research/m40-4-hook-probes.md`, folded into brief item
-      1): `agent_type` and `agent_id` are present inside a subagent and absent in the main
-      session; the `if` filter holds, a string per handler (a list is silently never matched), so
-      one `PostToolUse` group serves both arms, its `Bash` handlers `Bash(*grep *)` and
-      `Bash(rg *)`; a command the filter cannot read, such as any heredoc, starts both together;
-      a search's miss is a successful call, so `PostToolUseFailure` is not registered.
-   3. **Done — built in a worktree and cherry-picked into this tree** (2026-10-21): the build was
-      committed on the worktree's branch `m40-4-grep-reminder` as `ee57e66` and brought in with
-      `git cherry-pick --no-commit`, so it is **staged and uncommitted here, over `ac1a285`**, and
-      live in the three projects that run this tree at each one's next service and hook start
-      (the reminder itself only after a re-install writes its `PostToolUse` entry). The worktree
-      is removed; the branch is kept until M40-4 lands, then deleted.
-      **Decided in the build**: a group running only the other selection's script is copied
-      verbatim whatever its path, as a trigger an install does not write is; a selection's groups
-      go back where its old ones stood.
-   4. **Done — the build's evidence**: every new test seen red under a named in-memory mutation
-      (`m40_4_mut/` in this session's scratchpad); the live session of done-when 2 passed all
-      three legs (`research/m40-4-live-session.md`, with the ~100 ms a hook call costs, nearly
-      all of it the interpreter's start, and LeibaTrader's pre-reminder baseline of 4 follow-on
-      knowledge searches in 1,358); `experiments/m40_4_reminder_followon.py` counts the follow-on
-      quantity. The line's wording is memory-reviewer's (round 1).
-   5. **Done — the code review APPROVED** at round 8 (`reviews/m40-4-grep-reminder-build-review.md`),
-      and `./check.sh` green in this tree with the build staged (5636 passed; 0 of 503 new
-      statements uncovered). **Next: the operator's go for step 6**; the commit message is drafted
-      in this session's scratchpad as `m40-4-msg.txt`.
-   6. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is `ac1a285`, then
-      commit `M40-4: …` in the milestone style. The pull request after that, when the operator
-      asks; its CI is the version matrix.
+   5. **M40-5, committed as the branch's last commit** — under Claude Code the session spawns
+      `zikaron-code-orchestrator` in the background, where the skill had forked to it, since a
+      forked skill invoked while an earlier invocation still runs is run in the foreground, which
+      ends at its first wait; a session runs one documentation run at a time, queuing the next;
+      a run whose spawns are refused at the 20-subagent limit waits for those that started and
+      sizes its next batch to them; with no module named it updates every registered module,
+      read from its `root_path`, else documents the whole project; the batch is 18, a spawned
+      orchestrator holding one of the 20 (operator, 2026-10-21). Brief and build APPROVED
+      (`reviews/m40-5-spawned-orchestrator-review.md`,
+      `reviews/m40-5-spawned-orchestrator-build-review.md`), measured headless and in the
+      operator's interactive test (`research/m40-5-spawned-orchestrator-probe.md`). Live at a
+      project's next re-install only.
+
+   **Next: the pull request, when the operator asks** — branch `m40-code-knowledge` as it
+   stands, its commits over `main`; its CI is the version matrix.
 
    A commit is amended only while it is `HEAD`, its hash checked first. A feature built for
-   Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The dependency
-   blob and
-   the partial-coverage field change K14's format and are brainstormed with the operator first,
-   so they are not in this PR. **The
+   Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The
+   partial-coverage field changes K14's format and is brainstormed with the operator first, so it
+   is not in this PR. **The
    evaluation's harness now refuses**: `state.json` records `06deae8` as its first start, and
    the M40 commit moved the planner and the installer, which §7's package check covers
    though no run executes them. **M40-4 also moves `zikaron/hook` and `zikaron/service`, which a
@@ -277,8 +258,9 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
 
    **Built and APPROVED — M40's amendment of 2026-10-16** (operator, from the playground runs;
    folded into M40's one commit; `reviews/m40-code-knowledge-build-review.md`): under Claude Code
-   the skill forks to a background `zikaron-code-orchestrator` (`context: fork`), so the invoking
-   session stays free, while kiro keeps the loop in the session; the documenter and the
+   a background `zikaron-code-orchestrator` runs the loop — spawned by the session since M40-5,
+   forked to then — so the invoking session stays free, while kiro keeps the loop in the session;
+   the documenter and the
    orchestrator hold Zikaron's tools, memory verbs included, so the documenter's start-text
    exemption and scan skip are gone; one corpus per module, `code-knowledge/<module>`; **each
    behavior a document states says whether a test pins it**, and one no test covers is documented
@@ -293,7 +275,7 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    198 documents of `sugar-leiba` in 23 min 20 s, every item on its first attempt, no memory
    written; batches of 20, Claude Code's measured concurrency limit, issued together (operator,
    2026-10-16; spec §5.2) — 19 since 2026-10-20, a slot being still held when the next batch goes
-   out (operator).
+   out (operator), and 18 since M40-5, the spawned orchestrator's own slot taken too.
 
    **M40's evaluation is issue triage on Warp's `app/src/terminal`, replacing the LeibaTrader
    question set** (operator, 2026-10-16; spec §7 is normative, brief §M40 item 7): open issues at
@@ -310,9 +292,8 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    **Harness versions are recorded, never re-probed** (operator, 2026-10-16): a new Claude Code or
    kiro release is not a reason to re-test a measured behavior.
 
-The dated measurements in §"Owed work" below run on their dates regardless: the guards' field
-counts (2026-10-21), the `bounds`-on-first-call re-run (2026-10-29) and Q22's post-release
-measurement (2026-10-30).
+The dated measurements in §"Owed work" below run on their dates regardless: the
+`bounds`-on-first-call re-run (2026-10-29) and Q22's post-release measurement (2026-10-30).
 
 **The host is busy (operator, 2026-09-29, and again 2026-10-11)**, so no latency figure measured
 meanwhile is comparable with an idle-host budget.
@@ -419,19 +400,6 @@ proposed.
   the baseline says the write-side description does not bind and the consolidator is the only
   enforcement; that would argue for the corpus repair pass below before anything else.
 
-- **The guards' field counts — compute them 2026-10-21.** The guards went into three real
-  projects on 2026-10-07, so `design/guards.md` §7's counts (a)–(d) can now be read from their
-  transcripts against each project's pre-install replay (`experiments/m37_guard_replay.py
-  --project <dir>`). This is the measurement the interactive test could not make: whether the start
-  text holds over a long session, whether overrides carry true reasons or boilerplate, and whether
-  agents route around a deny. What it would decide: a reflexive override rate argues for the reason
-  rule, a route-around for a new §3.2 row on the observed command. **Count (e), the self-match
-  rule's denies, runs from 2026-10-11** — live on `Bash` from the build's landing in this tree and
-  on `Monitor` from the re-install that day — against the pre-landing replay's rate
-  (`research/m38-selfmatch-replay.md`, which reads every project at once). What it would decide:
-  whether a deny is followed by `-A`, a bracket, an override or a route-around, and so whether
-  §9.3's fix text works.
-
 - **A stop guard for the turn that ends on a promise** — the agent writes *"I'll now run …"* and
   stops without the tool call. Nathan's practice backed this with a monitor that asked every stopping
   agent whether its goal was met, in phrasing drawn from a large corpus rather than one fixed line,
@@ -448,35 +416,17 @@ proposed.
   rate and the regex's false positives. Claude Code's `Stop` output handling is ambiguous in its docs
   (`research/claude-code-harness-contract.md`), so a probe precedes any build.
 
-- **A document whose dependency changed reads `fresh`** — proposed by LeibaTrader's
-  `leiba-engineer`, endorsed by the operator (2026-10-16). A document records only its own
-  source's blob, so when `B.scala` changes, `A.scala`'s account of how it uses `B` can go stale
-  while `A`'s source, and so its `source.state`, does not move. **Proposed:** the planner — the
-  documenter cannot hash — records, on the first run after a document is written, the blob of each
-  file its `Depends on:` lines name, in the document's front matter; search then reports
-  `dependencies_changed: [paths]` beside `source.state`, which stays about the file itself; and
-  **the planner does not regenerate on it**, since one edit to a widely used file would otherwise
-  rewrite every document that names it. The same check closes `design/code-knowledge.md` §8's
-  dangling `Depends on:` gap. It changes K14's format and search-time check
-  (`design/knowledge-index.md` §7.7) and refines D39's "a file's own hash covers its imports", so
-  it is a milestone after M40, brainstormed first. **Measure first**: how often the evaluation's
-  wrong-claim sample finds a document wrong because a dependency changed and its own source did
-  not.
-
-- **Check a document's dependency paths in one shell call** (operator, 2026-10-17: the area of
-  improvement). Checking every path exists made Warp's dependency lines accurate — 4.1% missing,
-  then none in a six-document trial — but each check is a search call and a turn, so a document
-  costs 1.65× in dollars (`research/m40-toy-run.md` §8–§9). A single `ls`/`test` over every path
-  is one call, and a check rather than a search: the file search behaves like `find`, not `ls`
-  (operator), and the documenters used its brace patterns to explore directories, not to check a
-  list (§9). **Both tools have a job**: resolving where an import lives needs the search, since a
-  Rust crate in a workspace or a C++ header on an include path is no 1:1 map from the root
-  (operator), while confirming a path already written needs only `ls`/`test` — so the cheap shape
-  searches only for an import whose file is unknown, then confirms every path in one call. **The constraint**: the documenter holds no shell, by design, since it writes
-  nothing but its document. **Proposed:** grant it a shell restricted to `ls` and `test` — **probe
-  first** whether an agent definition's `tools:` line honors `Bash(ls:*)`, since a rule naming a
-  tool wrongly is silent — or let the planner run the check after the document is written, which
-  costs no model call at all. Tune on Sonnet 5.5, not on 4.6 (operator).
+- **A dependency that moves while its users' bytes do not** — a Scala file, a Rust file whose
+  `mod` declaration keeps its name, a C++ header found through include flags — leaves their
+  `Depends on:` lines naming a path that is gone while their documents read `fresh`, seen on Warp
+  (`research/m40-toy-run.md` §3). It is the only way a dependency's change reaches a document
+  whose own source did not move, since a dependency is a black box whose interface change changes
+  its users' code (operator, 2026-10-21; `design/code-knowledge.md` §2); **so the per-dependency
+  blob proposed 2026-10-16 is withdrawn** — seven `fresh` dependents of a rewritten file held no
+  false claim (§15 of the same note). **Proposed, once a dangling path is observed to mislead:**
+  the planner, with no model call, rewrites the old path in other documents' `Depends on:` lines
+  on a move it detects, and lists as stale a document whose `Depends on:` names a path that does
+  not exist (`design/code-knowledge.md` §8).
 
 - **Settled — Haiku 5.5 documents, Opus 5.5 orchestrates** (operator, 2026-10-20: *"overall, I
   think it is a win - on the cost side mostly"*). Claude Code's defaults: `haiku` for the
@@ -485,27 +435,46 @@ proposed.
   own flag that agent alone, over `--model` (M40-3); kiro keeps
   `claude-sonnet-5`, offering no Haiku 5.5. **Measured on LeibaTrader's 197 documents**
   (`research/m40-toy-run.md` §14): $17.73 against Sonnet's $52.86 — documenters $2.49, the
-  orchestrator $15.24, now most of a run's cost, its context growth about 2,000 tokens a document
-  the next lever; its output $0.18, so `effort: high` costs nothing that matters. Dependency paths
+  orchestrator $15.24, now most of a run's cost, nearly all of it cache reads (§16); its output
+  $0.18, so `effort: high` costs nothing that matters. Dependency paths
   alike (2 naming no file each); Haiku's documents 1.49× as long; in four of five sampled
   documents checked and the README, Haiku two wrong claims, both unsupported by what it read —
   the prompt now forbids both — and Sonnet one. On the playground's four documents the run cost
-  more (§12): the orchestrator's cost is mostly fixed.
+  more (§12): the orchestrator's cost is mostly fixed. Interactively every spawn runs in the
+  background (`research/claude-code-background-subagents.md` §Q3); Opus waits for the
+  notifications by issuing nothing, where Sonnet polled with a `sleep`/`find` loop, and no `sleep`
+  or file count is in LeibaTrader's run of 2026-10-20 (operator, 2026-10-21: it does not recur).
 
-- **An interactive orchestrator waits for background documenters; it cannot ask for the
-  foreground** (operator, 2026-10-20). Interactively Claude Code removes the spawn tool's
-  `run_in_background` parameter and runs every spawn in the background
-  (`research/claude-code-background-subagents.md` §Q3), so neither prose nor a hook can ask for the
-  foreground there; only headless `-p` offers the parameter, and needs it (`research/m40-toy-run.md`
-  §5). LeibaTrader's Sonnet orchestrator, 2026-10-19, waited for its 35 spawns with a `sleep`/`find`
-  loop counting written files, which the skill forbids; the playground's Opus orchestrator,
-  2026-10-20, took the absent parameter as the skill means it and waited for the notifications.
-  **Done:** the orchestrator on `opus`, and the skill's spawn clause names the parameterless case
-  as expected and says the harness keeps the orchestrator running until its spawns report, so it
-  waits by issuing nothing — never forbidding the end of its turn, which beside the bans on
-  sleeping and polling would leave only busy-work to wait with. **Next:** read LeibaTrader's next
-  regeneration transcript for a `sleep` or a file count; if one recurs, a `PreToolUse` hook denying
-  `sleep` to the orchestrator is the cheap enforcement.
+- **More files per documenter, to wake the orchestrator less** — measured
+  (`research/m40-toy-run.md` §16): the orchestrator's cost is cache reads, one per call, and 232 of
+  its 267 calls are a wake-up for one documenter's completion; Zikaron's spawn prompt and the
+  documenter's one-line report are about a tenth of the ~1,900 tokens each document adds and
+  already at their floor, the rest the harness's launch result, hand-back frame and notification.
+  **Proposed:** a documenter given *k* items, which divides both the wake-ups and the harness's
+  per-document text by *k* — modeled at *k* = 5 as about a tenth of the reads, unmeasured. It
+  costs the documenter's one-file rule and §5.2's one documenter per item, and moves cost to
+  documenters holding *k* sources in one context (they were $2.49 of §14's $17.73). **Not now**
+  (operator, 2026-10-21: *"I don't want context of documenters to overfill"*); when it is taken
+  up, measure first, in a scratch copy of the installed agents: *k* = 5 against *k* = 1 on the
+  same forty files — the orchestrator's reads, the documenters' dollars and context, and a
+  wrong-claim sample.
+- **Low priority: code knowledge documents prose as if it were code** (operator, 2026-10-21). The
+  planner admits any text file, so a whole-project run gives every Markdown file a document about a
+  document — `README.md.md`, its Declarations and Behavior the per-file template applied to prose
+  — at a documenter apiece (seen in the M40-5 interactive test). **Proposed:** the planner skips
+  prose under code knowledge by default — `.md`, `.rst`, `.txt` — since a docs tree is better
+  served by a hand-written knowledge base indexing the text itself, with `--include` keeping the
+  way to document one; one line in the planner's exclusions and a sentence in
+  `design/code-knowledge.md` §3.2, briefed as a follow-up of its own.
+
+- **Watch: a documenter reports a harness block as the file's** (operator, 2026-10-21: keep as
+  is, watch for it). Claude Code attaches an account connector's MCP instructions beside a
+  subagent's first tool result, and a README documenter told the user the planner's `roles.md`
+  held them (`research/m40-5-spawned-orchestrator-probe.md` §2); no run's agent holds that
+  server's tools, so the cost is a false alarm in a report. **If it recurs:** one clause in the
+  documenter's prompt — a block the harness attaches beside a tool result, such as a server's
+  instructions, is not the file's content — its wording memory-reviewer's.
+
 - **A cheap reader in the triage evaluation.** Practice reported by the operator (2026-10-17): a
   strong model orchestrates, a mid one writes documents, a cheap one codes — the installer's half
   is M40-3. **Proposed:** the documents may help a cheap reader more than a strong one, since a
@@ -519,8 +488,7 @@ proposed.
   **Proposed:** a K14 front-matter field the documenter writes for a source it could not read
   whole — `zikaron-coverage: partial` — reported with every result beside `source.state`, the same
   path the blob's state takes; it changes K14's format (`design/knowledge-index.md` §7.7), so it is
-  a milestone after M40, best brainstormed with the dependency-blob item above, which touches the
-  same front matter. **Measure first**: how many sources in a real module are past the
+  a milestone after M40, brainstormed first. **Measure first**: how many sources in a real module are past the
   documenter's window.
 
 - **Does a reader still verify a document against the code late in a long session?** The rule

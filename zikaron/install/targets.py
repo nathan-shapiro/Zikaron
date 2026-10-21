@@ -38,15 +38,13 @@ from zikaron.install.assets import (
     skill_markdown,
 )
 from zikaron.install.code_knowledge import (
-    CLAUDE_CODE_PLANNER_COMMAND,
     DOCUMENT_SKILL_NAME,
     DOCUMENTER_AGENT_NAME,
+    KIRO_ARGUMENTS_SOURCE,
     KIRO_PLANNER_COMMAND,
     ORCHESTRATOR_AGENT_NAME,
     document_code_skill,
-)
-from zikaron.install.code_knowledge import (
-    CLAUDE_CODE_SPAWN_INSTRUCTION as CLAUDE_CODE_DOCUMENTER_SPAWN,
+    launch_skill,
 )
 from zikaron.install.code_knowledge import (
     KIRO_SPAWN_INSTRUCTION as KIRO_DOCUMENTER_SPAWN,
@@ -214,7 +212,8 @@ class HarnessTarget(ABC):
     @property
     @abstractmethod
     def ships_orchestrator(self) -> bool:
-        """Whether a memory install writes the code orchestrator the documentation skill forks to.
+        """Whether a memory install writes the code orchestrator the documentation skill has the
+        session spawn.
 
         Where it does not, the session that invokes the skill runs its loop itself, so
         `--orchestrator-model` is refused there rather than ignored, and no orchestrator's model is
@@ -338,7 +337,7 @@ class KiroTarget(HarnessTarget):
                     identity_vocabulary(),
                     spawn_instruction=KIRO_DOCUMENTER_SPAWN,
                     planner_command=KIRO_PLANNER_COMMAND,
-                    fork_agent=None,
+                    arguments_source=KIRO_ARGUMENTS_SOURCE,
                 ),
             ),
         )
@@ -437,8 +436,8 @@ class ClaudeCodeTarget(HarnessTarget):
         return claude_mcp_config(project)
 
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
-        """The consolidator, the documenter, the code orchestrator the documentation skill forks
-        to, and the two skills, which only the memory store ships."""
+        """The consolidator, the documenter, the code orchestrator the documentation skill has the
+        session spawn, and the two skills, which only the memory store ships."""
         if not plan.components.memory:
             return ()
         project = plan.project
@@ -461,12 +460,7 @@ class ClaudeCodeTarget(HarnessTarget):
             ),
             ShippedFile(
                 project / ".claude" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md",
-                document_code_skill(
-                    claude_tool_vocabulary(),
-                    spawn_instruction=CLAUDE_CODE_DOCUMENTER_SPAWN,
-                    planner_command=CLAUDE_CODE_PLANNER_COMMAND,
-                    fork_agent=ORCHESTRATOR_AGENT_NAME,
-                ),
+                launch_skill(claude_tool_vocabulary()),
             ),
         )
 

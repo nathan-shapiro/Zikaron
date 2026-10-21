@@ -1,30 +1,31 @@
 ---
 name: zikaron-document-code
-description: Write per-source-file documentation of one module of this project's code into a knowledge base of that module's own, by running Zikaron's planner and spawning a zikaron-documenter subagent per file. Use when asked to document a module or directory of the code, or to bring that documentation up to date after the code has moved.
+description: Write per-source-file documentation of this project's code into a knowledge base per module, through Zikaron's planner and a zikaron-documenter subagent per file. Use when asked to create, write or update the code's documentation — a module's, a directory's or the project's — or to bring it up to date after the code has moved. With no directory named it updates every documented module, or documents the whole project where none is.
 ---
 
 # Document this project's code
 
 ```
-/zikaron-document-code <module> [--include GLOB]... [--exclude GLOB]... [--slice N]
+/zikaron-document-code [<module>]... [--include GLOB]... [--exclude GLOB]... [--slice N]
 ```
 
-This writes one document per source file under `<module>`, and a README for the module, into the
+This writes one document per source file of each module, and a README for the module, into the
 project's `code-knowledge/` directory, and makes them searchable as the module's own knowledge base.
 A **planner** decides what needs writing; you spawn a **zikaron-documenter** subagent for each item
 it lists and run it again, until it reports the module up to date. You write no document yourself
 and you never decide what is out of date — the planner does, from hashes.
 
-The module, its globs and any slice are the arguments this skill was invoked with. `<module>` is a
-directory relative to the project root, written with no leading `./` and no trailing `/`, and `.`
-for the root itself. **Its globs are part of what the module is**: pass the same `--include` and
-`--exclude` on every run over it, because a narrower set makes the planner remove the documents it
-no longer admits. `--slice N` is this skill's own word, for documenting only N files this time; it
-is never passed to the planner.
+The modules, their globs and any slice are the arguments this skill was invoked with.
 
-## 1. Find the planner
+A module is a directory relative to the project root, written with no leading `./` and no trailing
+`/`, and `.` for the root itself. **Its globs are part of what the module is**: pass the same
+`--include` and `--exclude` on every run over it, because a narrower set makes the planner remove
+the documents it no longer admits. `--slice N` is the skill's own word, for documenting only N
+files this time; it is never passed to the planner.
 
-The project root is the directory holding `.kiro/`. Read
+## 1. Find the planner and the modules
+
+The project root is the directory holding `.kiro/`. Open
 `.kiro/agents/zikaron-consolidator.json` there, which Zikaron's install always writes, and take
 `mcpServers.zikaron.command`: the path of this project's `zikaron-mcp`. The planner is the `zikaron`
 in that same directory — the path with its last component `zikaron-mcp` replaced by `zikaron`.
@@ -34,14 +35,37 @@ symlinks resolved, as `pwd -P` prints it there, which is the form the planner's 
 knowledge base's `root_path` is stored in. Do not use a `zikaron` found on `PATH`: it may be another
 install, one without this command.
 
-Call the module's knowledge base `<corpus>`: `code-knowledge/<module>`, or `code-knowledge` when
-`<module>` is `.`. Its directory, `<root>/<corpus>`, holds the module's documents. **Refuse a module
-that nests** before the planner first runs: call `zikaron_knowledge_status` with no name, and if a
-knowledge base named `code-knowledge`, or with a name beginning `code-knowledge/`, has a
-`root_path` that contains `<root>/<corpus>` or lies inside it, and is not that directory itself —
-containment between directories, so `…/code-knowledge/src` does not contain
-`…/code-knowledge/src-extra` — stop and report it: the module's documents would be indexed by two
-knowledge bases, and returned twice by a search naming neither.
+Call `zikaron_knowledge_status` with no name: its listing decides the modules and the check below.
+**The modules are the ones named, in the order given. With none named**, every knowledge base whose
+name begins `code-knowledge/` is a module documented already, and the run updates each in turn:
+**its module is its `root_path` with `<root>/code-knowledge/` taken off — never its name**, which
+the index stores lower-cased while a directory keeps its case. One whose `root_path` does not lie
+under `<root>/code-knowledge/` is another directory's: pass over it, with an opening line of its own
+in the report (step 8) saying whose directory it is. It stays registered, so a run that passes over
+every one documents nothing, and says so. Where no knowledge base's name begins `code-knowledge/`,
+the module is `.`, the whole project.
+
+**Globs and `--slice` need a run of one module**: a run that names two or more modules, or names
+none and finds any knowledge base named `code-knowledge/…` registered, given a glob or a slice
+stops here, before the planner first runs, and reports it, since nothing says which module they are
+for. So a run over registered modules passes no globs, and each of its opening lines says
+`globs: none`.
+
+Run steps 2 to 7 for each module in turn, and report them all in step 8. For each, call the
+module's knowledge base `<corpus>`: `code-knowledge/<module>`, or `code-knowledge` when `<module>`
+is `.`. Its directory, `<root>/<corpus>`, holds the module's documents. **Refuse a module that
+nests** before the planner first runs for it: if a knowledge base named `code-knowledge`, or with a
+name beginning `code-knowledge/`, has a `root_path` that contains `<root>/<corpus>` or lies inside
+it, and is not that directory itself — containment between directories, so `…/code-knowledge/src`
+does not contain `…/code-knowledge/src-extra` — refuse it: the module's documents would be indexed
+by two knowledge bases, and returned twice by a search naming neither.
+
+**In a run of several modules, a module refused is reported and the run goes on to the next**: one
+refused for nesting, or one the planner refuses — its standard error opening `refused: --module`,
+whatever follows. A registered module the planner finds no such directory for was renamed or
+removed since it was documented; its opening line names its knowledge base and documents as the
+user's to remove. Any other failure of the planner stops the run, and a run of one module stops on
+any refusal: report it and stop.
 
 ## 2. Run it in batches
 
@@ -52,14 +76,15 @@ Run this as a shell command:
     [--exclude GLOB]... --apply --limit <n>
 ```
 
-`<n>` is 19 plus the number of items you have given up on (step 4). **Never run it
+`<n>` is 18 plus the number of items you have given up on (step 4), less after a batch
+had spawns refused, as step 4 says. **Never run it
 without `--limit`**: a whole module's listing is longer than a harness shows of a command's
 output, and a cut-off object cannot be parsed. **Always pass `--project` with `<root>` written
 out** — not `$PWD` or `.`, which the shell resolves wherever it stands: otherwise the planner
 resolves the shell's working directory, which may have moved.
 
-It prints one JSON object. A non-zero exit is a refusal, its reason on standard error: report it
-and stop. What you act on:
+It prints one JSON object. A non-zero exit prints none, its reason on standard error, and is
+handled as step 1 says. What you act on:
 
 - `work` — the documents to write, each with its `kind`, `source`, `document` and `front_matter`;
 - `readme` — the module README to write, or `null`; under `--apply` its `roles` names the file the
@@ -103,6 +128,16 @@ many subagents were running is not an attempt**: no documenter ran, and the next
 item again. **An item listed after three attempts is given up on**: spawn nothing more for it, and
 count it into `<n>`, since it still leads every listing.
 
+**A spawn refused because too many subagents are running is expected and never a reason to stop**:
+any other agent the session runs may hold the slots. The harness's *"Do not retry"* is kept — no
+refused spawn is made again; the next planner run lists the item, and a later, smaller batch spawns
+it. Wait for the documenters of that batch that did start, then run step 2 with `<n>` the number
+that started — or 1, when none did — plus the items given up on, and return to 18 once a
+batch has none refused. A batch that starts none has nothing to wait for, so that batch of one
+follows at once; if it is refused too, stop and report that the session's subagents were all in
+use, and that invoking the skill again resumes where this run stopped — a stop for contention,
+never the end below.
+
 Stop when `up_to_date` is true, or when a run lists no `work` and no `readme`, or lists only items
 you have given up on.
 
@@ -118,7 +153,7 @@ the old README, and the write would overwrite it.
 
 With `--slice N`, stop offering items once N distinct items have been offered; the last batch's
 `--limit` is what the slice has left, plus the items given up on. Then check with a **dry run** —
-the same command without `--apply`, `--limit` 19 plus the items given up on — which
+the same command without `--apply`, `--limit` 18 plus the items given up on — which
 changes nothing, where an `--apply` run would remove the out-of-date documents of items this slice
 will not write.
 An offered item the dry run still lists is retried with `--apply` and `--limit` the number of such
@@ -146,9 +181,13 @@ is indexed however this project keeps it, committed or not.
 
 ## 8. Report
 
-End with the report the user reads. **Open it with one line naming the module, whether it is up to
-date, and its knowledge base's name** — the session that receives the report may pass on only its
-first line. Then how many documents were written, moved and removed. If it is not up to date, name
+End with the report the user reads. **Open it with one line per module the run was asked for, each
+naming the module, whether it is up to date, and its knowledge base's name**, before anything else
+— a refused module's saying it was refused and why, a passed-over knowledge base's saying whose
+directory it is, a module the run stopped before reaching saying so, and in a run over registered
+modules each saying `globs: none` — since the
+session that receives the report may pass on only these lines. Then, for each module in the same
+order, how many documents were written, moved and removed. If it is not up to date, name
 each item given up on and why, and each `unverifiable` source, and say that the README was
 therefore not written, since it waits for every file. Say so when `git_mode_effective` is `off`,
 and only then. After a slice, report what it left — the last dry run's `work` items plus its
@@ -162,16 +201,5 @@ would document them.
 
 ## Permissions
 
-Under Claude Code this skill runs in a background subagent of its own, `zikaron-code-orchestrator`,
-so the session that invoked it stays free and receives the report when the run ends; one run at a
-time, since a second invocation holds that session until the first is done. The planner's command
-and each documenter's write go through the session's permission mode, and their prompts surface in
-the session, naming the agent asking: an interactive session is asked to approve the planner's
-command when it first runs — and at later batches unless the user allows it for the session — and
-the first document a documenter writes; under auto mode neither is put to the user, the classifier
-deciding the command and an edit inside the project approved outright. A headless run is asked
-nothing and is refused: it needs `--permission-mode bypassPermissions`, or
-`--allowedTools` naming the planner command, the subagent tool, the file tools and Zikaron's own
-server, and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a run that waits ten idle
-minutes is stopped. Under kiro this skill runs in the session that invoked it, and the documenter's
-own config already allows its tools.
+This skill runs in the session that invoked it, and the documenter's own config already allows its
+tools.

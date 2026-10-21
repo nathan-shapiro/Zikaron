@@ -92,7 +92,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Tool availability to the model | tools are present in the list | MCP tools may arrive **deferred**: present to the harness, absent from the model's initial tool list until it loads them *by exact name*. Measured (`dogfood-checkpoint` §2) |
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
-| Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, the skill run by the session that invoked it | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill's `context: fork` runs it as, in the background (`design/code-knowledge.md` §5.2, §5.4) |
+| Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, the skill run by the session that invoked it | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill has the session spawn in the background, its definition carrying the loop (`design/code-knowledge.md` §5.2, §5.4) |
 
 Trigger names normalize internally onto `HookEvent`'s members, each name to the one member it
 means: spawn and prompt under both harnesses, and under Claude Code alone the subagent start,
@@ -299,6 +299,12 @@ Two consequences:
 is bounded — a spurious self-takeover costs one worker's in-flight reasoning and a replan, never a journal
 row. Cross-session mutual exclusion, the case the lease was actually built for, is untouched. A run-token
 design is named and deliberately **not** built.
+
+**So the consolidation skill runs in the session that invoked it, and does not fork** (operator,
+2026-10-21), as the code-documentation skill does not either. A second consolidator of one session is
+served the same run, so what stands between a second invocation and two workers on one run is the
+invoking session seeing the first one it spawned; a fork would start each invocation's consolidator
+directly, with no such session.
 
 ## The consolidator's model
 
@@ -623,8 +629,8 @@ or both:
 | Consolidator | `.claude/agents/zikaron-consolidator.md` | memory | YAML frontmatter, prompt as body |
 | Skill | `.claude/skills/zikaron-consolidate/SKILL.md` | memory | YAML frontmatter, body |
 | Documenter | `.claude/agents/zikaron-documenter.md` | memory | YAML frontmatter with `effort: medium` and `tools:` the file tools and `mcp__zikaron`, prompt as body (`design/code-knowledge.md` §5.1, §5.4) |
-| Code orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | memory | YAML frontmatter with `effort: high` and `tools:` `Agent`, `Bash`, `Read` and `mcp__zikaron`, prompt as body |
-| Code documentation skill | `.claude/skills/zikaron-document-code/SKILL.md` | memory | YAML frontmatter carrying `context: fork` and `agent: zikaron-code-orchestrator`, body |
+| Code orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | memory | YAML frontmatter with `effort: high`, `background: true` and `tools:` `Agent`, `Bash`, `Read` and `mcp__zikaron`; its prompt, then the loop, as body |
+| Code documentation skill | `.claude/skills/zikaron-document-code/SKILL.md` | memory | YAML frontmatter, body telling the session to spawn `zikaron-code-orchestrator` |
 
 **An install touches only its own selection.** Triggers it does not write are copied verbatim, and
 so is the other selection's group on `PostToolUse`, which both write, so the guards over a memory

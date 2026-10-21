@@ -2,13 +2,14 @@
 
 Every hermetic test of D39 checks what the installer writes and what the planner decides. What none
 of them can check is the harness doing its half (`design/code-knowledge.md` §5.2): that the
-installed skill forks to the orchestrator under `context: fork`, that the orchestrator can spawn
-the installed documenter and wait for it, that a documenter's write lands where the planner looks,
-and that a headless `-p` session stays alive until the forked run has finished. A rename upstream of
-any of those leaves every install writing nothing, or the invoking session doing the work itself.
-So this asserts only what the harness recorded and the run left behind — the stream's fork and its
-documenter spawns, the planner's own verdict, each document's K14 front matter as the planner
-reads it, and the corpus's registration — never what a model says.
+installed skill has the session spawn the orchestrator, that the orchestrator can spawn the
+installed documenter and wait for it, that a documenter's write lands where the planner looks, and
+that a headless `-p` session stays alive until the orchestrator's run has finished. A rename
+upstream of any of those leaves every install writing nothing, or the invoking session doing the
+work itself. So this asserts only what the harness recorded and the run left behind — the
+session's spawn and the orchestrator's documenter spawns, the planner's own verdict, each
+document's K14 front matter as the planner reads it, and the corpus's registration — never what a
+model says. The skill is invoked with no argument, so the run documents the whole project.
 
 **Out of the default run**, as `integration_claude` is (`design/coding-standards.md` §4): it needs
 a working `claude` and live model calls, a few documenters' worth.
@@ -35,7 +36,8 @@ from zikaron.service import paths
 
 pytestmark = pytest.mark.integration_claude
 
-#: Three documents — two sources and the README — each a documenter's whole turn, behind a fork.
+#: Four documents — the two sources, the install's `.mcp.json` and the README — each a
+#: documenter's whole turn, behind the orchestrator.
 _RUN_TIMEOUT: Final = 1500.0
 
 _SOURCES: Final = {
@@ -104,7 +106,7 @@ def _project(root: Path) -> Path:
 
 def _plan(project: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
     capsys.readouterr()
-    status = planner.main(["plan", "--project", str(project), "--module", "pkg"])
+    status = planner.main(["plan", "--project", str(project), "--module", "."])
     captured = capsys.readouterr()
     assert status == 0, captured.err
     plan = json.loads(captured.out)
@@ -112,18 +114,9 @@ def _plan(project: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object
     return plan
 
 
-#: The prefix of `parent_tool_use_id` on a forked skill's messages
-#: (`research/forked-skill-probe.md`: `forked-command-zikaron-document-code`).
-_FORK_PARENT: Final = "forked-command-"
-
-
-def _forked(records: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [r for r in records if str(r.get("parent_tool_use_id") or "").startswith(_FORK_PARENT)]
-
-
-def _spawned(records: list[dict[str, object]]) -> list[str]:
-    """The `subagent_type` of every spawn the given messages made."""
-    types = []
+def _spawns(records: list[dict[str, object]]) -> list[tuple[str, str]]:
+    """The call id and `subagent_type` of every spawn the given messages made."""
+    spawns = []
     for record in records:
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -131,8 +124,13 @@ def _spawned(records: list[dict[str, object]]) -> list[str]:
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 arguments = block.get("input")
                 if isinstance(arguments, dict) and "subagent_type" in arguments:
-                    types.append(str(arguments["subagent_type"]))
-    return types
+                    spawns.append((str(block.get("id")), str(arguments["subagent_type"])))
+    return spawns
+
+
+def _children(records: list[dict[str, object]], call: str) -> list[dict[str, object]]:
+    """The messages of the subagent the spawn `call` started, which `-p` streams under its id."""
+    return [r for r in records if r.get("parent_tool_use_id") == call]
 
 
 def _corpora(project: Path) -> list[str]:
@@ -151,16 +149,16 @@ def _corpora(project: Path) -> list[str]:
         connection.close()
 
 
-def test_the_skill_documents_a_module_to_up_to_date(
+def test_the_skill_documents_the_whole_project_to_up_to_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The planner's verdict before and after one headless invocation of the installed skill.
 
-    `-p` waits for the forked orchestrator, but by default for ten minutes at most, dropping what is
-    unfinished; `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` lifts the cap
+    `-p` waits for the background orchestrator, but by default for ten minutes at most, dropping
+    what is unfinished; `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0` lifts the cap
     (`research/claude-code-background-subagents.md`, row 4), as the toy run did. The session's own
-    model is `haiku`, since it only invokes the skill — the orchestrator and the documenters run on
-    the model the install wrote.
+    model is `haiku`, since it only spawns the orchestrator — the orchestrator and the documenters
+    run on the models the install wrote.
     """
     _require_claude()
     project = _project(tmp_path)
@@ -170,7 +168,7 @@ def test_the_skill_documents_a_module_to_up_to_date(
         "`zikaron init` could not create the store — see .zikaron/service.log"
     )
     before = _plan(project, capsys)
-    assert before["up_to_date"] is False, "a module with no documents was reported up to date"
+    assert before["up_to_date"] is False, "a project with no documents was reported up to date"
 
     try:
         result = subprocess.run(  # noqa: S603 — the argv is this file's own constant.
@@ -184,7 +182,7 @@ def test_the_skill_documents_a_module_to_up_to_date(
                 "--output-format",
                 "stream-json",
                 "--verbose",
-                "/zikaron-document-code pkg",
+                "/zikaron-document-code",
             ],
             cwd=project,
             env={**os.environ, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0"},
@@ -196,7 +194,7 @@ def test_the_skill_documents_a_module_to_up_to_date(
         )
         stdout, exited = result.stdout, str(result.returncode)
     except subprocess.TimeoutExpired as expired:
-        # Killed with its fork: what the planner says now is the diagnosis.
+        # Killed with its orchestrator: what the planner says now is the diagnosis.
         stdout = (expired.stdout or b"").decode("utf-8", "replace")  # bytes even in text mode
         exited = f"never (killed at {_RUN_TIMEOUT:.0f} s)"
     records = []
@@ -212,20 +210,23 @@ def test_the_skill_documents_a_module_to_up_to_date(
         f"the run left work undone: {after.get('work')}. claude exited {exited}; "
         f"its report: {report[-1500:]!r}"
     )
-    forked = _forked(records)
-    assert forked, "the skill did not fork: no message carries a forked-command parent"
-    assert "zikaron-documenter" in _spawned(forked), (
-        "the orchestrator spawned no zikaron-documenter"
-    )
-    documents = project / "code-knowledge" / "pkg"
+    session = [r for r in records if not r.get("parent_tool_use_id")]
+    orchestrators = [call for call, kind in _spawns(session) if kind == "zikaron-code-orchestrator"]
+    assert orchestrators, "the session spawned no zikaron-code-orchestrator"
+    assert any(
+        kind == "zikaron-documenter"
+        for call in orchestrators
+        for _, kind in _spawns(_children(records, call))
+    ), "the orchestrator spawned no zikaron-documenter"
+    documents = project / "code-knowledge"
     for relative in _SOURCES:
-        document = documents / f"{relative.removeprefix('pkg/')}.md"
+        document = documents / f"{relative}.md"
         assert document.is_file(), f"no document for {relative}"
         link = read_link(document.read_text(encoding="utf-8"))
         assert isinstance(link, SourceLink), f"{document} declares no well-formed K14 link: {link}"
         assert link.path == relative
         assert link.blob == _git(project, "hash-object", relative).strip()
-    assert (documents / "README.md").is_file(), "the module README was never written"
-    assert _corpora(project) == ["code-knowledge/pkg"], (
-        "the skill's last step did not register the module's corpus"
+    assert (documents / "README.md").is_file(), "the project's README was never written"
+    assert _corpora(project) == ["code-knowledge"], (
+        "the run's last step did not register the whole project's corpus"
     )

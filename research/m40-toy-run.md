@@ -542,3 +542,67 @@ that found nothing, and a flow inferred from a role line. The documenter now nev
 path or a name does not exist, and the README says how parts connect only as their documents state
 it (operator, 2026-10-20; `design/code-knowledge.md` §5.1). Verdict (operator): a win, mostly on
 cost.
+
+## 15. A rewritten dependency, and the documents that name it
+
+2026-10-21, on §14's corpus, written 2026-10-20 03:37. Since then
+`strategy/zspreadscale/ZSpreadScaleStrategy.scala` has changed, committed in `509f3dc` and further
+in the working tree: 138 lines added and 81 removed against `332aa44`. The instance-group trading
+is rewritten — `simulateInstanceGroup` became `tradeInstanceGroup`, the veto quantity a supporting
+index — `TradeState` and `PositionState` became `InstanceTradeState` and `InstancePositionState`,
+and `InstanceGroupPositionState` is new. Eight documents name it in a `Depends on:` line; seven of
+their sources did not change, so those seven read `fresh`:
+
+| Document | What it says of the strategy |
+|---|---|
+| `gelt/GeltConfig.scala` | the `Config` type and its nested `TradeTimeThresholds`, `DesiredVolumeHeuristic`, `DynamicOptimizationMode`, `InstanceGroup`, `Iteration` |
+| `zspreadscale/ZSpreadScaleOptimization.scala` | the `Config` types and the `priority` and `instanceNames` members it reads |
+| `zspreadscale/ZSpreadScaleOptimizationExperimentApp.scala` | `Config`, `InstanceGroup.generate`, `Iteration`, `DynamicOptimizationMode` |
+| `zspreadscale/ZSpreadScaleStrategyStore.scala` | the `VariantKey` and `Config` codecs; what `VariantKey.withName` does with an unknown name is left to the strategy's file |
+| `gelt/bootstrap/ExecutionBootstrap.scala` | the class, constructed as the head strategy |
+| `resources/logback.xml`, `resources/logback-container.xml` | the logger named by the class's full name |
+
+**None holds a claim the change made false.** Each describes the strategy by what its file uses
+from it, and none of that moved. The strategy's own document reads `changed`, and the eighth
+dependent, `ZSpreadScaleSimulationApp.scala`, changed itself. One file, seven dependents, a day
+and a half.
+
+The reading (operator, 2026-10-21): a dependency is either a black box, whose change is an
+implementation detail its users' documents do not describe, or its interface changes, and then so
+does the code that uses it. What escapes both is a dependency that moves while its users' bytes do
+not — a Scala file, a Rust file whose `mod` declaration keeps its name (§3), a C++ header found
+through the compiler's include flags — and the string coupling the two logback files carry is the
+same case. The per-dependency blob proposed 2026-10-16 is withdrawn on it.
+
+Re-derive: `git -C ~/Trading/LeibaTrader diff --stat 332aa44 -- <path>`, then grep the corpus for
+`` Depends on: `<path>` `` and read each match against the diff.
+
+## 16. What the orchestrator's context is made of
+
+2026-10-21, from §14's orchestrator transcript (`agent-aa8f578d1a4d31fe1` under LeibaTrader's
+session `d5e50cb7`), Opus 5.5: 199 spawns, 267 API calls, its context 46,123 tokens at the first
+call and 421,516 at the last. **Its tokens are cache reads**: 62,877,208 read, 496,734 written to
+the cache, 8,993 output, 1,002 uncached input — reads 127 times the writes and 7,000 times the
+output, so nearly all of its $15.24. A read is one call times its context, so the cost is the
+number of calls times how large the context has grown.
+
+**What each call added**, from the change in context between consecutive calls, grouped by exactly
+what arrived between them:
+
+| Between two calls | Times | Median tokens added | Whose text |
+|---|---|---|---|
+| a batch of 19 or 20 spawns | 10 | 14,654–14,711, about 750 a spawn | the spawn prompt, median 526 characters — `Root:`, `Source:`, `Document:` and the front matter — and the harness's launch result, 959 characters each |
+| one documenter's hand-back | 194 | 482 | the report, median 131 characters (`written: <path>`), inside the harness's frame of about 1,300 |
+| one task notification | 38 | 937 | the harness's, its result saying the report came as a message |
+| a shell call — the planner, or a script over its JSON | 11 | 2,436, or 2,742 with notifications queued during it | the planner's |
+
+**Zikaron's own text is about a tenth of each document's growth** — the prompt and the one-line
+report against about 1,900 tokens a document — and both are already at their floor, so a briefer
+prompt or report saves under a tenth of the reads. **The calls are the lever**: 232 of the 267 are
+the orchestrator woken for one completion, and each reads the whole context to wait again. The
+starting context, read on every call, is a fifth of the reads (267 × 46,123); the growth is the
+rest.
+
+Re-derive: for each distinct `message.id` among the transcript's `assistant` rows, sum
+`input_tokens`, `cache_read_input_tokens` and `cache_creation_input_tokens` for the context; then
+group the `user` and `attachment` rows between consecutive calls by kind.

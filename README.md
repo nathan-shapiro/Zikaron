@@ -360,7 +360,7 @@ and under **Claude Code**:
 | `.claude/agents/zikaron-consolidator.md` | the consolidation subagent, as frontmatter plus its prompt |
 | `.claude/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
 | `.claude/agents/zikaron-documenter.md` | the documentation subagent, as frontmatter plus its prompt |
-| `.claude/agents/zikaron-code-orchestrator.md` | the subagent the code-documentation skill runs as, in the background |
+| `.claude/agents/zikaron-code-orchestrator.md` | the subagent your session spawns, in the background, to run a code-documentation run |
 | `.claude/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
 | `.claude/settings.local.json` | hooks for session start, each message, each subagent start and each search ([Code knowledge](#code-knowledge)), plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
 | `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
@@ -712,17 +712,21 @@ An agent new to a codebase searches it by keyword to find where to start. **Code
 it a corpus to search instead: one document per source file — what the file is for, every class and
 function it declares with its declaration, its non-trivial behavior, and the files it depends on —
 written by agents, kept as files in your project, and indexed as an ordinary knowledge base. Ask
-for it with the installed skill, naming a directory of your code:
+for it in plain words — *"create code documentation"*, *"document `src/billing`"* — or with the
+installed skill, naming directories of your code, or none:
 
 ```
+/zikaron-document-code                               # every documented module, or the whole project
 /zikaron-document-code src/billing
 /zikaron-document-code src/billing --slice 20       # just twenty files, to see what it costs
 /zikaron-document-code services/api --exclude '*_generated.go'
 ```
 
-**Under Claude Code the skill runs in the background**, as the `zikaron-code-orchestrator`
-subagent, so your session stays free while it works and receives its report when it ends; under
-kiro it runs in your session. Either way it runs a **planner**, `zikaron code-knowledge plan`,
+With no directory named it updates every module you have documented, or, where you have documented
+none, documents the whole project, into one knowledge base of its own; globs and `--slice` need
+one module. **Under Claude Code the skill runs in the background**: your session spawns the
+`zikaron-code-orchestrator` subagent to run it, so your session stays free while it works and
+receives its report when it ends; under kiro it runs in your session. Either way it runs a **planner**, `zikaron code-knowledge plan`,
 which decides from hashes which documents are missing, out of date or malformed, removes the ones a
 deleted or renamed source left behind — moving a renamed file's document instead of rewriting it —
 and lists the rest. It then spawns a `zikaron-documenter` subagent per listed file, and runs the
@@ -738,7 +742,10 @@ zikaron code-knowledge plan --module src/billing --limit 10
 ```
 
 **Pass the same `--include` and `--exclude` every time** you document a directory: they are part of
-what it is, and a narrower set makes the planner remove the documents it no longer admits.
+what it is, and a narrower set makes the planner remove the documents it no longer admits. So a
+directory documented with globs is updated by naming it with them: the plain update passes none and
+documents such a directory in full — its report says `globs: none` — and the next run naming it with
+its globs removes what the update added.
 
 The documents go under `code-knowledge/`, mirroring your tree —
 `code-knowledge/src/billing/invoice.py.md` describes `src/billing/invoice.py` — and **each module
@@ -757,8 +764,8 @@ permission prompts appear in your session, naming the subagent asking: you are a
 planner's command when it first runs — allow it for the session, or you are asked again at later
 batches — and the first document a documenter writes. Under auto mode, the interactive default
 since Claude Code 2.1.283, neither is put to you: the classifier decides the command, and an edit
-inside the project is approved outright. One run at a time: invoking the skill again while one runs
-holds your session until the first ends. A headless run asks nothing and so is refused unless you
+inside the project is approved outright. One run at a time in a session: a second request while a
+run is out waits, and your session starts it when the first run reports. A headless run asks nothing and so is refused unless you
 give it the permission up front: `--permission-mode bypassPermissions`, best kept to a copy of the
 project, or
 `--allowedTools` naming the planner command, the subagent tool, the file tools and `mcp__zikaron`,

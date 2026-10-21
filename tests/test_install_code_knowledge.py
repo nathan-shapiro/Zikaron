@@ -1,35 +1,41 @@
 """What an install ships for code knowledge: the documenter, Claude Code's orchestrator, their
-grants and prompts, and the skill.
+grants and prompts, the loop they run, and the skill.
 
 `design/code-knowledge.md` §5 is normative. The documenter's grant is its harness's file tools and
-Zikaron's server (§5.1, §5.4), the orchestrator's a fixed four with no editing tool;
-neither prompt names a tool, so the documenter's one text is true on both harnesses; and the skill
-forks to the orchestrator under Claude Code alone and names only tools that exist on the harness
-it is rendered for, by the property every other shipped text is held to.
+Zikaron's server (§5.1, §5.4), the orchestrator's a fixed four with no editing tool; the
+documenter's prompt names no tool, so its one text is true on both harnesses, and the orchestrator's
+body names no built-in one. The loop is kiro's skill and the body of Claude Code's orchestrator,
+whose skill has the session spawn it; each text names only tools that exist on the harness it is
+rendered for, by the property every other shipped text is held to.
 """
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
 import pytest
 
+from zikaron.code_knowledge import main as planner
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.install import harness as install_harness
 from zikaron.install.assets import identity_vocabulary
 from zikaron.install.code_knowledge import (
-    CLAUDE_CODE_PLANNER_COMMAND,
-    CLAUDE_CODE_SPAWN_INSTRUCTION,
+    CLAUDE_CODE_ARGUMENTS_SOURCE,
     DOCUMENT_SKILL_NAME,
     DOCUMENTER_AGENT_NAME,
     DOCUMENTER_PROMPT,
+    KIRO_ARGUMENTS_SOURCE,
     KIRO_PLANNER_COMMAND,
     KIRO_SPAWN_INSTRUCTION,
     ORCHESTRATOR_AGENT_NAME,
+    ORCHESTRATOR_DESCRIPTION,
     ORCHESTRATOR_MODEL,
     ORCHESTRATOR_PROMPT,
     document_code_skill,
+    launch_skill,
+    orchestrator_prompt,
 )
 from zikaron.install.entries import (
     TOOL_SELECTOR,
@@ -99,26 +105,42 @@ _LABELS: Final = ("Root:", "Source:", "Document:", "Front matter:")
 
 _COMMANDS: Final = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
-_CLAUDE_SKILL: Final = document_code_skill(
-    claude_tool_vocabulary(),
-    spawn_instruction=CLAUDE_CODE_SPAWN_INSTRUCTION,
-    planner_command=CLAUDE_CODE_PLANNER_COMMAND,
-    fork_agent=ORCHESTRATOR_AGENT_NAME,
-)
+_CLAUDE_SKILL: Final = launch_skill(claude_tool_vocabulary())
 _KIRO_SKILL: Final = document_code_skill(
     identity_vocabulary(),
     spawn_instruction=KIRO_SPAWN_INSTRUCTION,
     planner_command=KIRO_PLANNER_COMMAND,
-    fork_agent=None,
+    arguments_source=KIRO_ARGUMENTS_SOURCE,
 )
+_ORCHESTRATOR: Final = orchestrator_agent_markdown(model="sonnet")
+
+
+def _body(markdown: str) -> str:
+    """Everything after a definition's frontmatter, whose `tools:` names the built-ins it grants."""
+    return markdown.split("---\n", 2)[2]
+
+
+_ORCHESTRATOR_BODY: Final = _body(_ORCHESTRATOR)
 
 _PROMPTS: Final = pytest.mark.parametrize(
-    "prompt", [DOCUMENTER_PROMPT, ORCHESTRATOR_PROMPT], ids=["documenter", "orchestrator"]
+    "prompt", [DOCUMENTER_PROMPT, _ORCHESTRATOR_BODY], ids=["documenter", "orchestrator"]
+)
+
+#: The two texts that carry the loop.
+_LOOPS: Final = pytest.mark.parametrize(
+    "loop", [_ORCHESTRATOR_BODY, _KIRO_SKILL], ids=["claude-code", "kiro"]
+)
+_SKILLS: Final = pytest.mark.parametrize(
+    "skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"]
 )
 
 
 def _flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def _frontmatter(markdown: str) -> list[str]:
+    return markdown.split("---\n")[1].splitlines()
 
 
 def _frontmatter_tools(markdown: str) -> list[str]:
@@ -151,11 +173,41 @@ class TestTheDocumentersGrant:
 
 class TestTheOrchestrator:
     def test_its_grant_spawns_runs_reads_and_reaches_the_primary_server(self) -> None:
-        markdown = orchestrator_agent_markdown(model="sonnet")
-        assert _frontmatter_tools(markdown) == ["Agent", "Bash", "Read", "mcp__zikaron"]
-        assert f"name: {ORCHESTRATOR_AGENT_NAME}\n" in markdown
-        assert "model: sonnet\neffort: high\n" in markdown
-        assert markdown.endswith(f"---\n\n{ORCHESTRATOR_PROMPT}\n")
+        assert _frontmatter_tools(_ORCHESTRATOR) == ["Agent", "Bash", "Read", "mcp__zikaron"]
+        assert f"name: {ORCHESTRATOR_AGENT_NAME}\n" in _ORCHESTRATOR
+        assert "model: sonnet\neffort: high\n" in _ORCHESTRATOR
+
+    def test_its_body_is_its_own_prompt_then_the_loop(self) -> None:
+        assert _ORCHESTRATOR_BODY.startswith(f"\n{ORCHESTRATOR_PROMPT}\n\n# Document this project")
+        assert _ORCHESTRATOR_BODY.count("## 1. Find the planner and the modules") == 1
+        assert "## Permissions" not in _ORCHESTRATOR_BODY
+
+    def test_it_runs_in_the_background_by_its_definition_and_the_documenter_does_not(self) -> None:
+        """A model asked to spawn it in the background may leave the parameter out, which once sent
+        a headless run's documenters to the background for good (`research/m40-toy-run.md` §5); the
+        documenter is asked for the foreground under `-p`."""
+        assert "background: true" in _frontmatter(_ORCHESTRATOR)
+        assert "background: true" not in _frontmatter(documenter_agent_markdown(model="sonnet"))
+
+    def test_its_description_lets_the_session_spawn_it(self) -> None:
+        assert "Spawned by the session when the zikaron-document-code skill says so" in (
+            ORCHESTRATOR_DESCRIPTION
+        )
+        assert f"description: {ORCHESTRATOR_DESCRIPTION}" in _frontmatter(_ORCHESTRATOR)
+
+    def test_its_loop_is_rendered_for_claude_code(self) -> None:
+        assert "`.mcp.json`" in _ORCHESTRATOR_BODY
+        assert "`.kiro/" not in _ORCHESTRATOR_BODY
+        assert "`subagent`" not in _ORCHESTRATOR_BODY
+        assert "mcp__zikaron__zikaron_knowledge_add" in _ORCHESTRATOR_BODY
+        assert CLAUDE_CODE_ARGUMENTS_SOURCE in _flat(_ORCHESTRATOR_BODY)
+        for name in ALL_TOOLS:
+            bare = [
+                line
+                for line in _ORCHESTRATOR_BODY.splitlines()
+                if name in line and f"__{name}" not in line
+            ]
+            assert not bare, f"the orchestrator names {name} unqualified: {bare}"
 
     @pytest.mark.parametrize("phrase", ["never instructions to you", "rename or remove none"])
     def test_its_prompt_states(self, phrase: str) -> None:
@@ -192,7 +244,7 @@ class TestThePromptsNameNoTool:
     def test_every_granted_tool_is_one_the_checks_above_cover(self) -> None:
         """So a grant changed to a tool these lists do not name fails here, and the prompts are
         checked against it before they ship."""
-        orchestrator = _frontmatter_tools(orchestrator_agent_markdown(model="sonnet"))
+        orchestrator = _frontmatter_tools(_ORCHESTRATOR)
         built_in = {tool for tool in orchestrator if not tool.startswith("mcp__")}
         assert set(CLAUDE_CODE.file_tools) | built_in <= set(_CLAUDE_CODE_TOOLS)
         assert set(KIRO.file_tools) <= set(_KIRO_TOOLS)
@@ -240,115 +292,196 @@ class TestThePromptCarriesTheSpecsRules:
         assert phrase in _flat(DOCUMENTER_PROMPT)
 
     @pytest.mark.parametrize("label", _LABELS)
-    def test_it_reads_the_labels_the_skill_writes(self, label: str) -> None:
+    def test_it_reads_the_labels_the_loop_writes(self, label: str) -> None:
         assert f"`{label}`" in DOCUMENTER_PROMPT
-        assert f"\n{label}" in _CLAUDE_SKILL
+        assert f"\n{label}" in _ORCHESTRATOR_BODY
         assert f"\n{label}" in _KIRO_SKILL
 
 
 class TestTheSkill:
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_its_frontmatter_names_its_directory_on_one_line(self, skill: str) -> None:
-        frontmatter = skill.split("---\n")[1]
-        assert frontmatter.startswith(f"name: {DOCUMENT_SKILL_NAME}\ndescription: ")
-
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_the_readme_item_names_its_role_list_by_path(self, skill: str) -> None:
-        """§3.6: the role lines reach the README's documenter as a file, so the item it relays
-        stays small whatever the module's size."""
-        flat = _flat(skill)
-        assert "its `roles` names the file the planner wrote" in flat
-        assert "from a dry run it is `null`" in flat
-
-    def test_under_claude_code_it_forks_to_the_orchestrator(self) -> None:
-        """The session that invoked it stays free (`design/code-knowledge.md` §5.2)."""
-        frontmatter = _CLAUDE_SKILL.split("---\n")[1].splitlines()
-        assert frontmatter[2:] == ["context: fork", f"agent: {ORCHESTRATOR_AGENT_NAME}"]
-
-    def test_under_kiro_it_runs_in_the_session(self) -> None:
-        """A kiro subagent has no spawn tool, so nothing could run the loop but the session."""
-        frontmatter = _KIRO_SKILL.split("---\n")[1].splitlines()
+    @_SKILLS
+    def test_its_frontmatter_is_its_name_and_description_on_a_line_each(self, skill: str) -> None:
+        """Neither forks: under kiro a subagent has no spawn tool, so nothing could run the loop but
+        the session, and under Claude Code the session spawns the orchestrator itself
+        (`design/code-knowledge.md` §5.2)."""
+        frontmatter = _frontmatter(skill)
+        assert frontmatter[0] == f"name: {DOCUMENT_SKILL_NAME}"
+        assert frontmatter[1].startswith("description: ")
         assert len(frontmatter) == len(("name", "description"))
 
-    def test_under_claude_code_no_bare_tool_name_survives(self) -> None:
-        for name in ALL_TOOLS:
-            bare = [
-                line
-                for line in _CLAUDE_SKILL.splitlines()
-                if name in line and f"__{name}" not in line
-            ]
-            assert not bare, f"the skill names {name} unqualified: {bare}"
-        assert "mcp__zikaron__zikaron_knowledge_add" in _CLAUDE_SKILL
+    @_SKILLS
+    def test_its_description_says_what_no_directory_named_means(self, skill: str) -> None:
+        description = _frontmatter(skill)[1]
+        assert "create, write or update the code's documentation" in description
+        assert (
+            "With no directory named it updates every documented module, or documents the whole "
+            "project where none is."
+        ) in description
 
     def test_under_kiro_the_bare_names_stay(self) -> None:
         assert "zikaron_knowledge_add" in _KIRO_SKILL
         assert "mcp__" not in _KIRO_SKILL
 
-    def test_the_claude_code_spawn_names_no_spawning_tool(self) -> None:
-        assert "subagent_type: zikaron-documenter" in CLAUDE_CODE_SPAWN_INSTRUCTION
-        for tool in ("`Task`", "`Agent`"):
-            assert tool not in _CLAUDE_SKILL
+    def test_under_kiro_it_names_no_orchestrator(self) -> None:
+        assert ORCHESTRATOR_AGENT_NAME not in _KIRO_SKILL
+        assert "This skill runs in the session that invoked it" in _flat(_KIRO_SKILL)
 
     def test_kiro_spawns_through_the_subagent_tool(self) -> None:
         assert "`subagent`" in KIRO_SPAWN_INSTRUCTION
         assert "role: zikaron-documenter" in KIRO_SPAWN_INSTRUCTION
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_a_batch_is_spawned_together(self, skill: str) -> None:
+
+class TestTheLaunch:
+    """Claude Code's skill, which has the session spawn the orchestrator and run nothing else."""
+
+    def test_it_spawns_the_orchestrator_in_the_background(self) -> None:
+        flat = _flat(_CLAUDE_SKILL)
+        assert f"`subagent_type: {ORCHESTRATOR_AGENT_NAME}`" in flat
+        assert "if the tool offers `run_in_background`, pass `true`" in flat
+        assert "if it offers no such parameter, every spawn runs in the background" in flat
+
+    def test_it_hands_over_the_arguments_as_typed(self) -> None:
+        """Claude Code replaces `$ARGUMENTS` with the invocation's arguments as typed, so a glob
+        reaches the planner as the user wrote it."""
+        prompt = (
+            "```\nRun one documentation run with exactly these arguments, as written, and no "
+            "others:\n$ARGUMENTS\n```"
+        )
+        assert prompt in _CLAUDE_SKILL
+
+    def test_it_runs_none_of_the_loop(self) -> None:
+        body = _body(_CLAUDE_SKILL)
+        assert "code-knowledge plan" not in body
+        assert "zikaron-documenter" not in body
+        assert "You run nothing of it yourself" in _flat(body)
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "One request is one spawn, however many modules it names.",
+            "**One run at a time in this session.** A request that comes while a run of yours is "
+            "out is not spawned then: say so, and spawn it when that run's report arrives.",
+            "is made again when the next subagent of this session reports, and never while a run "
+            "of yours is out",
+            "is answered the same way, with the request repeated as it was given",
+            "Relay each report when it arrives with its opening lines — one per module the run "
+            "was asked for",
+            "`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`",
+        ],
+    )
+    def test_it_states(self, phrase: str) -> None:
+        assert phrase in _flat(_CLAUDE_SKILL)
+
+    def test_it_names_no_spawning_tool_and_no_bare_tool_name(self) -> None:
+        for tool in ("`Task`", "`Agent`"):
+            assert tool not in _CLAUDE_SKILL
+        for name in ALL_TOOLS:
+            assert name not in _CLAUDE_SKILL.replace(f"__{name}", "")
+
+
+class TestTheLoop:
+    """What kiro's skill and Claude Code's orchestrator both carry."""
+
+    @_LOOPS
+    def test_the_readme_item_names_its_role_list_by_path(self, loop: str) -> None:
+        """§3.6: the role lines reach the README's documenter as a file, so the item it relays
+        stays small whatever the module's size."""
+        flat = _flat(loop)
+        assert "its `roles` names the file the planner wrote" in flat
+        assert "from a dry run it is `null`" in flat
+
+    @_LOOPS
+    def test_a_batch_is_spawned_together(self, loop: str) -> None:
         """One spawn per message would start each documenter sooner, and cost an orchestrator turn
         per spawn over a context that grows with every document (`design/code-knowledge.md`
         §5.2)."""
-        assert "Issue every spawn of a batch together" in _flat(skill)
-        assert "one spawn per message" not in _flat(skill)
+        assert "Issue every spawn of a batch together" in _flat(loop)
+        assert "one spawn per message" not in _flat(loop)
 
     def test_each_harness_reads_the_planner_from_the_file_its_install_writes(self) -> None:
-        assert "`.mcp.json`" in _CLAUDE_SKILL
+        assert "`.mcp.json`" in _ORCHESTRATOR_BODY
         assert "`.kiro/agents/zikaron-consolidator.json`" in _KIRO_SKILL
-        for skill in (_CLAUDE_SKILL, _KIRO_SKILL):
-            assert "mcpServers.zikaron.command" in skill
+        for loop in (_ORCHESTRATOR_BODY, _KIRO_SKILL):
+            assert "mcpServers.zikaron.command" in loop
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_the_planner_always_runs_bounded_and_with_the_project(self, skill: str) -> None:
-        flat = _flat(skill)
+    def test_each_harness_says_where_its_arguments_come_from(self) -> None:
+        assert CLAUDE_CODE_ARGUMENTS_SOURCE in _flat(_ORCHESTRATOR_BODY)
+        assert KIRO_ARGUMENTS_SOURCE in _flat(_KIRO_SKILL)
+
+    @_LOOPS
+    def test_the_planner_always_runs_bounded_and_with_the_project(self, loop: str) -> None:
+        flat = _flat(loop)
         assert "code-knowledge plan --project <root> --module <module>" in flat
         assert "--apply --limit <n>" in flat
-        assert "`<n>` is 19 plus the number of items you have given up on" in flat
+        assert "`<n>` is 18 plus the number of items you have given up on" in flat
         assert (
             "A spawn the harness refused, or that failed to start, because too many subagents "
             "were running is not an attempt"
         ) in flat
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_it_registers_the_modules_own_corpus_with_git_mode_off(self, skill: str) -> None:
-        flat = _flat(skill)
+    @_LOOPS
+    def test_it_registers_the_modules_own_corpus_with_git_mode_off(self, loop: str) -> None:
+        flat = _flat(loop)
         assert "`code-knowledge/<module>`, or `code-knowledge` when `<module>` is `.`" in flat
         assert "- `name`: `<corpus>` - `path`: `<corpus>`" in flat
         assert '`git_mode`: `"off"`' in flat
         assert '`include`: `["*.md"]`' in flat
         assert "Per-source-file documentation of `<module>` in this project's code" in flat
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_it_refuses_a_module_that_nests_before_the_first_run(self, skill: str) -> None:
-        flat = _flat(skill)
+    @_LOOPS
+    def test_it_refuses_a_module_that_nests_before_the_first_run(self, loop: str) -> None:
+        flat = _flat(loop)
         refusal = flat.index("**Refuse a module that nests**")
         assert "`root_path` that contains `<root>/<corpus>` or lies inside it" in flat
         assert refusal < flat.index("## 2. Run it in batches")
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_the_report_opens_with_the_module_its_state_and_its_knowledge_base(
-        self, skill: str
-    ) -> None:
+    @_LOOPS
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "**The modules are the ones named, in the order given. With none named**",
+            "**its module is its `root_path` with `<root>/code-knowledge/` taken off — never its "
+            "name**, which the index stores lower-cased while a directory keeps its case",
+            "a run that passes over every one documents nothing, and says so",
+            "Where no knowledge base's name begins `code-knowledge/`, the module is `.`, the "
+            "whole project.",
+            "a run that names two or more modules, or names none and finds any knowledge base "
+            "named `code-knowledge/…` registered, given a glob or a slice stops here",
+            "pass over it, with an opening line of its own in the report (step 8) saying whose "
+            "directory it is",
+            "a module the run stopped before reaching saying so",
+            "each of its opening lines says `globs: none`",
+            "its standard error opening `refused: --module`, whatever follows",
+            "Any other failure of the planner stops the run",
+            "**A spawn refused because too many subagents are running is expected and never a "
+            "reason to stop**",
+            'The harness\'s *"Do not retry"* is kept — no refused spawn is made again',
+            "`<n>` the number that started — or 1, when none did — plus the items given up on",
+            "a stop for contention, never the end below",
+        ],
+    )
+    def test_it_states_the_rules_of_a_run_over_its_modules(self, loop: str, phrase: str) -> None:
+        assert phrase in _flat(loop)
+
+    @_LOOPS
+    def test_the_report_opens_with_a_line_per_module(self, loop: str) -> None:
         """The session that received the report in the playground relayed one line of it, without
         the knowledge base's name (`research/forked-skill-probe.md` §Interactive)."""
-        assert "Open it with one line naming the module, whether it is up to date" in _flat(skill)
+        flat = _flat(loop)
+        assert (
+            "**Open it with one line per module the run was asked for, each naming the module, "
+            "whether it is up to date, and its knowledge base's name**"
+        ) in flat
+        assert "a refused module's saying it was refused and why" in flat
 
     def test_claude_codes_spawn_asks_for_the_foreground_by_its_parameter(self) -> None:
         """A headless orchestrator that left the parameter out sent its documenters to the
         background, ended its turn and never resumed (`research/m40-toy-run.md` §5). Interactively
-        the tool offers no such parameter, which the skill names as expected."""
-        flat = _flat(_CLAUDE_SKILL)
+        the tool offers no such parameter, which the loop names as expected."""
+        flat = _flat(_ORCHESTRATOR_BODY)
         assert "if the tool offers `run_in_background`, pass `false`" in flat
         assert "if it offers no such parameter, every spawn runs in the background" in flat
+        assert "subagent_type: zikaron-documenter" in flat
         assert "run_in_background" not in _KIRO_SKILL
 
     def test_claude_codes_wait_for_a_background_spawn_can_be_followed(self) -> None:
@@ -356,26 +489,44 @@ class TestTheSkill:
         orchestrator in the field held its turn open with a `sleep`/`find` loop; interactively the
         harness keeps a subagent running until its background spawns report
         (`research/claude-code-background-subagents.md` §Q4)."""
-        flat = _flat(_CLAUDE_SKILL)
+        flat = _flat(_ORCHESTRATOR_BODY)
         assert "the harness keeps you running until every spawn of yours has reported" in flat
         assert "so wait by issuing nothing" in flat
         assert "ending your turn" not in flat
 
-    @pytest.mark.parametrize("skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"])
-    def test_the_report_names_sources_too_large_to_document(self, skill: str) -> None:
+    @_LOOPS
+    def test_the_report_names_sources_too_large_to_document(self, loop: str) -> None:
         """Warp's `view.rs` was skipped over the size cap while the report said the module was
         fully documented (`research/m40-toy-run.md` §1)."""
-        flat = _flat(skill)
+        flat = _flat(loop)
         assert "When `skipped` counts any `over_size_cap`" in flat
         assert "`knowledge_max_file_bytes`" in flat
 
-    def test_a_placeholder_that_survives_is_refused(self) -> None:
+    def test_the_planners_refusal_of_a_module_opens_with_the_prefix_the_loop_names(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The loop skips a module by this prefix and stops on any other failure, so the planner's
+        wording and the loop's must not drift apart."""
+        prefix = re.search(r"standard error opening `([^`]+)`", _flat(_KIRO_SKILL))
+        assert prefix is not None
+        (tmp_path / ".zikaron").mkdir()
+        (tmp_path / ".zikaron" / "memory.db").write_bytes(b"")
+        status = planner.main(["plan", "--project", str(tmp_path), "--module", "absent"])
+        assert status == 1
+        assert capsys.readouterr().err.startswith(prefix.group(1))
+
+    @pytest.mark.parametrize(
+        "render",
+        [document_code_skill, orchestrator_prompt],
+        ids=["skill", "orchestrator"],
+    )
+    def test_a_placeholder_that_survives_is_refused(self, render: Callable[..., str]) -> None:
         with pytest.raises(ValueError, match="survived substitution"):
-            document_code_skill(
+            render(
                 identity_vocabulary(),
                 spawn_instruction="@@SPAWN_INSTRUCTION@@",
                 planner_command=KIRO_PLANNER_COMMAND,
-                fork_agent=None,
+                arguments_source=KIRO_ARGUMENTS_SOURCE,
             )
 
 
