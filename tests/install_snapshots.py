@@ -35,7 +35,7 @@ def rendered() -> dict[str, str]:
         plan = Plan(
             project=_PROJECT,
             commands=_COMMANDS,
-            model=target.spec.consolidator_model,
+            consolidator_model=target.spec.consolidator_model,
             documenter_model=target.spec.documenter_model,
             orchestrator_model=ORCHESTRATOR_MODEL,
             hook_format=HookFormat.OBJECT,

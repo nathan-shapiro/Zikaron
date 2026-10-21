@@ -339,7 +339,7 @@ def test_model_is_refused_under_guards_and_accepted_under_both(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert _install(project, "--components", "guards", "--model", "opus") == 1
-    assert "ships none" in capsys.readouterr().err
+    assert "ships no agent" in capsys.readouterr().err
     assert _tree(project) == {}
     assert _install(project, "--components", "both", "--model", "opus") == 0
     for agent in ("zikaron-consolidator", "zikaron-documenter", "zikaron-code-orchestrator"):

@@ -76,7 +76,7 @@ def _plan(
     return Plan(
         project=project,
         commands=_COMMANDS,
-        model="a-model",
+        consolidator_model="a-model",
         documenter_model="a-model",
         orchestrator_model="a-model",
         hook_format=fmt,

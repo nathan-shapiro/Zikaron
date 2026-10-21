@@ -208,7 +208,7 @@ def stub_harness_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
     The distinction this exists to draw is between two kinds of "real". `tests/test_install_e2e.py`
     and `tests/test_install_takeover.py` spawn real hook processes, a real service, a real socket
     and a real MCP client — all Zikaron's own, all reproducible anywhere. They touch `kiro-cli` only
-    because `install.main` validates the consolidator's model on the way past, which is incidental
+    because an install validates each shipped agent's model on the way past, which is incidental
     to everything they assert. Stubbing that one call makes them hermetic without weakening them by
     a single assertion, and what a real binary genuinely establishes stays in
     `test_install_harness.py::TestAgainstTheRealBinary` behind `integration_kiro`.

@@ -214,6 +214,16 @@ class HarnessTarget(ABC):
         where their configuration lives.
         """
 
+    @property
+    @abstractmethod
+    def ships_orchestrator(self) -> bool:
+        """Whether a memory install writes the code orchestrator the documentation skill forks to.
+
+        Where it does not, the session that invokes the skill runs its loop itself, so
+        `--orchestrator-model` is refused there rather than ignored, and no orchestrator's model is
+        checked.
+        """
+
     @abstractmethod
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
         """The artefacts this install owns outright, path and exact content."""
@@ -302,9 +312,13 @@ class KiroTarget(HarnessTarget):
     def accepts_agent_flag(self) -> bool:
         return True
 
+    @property
+    def ships_orchestrator(self) -> bool:
+        return False
+
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
         targets = Targets(project=plan.project)
-        config = consolidator_agent_config(plan.commands, model=plan.model)
+        config = consolidator_agent_config(plan.commands, model=plan.consolidator_model)
         return (
             ShippedFile(
                 targets.consolidator_config, json.dumps(config, indent=_JSON_INDENT) + "\n"
@@ -408,6 +422,10 @@ class ClaudeCodeTarget(HarnessTarget):
     def accepts_agent_flag(self) -> bool:
         return False
 
+    @property
+    def ships_orchestrator(self) -> bool:
+        return True
+
     def _settings(self, project: Path) -> Path:
         """`.claude/settings.local.json`, never `settings.json`.
 
@@ -430,7 +448,7 @@ class ClaudeCodeTarget(HarnessTarget):
         return (
             ShippedFile(
                 project / ".claude" / "agents" / f"{CONSOLIDATOR_AGENT_NAME}.md",
-                consolidator_agent_markdown(plan.commands, model=plan.model),
+                consolidator_agent_markdown(plan.commands, model=plan.consolidator_model),
             ),
             ShippedFile(
                 project / ".claude" / "skills" / SKILL_NAME / "SKILL.md",

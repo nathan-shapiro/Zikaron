@@ -6880,45 +6880,120 @@ change to what a build does or prints, to the lock, to `knowledge_build` rows or
 
 ## M40-3 — One model for every agent, and a flag for each
 
-Normative: **`design/harness.md` §"The flags, and what each refuses"** and §"The consolidator's
-model"; `design/code-knowledge.md` §5.1 and §5.4 where they say what `--model` sets; `README.md`'s
-table of install options. Decision: D34's split, unchanged — a value per agent, no new shape.
-Evidence: the operator's practice, 2026-10-17 — a strong model orchestrates, a mid one writes, a
-cheap one codes — and the Warp run, whose orchestrator ran Sonnet 4.6 because the one `--model`
-set every agent.
+Normative: **`design/harness.md` §"The flags, and what each refuses"** and the last paragraph of
+§"The consolidator's model", on what sets the documenter's and the orchestrator's;
+`design/code-knowledge.md` §5.1 and §5.4 where they say what `--model` sets, and §5.4's paragraph
+on the prose that enumerates an install; `design/guards.md` §5, where it says why `--model` is
+refused under `guards`; `README.md` §Install's table of options; and `design/kiro-gaps.md`'s row
+for the run that leaves the session free. Decision: D34's split, unchanged — a value per agent, and
+no new shape: the one difference of shape it reads, whether a target writes an orchestrator,
+already exists and gains a property. Evidence: the operator's practice, 2026-10-17 — a strong model
+orchestrates, a mid one writes, a cheap one codes — and the Warp run, whose orchestrator ran
+Sonnet 4.6 because the one `--model` set every agent.
+
+**What was found.** `--model` is one value for every agent an install ships — the consolidator, the
+documenter and, under Claude Code, the code orchestrator — so a run that wants one agent's model
+changed changes them all. Each agent already has a default of its own
+(`HarnessSpec.consolidator_model`, `HarnessSpec.documenter_model`, `ORCHESTRATOR_MODEL`), and under
+Claude Code the three differ; only the override is shared. **Model ids are each harness's own** —
+kiro's are the ids `kiro-cli chat --list-models` lists, Claude Code's an alias or a full id — and
+an install is for one harness, so a project set up for both installs twice, each run with its own
+harness's ids, and no flag translates between them.
+
+**Built in this tree, not a worktree.** Nothing a running session loads imports what this changes:
+the hook, the guard, the MCP server, the service, the indexer and the planner import nothing from
+`zikaron/install/`, and `zikaron doctor`, which imports `targets.py`, runs only when someone types
+it. So the three projects that run this tree are not exposed mid-build, as they were to M40-1's
+guard and M40-2's service and indexer.
 
 ### What ships
 
 1. **`--consolidator-model`, `--documenter-model` and `--orchestrator-model`**, each the model of
-   that agent alone. `--model` is the default for any of them not given; with neither, each agent
-   takes its own (`HarnessSpec.consolidator_model`, `HarnessSpec.documenter_model`,
-   `ORCHESTRATOR_MODEL`), as now.
-2. **Refusals.** Any of the three under `--components guards`, which ships no agent, as `--model`
-   is refused there; and `--orchestrator-model` under kiro, which ships no orchestrator — refused
-   rather than ignored, since a flag that silently does nothing is what the install contract exists
-   to prevent. `--model` under kiro stays accepted, since it sets two agents there.
-3. **The model check**: each distinct model the install ships is checked once against its harness,
-   the orchestrator's included when a flag names it; `ORCHESTRATOR_MODEL` stays unchecked under
-   kiro, which ships no orchestrator.
-4. **Documents**: the passages in the normative list.
+   that agent alone. Precedence: the agent's own flag, then `--model`, then the agent's default
+   (`HarnessSpec.consolidator_model`, `HarnessSpec.documenter_model`, `ORCHESTRATOR_MODEL`), as
+   now. Each is tested with `is None`, as `--model` is, so an empty value reaches the model check
+   and is refused there rather than replaced by a default. `Plan.model` becomes
+   `Plan.consolidator_model`, so the three fields read alike and none reads as `--model`; the
+   two-line `#:` comment over `documenter_model`, which says `model` is every other agent's and
+   that kiro ignores the orchestrator's, goes with it.
+2. **Two refusals**, each raised before anything is written, `--print-only` included, as `--model`'s
+   under `guards` is now:
+   - **any model flag** — `--model` or one of the three — under `--components guards`, which
+     ships no agent; the message names the flags given.
+   - **`--orchestrator-model` under a target that ships no orchestrator**, which is kiro's —
+     refused rather than ignored, since a flag that silently does nothing is what the install
+     contract exists to prevent. The message says that there the session that invokes the skill
+     runs its loop itself, and that `--documenter-model` sets the documenter. **Read from the
+     target, never from the harness's name**: a `ships_orchestrator` property on `HarnessTarget`,
+     beside `accepts_agent_flag`, since the orchestrator is a difference of shape and
+     `zikaron/install/targets.py` is where one lives (`design/harness.md` §"The installer's two
+     targets"). `--model` under kiro stays accepted, since it sets two agents there.
+3. **The model check**: each distinct model the install ships is checked once against its harness —
+   the orchestrator's wherever the target ships one, its default included, since Claude Code's
+   check is a local shape test that costs nothing; under kiro, which ships none,
+   `ORCHESTRATOR_MODEL` stays unchecked, as kiro's list would refuse the alias.
+4. **Where it lives**: `zikaron/install/models.py`, a module of its own — which model each agent is
+   installed with. It defines the parser's four model options, `--model` and the three, through one
+   function `main.py`'s `_parser` calls, and holds their resolution, both refusals and the model
+   check; `--model`'s option, its refusal under `guards` and the check move there from
+   `zikaron/install/main.py`, which is already past `design/coding-standards.md` §1's roughly 400
+   lines.
+5. **Documents**: the passages in the normative list, with `design/harness.md` §"The flags, and
+   what each refuses" gaining a bullet for the three flags, the agent each sets, and
+   `--orchestrator-model` refused under a target that ships no orchestrator, as `--agent` is under
+   Claude Code, and with `design/code-knowledge.md` §5.4's paragraph on the prose that enumerates
+   an install naming `models.py` as where the help and the refusal now live. `README.md`'s table of
+   options gains a row per flag and says that model ids are the harness's own, so that installing
+   for both harnesses is two runs, each with its harness's ids. `design/kiro-gaps.md`'s row for the
+   run that leaves the session free gains `--orchestrator-model` in what Claude Code has and in
+   what closing it takes, and its Haiku 5.5 row says that `--documenter-model` reaches one before
+   the default moves.
 
 ### Invariants and properties to cover
 
-- Each flag reaches its own agent's file and no other, on each harness where that agent exists.
-- Precedence: an agent's own flag over `--model` over the agent's default.
-- Both refusals, each with its message, before anything is written.
-- Each distinct model is checked exactly once, counted through a stubbed check.
-- The install snapshots do not move, since no default changes.
+Each with the mutation, applied in memory by a pytest plugin, that its test must be seen red
+against.
+
+- **Each flag reaches its own agent's file and no other**, on each harness where that agent exists
+  — all three under Claude Code, the consolidator's and the documenter's under kiro (one flag's
+  value written into another agent's file; one flag ignored).
+- **Precedence**: an agent's own flag over `--model` over the agent's default (`--model` read
+  ahead of an agent's own flag); **and an empty value is refused**, not replaced by a default (`or`
+  for `is None`).
+- **Both refusals, each with its message, before anything is written**: each of the four flags
+  under `guards` (the refusal reading `--model` alone), and `--orchestrator-model` under kiro (the
+  refusal dropped; either refusal moved below `write_shipped_files`).
+- **`ships_orchestrator` agrees with what the target writes for the memory store** — true exactly
+  where `shipped_files`, for a plan whose `components` include `memory`, includes the
+  orchestrator's definition (Claude Code's answering false; kiro's answering true).
+- **Each distinct model is checked exactly once**, counted through a stubbed check, the
+  orchestrator's included under Claude Code and not under kiro (the deduplication dropped, seen
+  with `--model` given so the three coincide; the orchestrator's left out under Claude Code, seen
+  at the defaults, where the three differ; the orchestrator's checked under kiro, seen at the
+  defaults, where the two coincide).
+- **The install snapshots do not move**, since no default changes — the fixtures under
+  `tests/fixtures/installed/` stay as they are, though the renderer `tests/install_snapshots.py`
+  follows the rename.
 
 ### Done when
 
-1. Items 1–4 are in, and every new test was **seen red** against the mutation it names.
-2. `./check.sh` is green.
+1. Items 1–5 are in, and every new test was **seen red** against the mutation it names.
+2. Every passage in `design/`, `README.md`, `zikaron/` and `tests/` that says what sets an agent's
+   model, or which flags `--components guards` refuses, names the agent's own flag beside
+   `--model` — judged by meaning, not by match — other than the briefs in `design/build-plan.md`,
+   which record what each milestone shipped as it stood, and `design/code-knowledge.md` §7, which
+   records the flag the evaluation's install was run with. And `design/harness.md` §"The flags,
+   and what each refuses" states the refusal of `--orchestrator-model` where no orchestrator ships.
+3. `./check.sh` is green, and `.venv/bin/python experiments/new_line_coverage.py` names no line
+   added under `zikaron/` that no test executes.
 
 ### Scope fence
 
 **Not** a change to any default model. **Not** a flag for effort. **Not** an orchestrator under
-kiro. **Not** the evaluation's third reader, which stays in `FINDINGS.md` §"Owed work".
+kiro. **Not** a translation between the two harnesses' model ids, nor an install-time check of a
+Claude Code id beyond its shape, since Claude Code refuses an unknown id at spawn
+(`design/harness.md` §"The consolidator's model"). **Not** the evaluation's third reader, which
+stays in `FINDINGS.md` §"Owed work".
 
 ## M40-4 — A grep through a documented module, by an agent that forgot its documents
 

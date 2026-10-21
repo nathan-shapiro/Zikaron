@@ -335,10 +335,12 @@ be talked out of it, and putting it on a tool signature would reverse D27 to obt
 already holds.
 
 **The documenter's model is a field of its own**, `documenter_model`, with its own row in the table
-above, on the same terms: an alias under Claude Code, a pinned id under kiro, and set by `--model`
-with every other agent when that flag is given (`design/code-knowledge.md` §5.1). **Claude Code's
-code orchestrator's is no `HarnessSpec` field**, since no other harness ships one: its default, the
-`opus` alias, sits beside its effort in its definition (§5.4 there), and `--model` sets it too.
+above, on the same terms: an alias under Claude Code, a pinned id under kiro, and set by
+`--documenter-model`, or by `--model` with every other agent (`design/code-knowledge.md` §5.1).
+**Claude Code's code orchestrator's is no `HarnessSpec` field**, since no other harness ships one:
+its default, the `opus` alias, sits beside its effort in its definition (§5.4 there), and
+`--orchestrator-model` sets it, or `--model`. The consolidator's is set by `--consolidator-model`,
+or by `--model` (§"The flags, and what each refuses").
 
 ## Three approval gates, and the one that reads our own config back at the user
 
@@ -660,8 +662,18 @@ to start — is derived from the stated value, not from either default.
 - **`--components` is Claude Code's for the guards.** `memory` is the default and writes what an
   install wrote before the flag existed. `guards` and `both` are **refused** under kiro, before
   anything is written, and the refusal is read from the seam — `HarnessSpec.guards` is `None`
-  there — never from the harness's name. `--model` under `guards` is refused too, since that
-  selection ships no agent; `--no-trust-tools` asks nothing of the guards and is a no-op.
+  there — never from the harness's name. Every model flag under `guards` is refused too, since
+  that selection ships no agent; `--no-trust-tools` asks nothing of the guards and is a no-op.
+- **`--model` sets every agent, and an agent's own flag sets that agent alone, over `--model`** —
+  `--consolidator-model`, `--documenter-model` and `--orchestrator-model`; with neither, each agent
+  takes its own default. **`--orchestrator-model` is refused under a target that ships no
+  orchestrator**, kiro's, where the session that invokes the documentation skill runs its loop
+  itself — refused rather than ignored, as `--agent` is under Claude Code, and read from the
+  target's `ships_orchestrator`, never from the harness's name. `--model` stays accepted there,
+  since it sets two agents. **A model id is the harness's own** — one `kiro-cli chat --list-models`
+  lists, or a Claude Code alias or full id — so a project set up for both harnesses installs twice,
+  each run with that harness's ids. Each distinct model an install writes is checked once against
+  its harness.
 - **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two
   merge targets are fixed project paths. Passed under Claude Code it is **refused**, rather than ignored:
   ignoring it would silently discard the one instruction the user gave about where their config lives.

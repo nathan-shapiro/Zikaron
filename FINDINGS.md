@@ -152,7 +152,7 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       `research/claude-code-job-dir-hook-probe.md`. Live in the three projects that run this
       tree, so LeibaTrader's memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` is now false;
       retiring it is the operator's.
-   2. **M40-2, committed over `bed5430`** — `foreground_command` gone from both build verbs and
+   2. **M40-2, committed as `7abf443`** — `foreground_command` gone from both build verbs and
       the CLI; each build the service spawns writes its output to `knowledge/<id>.log`, which
       `status` names as `build_log`; brief and build APPROVED
       (`reviews/m40-2-indexer-log-review.md`, `reviews/m40-2-indexer-log-build-review.md`). Live
@@ -160,32 +160,31 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       started before it answers without `build_log` until it restarts. The status tool's
       description is at 1,896 of the 1,900 characters `tests/test_mcp_tool_descriptions.py`
       allows, so a sentence added to it later must be paid for.
-   3. **M40-3** — a `--model` flag per agent;
+   3. **M40-3, built and APPROVED, uncommitted** — a model flag per agent, `--model` the default
+      for any not given (`reviews/m40-3-model-flag-review.md`,
+      `reviews/m40-3-model-flag-build-review.md`);
    4. **M40-4** — the reminder that a grepped module has a knowledge base.
 
    **Next: M40-3, worked as M40-1 and M40-2 were** (operator, 2026-10-20: review the brief, write
    the code and tests to the coding standards, pass the done criteria, then review the code —
    re-read loops mandatory before every round), each step done before the next:
-   1. **The brief alone**, `design/build-plan.md` §"M40-3 — One model for every agent, and a flag
-      for each": first ground it in the code and write into it what it leaves to the builder,
-      re-read loop to a clean pass; then memory-reviewer on M40-3 alone in
-      `reviews/m40-3-model-flag-review.md` to APPROVED, the standing operator lines of §"How the
-      next review should be briefed" in every brief. At the fifth round without approval, report
-      what is open and ask.
-   2. **A worktree only if the brief says one is needed.** M40-1 and M40-2 used one because the
-      three projects import the guard, the service and the indexer from this tree; M40-3 changes
-      the installer, which runs only when someone re-installs, so the brief should say so and
-      build here.
-   3. **The build**: code, tests and documents as the brief's items say; every new test seen red
+   1. **Done — the brief**, `design/build-plan.md` §"M40-3 — One model for every agent, and a flag
+      for each", carrying the builder's choices (a `ships_orchestrator` target property,
+      `Plan.consolidator_model`, `zikaron/install/models.py` owning the four model options, the
+      orchestrator's model checked wherever one ships, the README's per-harness ids — operator's
+      go, 2026-10-20), APPROVED (`reviews/m40-3-model-flag-review.md`).
+   2. **No worktree**: the brief says why — nothing a running session loads imports
+      `zikaron/install/`.
+   3. **Done — the build**: `zikaron/install/models.py`, `tests/test_install_models.py` and the
+      documents; every new test seen red against its mutation, `./check.sh` green and
+      `new_line_coverage.py` 0 uncovered. **The method, for M40-4**: every new test seen red
       against its mutation, applied in memory by a pytest plugin that patches one named mutation
       in on load (`PYTHONPATH=<its directory> pytest -p <plugin>`), never by editing a file —
-      M40-2's plugin and runner, `m40_2_mut/` in this session's scratchpad, are the template,
-      and a runner must not add `-q`, since `addopts` already has one and `-qq` drops the
-      summary line it reads. Then `./check.sh`, and `.venv/bin/python
-      experiments/new_line_coverage.py` reporting 0 uncovered.
-   4. **The code review**, in `reviews/m40-3-model-flag-build-review.md`, to APPROVED.
-   5. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is M40-2's commit,
-      then commit `M40-3: …` in the milestone style.
+      `m40_3_mut/` in this session's scratchpad is the template — and a runner must not add
+      `-q`, since `addopts` already has one and `-qq` drops the summary line it reads.
+   4. **Done — the code review**, APPROVED (`reviews/m40-3-model-flag-build-review.md`).
+   5. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is `7abf443`, then
+      commit `M40-3: …` in the milestone style.
 
    A commit is amended only while it is `HEAD`, its hash checked first. A feature built for
    Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The dependency
@@ -455,7 +454,8 @@ proposed.
 - **Settled — Haiku 5.5 documents, Opus 5.5 orchestrates** (operator, 2026-10-20: *"overall, I
   think it is a win - on the cost side mostly"*). Claude Code's defaults: `haiku` for the
   documenter (`HarnessSpec.documenter_model`), `opus` for the orchestrator (`ORCHESTRATOR_MODEL`,
-  at `effort: high`), `sonnet` for the consolidator; `--model` sets all three; kiro keeps
+  at `effort: high`), `sonnet` for the consolidator; `--model` sets all three, and an agent's
+  own flag that agent alone, over `--model` (M40-3); kiro keeps
   `claude-sonnet-5`, offering no Haiku 5.5. **Measured on LeibaTrader's 197 documents**
   (`research/m40-toy-run.md` §14): $17.73 against Sonnet's $52.86 — documenters $2.49, the
   orchestrator $15.24, now most of a run's cost, its context growth about 2,000 tokens a document

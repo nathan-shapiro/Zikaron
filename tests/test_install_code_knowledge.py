@@ -396,7 +396,7 @@ class TestAnInstall:
         )
         assert skill.read_text(encoding="utf-8") == _CLAUDE_SKILL
 
-    def test_without_model_each_agent_takes_its_own_default(self, tmp_path: Path) -> None:
+    def test_without_any_model_flag_each_agent_takes_its_own_default(self, tmp_path: Path) -> None:
         (tmp_path / ".claude").mkdir()
         assert main(["--project", str(tmp_path)]) == 0
         agents = tmp_path / ".claude" / "agents"
