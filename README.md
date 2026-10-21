@@ -362,7 +362,7 @@ and under **Claude Code**:
 | `.claude/agents/zikaron-documenter.md` | the documentation subagent, as frontmatter plus its prompt |
 | `.claude/agents/zikaron-code-orchestrator.md` | the subagent the code-documentation skill runs as, in the background |
 | `.claude/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
-| `.claude/settings.local.json` | three hooks — session start, per-message, and per-subagent — plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
+| `.claude/settings.local.json` | hooks for session start, each message, each subagent start and each search ([Code knowledge](#code-knowledge)), plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
 | `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
 
 With `--components guards` the install writes `.claude/settings.local.json` alone, and in it only
@@ -769,11 +769,17 @@ ten idle minutes on background work is stopped. Under kiro the agent you run nee
 `zikaron-documenter` to `toolsSettings.crew.trustedAgents`, you are asked before each documenter is
 spawned; the documenter's own config already allows its tools.
 
-**Using it.** Nothing tells your agent to search it unprompted; say so in your prompt, naming the
-module's knowledge base to keep to one module:
+**Using it.** Ask for it in your prompt, naming the module's knowledge base to keep to one module:
 
 > Answer the following question using the knowledge tool, and then verify it against the actual
 > code: …
+
+Under Claude Code, a search of a documented module — `grep`, `rg` or `git grep` in a shell, or the
+`Grep` and `Glob` tools — is followed by one line naming the knowledge bases that document it: on
+the first such search after each prompt you send, and then at most once every five minutes for
+each agent by default (`retrieval.knowledge_reminder_interval`). It reminds an agent that is already
+searching; it does not make one use the documents, so the instruction in your prompt stays the way
+to have it do that. Kiro has no reminder.
 
 **Read every result as a lead, not as a fact.** Each one carries `source.state`: `fresh` means the
 file has not changed since its document was written — not that the document is right, since a
@@ -829,6 +835,7 @@ idle_timeout = 1800        # seconds of inactivity before the service stops itse
 | `retrieval` | `fts_query_max_terms` | `64` | 1–512 | the largest full-text query built from one prompt |
 | `retrieval` | `knowledge_max_chunks_per_file` | `2` | 1–20 | **knowledge bases:** how many fragments one file may contribute to a result set |
 | `retrieval` | `knowledge_snippet_max_chars` | `1200` | 80–24000 | **knowledge bases:** how much text a single returned fragment carries, counted in code points |
+| `retrieval` | `knowledge_reminder_interval` | `300` | 0–86400 | **code knowledge, Claude Code:** seconds an agent goes unreminded after a search of a documented module reminds it; `0` reminds on every such search |
 | `dedup` | `dedup_threshold` | `0.8` | 0.0–1.0 | how similar a new record must be to be offered back as a near-duplicate |
 | `dedup` | `dedup_max` | `3` | 0–20 | how many near-duplicates are handed back at once |
 | `consolidation` | `mutual_k` | `5` | 2–50 | how many neighbours each entry considers when grouping |
@@ -958,8 +965,10 @@ file, byte and skip-reason counts.
 ## When something is wrong
 
 Zikaron is built to fail quietly rather than get in your way. A hook that cannot reach the service
-prints a short note asking the agent to tell you, writes one line to `hook.log`, and exits cleanly. It
-never blocks your message, and it never reads the store directly.
+when you send a message prints a short note asking the agent to tell you, writes one line to
+`hook.log`, and exits cleanly. It never blocks your message, and it never reads the store directly.
+The reminder after a search says nothing when no service is running and starts none; one that
+reaches a service and fails writes a `hook.log` line marked `remind` after its kind.
 
 The service stops itself after a stretch of idleness, and the next message starts it again. That
 message waits a few seconds longer — the hook allows a start more time than a running service — and

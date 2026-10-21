@@ -69,7 +69,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x`, ~~with an artefact-shape rule~~ — **amended 2026-10-11**: a minor bump means a schema bump, nothing else |
 | D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back — **amended 2026-10-13 (M39)**: a corpus database is brought forward by whichever process opens it with `memory.db` at version 4 or later, and a corpus schema move moves `memory.db`'s too; a corpus schema version is the `memory.db` version that introduced its shape (corpora go 1 → 4), so a corpus is never ahead of its store |
 | D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform |
-| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code the skill forks to a background orchestrator subagent; one corpus per module; the documenter and orchestrator hold Zikaron's tools |
+| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code the skill forks to a background orchestrator subagent; one corpus per module; the documenter and orchestrator hold Zikaron's tools — **amended 2026-10-20 (M40-4)**: under Claude Code a search of a documented module is followed by one line naming its knowledge bases, at most once per agent each `retrieval.knowledge_reminder_interval` |
 
 ## Current state — resume here
 
@@ -160,31 +160,56 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       started before it answers without `build_log` until it restarts. The status tool's
       description is at 1,896 of the 1,900 characters `tests/test_mcp_tool_descriptions.py`
       allows, so a sentence added to it later must be paid for.
-   3. **M40-3, built and APPROVED, uncommitted** — a model flag per agent, `--model` the default
-      for any not given (`reviews/m40-3-model-flag-review.md`,
-      `reviews/m40-3-model-flag-build-review.md`);
+   3. **M40-3, committed as `ac1a285`** — `--consolidator-model`, `--documenter-model` and
+      `--orchestrator-model` over `--model`, in `zikaron/install/models.py`; every model flag
+      refused under `guards`, `--orchestrator-model` under kiro (`HarnessTarget.ships_orchestrator`);
+      brief and build APPROVED (`reviews/m40-3-model-flag-review.md`,
+      `reviews/m40-3-model-flag-build-review.md`). Live at a project's next re-install only.
    4. **M40-4** — the reminder that a grepped module has a knowledge base.
 
-   **Next: M40-3, worked as M40-1 and M40-2 were** (operator, 2026-10-20: review the brief, write
+   **Next: M40-4, worked as M40-1 to M40-3 were** (operator, 2026-10-20: review the brief, write
    the code and tests to the coding standards, pass the done criteria, then review the code —
    re-read loops mandatory before every round), each step done before the next:
-   1. **Done — the brief**, `design/build-plan.md` §"M40-3 — One model for every agent, and a flag
-      for each", carrying the builder's choices (a `ships_orchestrator` target property,
-      `Plan.consolidator_model`, `zikaron/install/models.py` owning the four model options, the
-      orchestrator's model checked wherever one ships, the README's per-harness ids — operator's
-      go, 2026-10-20), APPROVED (`reviews/m40-3-model-flag-review.md`).
-   2. **No worktree**: the brief says why — nothing a running session loads imports
-      `zikaron/install/`.
-   3. **Done — the build**: `zikaron/install/models.py`, `tests/test_install_models.py` and the
-      documents; every new test seen red against its mutation, `./check.sh` green and
-      `new_line_coverage.py` 0 uncovered. **The method, for M40-4**: every new test seen red
-      against its mutation, applied in memory by a pytest plugin that patches one named mutation
-      in on load (`PYTHONPATH=<its directory> pytest -p <plugin>`), never by editing a file —
-      `m40_3_mut/` in this session's scratchpad is the template — and a runner must not add
-      `-q`, since `addopts` already has one and `-qq` drops the summary line it reads.
-   4. **Done — the code review**, APPROVED (`reviews/m40-3-model-flag-build-review.md`).
-   5. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is `7abf443`, then
-      commit `M40-3: …` in the milestone style.
+   1. **Done — the brief**, `design/build-plan.md` §"M40-4 — A grep through a documented module,
+      by an agent that forgot its documents": **grounded in the code and rewritten** (2026-10-20) —
+      `PostToolUse` becomes a trigger the memory and guard selections share, so the settings
+      merge owns a group by the program it runs; the hook connects without ever spawning; `grep`
+      and `rg` operands are read by an extended `read_grep`; the method is `knowledge_remind`.
+      **`git grep` is supported too** (operator, 2026-10-20) — measured: no pathspec searches the
+      `cwd` down, `git -C <dir>` moves it, `:/` is the repository's top, a miss exits 1.
+      **APPROVED** (`reviews/m40-4-grep-reminder-review.md`, 2026-10-21), round 7's nitpicks
+      applied. Ownership on a trigger is membership by program path. Also settled in review: the
+      throttle keys on the session label plus a subagent's `agent_id`; a code-knowledge
+      `knowledge_search` counts as a reminder; the hook sends `deadline_at_ms`; the key is
+      `retrieval.knowledge_reminder_interval`; `paths` is bounded at 1–50.
+   2. **Done — the probes** (2026-10-21, `research/m40-4-hook-probes.md`, folded into brief item
+      1): `agent_type` and `agent_id` are present inside a subagent and absent in the main
+      session; the `if` filter holds, a string per handler (a list is silently never matched), so
+      one `PostToolUse` group serves both arms, its `Bash` handlers `Bash(*grep *)` and
+      `Bash(rg *)`; a command the filter cannot read, such as any heredoc, starts both together;
+      a search's miss is a successful call, so `PostToolUseFailure` is not registered.
+   3. **Done — built in a worktree and cherry-picked into this tree** (2026-10-21): the build was
+      committed on the worktree's branch `m40-4-grep-reminder` as `ee57e66` and brought in with
+      `git cherry-pick --no-commit`, so it is **staged and uncommitted here, over `ac1a285`**, and
+      live in the three projects that run this tree at each one's next service and hook start
+      (the reminder itself only after a re-install writes its `PostToolUse` entry). The worktree
+      is removed; the branch is kept until M40-4 lands, then deleted.
+      **Decided in the build**: a group running only the other selection's script is copied
+      verbatim whatever its path, as a trigger an install does not write is; a selection's groups
+      go back where its old ones stood.
+   4. **Done — the build's evidence**: every new test seen red under a named in-memory mutation
+      (`m40_4_mut/` in this session's scratchpad); the live session of done-when 2 passed all
+      three legs (`research/m40-4-live-session.md`, with the ~100 ms a hook call costs, nearly
+      all of it the interpreter's start, and LeibaTrader's pre-reminder baseline of 4 follow-on
+      knowledge searches in 1,358); `experiments/m40_4_reminder_followon.py` counts the follow-on
+      quantity. The line's wording is memory-reviewer's (round 1).
+   5. **Done — the code review APPROVED** at round 8 (`reviews/m40-4-grep-reminder-build-review.md`),
+      and `./check.sh` green in this tree with the build staged (5636 passed; 0 of 503 new
+      statements uncovered). **Next: the operator's go for step 6**; the commit message is drafted
+      in this session's scratchpad as `m40-4-msg.txt`.
+   6. **Landing**, on the operator's go: check `git rev-parse --short HEAD` is `ac1a285`, then
+      commit `M40-4: …` in the milestone style. The pull request after that, when the operator
+      asks; its CI is the version matrix.
 
    A commit is amended only while it is `HEAD`, its hash checked first. A feature built for
    Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The dependency
@@ -193,12 +218,14 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    so they are not in this PR. **The
    evaluation's harness now refuses**: `state.json` records `06deae8` as its first start, and
    the M40 commit moved the planner and the installer, which §7's package check covers
-   though no run executes them. **Before the repeats, proposed:** narrow that check to what a run
-   executes — leave `zikaron/code_knowledge`, `zikaron/core/code_knowledge` and `zikaron/install`
-   out of both the porcelain and the diff, one sentence in §7 — which keeps the slice, run under
-   an unchanged server, service, hook and index; or re-`prepare` at the new commit and re-run the
-   slice (about $49). The M40 commit carries the skill's report wording from the Warp slice, with
-   spec §5.2 step 4 to match and snapshots re-rendered; **the evaluation rewritten as issue triage
+   though no run executes them. **M40-4 also moves `zikaron/hook` and `zikaron/service`, which a
+   run does execute**, so narrowing the check to what a run executes can no longer keep the slice:
+   exempting those two would rest on an argument the check cannot verify — the copies carry no
+   `PostToolUse` entry, the push path's change is a relocation, and `memory_surface`'s receipt
+   touches only an in-memory table. **Proposed before the repeats:** re-`prepare` at the PR's merge
+   commit and re-run the slice (about $49), so every cell runs one build. The M40 commit carries
+   the skill's report wording from the Warp slice, with spec §5.2 step 4 to match and snapshots
+   re-rendered; **the evaluation rewritten as issue triage
    on Warp** — spec
    §7, brief §M40 items 6–7, done-when and fence, APPROVED in
    `reviews/m40-code-knowledge-brief-review.md` — `research/m40-evaluation.md`,
@@ -510,6 +537,26 @@ proposed.
   linked document, emitting one deterministic line to verify against the code before editing,
   installed with the guards.
 
+- **A native hook client, to cut the ~100 ms each hook call costs** (operator, 2026-10-21: *"In the
+  future, we might consider rewriting hook (only hook, not service) in rust to improve
+  startup."*). Measured (`research/m40-4-live-session.md` §3): the interpreter is 36 ms and the
+  imports ~65 ms of every call, the exchange with the service ~3 ms, and importing per event saves
+  ~2 ms, so nothing short of a different runtime moves it; since M40-4 it is paid on every matched
+  search, the documenter's included, as well as once per prompt. **The shape** (operator,
+  2026-10-21: *"All parsing and business logic can be in service. Hook will only do rpc over Unix
+  socket so only thing which will have to be duplicated is domain model and serde"*): the hook
+  forwards the payload, with the few environment values only it can see — the session label and
+  the harness markers detection reads — in one request, and prints the `{channel, text}` the
+  service answers; trigger mapping, the shell parse, the reminder's decision and the start texts
+  move into the service, so `HarnessSpec` and the guard's parser stay Python. **Three things
+  cannot move, because there is no service to move them to**: a push's start-if-absent (spawn,
+  lock, poll), which a cold start needs — the native hook can hand that one path to today's Python
+  hook, ~20% of pushes on LeibaTrader; `hook.log`'s lines for a service it could not reach; and
+  `zikaron-guard`, whose guards-only install has no store and no service at all, so the guards
+  either stay a Python process or get their own port. Plus a binary per supported platform (D35)
+  in the distribution D36 settles. **Proposed:** measure first what share of a real session's wall
+  time hook processes take, from the transcripts' `hook_success` entries, and decide on that.
+
 **An owed item goes here the moment it is identified**, not into the section that happens to have
 measured it.
 
@@ -612,7 +659,8 @@ normative and APPROVED; M19–M25 landed. What is still open:
 **Ids are stable and retired rather than reused.** 4, 8, 10, 11, 13, 15, 18, 20 and 22 closed and their numbers stay spent, so an `open question N` citation written anywhere in the corpus still means what it meant; the closed entries are in `FINDINGS-archive.md`. Ids sit outside the list marker because a Markdown renderer renumbers `1. 2. 3.` sequentially and would undo this.
 - **Q1** — **The push hook fires at the wrong moment for half the use case.** `userPromptSubmit` fires once
   per user message; the moment a memory is most needed arrives twenty tool calls later, when no
-  injectable hook fires. Push covers task-framing recall only.
+  hook the push rides fires — under Claude Code `PostToolUse` could carry one (D38, M40-4),
+  untried. Push covers task-framing recall only.
 - **Q2** — **Fusion erases the signal an embedder upgrade would buy, and config cannot recover it.**
   Dense-only, `bge-large` beats `bge-small` by MRR@10 +0.0705; the hybrid erases it. All 960 fused top-5
   slots are held by documents both arms returned, while the arms intersect in ~28% of their union.

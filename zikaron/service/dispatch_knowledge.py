@@ -1,4 +1,5 @@
-"""Method dispatch for the knowledge index: search, and the management verbs.
+"""Method dispatch for the knowledge index: search, the management verbs, and the search
+reminder's `knowledge_remind`.
 
 In its own module rather than in `dispatch.py` because it is a different subsystem rather than
 more primary-agent verbs: it reads the knowledge-base registry and each corpus's own database, and
@@ -36,6 +37,8 @@ for that reason. The wrapper below is where the split is made.
 a judgement about what else is running on a machine, which `lifecycle.unlock` states is the
 operator's; an agent meeting a held lock is meant to wait or report it, not to decide the holder is
 dead. So the method exists for `zikaron knowledge` and D32's tool count is unchanged.
+`knowledge_remind` is served here on the same terms, and `dispatch_reminder.py` says why it has no
+tool.
 
 **A build is spawned, never run here.** The service is the process a user is waiting on; a build is
 minutes of saturated CPU over a whole directory tree. `add` and `refresh` start a detached indexer
@@ -43,6 +46,7 @@ through the same function the command-line surface uses, so the two cannot come 
 what a build is invoked as.
 """
 
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -50,6 +54,7 @@ from pathlib import Path
 
 import aiosqlite
 
+from zikaron.core.code_knowledge.reminder import module_of
 from zikaron.core.errors import ErrorCode, ZikaronError
 from zikaron.core.knowledge import (
     builds,
@@ -76,6 +81,8 @@ from zikaron.core.store.transactions import is_contention
 from zikaron.knowledge.indexer import detach
 from zikaron.service import paths
 from zikaron.service.context import ServiceContext
+from zikaron.service.dispatch import caller_deadline
+from zikaron.service.dispatch_reminder import knowledge_remind
 from zikaron.service.envelope import ResolvedEnvelope
 from zikaron.service.methods import Access, Method
 from zikaron.service.params import (
@@ -256,11 +263,17 @@ def _refusals_as_wire_errors(
 async def knowledge_search(
     db: aiosqlite.Connection,
     ctx: ServiceContext,
-    envelope: ResolvedEnvelope,  # noqa: ARG001 — records no *semantic* event; the seam logs it.
+    envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> KnowledgeSearchResult:
     """`knowledge_search(query, knowledge_bases?, limit_per_kb?)
-    -> {groups, groups_dropped, known_knowledge_bases}`."""
+    -> {groups, groups_dropped, known_knowledge_bases}`.
+
+    A search whose scope reaches code knowledge counts as its session's reminder
+    (`design/code-knowledge.md` §6): the agent has just used the documents, so the search it runs
+    next to check them against the code is not told they exist. The MCP client's envelope names no
+    subagent, so a subagent's search counts for its session.
+    """
     request = groups.SearchRequest(
         text=require_str(params, "query"),
         limit_per_kb=require_int(params, "limit_per_kb", default=DEFAULT_LIMIT_PER_KB),
@@ -274,7 +287,14 @@ async def knowledge_search(
         encoder=ctx.encoder,
         migrate=_migrates(ctx),
     )
+    if _reaches_code_knowledge(request.names):
+        ctx.reminders.note_searched(envelope.session_id, now=time.monotonic())
     return KnowledgeSearchResult(response=response)
+
+
+def _reaches_code_knowledge(names: Sequence[str] | None) -> bool:
+    """Whether a search naming `names`, or every corpus for `None`, may reach a module's corpus."""
+    return names is None or any(module_of(name.lower()) is not None for name in names)
 
 
 async def knowledge_list(
@@ -664,4 +684,11 @@ KNOWLEDGE_METHODS: dict[str, Method] = {
         # Writes only the corpus's own database.
         ("knowledge_unlock", knowledge_unlock, Access.READ),
     )
+} | {
+    "knowledge_remind": Method(
+        _naming_the_store("knowledge_remind", knowledge_remind),
+        Access.READ,
+        deadline=caller_deadline,
+        store_failure=_store_unavailable,
+    ),
 }

@@ -62,12 +62,17 @@ LONG_SKIPPED: Final = frozenset(
     }
 )
 _PATTERN, _PATTERN_FILE, _INVERT, _IGNORE_CASE = "e", "f", "v", "i"
+_RECURSIVE: Final = frozenset("rR")
+#: What ends the options: every token after it is an operand.
+_END_OF_OPTIONS: Final = "--"
 #: The long options read, each with the short option it spells.
 _LONG: Final = {
     "--regexp": _PATTERN,
     "--file": _PATTERN_FILE,
     "--invert-match": _INVERT,
     "--ignore-case": _IGNORE_CASE,
+    "--recursive": "r",
+    "--dereference-recursive": "R",
 }
 #: What a basic expression escapes to make special, and what an extended one has special unescaped.
 _BASIC_SPECIALS: Final = frozenset("|(){}+?")
@@ -75,16 +80,37 @@ _BASIC_SPECIALS: Final = frozenset("|(){}+?")
 
 @dataclass(slots=True)
 class Grep:
-    """One `grep`'s reading: each pattern's text, `None` for one that is not literal."""
+    """One `grep`'s reading: each pattern's text, `None` for one that is not literal, and every
+    operand as written."""
 
     patterns: list[str | None] = field(default_factory=list)
     letters: set[str] = field(default_factory=set)
     dialect: Dialect = Dialect.BASIC
+    operands: list[str] = field(default_factory=list)
 
     @property
     def drops_matches(self) -> bool:
         """Inverted, with every pattern read from the command."""
         return _INVERT in self.letters and _PATTERN_FILE not in self.letters
+
+    @property
+    def paths(self) -> list[str]:
+        """The operands naming what to search: all of them when an `-e` or `-f` named the
+        patterns, else all but the first, which is the pattern."""
+        if self.letters & {_PATTERN, _PATTERN_FILE}:
+            return self.operands
+        return self.operands[1:]
+
+    @property
+    def recursive(self) -> bool:
+        """Whether it descends into directories, which with no path means the working one."""
+        return bool(self.letters & _RECURSIVE)
+
+    @property
+    def names_a_pattern(self) -> bool:
+        """Whether anything was given to search for: an operand, or an `-e` or `-f`. Without one
+        the command prints its usage or its version and searches nothing."""
+        return bool(self.operands) or bool(self.letters & {_PATTERN, _PATTERN_FILE})
 
 
 def drops_shell_line(rest: Sequence[SimpleCommand], command: str) -> bool:
@@ -109,12 +135,22 @@ def _any_searches(grep: Grep, command: str) -> bool:
     return False
 
 
-def read_grep(given: Sequence[Token]) -> Grep:
+def read_grep(
+    given: Sequence[Token],
+    *,
+    skipped: frozenset[str] = SKIPPED,
+    long_skipped: frozenset[str] = LONG_SKIPPED,
+) -> Grep:
     """A `grep`'s options and patterns: its first operand, unless an `-e` or `-f` anywhere names
-    them, which makes every operand a file."""
+    them, which makes every operand a file. `--` ends the options.
+
+    `skipped` and `long_skipped` are the options that take an argument, `grep`'s by default; a
+    program that reads its patterns as `grep` does but takes other options passes its own.
+    """
     grep = Grep()
     pending: str | None = None
-    operands: list[str | None] = []
+    literals: list[str | None] = []
+    options_ended = False
     for token in given:
         if not token.is_word:
             break
@@ -123,18 +159,21 @@ def read_grep(given: Sequence[Token]) -> Grep:
             if pending == _PATTERN:
                 grep.patterns.append(literal_text(token))
             pending = None
-        elif text.startswith("--"):
-            pending = _read_long(text, token, grep)
-        elif text.startswith("-") and len(text) > 1:
-            pending = _read_cluster(text[1:], token, grep)
+        elif not options_ended and text == _END_OF_OPTIONS:
+            options_ended = True
+        elif not options_ended and text.startswith("--"):
+            pending = _read_long(text, token, grep, long_skipped)
+        elif not options_ended and text.startswith("-") and len(text) > 1:
+            pending = _read_cluster(text[1:], token, grep, skipped)
         else:
-            operands.append(literal_text(token))
-    if operands and not grep.letters & {_PATTERN, _PATTERN_FILE}:
-        grep.patterns.append(operands[0])
+            literals.append(literal_text(token))
+            grep.operands.append(text)
+    if literals and not grep.letters & {_PATTERN, _PATTERN_FILE}:
+        grep.patterns.append(literals[0])
     return grep
 
 
-def _read_long(text: str, token: Token, grep: Grep) -> str | None:
+def _read_long(text: str, token: Token, grep: Grep, long_skipped: frozenset[str]) -> str | None:
     """Read one long option; what the next token is for, if anything."""
     name, equals, _ = text.partition("=")
     letter = _LONG.get(name)
@@ -146,12 +185,12 @@ def _read_long(text: str, token: Token, grep: Grep) -> str | None:
         return None
     if equals:
         return None
-    if letter in (_PATTERN, _PATTERN_FILE) or name in LONG_SKIPPED:
+    if letter in (_PATTERN, _PATTERN_FILE) or name in long_skipped:
         return letter or name
     return None
 
 
-def _read_cluster(letters: str, token: Token, grep: Grep) -> str | None:
+def _read_cluster(letters: str, token: Token, grep: Grep, skipped: frozenset[str]) -> str | None:
     """Read one `-xyz` cluster; what the next token is for, if anything."""
     for index, letter in enumerate(letters):
         attached = letters[index + 1 :]
@@ -162,7 +201,7 @@ def _read_cluster(letters: str, token: Token, grep: Grep) -> str | None:
             literal = literal_text(token)
             grep.patterns.append(None if literal is None else attached)
             return None
-        if letter == _PATTERN_FILE or letter in SKIPPED:
+        if letter == _PATTERN_FILE or letter in skipped:
             grep.letters.add(letter)
             return None if attached else letter
         grep.letters.add(letter)

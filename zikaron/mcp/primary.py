@@ -16,15 +16,14 @@ What follows applies to all of them. Tool descriptions carry the mechanics (the 
 precondition, the dedup payload, retire semantics) and the authoring rules for `gist` and `content`,
 since they sit in context at the point of decision — a description is in front of the model at the
 instant it fills the argument the rule governs — while `agentSpawn`'s prose carries the write
-trigger, the scope test and the recall occasions. Each tool is a thin translation:
-build the RPC params from typed arguments, call the wire method whose name `architecture.md`
-§"Service RPC surface" states — a wire method is the tool's own name without the `zikaron_` prefix,
-so the subsystem segment survives into it, and `memory_surface`, `memory_plan_groups` and
-`knowledge_unlock` are the subsystem methods no tool carries — the hook calling the first, the
-consolidator's own client the second and `zikaron knowledge` the third; `health`, which has neither
-tool nor subsystem, is answered before any dispatch table is reached — and hand back whatever the
-service returned, a conflict shape included, since a conflict is an ordinary successful response,
-not a rejection (`errors.py`'s own docstring).
+trigger, the scope test and the recall occasions. Each tool is a thin translation: build the RPC
+params from typed arguments, call the wire method whose name `architecture.md` §"Service RPC
+surface" states — a wire method is the tool's own name without the `zikaron_` prefix, so the
+subsystem segment survives into it, and a subsystem method no tool carries is one an agent must not
+call itself, called instead by the hook, the consolidator's own client or `zikaron knowledge`;
+`health`, which has neither tool nor subsystem, is answered before any dispatch table is reached —
+and hand back whatever the service returned, a conflict shape included, since a conflict is an
+ordinary successful response, not a rejection (`errors.py`'s own docstring).
 
 Every tool constructs its own `ClientEnvelope` fresh via `connection.envelope(kind="mcp")`, which
 carries whichever session label `connection` has adopted so far — see `connection.py`'s own

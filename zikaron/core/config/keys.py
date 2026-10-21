@@ -305,6 +305,16 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
         1_200,
     ),
     ConfigKey(
+        ConfigSection.RETRIEVAL,
+        "knowledge_reminder_interval",
+        # How long after reminding an agent of a documented module its next such search goes
+        # unreminded (`design/code-knowledge.md` §6); 0 reminds on every one. A day is far past any
+        # interval that still reminds within a session, so it bounds a typo rather than a use.
+        IntBounds(0, 86_400),
+        300,
+        unit=ConfigUnit.SECONDS,
+    ),
+    ConfigKey(
         ConfigSection.DEDUP,
         "dedup_threshold",
         FloatBounds(0.0, 1.0, minimum_inclusive=True, maximum_inclusive=True),

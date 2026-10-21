@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from zikaron.guard.limits import TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, Guards
+from zikaron.harness.spec import CLAUDE_CODE, Guards, SearchReminder
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install import harness
@@ -32,7 +32,14 @@ def _guards() -> Guards:
     return guards
 
 
+def _reminder() -> SearchReminder:
+    reminder = CLAUDE_CODE.search_reminder
+    assert reminder is not None
+    return reminder
+
+
 GUARDS = _guards()
+REMINDER = _reminder()
 START_TRIGGERS = ("SessionStart", "SubagentStart")
 USER_PRE_TOOL_USE = {"matcher": "Bash", "hooks": [{"type": "command", "command": "/u/lint.sh"}]}
 USER_POST_TOOL_USE = {"hooks": [{"type": "command", "command": "/u/format.sh"}]}
@@ -81,6 +88,11 @@ def _commands_of(groups: list[Any]) -> list[str]:
     return [entry["command"] for group in groups for entry in group["hooks"]]
 
 
+def _scripts_of(groups: list[Any]) -> list[str]:
+    """Each group's one Zikaron script, by name, in the order the groups stand."""
+    return [Path(shlex.split(group["hooks"][0]["command"])[0]).name for group in groups]
+
+
 def _tree(project: Path) -> dict[str, bytes]:
     return {
         str(path.relative_to(project)): path.read_bytes()
@@ -104,13 +116,17 @@ def test_the_result_is_the_union_of_what_was_there_and_what_is_installed(
     hooks = _hooks(project)
     expected_triggers = {
         *START_TRIGGERS,
-        *(["UserPromptSubmit"] if installed.memory else []),
+        *(["UserPromptSubmit", REMINDER.trigger] if installed.memory else []),
         *([GUARDS.command.trigger, GUARDS.reread.trigger] if installed.guards else []),
     }
     assert set(hooks) == expected_triggers
     start = " ".join((shlex.quote(str(commands.hook)), *installed.arguments))
     for trigger in START_TRIGGERS:
         assert _commands_of(hooks[trigger]) == [start]
+    shared = sorted(_scripts_of(hooks.get(REMINDER.trigger, [])))
+    assert shared == sorted(
+        [*(["zikaron-hook"] if installed.memory else []), *(["zikaron-guard"] * installed.guards)]
+    )
     settings = _settings(project)
     assert ("enabledMcpjsonServers" in settings) is installed.memory
     assert ("permissions" in settings) is installed.memory
@@ -139,10 +155,23 @@ def test_a_memory_start_entry_is_the_command_alone() -> None:
             }
         ]
     }
+    reminder = {
+        "matcher": "Grep|Glob|Bash",
+        "hooks": [
+            {
+                "type": "command",
+                "if": condition,
+                "command": "/venv/bin/zikaron-hook",
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+            for condition in ("Grep", "Glob", "Bash(*grep *)", "Bash(rg *)")
+        ],
+    }
     assert claude_hooks_value(commands) == {
         "SessionStart": [entry],
         "UserPromptSubmit": [entry],
         "SubagentStart": [entry],
+        "PostToolUse": [reminder],
     }
 
 
@@ -192,10 +221,10 @@ def test_memory_over_guards_leaves_the_guard_groups_byte_identical(project: Path
     assert _install(project) == 0
     after = _hooks(project)
     for hook in GUARDS:
-        assert json.dumps(after[hook.trigger]) == json.dumps(before[hook.trigger])
+        assert json.dumps(after[hook.trigger][0]) == json.dumps(before[hook.trigger][0])
 
 
-@pytest.mark.parametrize("selection", ["guards", "both"])
+@pytest.mark.parametrize("selection", ["memory", "guards", "both"])
 def test_a_users_own_tool_hooks_survive_with_or_without_our_matcher(
     project: Path, selection: str
 ) -> None:
@@ -207,9 +236,11 @@ def test_a_users_own_tool_hooks_survive_with_or_without_our_matcher(
     )
     assert _install(project, "--components", selection) == 0
     hooks = _hooks(project)
+    installed = Components(selection)
     assert hooks["PreToolUse"][0] == USER_PRE_TOOL_USE
     assert hooks["PostToolUse"][0] == USER_POST_TOOL_USE
-    assert len(hooks["PreToolUse"]) == len(hooks["PostToolUse"]) == 2
+    assert len(hooks["PreToolUse"]) == 1 + installed.guards
+    assert len(hooks["PostToolUse"]) == 1 + installed.memory + installed.guards
 
 
 def test_an_older_memory_install_is_upgraded_on_the_start_entries_only(
@@ -378,3 +409,142 @@ def test_missing_checks_only_the_scripts_the_selection_needs(
 ) -> None:
     absent = Commands(hook=tmp_path / "zikaron-hook", mcp=tmp_path / "zikaron-mcp")
     assert tuple(path.name for path in absent.missing(selection)) == needed
+
+
+def _write_settings(project: Path, document: dict[str, Any]) -> None:
+    (project / ".claude" / "settings.local.json").write_text(json.dumps(document))
+
+
+class TestTheSharedPostToolUseTrigger:
+    """Both selections write the reminder's trigger: the memory store its search reminder, the
+    guards their re-read nudge. A group belongs to the selection whose program it runs
+    (`design/guards.md` §5), and ownership is membership, not list equality."""
+
+    def _shared(self, project: Path) -> list[Any]:
+        groups = _hooks(project)[REMINDER.trigger]
+        assert isinstance(groups, list)
+        return groups
+
+    def _ours(self, project: Path) -> dict[str, Any]:
+        (group,) = [g for g in self._shared(project) if _scripts_of([g]) == ["zikaron-hook"]]
+        assert isinstance(group, dict)
+        return group
+
+    @pytest.mark.parametrize("force", [False, True], ids=["plain", "forced"])
+    @pytest.mark.parametrize(
+        ("first", "second"), [("guards", "memory"), ("memory", "guards"), ("both", "both")]
+    )
+    def test_each_selection_keeps_the_other_s_group(
+        self,
+        project: Path,
+        capsys: pytest.CaptureFixture[str],
+        first: str,
+        second: str,
+        force: bool,
+    ) -> None:
+        """The other selection's group is copied, not replaced, so no note reports it."""
+        assert _install(project, "--components", first) == 0
+        capsys.readouterr()
+        assert _install(project, "--components", second, *(["--force"] * force)) == 0
+        assert sorted(_scripts_of(self._shared(project))) == ["zikaron-guard", "zikaron-hook"]
+        out = capsys.readouterr().out
+        assert "--force replaced Zikaron's hook" not in out
+        assert "differed from what this install writes" not in out
+
+    @pytest.mark.parametrize(
+        ("first", "then"),
+        [("memory", "memory"), ("both", "both"), ("both", "memory"), ("both", "guards")],
+    )
+    def test_a_rerun_that_changes_nothing_writes_nothing(
+        self, project: Path, first: str, then: str
+    ) -> None:
+        assert _install(project, "--components", first) == 0
+        before = _tree(project)
+        assert _install(project, "--components", then) == 0
+        assert _tree(project) == before
+        assert not (project / ".claude" / "settings.local.json.bak").exists()
+
+    @pytest.mark.parametrize("change", ["fewer", "more"])
+    def test_our_group_with_another_set_of_handlers_is_rewritten_and_reported(
+        self, project: Path, capsys: pytest.CaptureFixture[str], change: str
+    ) -> None:
+        assert _install(project) == 0
+        settings = _settings(project)
+        (group,) = settings["hooks"][REMINDER.trigger]
+        handlers = group["hooks"]
+        group["hooks"] = handlers[:-1] if change == "fewer" else [*handlers, handlers[0]]
+        _write_settings(project, settings)
+        capsys.readouterr()
+        assert _install(project) == 0
+        assert self._ours(project) == claude_hooks_value(_commands())[REMINDER.trigger][0]
+        assert "differed from what this install writes" in capsys.readouterr().out
+
+    def test_our_group_beside_a_user_s_command_is_refused(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert _install(project) == 0
+        settings = _settings(project)
+        settings["hooks"][REMINDER.trigger][0]["hooks"].append(
+            {"type": "command", "command": "/u/mine.sh"}
+        )
+        _write_settings(project, settings)
+        capsys.readouterr()
+        assert _install(project) == 1
+        assert REMINDER.trigger in capsys.readouterr().err
+
+    def test_under_force_it_is_replaced_and_the_user_s_command_reported(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert _install(project) == 0
+        settings = _settings(project)
+        settings["hooks"][REMINDER.trigger][0]["hooks"].append(
+            {"type": "command", "command": "/u/mine.sh"}
+        )
+        _write_settings(project, settings)
+        capsys.readouterr()
+        assert _install(project, "--force") == 0
+        assert "/u/mine.sh" not in json.dumps(self._shared(project))
+        assert "dropping /u/mine.sh" in capsys.readouterr().out
+
+    def test_another_install_s_group_of_this_selection_is_refused(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        theirs = _another_installs(claude_hooks_value(_commands())[REMINDER.trigger][0])
+        _write_settings(project, {"hooks": {REMINDER.trigger: [theirs]}})
+        assert _install(project) == 1
+        assert "/other/venv/bin/zikaron-hook" in capsys.readouterr().err
+
+    def test_another_install_s_group_of_this_selection_is_replaced_under_force(
+        self, project: Path
+    ) -> None:
+        theirs = _another_installs(claude_hooks_value(_commands())[REMINDER.trigger][0])
+        _write_settings(project, {"hooks": {REMINDER.trigger: [theirs]}})
+        assert _install(project, "--force") == 0
+        assert "/other/venv" not in json.dumps(self._shared(project))
+
+    def test_another_install_s_group_of_the_other_selection_is_copied_verbatim(
+        self, project: Path
+    ) -> None:
+        """An install touches only its own selection, whoever installed the other."""
+        nudge = {
+            "matcher": GUARDS.reread.matcher,
+            "hooks": [{"type": "command", "command": "/other/venv/bin/zikaron-guard"}],
+        }
+        _write_settings(project, {"hooks": {GUARDS.reread.trigger: [nudge]}})
+        assert _install(project) == 0
+        assert self._shared(project)[0] == nudge
+        assert _scripts_of(self._shared(project)) == ["zikaron-guard", "zikaron-hook"]
+
+
+def _commands() -> Commands:
+    return Commands.from_this_interpreter()
+
+
+def _another_installs(group: dict[str, Any]) -> dict[str, Any]:
+    """`group` as another install at another path would have written it."""
+    return {
+        **group,
+        "hooks": [
+            {**handler, "command": "/other/venv/bin/zikaron-hook"} for handler in group["hooks"]
+        ],
+    }

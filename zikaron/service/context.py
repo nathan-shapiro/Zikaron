@@ -29,6 +29,7 @@ from zikaron.core.retrieval.retrieve import RetrievalSettings
 from zikaron.core.store.store import Store
 from zikaron.core.version import package_version
 from zikaron.service.access_log import AccessLog
+from zikaron.service.reminders import ReminderTimes
 from zikaron.service.spawned_builds import SpawnedBuilds
 
 
@@ -139,6 +140,9 @@ class ServiceContext:
     #: empty however the context is built, because it records what this process has done rather
     #: than any state of the store.
     spawned_builds: SpawnedBuilds = field(default_factory=SpawnedBuilds)
+    #: When each agent was last reminded of the code knowledge its searches reached. Empty however
+    #: the context is built, for the same reason.
+    reminders: ReminderTimes = field(default_factory=ReminderTimes)
     #: The package version this process runs, read when the context is built and never again: an
     #: in-place upgrade replaces the metadata the lookup reads while this process keeps running the
     #: old code, which is the case `health()` reports it for (`distribution.md` §3).

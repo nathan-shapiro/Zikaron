@@ -135,7 +135,7 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
                 prompt=prompt,
                 limit=_SURFACE_LIMIT,
                 envelope=client_envelope,
-                deadline=rpc.PushDeadline.after(remaining, now=now),
+                deadline=rpc.HookDeadline.after(remaining, now=now),
             )
         except rpc.NotSentError:
             # Connecting spent the budget, or the moment left of it ran out before the send.
@@ -146,8 +146,8 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
             # listener that accepts and never answers `health` — a blocked event loop — which
             # stays `transport`.
             return _degrade(hook_log_path, "unanswered", cold_start=cold_start)
-    except (connect.HookTransportError, rpc.SurfaceRejectionError, ZikaronError) as error:
-        kind, code = _classify_failure(error)
+    except (connect.HookTransportError, rpc.ServiceRejectionError, ZikaronError) as error:
+        kind, code = failure.classify(error)
         return _degrade(hook_log_path, kind, code=code, cold_start=cold_start)
     except Exception:
         # Anything else — a send/recv failure, a malformed response, a timeout before the send, or
@@ -160,44 +160,6 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
     finally:
         if sock is not None:
             sock.close()
-
-
-#: The wire codes a `surface` answer can carry, by the `hook.log` kind each is recorded as — the
-#: vocabulary `architecture.md` §"Errors" already uses, rather than a second one. An identity
-#: mismatch is not here: it is caught inside `connect.connect_once`, before any `surface`. Literals,
-#: because this package is stdlib-only; a guard test holds each to its `ErrorCode`'s wire name.
-_REJECTION_KINDS: dict[int, str] = {
-    -32020: "store_busy",
-    -32022: "reindexing",
-    -32023: "bad_config",
-    -32024: "schema_incompatible",
-    -32026: "deadline_passed",
-}
-
-
-def _classify_failure(error: Exception) -> tuple[str, int | None]:
-    """Every exception `run()` catches, as the `(kind, code)` pair `_degrade` needs.
-
-    A wire code the design's error table does not name (a programming error in the service, or a
-    future addition neither side has been told about yet) still gets something identifiable
-    rather than an uninformative default — `rejected_<code>`.
-    """
-    # Both subclasses are checked before the `HookTransportError` base they share, which is
-    # otherwise `transport`.
-    if isinstance(error, connect.ServiceStartingError):
-        return error.waited_on, None
-    if isinstance(error, connect.StoreIdentityError):
-        return "store_identity", -32030
-    if isinstance(error, rpc.SurfaceRejectionError):
-        return _REJECTION_KINDS.get(error.code, f"rejected_{error.code}"), error.code
-    if isinstance(error, ZikaronError):
-        # A refused runtime directory or socket path. It keeps its numeric code beside its name,
-        # since `architecture.md` names both wherever one exists.
-        return str(error.code.wire_name), int(error.code)
-    # No server became reachable: the one spawned for this push exited before answering, or the
-    # start it was queued behind has stalled. A timeout waiting for the `surface` answer is
-    # `unanswered`, decided in `run()` around that call.
-    return "transport", None
 
 
 def _degrade(

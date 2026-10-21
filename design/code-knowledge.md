@@ -432,7 +432,8 @@ format and these rules:
   dependency's source. The documents a README item has it open by path are the exception, each
   current by the time the planner lists the README (§3.6). Any other knowledge base is a lead, as
   a memory is. Haiku 5.5 documenters reached the corpus they were rewriting, by name or among
-  all, in 34 of the 41 searches they ran (`research/m40-toy-run.md` §13);
+  all, in 34 of the 41 searches they ran (`research/m40-toy-run.md` §13). For the same reason no
+  search reminder reaches it: §6's hook is silent for its agent type;
 - **a source that is not text gets no document** — it writes nothing and says so;
 - **its answer is one line** — the path it wrote, or what stopped the write — and never the
   document's text, since every answer lands in the orchestrator's context.
@@ -746,13 +747,58 @@ with its one file can let stand.
 
 ## 6. Navigation
 
-**For now the instruction goes in the user's own prompt** (operator, 2026-10-14) — *"Answer the
-following question using the knowledge tool, and then verify it against the actual code: …"* — and
-nothing is injected at session start or added to a tool's description. A question about one module
-names its corpus, `code-knowledge/<module>`; one naming none searches every knowledge base the
-project has, the modules among them (§5.3).
-`README.md` documents that pattern beside the skill. Unprompted recall is bursty, at 6–11% of
-turns (`FINDINGS.md` Q16), which is why the instruction is explicit rather than hoped for.
+**The instruction goes in the user's own prompt** (operator, 2026-10-14) — *"Answer the following
+question using the knowledge tool, and then verify it against the actual code: …"* — and nothing
+is injected at session start or added to a tool's description. A question about one module names
+its corpus, `code-knowledge/<module>`; one naming none searches every knowledge base the project
+has, the modules among them (§5.3). `README.md` documents that pattern beside the skill.
+Unprompted recall is bursty, at 6–11% of turns (`FINDINGS.md` Q16), which is why the instruction
+is explicit rather than hoped for.
+
+**And under Claude Code a search of a documented module is followed by one reminder line** (D39,
+amended; operator, 2026-10-20), since an agent forgets the knowledge base over a session as it
+forgot the edit rules, though its `CLAUDE.md` names both. The search's own `PostToolUse` hook names
+the corpora that document what it searched, at the moment the agent is looking for what the
+documents hold — a reminder, never a deny, after a search that has already run. Kiro has none: its
+post-tool hook has no documented path to the model (`design/kiro-gaps.md`).
+
+- **What counts as a search** is a `Grep` or `Glob`, its `path` or else the working directory, or
+  a `Bash` command running `grep`, `egrep`, `fgrep`, `rg` or `git grep`, its operands read as the
+  guard reads `grep`'s (`design/guards.md` §3.1): with no path, a recursive `grep`, an `rg` and a
+  `git grep` search the working directory, while any other `grep`, and an `rg` after a `|`, reads
+  its input, and one given no pattern — `rg --version`, `rg --help` — searches nothing; a `git
+  grep` pathspec is read up to its first component with a wildcard, since git's globs cross
+  directories. A search reaches module M when a path it searched is M or under it, or M is under
+  a path it searched, so a search from the project's root reaches every module; paths are
+  compared lexically and without regard to case, since a corpus's registered name is lower-cased,
+  and the root module's corpus, `code-knowledge`, is reached by every search inside the project.
+  One `PostToolUse` group carries the hook, its matcher `Grep|Glob|Bash`, a handler for each of
+  `Grep` and `Glob` and for each of `Bash(*grep *)` and `Bash(rg *)`, each with a string `if`
+  (`research/m40-4-hook-probes.md`).
+- **How often**: at most one reminder per agent each `retrieval.knowledge_reminder_interval`
+  seconds, 300 by default (operator, 2026-10-19), where an agent is the session, or a subagent by
+  its `agent_id`, since a subagent's context starts without its parent's reminders; a main session
+  started as a named agent carries an `agent_type` and no `agent_id`, and so is keyed as the
+  session (`research/m40-4-hook-probes.md`). A user prompt opens the session's turn, so its first
+  such search reminds; a `zikaron_knowledge_search` whose scope reaches a code-knowledge corpus
+  counts as the session's reminder, since the agent has just used the documents. The service keeps
+  the times, in memory, and decides (`design/architecture.md` §"Service RPC surface").
+- **Never** for the documenter, which takes nothing from a code-knowledge base (§5.1), nor for the
+  orchestrator, which searches no source.
+- **The line** names up to five corpora, the deepest module first, and how many more, and says that
+  `zikaron_knowledge_search` finds what a file is for and what it depends on, as a lead to check
+  against the code. It is a statement that names its source, since text framed as an out-of-band
+  instruction can trip a model's injection defenses (`research/claude-code-tool-hooks-docs.md`
+  §3.3). Its wording is `zikaron.core.code_knowledge.reminder`'s.
+- **What it costs**: a hook process for each `Grep` and `Glob` and each matched `Bash` call — a
+  match being the `if` filter's, so a `pgrep`, an `echo … grep …` or a commit message carrying
+  `grep ` starts one too, and a command the filter cannot read, any heredoc, starts both `Bash`
+  handlers together at about one start's wall time (`research/m40-4-hook-probes.md`) — about
+  100 ms where it was measured, nearly all of it the interpreter's start and imports
+  (`research/m40-4-live-session.md` §3), the documenter's included, since a matcher selects a
+  tool and not an agent; one `knowledge_remind` with its `call` row in a project with any corpus,
+  which adds about 3 ms; nothing more where none is registered. The hook gives the exchange 1 s
+  and fails open (`design/architecture.md` §"Degraded modes").
 
 ## 7. Evaluation
 
@@ -1240,6 +1286,19 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
   the documenter sets, reported with every result beside `source.state` — a change to K14's format
   this milestone's fence excludes, proposed in `FINDINGS.md` §"Owed work".
 - **Search samples dependents** of a widely used file (§2).
+- **The search reminder (§6) misses some searches**: one whose paths come from elsewhere — a `{}`,
+  `+`, `;` or `-` among its operands, as `find … -exec grep … {} +` and `xargs -I{} grep … {}`
+  give, or `xargs` before it — which is read as no search rather than as one of the working
+  directory; a `git grep` revision with no `--` after it, read as a path under the working
+  directory and so reaching only the modules at or above it; a shell glob under a recursive
+  `grep`, such as `src/*`, read as lying under `src` rather than as the directories it expands
+  to; a `cd` earlier in the same command,
+  since the payload's working directory follows only earlier calls' `cd`s; a search behind
+  `timeout` or another wrapper the `if` filter does not see through, and one inside `bash -c
+  '…'`; a search that errors, and one after an environment assignment that finds nothing, whose
+  exit 1 the harness then reads as an error — both fire `PostToolUseFailure`; and a project
+  reached through a symbolic link against a working directory that names its real path. Each was measured or follows from what was
+  (`research/m40-4-hook-probes.md`), and none is worth a mechanism of its own.
 - **Nothing but its prompt stops a documenter writing outside the documents directory.** Claude Code
   has no per-subagent path rule, and kiro's `allowedPaths` would have to be fixed at install while
   the documents directory is a per-run argument. A source a documenter overwrote reads `stale` on the

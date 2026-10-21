@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Final, NamedTuple
 
 from zikaron.guard.limits import TIMEOUT_SECONDS as GUARD_TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, SearchReminder
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
 from zikaron.install.assets import consolidator_prompt, identity_vocabulary
@@ -81,12 +81,12 @@ _CONSOLIDATOR_DESCRIPTION: Final = (
     "fetch memory."
 )
 
-#: Claude Code's three triggers, derived from the seam for the reason above. `SubagentStart` has no
-#: kiro counterpart and is not optional: the write-policy-per-subagent path sits behind it, and
-#: kiro reaches the same place by firing its ordinary hooks *for* a subagent session instead.
-#: Registering only the first two would leave that path dead with nothing failing — no error, no log
-#: line, just subagents that never see the policy. The `is not None` filter is a type narrowing and
-#: not a real branch: this tuple is Claude Code's, and Claude Code has all three.
+#: Claude Code's start, prompt and subagent triggers, derived from the seam for the reason above.
+#: `SubagentStart` has no kiro counterpart and is not optional: the write-policy-per-subagent path
+#: sits behind it, and kiro reaches the same place by firing its ordinary hooks *for* a subagent
+#: session instead. Leaving it out would leave that path dead with nothing failing — no error, no
+#: log line, just subagents that never see the policy. The `is not None` filter is a type narrowing
+#: and not a real branch: this tuple is Claude Code's, and Claude Code has each of them.
 _CLAUDE_TRIGGERS: Final = tuple(
     trigger
     for trigger in (
@@ -104,6 +104,11 @@ CLAUDE_START_TRIGGERS: Final = (_CLAUDE_TRIGGERS[0], _CLAUDE_TRIGGERS[2])
 #: narrowing: Claude Code is the harness the guards are offered on.
 _CLAUDE_GUARD_HOOKS: Final = tuple(
     hook for guards in (CLAUDE_CODE.guards,) if guards is not None for hook in guards
+)
+
+#: The search reminder's hook, read from the seam the same way, with the same narrowing.
+_CLAUDE_REMINDERS: Final = tuple(
+    reminder for reminder in (CLAUDE_CODE.search_reminder,) if reminder is not None
 )
 
 
@@ -306,18 +311,20 @@ def claude_hooks_value(
     *,
     start: Components | None = None,
 ) -> dict[str, list[dict[str, object]]]:
-    """The `hooks` value for `.claude/settings.local.json` for one selection, one group per trigger.
+    """The `hooks` value for `.claude/settings.local.json` for one selection: its groups per
+    trigger, the memory store's before the guards' on a trigger both write.
 
     Every selection writes the two start triggers, whose `zikaron-hook` command carries `start` —
     the selection those entries emit start text for, `components` unless the caller widens it to a
     union with what is already installed (`design/guards.md` §5). The memory store adds the
-    prompt trigger; the guards add their two groups, each with its matcher.
+    prompt trigger and the search reminder's group (`design/code-knowledge.md` §6); the guards add
+    their two groups, each with its matcher.
 
     The doubled nesting is the harness's own and was confirmed by running it: an event maps to a
     list of *groups*, each carrying an optional `matcher` and its own inner `hooks` list
-    (`research/claude-code-installer-probe.md` §1). The memory groups carry no `matcher` —
-    `UserPromptSubmit` accepts none at all, and the start triggers must fire for every session and
-    every subagent, which is what omitting it means.
+    (`research/claude-code-installer-probe.md` §1). The start and prompt groups carry no `matcher`
+    — `UserPromptSubmit` accepts none at all, and the start triggers must fire for every session
+    and every subagent, which is what omitting it means.
 
     `timeout` is **seconds** here, measured rather than assumed. `command` is a shell command line,
     measured (`research/claude-code-hook-command-shell-probe.md`), so the path is shell-quoted: an
@@ -331,15 +338,35 @@ def claude_hooks_value(
             groups[trigger] = [start_group]
         elif components.memory:
             groups[trigger] = [_claude_group(commands.hook, (), HOOK_TIMEOUT_SECONDS)]
+    for reminder in _CLAUDE_REMINDERS if components.memory else ():
+        groups.setdefault(reminder.trigger, []).append(_reminder_group(commands.hook, reminder))
     for hook in _CLAUDE_GUARD_HOOKS if components.guards else ():
         guard = _claude_group(commands.guard, (), GUARD_TIMEOUT_SECONDS)
-        groups[hook.trigger] = [{"matcher": hook.matcher, **guard}]
+        groups.setdefault(hook.trigger, []).append({"matcher": hook.matcher, **guard})
     return groups
 
 
 def _claude_group(script: Path, arguments: tuple[str, ...], timeout: int) -> dict[str, object]:
     command = " ".join((hook_command_string(script), *arguments))
     return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
+
+
+def _reminder_group(script: Path, reminder: SearchReminder) -> dict[str, object]:
+    """The reminder's one group: both arms' tools in its matcher, and a handler per `if` filter,
+    each a string, since a list of them is never matched (`research/m40-4-hook-probes.md`)."""
+    command = hook_command_string(script)
+    return {
+        "matcher": reminder.matcher,
+        "hooks": [
+            {
+                "type": "command",
+                "if": condition,
+                "command": command,
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+            for condition in (*reminder.files.filters, *reminder.shell.filters)
+        ],
+    }
 
 
 def claude_mcp_servers_value(commands: Commands) -> dict[str, object]:

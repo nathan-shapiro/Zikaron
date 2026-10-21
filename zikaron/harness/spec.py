@@ -31,9 +31,9 @@ class Harness(enum.Enum):
 class HookEvent(enum.Enum):
     """What a hook invocation *means*, independent of which harness's trigger name delivered it.
 
-    Trigger names normalize many-to-three. `SPAWN` and `PROMPT` exist under both harnesses;
-    `SUBAGENT_START` arrives only under Claude Code, whose payload carries the `agent_type` that
-    makes a per-agent rule expressible at all.
+    Trigger names normalize onto the members below, each name to the one member it means. `SPAWN`
+    and `PROMPT` exist under both harnesses; `SUBAGENT_START` and `SEARCH` arrive only under Claude
+    Code, whose payload carries the `agent_type` that makes a per-agent rule expressible at all.
 
     `SubagentStop` is deliberately absent. It has no work to do: the only path that wanted it
     existed to record which concrete model a consolidation run used, and that is unnecessary
@@ -45,6 +45,8 @@ class HookEvent(enum.Enum):
     SPAWN = "spawn"
     PROMPT = "prompt"
     SUBAGENT_START = "subagent_start"
+    #: A search of the project's files has run (`design/code-knowledge.md` §6).
+    SEARCH = "search"
 
 
 class OutputChannel(enum.Enum):
@@ -108,6 +110,34 @@ class Guards(NamedTuple):
     reread: GuardHook
 
 
+class SearchArm(NamedTuple):
+    """One kind of search the reminder follows: the tools its matcher names, and the `if` filter
+    each of its handlers carries, one handler per filter."""
+
+    matcher: str
+    filters: tuple[str, ...]
+
+    @property
+    def tools(self) -> frozenset[str]:
+        """The tool names the matcher selects."""
+        return frozenset(self.matcher.split("|"))
+
+
+class SearchReminder(NamedTuple):
+    """The reminder's hook (`design/code-knowledge.md` §6): its trigger and its two arms — `files`,
+    the search tools whose `path` is what they searched, and `shell`, whose `command` is read for a
+    search command. Installed as one group whose matcher joins both arms'."""
+
+    trigger: str
+    files: SearchArm
+    shell: SearchArm
+
+    @property
+    def matcher(self) -> str:
+        """The one group's matcher."""
+        return f"{self.files.matcher}|{self.shell.matcher}"
+
+
 class HarnessSpec(NamedTuple):
     """Everything that varies between harnesses, for one harness.
 
@@ -143,6 +173,9 @@ class HarnessSpec(NamedTuple):
     #: The guards' triggers and matchers, or `None` where the guards are not offered — which is
     #: what the installer's refusal of them reads.
     guards: Guards | None
+    #: The search reminder's hook, or `None` where a tool event's output has no documented path to
+    #: the model, in which case a memory install writes no such hook.
+    search_reminder: SearchReminder | None
     #: The documenter's whole grant: reading, searching and writing files, spelled as this harness
     #: names its own tools. The only place either harness's file tools are named, so the
     #: documenter's prompt can say *read* and *write* and stay true on both
@@ -277,6 +310,7 @@ KIRO: Final = HarnessSpec(
     consolidator_can_read_files=False,
     # Not offered: this harness's `postToolUse` has no documented path to the model.
     guards=None,
+    search_reminder=None,
     file_tools=("read", "grep", "glob", "write"),
 )
 
@@ -313,6 +347,14 @@ CLAUDE_CODE: Final = HarnessSpec(
         command=GuardHook(trigger="PreToolUse", matcher="Bash|Monitor"),
         reread=GuardHook(trigger="PostToolUse", matcher="Edit|MultiEdit|NotebookEdit|Write"),
     ),
+    # As measured: an `if` is a string, one per handler — a list is never matched — and a leading
+    # wildcard reaches `egrep`, `fgrep` and both spellings of `git grep`
+    # (`research/m40-4-hook-probes.md`).
+    search_reminder=SearchReminder(
+        trigger="PostToolUse",
+        files=SearchArm(matcher="Grep|Glob", filters=("Grep", "Glob")),
+        shell=SearchArm(matcher="Bash", filters=("Bash(*grep *)", "Bash(rg *)")),
+    ),
     file_tools=("Read", "Grep", "Glob", "Write", "Edit"),
 )
 
@@ -331,10 +373,12 @@ def _trigger_vocabulary() -> dict[str, HookEvent]:
     """
     vocabulary: dict[str, HookEvent] = {}
     for spec in SPECS.values():
+        reminder = spec.search_reminder
         named = (
             (spec.spawn_trigger, HookEvent.SPAWN),
             (spec.prompt_trigger, HookEvent.PROMPT),
             (spec.subagent_start_trigger, HookEvent.SUBAGENT_START),
+            (None if reminder is None else reminder.trigger, HookEvent.SEARCH),
         )
         for trigger, event in named:
             if trigger is None:
@@ -349,12 +393,13 @@ def _trigger_vocabulary() -> dict[str, HookEvent]:
 TRIGGERS: Final[dict[str, HookEvent]] = _trigger_vocabulary()
 
 #: Which channel each event's output must go out on. A function of the event alone, not of the
-#: harness: the only harness variation is that kiro never produces `SUBAGENT_START` at all, so a
-#: per-harness column here would carry one unreachable cell and no information.
+#: harness: the only harness variation is which events a harness produces at all, so a per-harness
+#: column here would carry only unreachable cells and no information.
 CHANNELS: Final[dict[HookEvent, OutputChannel]] = {
     HookEvent.SPAWN: OutputChannel.STDOUT,
     HookEvent.PROMPT: OutputChannel.STDOUT,
     HookEvent.SUBAGENT_START: OutputChannel.ADDITIONAL_CONTEXT,
+    HookEvent.SEARCH: OutputChannel.ADDITIONAL_CONTEXT,
 }
 
 

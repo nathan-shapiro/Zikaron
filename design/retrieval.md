@@ -26,10 +26,12 @@ triage material, and D4's progressive disclosure means content is fetched on dem
 
 **The known limitation, stated plainly.** `userPromptSubmit` fires once per *user message*, not per agent
 turn. So push covers **task-framing recall** only. The moment a memory is most needed — "this protobuf step
-just failed silently" — arrives twenty tool calls later, when no injectable hook fires. Symptom-triggered
-recall must therefore come from pull, which means the agent has to remember to pull. `postToolUse` fires per
-tool call and does receive `tool_response`, but has **no documented stdout→context path**. Unresolved; see
-`FINDINGS.md` open question 1.
+just failed silently" — arrives twenty tool calls later, when no hook the push rides fires. Symptom-triggered
+recall must therefore come from pull, which means the agent has to remember to pull. Under kiro `postToolUse`
+fires per tool call and receives `tool_response` but has no documented path to the model; under Claude Code
+`PostToolUse`'s `additionalContext` does reach it — the channel D38's nudge and the search reminder use
+(`design/code-knowledge.md` §6) — and the push does not ride it, so this is open as a design question rather
+than closed by the harness; see `FINDINGS.md` open question 1.
 
 ## Fusion
 

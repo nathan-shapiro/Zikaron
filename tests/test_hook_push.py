@@ -22,7 +22,7 @@ import pytest
 from zikaron.core.errors import ErrorCode
 from zikaron.core.store import ddl
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
-from zikaron.hook import connect, push, rpc, tripwire
+from zikaron.hook import connect, failure, push, rpc, tripwire
 from zikaron.service import paths
 
 
@@ -451,7 +451,7 @@ def test_an_unexpected_exception_from_the_socket_is_treated_as_a_transport_failu
     monkeypatch: pytest.MonkeyPatch,
     fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
 ) -> None:
-    """A malformed response (not `SurfaceRejectionError`, not `HookTransportError`, but a bare
+    """A malformed response (not `ServiceRejectionError`, not `HookTransportError`, but a bare
     `ConnectionError`/`OSError` from `rpc.surface_once` itself) must still be caught and
     reported."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
@@ -470,8 +470,8 @@ def test_a_genuinely_unanticipated_exception_type_is_still_caught_and_relayed(
 ) -> None:
     """`run()`'s own catch-all is a genuine `except Exception`, not a finite list of anticipated
     types — proven here with `RuntimeError`, which is none of `connect.HookTransportError`,
-    `rpc.SurfaceRejectionError`, or `ZikaronError`, and would previously have propagated straight
-    past this function into `main.py`'s own outermost catch-all, which reports nothing on either
+    `rpc.ServiceRejectionError`, or `ZikaronError`, and without it would propagate straight past
+    this function into `main.py`'s own outermost catch-all, which reports nothing on either
     channel. Forced by monkeypatching `connect.connect_once` itself to raise `RuntimeError`
     directly, so this test does not depend on any real code path happening to raise that type.
     """
@@ -526,9 +526,7 @@ def test_a_hostile_runtime_directory_is_logged_and_relayed_rather_than_propagati
     assert "operator" in output
     hook_log = (tmp_path / ".zikaron" / "hook.log").read_text(encoding="utf-8")
     assert "bad_config" in hook_log
-    # `_classify_failure`'s `ZikaronError` branch must preserve the error's own numeric code
-    # alongside its name — an earlier version of that branch returned only the wire name, which
-    # left `hook.log` naming `bad_config` with no accompanying `-32023`, contrary to
+    # `failure.classify` keeps a `ZikaronError`'s numeric code beside its name, per
     # `architecture.md`'s "naming the kind and, where one exists, the wire error code."
     assert "-32023" in hook_log
 
@@ -867,10 +865,10 @@ def test_every_rejection_kind_is_its_codes_own_wire_name() -> None:
     the three store-level open failures, and lateness. An identity mismatch is caught earlier, in
     `connect_once`, and never reaches this map.
     """
-    assert {code: ErrorCode(code).wire_name for code in push._REJECTION_KINDS} == (
-        push._REJECTION_KINDS
+    assert {code: ErrorCode(code).wire_name for code in failure.REJECTION_KINDS} == (
+        failure.REJECTION_KINDS
     )
-    assert set(push._REJECTION_KINDS) == {
+    assert set(failure.REJECTION_KINDS) == {
         ErrorCode.STORE_BUSY,
         ErrorCode.REINDEXING,
         ErrorCode.BAD_CONFIG,

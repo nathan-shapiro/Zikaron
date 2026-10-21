@@ -1,4 +1,5 @@
-"""The hook's own single-attempt connect-or-start sequence.
+"""The hook's own single-attempt connect-or-start sequence, and the connect alone, which never
+starts a service.
 
 `architecture.md` §Lifecycle's five-step start-if-absent sequence is normative, and
 `zikaron.service.lifecycle.connect_start_if_absent` already implements it — but that module also
@@ -202,6 +203,28 @@ def connect_once(
         health = _health_or_close(sock)
     _verify_identity(health, store_db_path=store_db_path, store_id=store_id, sock=sock)
     return Connection(sock=sock, cold_start=cold_start, health=health)
+
+
+def connect_if_serving(sock_path: Path, *, store_db_path: Path) -> Connection | None:
+    """The sequence's first step alone: connect to a service already serving and verify it is this
+    store's, or `None` when nothing is listening — never a start, for a caller with nothing to wait
+    for (`architecture.md` §"Degraded modes").
+
+    Raises:
+        HookTransportError: a reachable service's `health()` disagreed with `store_db_path`.
+        OSError: a connection failure distinct from "the server is absent", or `health()` not
+            answered in time.
+        ConnectionError, KeyError, ValueError, TypeError: `health()`'s answer was malformed, as
+            `_health` states.
+        ZikaronError: `security.ensure_runtime_dir` refused the runtime directory.
+    """
+    security.ensure_runtime_dir(sock_path.parent, uid=security.current_uid())
+    sock = _try_connect(sock_path)
+    if sock is None:
+        return None
+    health = _health_or_close(sock)
+    _verify_identity(health, store_db_path=store_db_path, store_id=None, sock=sock)
+    return Connection(sock=sock, cold_start=False, health=health)
 
 
 def _start_under_lock(

@@ -211,7 +211,8 @@ def _refusal(method: str, refused: TransactionRefused) -> ZikaronError:
 async def _invoke(
     ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, method: Method
 ) -> RpcResult:
-    """Read the request's deadline, obtain its connection, and run its handler on it."""
+    """Note the request's receipt, read its deadline, obtain its connection, and run its handler."""
+    method.on_receipt(ctx, envelope)
     deadline = method.deadline(request.params)
     try:
         async with _connection(ctx, method.access, deadline) as db:
