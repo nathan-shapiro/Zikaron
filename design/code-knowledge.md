@@ -871,19 +871,22 @@ reference answers only the operator could write and grade.
 
 **The repository is `warpdotdev/warp`, the module `app/src/terminal` with `--include '*.rs'`**,
 whose excluded files are `ref_tests/data` fixtures. Warp went public on 2026-04-28, after the
-training data of both models that run — Opus 4.6's ends August 2025, Sonnet 4.6's January 2026 by
-the API's model page, the latest of Anthropic's three statements
-(`research/m40-eval-sonnet5-issue-sets.md` §2) — so neither has seen its code. **Its issue tracker
+reader's training data — Opus 4.6's ends August 2025 (`research/m40-eval-sonnet5-issue-sets.md`
+§2) — so the reader has not seen its code. **Its issue tracker
 was public for years before its code**, so an issue opened before September 2025 may be in the
 reader's training data with whatever its thread said; such an issue is reported apart, as
 *pre-cutoff*, its file-level score clean since no code was public. No module of a few hundred files
 catches most of Warp's fixes, so the module came first and the issues are filtered to it (that
 note's §5).
 
-**The models are pinned by full id**, since Claude Code's `sonnet` and `opus` aliases resolve to the
-5.5 models, whose training data postdates Warp's publication: the documenter and the orchestrator on
-`claude-sonnet-4-6`, by the install's `--model`, and the reader on `claude-opus-4-6` at `--effort
-high` — the cheap writer and the strong reader real use has (operator, 2026-10-16). Each research
+**The reader is pinned by full id**, `claude-opus-4-6` at `--effort high`, since Claude Code's
+`opus` alias resolves to Opus 5.5, whose training data postdates Warp's publication (operator,
+2026-10-16). **The documents are written by the install's defaults** — Haiku 5.5 documenting
+under an Opus 5.5 orchestrator (operator, 2026-10-21), the cheap writer real use has. Those two
+may have seen Warp's public code and its issue threads, so a document could carry what its writer
+remembers rather than what it read, in the treatment alone; before the first timed run the
+documents are read for it — no scored issue cited, and every issue, PR or bug reference traced to
+the source (`research/m40-toy-run.md` §17). Each research
 note records the ids and the Claude Code version per run, and **the Zikaron build**: the copies
 run this repository's editable install, so a service that starts mid-run imports whatever the
 tree holds then. At every start the harness requires `git status --porcelain -- zikaron
@@ -901,10 +904,11 @@ written. **Its `knowledge_max_file_bytes` is raised to 5 MiB in the clone's
 `.zikaron/config.toml`** (operator, 2026-10-16), so the module's largest file, `view.rs`, at
 1,275,888 bytes a truth file of four issues, has a document — a partial one, which says so,
 since the file is past the documenter's context window (`research/m40-toy-run.md` §8). **The
-documents the evaluation reads are the clone's as they stand** once the planner reports
-`up_to_date` (operator, 2026-10-17), written under the four dependency rules that note records
-(§1, §5–§9), its final-corpus table saying which rule wrote how many.
-Its edit, rename and deletion re-runs happen in a scratch `cp -a` of the clone, taken once it
+documents the evaluation reads are the clone's regenerated corpus** (operator, 2026-10-21): once
+the skill and the prompts had moved past the toy run's, its Sonnet 4.6 documents were moved to
+`~/Zikaron-m40-archive/` and the module documented again over a fresh store, from this
+repository's install with no `--model`, to `up_to_date` (that note's §17).
+The toy run's edit, rename and deletion re-runs happened in a scratch `cp -a` of the clone, taken once it
 reports `up_to_date`, so the clone stays the documented tree. **The operator installed the build
 into `~/Trading/LeibaTrader` itself before the milestone landed** (operator, 2026-10-16), to
 document its code there and use it in real work; that run is recorded beside the toy run, as the
@@ -1163,7 +1167,9 @@ and reports them beside the discards. **The audit discards on what ran**: a run 
 `tool_result` is anything else names `github.com`, `warpdotdev` or a denied command, or in which a
 tool input resolves to a path under `<base>` outside its own copy — a sibling copy, the clone, the
 toy run's transcripts, anything under `<base>/eval/` outside `<root>` — or under `~/.claude`,
-where the other arm's sessions are kept; and, in the control, one whose inputs or results carry a
+where the other arm's sessions are kept, the run's own session's `tool-results/` excepted, since
+Claude Code saves a result too large to return there and tells the reader to read it; and, in the
+control, one whose inputs or results carry a
 `code-knowledge/` path. A copy's ancestors up to `<root>` may be listed, since each holds one
 entry. Any other path outside the copy, such as a dependency's source under `~/.cargo`, and any
 other URL, is listed in the note and read, since reading a library or searching the code for a
@@ -1222,9 +1228,11 @@ list's items before the `DIAGNOSIS` label being the list, in order, its first fi
 with no such block scores as naming none. **A label is the prompt's own, bolded or a heading** —
 `FILES:`, `**FILES:**`, `**FILES**:` or `## FILES` at a line's start — **and an item is a
 numbered or bulleted line or a table's data row**, a bullet indented under a numbered item being
-its detail: the slice's readers bolded the labels and put the list under headings in a table
-while keeping its content (`research/m40-evaluation.md` §4), a bulleted list is the remaining
-form of the same kind, and a reply scored as naming none for its markup measures the markup. Each arm's two rates are also reported by the `CONFIDENCE` the reply stated, which
+its detail, while a list with none of those — plain lines, as a code fence holds them — is one
+item a line, the fence markers aside: the slice's readers bolded the labels and put the list
+under headings in a table while keeping its content, and repeat 3's put it in a fence
+(`research/m40-evaluation.md` §4), a bulleted list is another form of the same kind, and a reply
+scored as naming none for its markup measures the markup. Each arm's two rates are also reported by the `CONFIDENCE` the reply stated, which
 says whether the documents move confidence or correctness. **One rule decides what names a
 file**, for the reader and the bot alike: a token names a file when, stripped of backticks and
 quotes, a leading `./` or either copy's absolute prefix — `<root>/a/warp/`, `<root>/b/warp/` — and

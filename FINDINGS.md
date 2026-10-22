@@ -80,8 +80,9 @@ are in `design/build-plan.md`; M32's shipped prose surfaces are normative in `de
 and decoded in `research/injected-prose-log.md`.
 
 **`0.3.2` is released** — tag `v0.3.2` on `e7b91c4`, on PyPI since 2026-10-12; its note says
-to re-run `install` so that `Monitor` is judged. **`main` carries `0.4.0.dev0`** (operator,
-2026-10-13), since M39 moved the schema, so the next release is `0.4.0`. **A minor bump means a
+to re-run `install` so that `Monitor` is judged. **The M40 pull request sets `0.4.0` for release**
+(operator, 2026-10-22), the minor M39's schema move forced; tagging it is the operator's, and
+after the release `main` carries `0.4.1.dev0`. **A minor bump means a
 `meta.schema_version` bump and nothing else** (operator, 2026-10-11; D36,
 `design/distribution.md` §3).
 
@@ -140,19 +141,19 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    5. **done** — the build APPROVED by memory-reviewer (`reviews/m40-code-knowledge-build-review.md`),
       every new line executed by a test.
 
-   **▶ RESUME HERE (2026-10-21).** **M40 is committed locally** on `m40-code-knowledge`, the
+   **▶ RESUME HERE (2026-10-22).** **M40 is committed locally** on `m40-code-knowledge`, the
    branch's first commit over `main`, everything through the documenter's rules against claims
    nothing read supports folded in (`reviews/m40-code-knowledge-build-review.md`); nothing is
    pushed and there is no PR yet. **That PR carries several commits** (operator, 2026-10-20): M40,
    then M40's follow-ups, each a commit of its own, in this order, each briefed in
    `design/build-plan.md` §"M40's follow-ups":
-   1. **M40-1, committed as `bed5430`** — the edit guard exempting a background job's
+   1. **M40-1, committed** — the edit guard exempting a background job's
       `$CLAUDE_JOB_DIR/tmp`, brief and build APPROVED (`reviews/m40-1-job-dir-review.md`,
       `reviews/m40-1-job-dir-build-review.md`), measured in
       `research/claude-code-job-dir-hook-probe.md`. Live in the three projects that run this
       tree, so LeibaTrader's memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` is now false;
       retiring it is the operator's.
-   2. **M40-2, committed as `7abf443`** — `foreground_command` gone from both build verbs and
+   2. **M40-2, committed** — `foreground_command` gone from both build verbs and
       the CLI; each build the service spawns writes its output to `knowledge/<id>.log`, which
       `status` names as `build_log`; brief and build APPROVED
       (`reviews/m40-2-indexer-log-review.md`, `reviews/m40-2-indexer-log-build-review.md`). Live
@@ -160,12 +161,12 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       started before it answers without `build_log` until it restarts. The status tool's
       description is at 1,896 of the 1,900 characters `tests/test_mcp_tool_descriptions.py`
       allows, so a sentence added to it later must be paid for.
-   3. **M40-3, committed as `ac1a285`** — `--consolidator-model`, `--documenter-model` and
+   3. **M40-3, committed** — `--consolidator-model`, `--documenter-model` and
       `--orchestrator-model` over `--model`, in `zikaron/install/models.py`; every model flag
       refused under `guards`, `--orchestrator-model` under kiro (`HarnessTarget.ships_orchestrator`);
       brief and build APPROVED (`reviews/m40-3-model-flag-review.md`,
       `reviews/m40-3-model-flag-build-review.md`). Live at a project's next re-install only.
-   4. **M40-4, committed as `4e0fc1e`** — under Claude Code a `Grep`, `Glob` or `Bash` search
+   4. **M40-4, committed** — under Claude Code a `Grep`, `Glob` or `Bash` search
       of a documented module is followed by one line naming its knowledge bases, through
       `knowledge_remind`, a method no tool carries, at most once per agent each
       `retrieval.knowledge_reminder_interval`; `PostToolUse` is a trigger the memory and guard
@@ -177,7 +178,7 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       Live in the three projects that run this tree at each one's next service and hook start;
       the reminder itself only after a re-install writes its `PostToolUse` entry.
 
-   5. **M40-5, committed as the branch's last commit** — under Claude Code the session spawns
+   5. **M40-5, committed** — under Claude Code the session spawns
       `zikaron-code-orchestrator` in the background, where the skill had forked to it, since a
       forked skill invoked while an earlier invocation still runs is run in the foreground, which
       ends at its first wait; a session runs one documentation run at a time, queuing the next;
@@ -190,21 +191,36 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
       operator's interactive test (`research/m40-5-spawned-orchestrator-probe.md`). Live at a
       project's next re-install only.
 
+   6. **The Warp evaluation, committed as the branch's last commit** (operator, 2026-10-21 and
+      -22) — every cell run on the M40-5 commit over regenerated documents, Haiku 5.5
+      documenting under Opus 5.5 with the reader still `claude-opus-4-6` (§7 amended), Claude
+      Code pinned at 2.1.306: three repeats of all sixteen issues, judged and scored
+      (`research/m40-evaluation.md` §4–§6, `research/m40-toy-run.md` §17). Over 48 runs an arm
+      the treatment graded 34 correct to 27, higher on five issues and lower on one (one-sided
+      sign test p 0.11), at 1.17× the dollars: no effect on easy issues, 1.38× on medium ones,
+      where it searched and still verified everything, and the same cost with better grades on
+      hard ones. The regenerated documents navigate no better than the Sonnet 4.6 ones (§5).
+      **The report for readers outside the project** is
+      `research/knowledge-index-issue-triage.md`, APPROVED
+      (`reviews/knowledge-index-issue-triage-review.md`); the operator shares it as a GitHub
+      link. The old documents, store, install and slice are in `~/Zikaron-m40-archive/`;
+      `replay-sonnet46-terminal` stays registered in the clone's store for a re-run.
+
    **Next: the pull request, when the operator asks** — branch `m40-code-knowledge` as it
-   stands, its commits over `main`; its CI is the version matrix.
+   stands, its commits over `main`; its CI is the version matrix. **After it**: the two agreed
+   documenter fixes (§"Owed work"), verified on a subset of documents; and, proposed but not
+   approved, a prompt-only third arm on the medium issues, about $65–90, which separates the
+   treatment prompt's effect on cost from the documents'. **Run that arm before the documenter
+   fixes land, or re-prepare**: no commit may touch `zikaron/` or `pyproject.toml` while a
+   further cell of this evaluation is to run, since `state.json` records the M40-5 commit and the
+   harness refuses a moved package; a commit of prose alone does not stop it. A rebase moves
+   that commit too, so after the operator merges other work first, a further cell needs `prepare`
+   again. The closed-issue stage is a milestone of its own.
 
    A commit is amended only while it is `HEAD`, its hash checked first. A feature built for
    Claude Code alone is entered in `design/kiro-gaps.md` (`CLAUDE.md` §Harness). The
    partial-coverage field changes K14's format and is brainstormed with the operator first, so it
-   is not in this PR. **The
-   evaluation's harness now refuses**: `state.json` records `06deae8` as its first start, and
-   the M40 commit moved the planner and the installer, which §7's package check covers
-   though no run executes them. **M40-4 also moves `zikaron/hook` and `zikaron/service`, which a
-   run does execute**, so narrowing the check to what a run executes can no longer keep the slice:
-   exempting those two would rest on an argument the check cannot verify — the copies carry no
-   `PostToolUse` entry, the push path's change is a relocation, and `memory_surface`'s receipt
-   touches only an in-memory table. **Proposed before the repeats:** re-`prepare` at the PR's merge
-   commit and re-run the slice (about $49), so every cell runs one build. The M40 commit carries
+   is not in this PR. The M40 commit carries
    the skill's report wording from the Warp slice, with spec §5.2 step 4 to match and snapshots
    re-rendered; **the evaluation rewritten as issue triage
    on Warp** — spec
@@ -236,10 +252,8 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
    (`reviews/m40-code-knowledge-brief-review.md`, rounds 27 on).
    **The slice ran and was judged** (note §4): 8 runs, $49.19, no discard; the treatment ranked a
    truth file first on 4 of 4 issues, the control on 3; the judge's 32 controls all graded as
-   expected. Ceilings from it: `--budget 39 --timeout 4887`. **The repeats are deferred: no
-   capacity this week** (operator, 2026-10-17) — about $540 and 14 hours for all of them; when
-   they resume, repeat 1's twelve other issues first (`run --repeat 1 --budget 39 --timeout
-   4887`, about $150, which skips the slice's cells), then ask again for repeats 2 and 3. **The M40 live test is written and seen red**
+   expected, on the M40 commit's build, so the three repeats (item 6 above) superseded its runs.
+   Ceilings from it: `--budget 39 --timeout 4887`. **The M40 live test is written and seen red**
    (`tests/test_code_knowledge_claude_live.py`): green on a real `claude`, red with the installed
    documenter removed.
 
@@ -471,9 +485,39 @@ proposed.
   is, watch for it). Claude Code attaches an account connector's MCP instructions beside a
   subagent's first tool result, and a README documenter told the user the planner's `roles.md`
   held them (`research/m40-5-spawned-orchestrator-probe.md` §2); no run's agent holds that
-  server's tools, so the cost is a false alarm in a report. **If it recurs:** one clause in the
-  documenter's prompt — a block the harness attaches beside a tool result, such as a server's
-  instructions, is not the file's content — its wording memory-reviewer's.
+  server's tools, so the cost is a false alarm in a report. **It recurred on 2026-10-21**, 1
+  hand-back of Warp's 407, the orchestrator relaying it to the user as a file to check
+  (`research/m40-toy-run.md` §17). **Proposed:** one clause in the documenter's prompt — a block
+  the harness attaches beside a tool result, such as a server's instructions, is not the file's
+  content — its wording memory-reviewer's, landed after the Warp evaluation's runs, since a commit
+  to `zikaron/` once `prepare` has run stops the harness and the documents are already written.
+
+- **A documenter's *"no test covers"* reads broader than what it searched** — two of three wrong
+  claims in §17's sample of Warp's documents name a behavior a test outside the file's own test
+  module pins (`app/src/ui_components/agent_icon_tests.rs`). **Proposed:** the documenter scopes
+  the claim to the tests it read — *"no test in `<file>` covers"* — which costs no search; the
+  same timing as the clause above. **Both fixes are agreed** (operator, 2026-10-21) and are
+  verified by regenerating a subset of documents — those the defects were seen in, in a scratch
+  `cp -a` of Warp's clone, which stays the documented tree — never the whole module.
+
+- **Paged knowledge search: the first results whole, the rest named** (operator, 2026-10-22). A
+  knowledge result is 7–9 k characters, about two `Read`s, carried on every later call, and on
+  Warp's medium issues the readers' searches replaced no reading (`research/m40-evaluation.md`
+  §6); trimming results is refused as a loss of what the index returns (operator). **Proposed:**
+  `knowledge_search` returns the first three snippets whole and names the rest it would have
+  returned — path, line range and the document's role line, a few hundred characters each, never a
+  "high similarity" claim, since fused scores are rank-based (D5) — with an `offset` to fetch
+  them, which needs an order stable across calls where fused keys often tie; D5's ids-plus-gists
+  shape, applied to the index. It changes the search tool's contract
+  (`design/knowledge-index.md` §8.3), so it is a milestone, brainstormed first. **The unknown is
+  whether a reader pages**: unpaged, it is trimming by another name. Readers asked for 10 results
+  in 57 of their 194 searches and 3 in 4, so they reach for more already — yet only 1 of 48
+  treatment runs opened a document file after a search, 30 lines of it
+  (`document_file_tool_calls`), and it had to glob for the path, since a result names the
+  document relative to its knowledge base and the source by its full path: readers go from a
+  snippet to the source, not to more of the document.
+  **Measure first**: a live arm on the hard and medium issues, counting page fetches and the
+  carried characters against §6's table.
 
 - **A cheap reader in the triage evaluation.** Practice reported by the operator (2026-10-17): a
   strong model orchestrates, a mid one writes documents, a cheap one codes — the installer's half

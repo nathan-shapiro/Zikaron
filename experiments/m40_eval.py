@@ -8,8 +8,8 @@ disagree, §7 is right and this file is wrong.
     python experiments/m40_eval.py probe              # the init tool set and every Bash rule
     python experiments/m40_eval.py install-hook       # the fallback deny, if a Bash rule failed
     python experiments/m40_eval.py restore a|b        # a copy back from its pristine one
-    python experiments/m40_eval.py run --repeat R [--first N] --budget USD --timeout S
-    python experiments/m40_eval.py judge [--workers K]   # grades every diagnosis not yet graded
+    python experiments/m40_eval.py run --repeat R [--first N | --issue I ...] --budget USD --timeout S
+    python experiments/m40_eval.py judge [--workers K] [--issue I ...]   # every one not yet graded
     python experiments/m40_eval.py score              # <base>/eval/scores.json
     python experiments/m40_eval.py reanalyze          # every run record, from its transcript
 
@@ -186,6 +186,15 @@ def _zikaron(*args: str) -> str:
 
 def _load_state(layout: Layout) -> dict[str, object]:
     return json.loads(layout.state.read_text(encoding="utf-8"))
+
+
+def _claude(layout: Layout) -> str:
+    """The Claude Code binary `prepare` resolved: the launcher on `PATH` follows a self-update,
+    which would put one evaluation's runs on two harness versions."""
+    binary = Path(str(_load_state(layout)["claude_binary"]))
+    if not binary.is_file():
+        raise Refused(f"{binary}, the Claude Code binary prepare pinned, is gone")
+    return str(binary)
 
 
 def _letters(state: dict[str, object]) -> dict[str, str]:
@@ -379,7 +388,11 @@ def prepare(layout: Layout, seed: int) -> None:
             "services stop on their own once idle)"
         )
     zikaron_head = _assert_package_unchanged(None)
-    claude_version = _run(["claude", "--version"]).strip()
+    launcher = shutil.which("claude")
+    if launcher is None:
+        raise Refused("claude is not on PATH")
+    claude_binary = os.path.realpath(launcher)
+    claude_version = _run([claude_binary, "--version"]).strip()
     plan = json.loads(
         _zikaron(
             "code-knowledge",
@@ -430,6 +443,7 @@ def prepare(layout: Layout, seed: int) -> None:
         "seed": seed,
         "arms": {"treatment": treatment, "control": control},
         "zikaron_head": zikaron_head,
+        "claude_binary": claude_binary,
         "claude_version": claude_version,
         "baseline": {treatment: _baseline(t), control: _baseline(c)},
         "prepared_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -461,7 +475,7 @@ def check(layout: Layout) -> None:
 def reader_command(layout: Layout, prompt: str, *, budget_usd: float | None = None) -> list[str]:
     """`claude -p` as §7 runs the reader: the allowlist, the strict MCP config and every deny."""
     args = [
-        "claude",
+        _claude(layout),
         "-p",
         "--model",
         READER_MODEL,
@@ -930,7 +944,9 @@ _CONFIDENCE = re.compile(r"\b(high|medium|low)\b", re.IGNORECASE)
 
 def _list_items(head: str) -> list[str]:
     """The list's entries in order: numbered or bulleted lines, or a table's data rows. A bullet
-    indented deeper than the list's first entry is an entry's detail, not an entry."""
+    indented deeper than the list's first entry is an entry's detail, not an entry. A list with
+    none of those — plain lines, as a code fence holds them — is one entry a line, fence markers
+    aside; the naming rule then skips a line that names no file."""
     lines = head.splitlines()
     items = []
     list_at: int | None = None
@@ -946,6 +962,8 @@ def _list_items(head: str) -> list[str]:
             following = lines[i + 1] if i + 1 < len(lines) else ""
             if not _TABLE_SEPARATOR.match(following):  # the row above a separator is the header
                 items.append(line.strip())
+    if not items:
+        items = [s for line in lines[1:] if (s := line.strip()) and not s.startswith("```")]
     return items
 
 
@@ -977,24 +995,41 @@ def _resolve(token: str, cwd: Path) -> Path:
     return Path(os.path.normpath(cwd / os.path.expandvars(os.path.expanduser(token))))
 
 
-def _place(path: Path, copy: Path, layout: Layout) -> str:
+def _own_tool_result(path: Path, session: str | None) -> bool:
+    """A file under the run's own session's `tool-results/`, where Claude Code saves a result too
+    large to return and tells the reader to read it: the reader's own output, while every other
+    session under `~/.claude/projects/` stays a leak. Session ids are unique, so the other arm's
+    never matches."""
+    projects = Path.home() / ".claude" / "projects"
+    if not session or not path.is_relative_to(projects):
+        return False
+    parts = path.relative_to(projects).parts
+    return len(parts) >= 4 and parts[1] == session and parts[2] == "tool-results"
+
+
+def _place(path: Path, copy: Path, layout: Layout, session: str | None = None) -> str:
     """Where a resolved path lands: `inside` the copy, `ancestor` (the copy's own directory or
-    `<root>`, which each hold one entry), `leak` (under `<base>` outside the copy, or under
-    `~/.claude`), or `outside`."""
+    `<root>`, which each hold one entry), `own` (the run's own saved tool results), `leak` (under
+    `<base>` outside the copy, or elsewhere under `~/.claude`), or `outside`."""
     if path == copy or path.is_relative_to(copy):
         return "inside"
     if path in (copy.parent, layout.root):
         return "ancestor"
     if path == layout.base or path.is_relative_to(layout.base):
         return "leak"
+    if _own_tool_result(path, session):
+        return "own"
     if path.is_relative_to(Path.home() / ".claude"):
         return "leak"
     return "outside"
 
 
-def audit(calls: list[ToolCall], copy: Path, layout: Layout, arm: str) -> dict[str, object]:
+def audit(
+    calls: list[ToolCall], copy: Path, layout: Layout, arm: str, session: str | None = None
+) -> dict[str, object]:
     """§7's audit over a run's tool inputs: what discards it, what was refused by rule, and the
-    paths and URLs outside the copy that are listed rather than discarded."""
+    paths and URLs outside the copy that are listed rather than discarded. `session` is the run's
+    own, whose saved tool results it may read."""
     discards: list[str] = []
     refused: dict[str, int] = {}
     outside: set[str] = set()
@@ -1035,7 +1070,7 @@ def audit(calls: list[ToolCall], copy: Path, layout: Layout, arm: str) -> dict[s
                 if k in call.input
             ]
         for token, path in resolved:
-            place = _place(path, copy, layout)
+            place = _place(path, copy, layout, session)
             if place == "leak":
                 discards.append(f"{call.name} reached outside its copy: {token[:200]}")
             elif place == "outside":
@@ -1061,8 +1096,10 @@ def routes(calls: list[ToolCall], copy: Path) -> dict[str, object]:
     documents = copy / "code-knowledge"
     zikaron: dict[str, int] = {}
     searches: list[dict[str, object]] = []
-    file_tool = bash_shown = bash_named = specs = 0
+    file_tool = bash_shown = bash_named = grep_shown = specs = 0
     for call in calls:
+        if call.name == "Grep" and f"{CORPUS}/" in (call.result or ""):
+            grep_shown += 1  # a grep with no `path` searches the whole copy, documents included
         if call.name == "Bash" and "code-knowledge/" in str(call.input.get("command", "")):
             bash_named += 1  # `cat` of a document shows its source's path, never its own
         if call.name.startswith("mcp__zikaron__"):
@@ -1087,6 +1124,7 @@ def routes(calls: list[ToolCall], copy: Path) -> dict[str, object]:
         "document_file_tool_calls": file_tool,
         "bash_results_showing_documents": bash_shown,
         "bash_commands_naming_documents": bash_named,
+        "grep_results_showing_documents": grep_shown,
         "results_showing_specs": specs,
     }
 
@@ -1190,6 +1228,7 @@ def run_issue(
             "attempt": attempt,
             "transcript": f"{names[arm]}.jsonl",
             "zikaron_head": head,
+            "claude_binary": state["claude_binary"],
             "started_at": started,
             "treatment_service_uptime": uptime,
             "budget_usd": budget,
@@ -1217,6 +1256,36 @@ def _transcript(path: Path) -> list[dict[str, object]]:
     return records
 
 
+#: How M40-4's search reminder opens (`zikaron/core/code_knowledge/reminder.py`), which tells its
+#: context from another hook's, as `experiments/m40_4_reminder_followon.py` does.
+_REMINDER_OPENS = "Zikaron hook:"
+
+
+def _search_reminders(records: list[dict[str, object]]) -> int | None:
+    """How many search reminders reached the reader. Claude Code's session file records each as a
+    `hook_additional_context` attachment, and the stream-json transcript does not; `None` when that
+    file is gone."""
+    session = next(
+        (r.get("session_id") for r in records if r.get("type") == "system" and r.get("subtype") == "init"),
+        None,
+    )
+    found = sorted(Path.home().glob(f".claude/projects/*/{session}.jsonl")) if session else []
+    if not found:
+        return None
+    count = 0
+    for line in found[0].read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        attachment = entry.get("attachment") or {}
+        if attachment.get("type") == "hook_additional_context" and any(
+            str(text).startswith(_REMINDER_OPENS) for text in attachment.get("content") or ()
+        ):
+            count += 1
+    return count
+
+
 def analysis(layout: Layout, record: dict[str, object]) -> dict[str, object]:
     """What a run's transcript says, by the rules as they stand: the result's figures, the reply
     parsed, the audit and the routes. `reanalyze` reapplies it to a kept transcript."""
@@ -1233,7 +1302,11 @@ def analysis(layout: Layout, record: dict[str, object]) -> dict[str, object]:
         raise Refused(f"{record['transcript']}: tool set {sorted(tools)} is not the allowlist's")
     result = next((r for r in records if r.get("type") == "result"), None) or {}
     calls = _tool_calls(records)
-    checked = audit(calls, copy, layout, arm)
+    session = next(
+        (str(r["session_id"]) for r in records if r.get("type") == "system" and r.get("subtype") == "init"),
+        None,
+    )
+    checked = audit(calls, copy, layout, arm, session)
     found = checked.pop("discards")
     after_run = record.get("after_run") or []
     assert isinstance(found, list) and isinstance(after_run, list)
@@ -1258,6 +1331,7 @@ def analysis(layout: Layout, record: dict[str, object]) -> dict[str, object]:
         "usage": _usage(records),
         "model_usage": result.get("modelUsage"),
         "reply": parse_reply(str(result.get("result") or "")),
+        "search_reminders": _search_reminders(records),
         "discards": [str(d) for d in found] + [str(d) for d in after_run],
         **checked,
         **routes(calls, copy),
@@ -1295,13 +1369,24 @@ def _order(layout: Layout) -> list[int]:
 
 
 def run_repeat(
-    layout: Layout, repeat: int, first: int | None, budget: float, timeout: float
+    layout: Layout,
+    repeat: int,
+    first: int | None,
+    only: list[int] | None,
+    budget: float,
+    timeout: float,
 ) -> None:
     """One repeat: every issue once, in the shuffled order, then each issue with a discarded arm
     run again once, both arms (§7). A cell whose arms both have a record is not run again, so the
-    slice stays the first repeat of its issues and an interrupted repeat resumes where it stopped."""
+    slice stays the first repeat of its issues and an interrupted repeat resumes where it stopped.
+    `only` keeps the named issues, in the order's sequence: a dry run of one."""
     issues = {int(i["issue"]): i for i in json.loads(ISSUES.read_text())["issues"]}
     order = _order(layout)[:first] if first else _order(layout)
+    if only:
+        unknown = sorted(set(only) - set(order))
+        if unknown:
+            raise Refused(f"not in the order: {unknown}")
+        order = [n for n in order if n in only]
 
     def cell(number: int, attempt: int) -> dict[str, dict[str, object]]:
         found = _recorded(layout, repeat, number, attempt)
@@ -1523,9 +1608,9 @@ def judge_prompt(issue: dict[str, object], diagnosis: str) -> str:
     )
 
 
-def judge_items(layout: Layout) -> list[dict[str, object]]:
+def judge_items(layout: Layout, only: list[int] | None = None) -> list[dict[str, object]]:
     """Every diagnosis the judge grades, blind: each kept run's, the bot's, and §7's two controls
-    per issue, in an order shuffled with the run's seed."""
+    per issue, in an order shuffled with the run's seed; `only` keeps the named issues' items."""
     state = _load_state(layout)
     issues = {int(i["issue"]): i for i in json.loads(ISSUES.read_text())["issues"]}
     items: list[dict[str, object]] = []
@@ -1588,7 +1673,7 @@ def judge_items(layout: Layout) -> list[dict[str, object]]:
             }
         )
     random.Random(f"judge-{state['seed']}").shuffle(items)
-    return items
+    return [i for i in items if not only or i["issue"] in only]
 
 
 def _grades(layout: Layout) -> list[dict[str, object]]:
@@ -1615,11 +1700,11 @@ def _grade(text: str) -> str | None:
     return words[-1] if words and words[-1] in GRADES else None
 
 
-def _judge_call(prompt: str, cwd: Path, empty_mcp: Path, stdout: TextIO) -> None:
+def _judge_call(binary: str, prompt: str, cwd: Path, empty_mcp: Path, stdout: TextIO) -> None:
     """One judge, §7's way: no tools, no server, in its empty directory."""
     subprocess.run(
         [
-            "claude",
+            binary,
             "-p",
             "--model",
             JUDGE_MODEL,
@@ -1644,9 +1729,10 @@ def _judge_call(prompt: str, cwd: Path, empty_mcp: Path, stdout: TextIO) -> None
     )
 
 
-def judge(layout: Layout, workers: int) -> None:
+def judge(layout: Layout, workers: int, only: list[int] | None = None) -> None:
     """Grade every item not yet graded, each in a `claude -p` with no tools in an empty directory
     (§7), its `init` asserted to list none and its transcript to use none."""
+    binary = _claude(layout)
     out = layout.eval / "judge"
     cwd = out / "cwd"
     cwd.mkdir(parents=True, exist_ok=True)
@@ -1658,7 +1744,7 @@ def judge(layout: Layout, workers: int) -> None:
     # A failure is retried, and so is an item whose diagnosis `reanalyze` has since changed.
     done = {(g["id"], g.get("diagnosis")) for g in _grades(layout) if g.get("grade") is not None}
     issues = {int(i["issue"]): i for i in json.loads(ISSUES.read_text())["issues"]}
-    pending = [i for i in judge_items(layout) if (i["id"], i["diagnosis"]) not in done]
+    pending = [i for i in judge_items(layout, only) if (i["id"], i["diagnosis"]) not in done]
 
     def grade_one(item: dict[str, object]) -> dict[str, object]:
         if not item["diagnosis"]:
@@ -1668,7 +1754,7 @@ def judge(layout: Layout, workers: int) -> None:
         transcript = out / f"{name}.jsonl"
         with transcript.open("w", encoding="utf-8") as stdout:
             try:
-                _judge_call(prompt, cwd, empty_mcp, stdout)
+                _judge_call(binary, prompt, cwd, empty_mcp, stdout)
             except subprocess.TimeoutExpired:
                 return {**item, "grade": None, "error": "timeout"}
         records = [json.loads(line) for line in transcript.read_text().splitlines() if line]
@@ -1688,6 +1774,7 @@ def judge(layout: Layout, workers: int) -> None:
             "reasoning": text,
             "usage": _usage(records),
             "total_cost_usd": result.get("total_cost_usd"),
+            "claude_binary": binary,
         }
 
     from concurrent.futures import ThreadPoolExecutor
@@ -1747,7 +1834,9 @@ def score(layout: Layout) -> None:
                     "document_file_tool_calls": run["document_file_tool_calls"],
                     "bash_results_showing_documents": run["bash_results_showing_documents"],
                     "bash_commands_naming_documents": run.get("bash_commands_naming_documents"),
+                    "grep_results_showing_documents": run.get("grep_results_showing_documents"),
                     "results_showing_specs": run["results_showing_specs"],
+                    "search_reminders": run.get("search_reminders"),
                     "outside_paths": run["outside_paths"],
                     "urls": run["urls"],
                 }
@@ -1803,10 +1892,14 @@ def main() -> int:
     commands.add_parser("restore").add_argument("letter", choices=("a", "b"))
     run = commands.add_parser("run")
     run.add_argument("--repeat", type=int, required=True)
-    run.add_argument("--first", type=int, help="only the first N issues of the order: the slice")
+    subset = run.add_mutually_exclusive_group()
+    subset.add_argument("--first", type=int, help="only the first N issues of the order: the slice")
+    subset.add_argument("--issue", type=int, action="append", help="only this issue; repeatable")
     run.add_argument("--budget", type=float, required=True, help="--max-budget-usd per run")
     run.add_argument("--timeout", type=float, required=True, help="wall-clock seconds per run")
-    commands.add_parser("judge").add_argument("--workers", type=int, default=4)
+    judging = commands.add_parser("judge")
+    judging.add_argument("--workers", type=int, default=4)
+    judging.add_argument("--issue", type=int, action="append", help="only this issue's items")
     commands.add_parser("score")
     commands.add_parser("reanalyze")
     args = parser.parse_args()
@@ -1821,9 +1914,9 @@ def main() -> int:
         elif args.command == "install-hook":
             install_hook(layout)
         elif args.command == "run":
-            run_repeat(layout, args.repeat, args.first, args.budget, args.timeout)
+            run_repeat(layout, args.repeat, args.first, args.issue, args.budget, args.timeout)
         elif args.command == "judge":
-            judge(layout, args.workers)
+            judge(layout, args.workers, args.issue)
         elif args.command == "score":
             score(layout)
         elif args.command == "reanalyze":
