@@ -26,7 +26,7 @@ Skip it for routine, low-stakes steps — each loop spends extra model cycles.
    **One pass is evidence about that pass, not about the artifact.** A single change typically needs several passes to reach zero. Every edit is a chance to create the next defect and a repair is still an edit, so a fix made during a pass is an input to the next one, never a closed item.
 
    It is a step here because re-reading is never itself one of the findings being applied, so it is never on the list being executed — which leaves this protocol as the only place the trigger reliably fires.
-3. **Delegate the review.** Use the `subagent` tool with `role: memory-reviewer` and a brief containing:
+3. **Delegate the review.** Spawn the **memory-reviewer** subagent, giving it a brief containing:
    - the **file path(s)** to review,
    - a **review file path** under `reviews/` (e.g., `reviews/<slug>-review.md`) — use the same path for all rounds; the reviewer appends each round under a new header and reads prior rounds before writing,
    - the **intent / goals** the artifact must satisfy,

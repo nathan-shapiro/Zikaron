@@ -385,7 +385,7 @@ connection *ought* to be is a third thing, and it is what missed the fifth site.
 
 **Minimal surface in the hook is a design constraint, not a preference — and it does not extend to the MCP
 client.** `zikaron-hook` is stdlib-only because its measured interpreter cost is the argument for the whole
-push architecture: it fires on every `userPromptSubmit`, so its import cost is paid once per user message, and
+push architecture: it fires on every `UserPromptSubmit`, so its import cost is paid once per user message, and
 D12's whole case for keeping retrieval on that critical path only holds if that repeated cost stays near-zero.
 Adding a third-party import to the hook is a **design violation**, not a style question — it silently spends
 the budget the service exists to protect. `aiosqlite` is a `core` dependency, not a hook one: the hook opens
@@ -407,11 +407,11 @@ inside `zikaron-mcp` too, was judged the better trade at this cost model. Nothin
 hook's own rule, and nothing about the hook's rule should be read backward onto the MCP client.
 
 **Logging is split by process, on purpose, and it is a documented exception rather than an inconsistency.**
-`zikaron-service` and the `agentSpawn` hook's detached warm helper both use stdlib `logging` — each to its own
+`zikaron-service` and the `SessionStart` hook's detached warm helper both use stdlib `logging` — each to its own
 file (`service.log`, `warmup.log`), never a shared one, since `logging.FileHandler` has no cross-process append
 locking and two independent processes writing one path through it is a real corruption risk, not a style
 choice. Both processes are off any latency-critical path (the service is long-running and warm; the helper
-runs detached, before the first `userPromptSubmit`), so `logging`'s import cost is irrelevant to them.
+runs detached, before the first `UserPromptSubmit`), so `logging`'s import cost is irrelevant to them.
 `zikaron-hook` does **not** use `logging`, even though `logging` is itself stdlib and so would not violate the
 minimal-surface rule above on its own terms: measured on this machine, `import logging` alone costs **~15 ms**
 of interpreter startup — in the same range as the `socket`/`json`/`os` cost this document's whole
@@ -439,8 +439,9 @@ shape, and every raise site references the enum. Never a bare integer at a call 
 any failure. Even there the failure is never lost: it goes to `hook.log` verbatim, and a short
 notice goes to stdout — asking the model to tell the operator something is wrong, or, for a
 service still starting, saying that memories resume once it has started. Stdout was measured
-directly (a live spike against a real kiro session) to be the one channel that actually reaches
-the model on this build; stderr, tried first, was measured not to surface visibly at all.
+directly to be the one channel that actually reaches the model (a live spike against kiro's V2
+engine, 2026-08; exit-0 stdout was measured to reach the model under V3 too,
+`research/kiro-v3-probe.md` §6); stderr, tried first, was measured not to surface visibly at all.
 "prints nothing to the user" was the original design and no longer describes the failure path —
 see `design/architecture.md` §"Degraded modes" for the full history and the measurement.
 

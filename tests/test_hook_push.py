@@ -1,8 +1,6 @@
 """`zikaron.hook.push.run`: suppression, the single connect attempt, the `surface` RPC, and the
-failure-relay path (`hook.log` plus a model-facing stdout instruction — see `push.py`'s own
-module docstring for the measurement behind this shape: a live spike found a non-zero exit
-suppresses stdout injection entirely and does not visibly surface stderr, so the design settled
-on always exit 0 and relaying a failure through the one confirmed-working channel).
+failure-relay path (`hook.log` plus a model-facing stdout instruction, always at exit 0 —
+`architecture.md` §"Degraded modes" holds the measurement behind that shape).
 
 `architecture.md` §"Degraded modes" and §"Subagent sessions" are normative.
 """
@@ -241,31 +239,58 @@ def test_the_hook_bootstraps_when_no_session_variable_is_present(
         service.close()
 
 
-def test_the_same_divergence_suppresses_under_both_harnesses_and_logs_under_only_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+def test_a_divergence_suppresses_and_logs_under_either_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spec: HarnessSpec
 ) -> None:
-    """One payload/environment divergence, two harnesses, deliberately different readings.
+    """Neither harness fires this hook for a subagent session, so payload and environment carry
+    one session id in every hook either fires, and a divergence means the harness was misdetected.
 
-    Under the harness that fires this hook *for* subagent sessions the divergence is the routine
-    subagent case: suppress, and write nothing, because a line per subagent turn would drown a log
-    whose value is a closed vocabulary. Under the harness where the two ids are invariantly equal
-    the same divergence means the harness was misdetected — a genuine anomaly, and the one thing
-    that writes here.
-
-    Both suppress. No fake service is bound, so reaching the RPC path at all would raise rather
-    than pass quietly, which is what makes "output is None" evidence that no call was made.
+    No fake service is bound, so reaching the RPC path at all would raise rather than pass quietly,
+    which is what makes "output is None" evidence that no call was made.
     """
     log = paths.hook_log_path(paths.store_dir(tmp_path))
-
-    monkeypatch.setenv(KIRO.session_variable, "top-level")
-    assert push.run(scope_dir=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
-    assert not log.exists(), "a routine subagent turn must leave the log untouched"
-
-    monkeypatch.delenv(KIRO.session_variable, raising=False)
-    monkeypatch.setenv(CLAUDE_CODE.marker_variable or "", "1")
-    monkeypatch.setenv(CLAUDE_CODE.session_variable, "top-level")
-    assert push.run(scope_dir=tmp_path, payload_session_id="a-subagent", prompt="p", pid=1) is None
+    if spec.marker_variable is not None:
+        monkeypatch.setenv(spec.marker_variable, "1")
+    monkeypatch.setenv(spec.session_variable, "an-enclosing-session")
+    assert push.run(scope_dir=tmp_path, payload_session_id="this-one", prompt="p", pid=1) is None
     assert log.read_text(encoding="utf-8").strip().endswith(tripwire.SESSION_ENV_MISMATCH)
+
+
+@pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+def test_a_block_over_the_budget_is_logged_and_printed_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
+    spec: HarnessSpec,
+) -> None:
+    """The harness cuts it and marks the cut to the model alone, so the line is the one place
+    anyone else can see a push was cut — and cutting it here would only move the cut."""
+    if spec.marker_variable is not None:
+        monkeypatch.setenv(spec.marker_variable, "1")
+    oversize = "x" * (spec.injection_budget + 1)
+    service = fake_service({"result": {"text": oversize}})
+    try:
+        printed = push.run(scope_dir=tmp_path, payload_session_id="s", prompt="p", pid=1)
+    finally:
+        service.close()
+    assert printed == oversize
+    assert _hook_log_entries(tmp_path) == [push.PUSH_OVERSIZE]
+
+
+def test_a_block_within_the_budget_logs_nothing(
+    tmp_path: Path,
+    fake_service: Callable[[dict[str, object]], _FakeSurfaceService],
+) -> None:
+    exactly_at = "x" * KIRO.injection_budget
+    service = fake_service({"result": {"text": exactly_at}})
+    try:
+        assert push.run(scope_dir=tmp_path, payload_session_id="s", prompt="p", pid=1) == (
+            exactly_at
+        )
+    finally:
+        service.close()
+    assert not paths.hook_log_path(paths.store_dir(tmp_path)).exists()
 
 
 def test_a_missing_kiro_session_id_never_suppresses(

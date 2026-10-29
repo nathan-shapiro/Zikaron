@@ -25,7 +25,7 @@ from typing import Final
 
 from zikaron.harness.spec import CLAUDE_CODE, Harness
 from zikaron.hook.components import Components
-from zikaron.install.entries import Commands, HookFormat
+from zikaron.install.entries import Commands
 from zikaron.install.harness import InstallError
 from zikaron.install.models import (
     ModelFlags,
@@ -101,15 +101,6 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         "before letting it. The shipped files are listed by path, not by content.",
     )
     add_model_options(parser)
-    parser.add_argument(
-        "--format",
-        dest="hook_format",
-        type=HookFormat,
-        choices=tuple(HookFormat),
-        default=HookFormat.OBJECT,
-        help="kiro only: which hook format to write when the target config has none yet. A config "
-        "that already has hooks keeps its own format regardless.",
-    )
     parser.add_argument(
         "--no-trust-tools",
         dest="trust_tools",
@@ -200,7 +191,6 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         consolidator_model=model_flags.consolidator_model(target),
         documenter_model=model_flags.documenter_model(target),
         orchestrator_model=model_flags.orchestrator_model(),
-        hook_format=options.hook_format,
         force=options.force,
         trust_tools=options.trust_tools,
         components=components,
@@ -215,6 +205,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         # install still refuses.
         try:
             target.refuse_absent_harness()
+            target.refuse_unsupported_version()
             refuse_unknown_models(target, plan)
         except InstallError as exc:
             # "refused", not "could not be validated": the two reachable causes read very
@@ -235,6 +226,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         return report
 
     target.refuse_absent_harness()
+    target.refuse_unsupported_version()
     refuse_unknown_models(target, plan)
     shipped = target.shipped_files(plan)
     _refuse_agent_aliasing_a_shipped_target(agent, shipped)

@@ -1,7 +1,7 @@
-"""The subagent-suppression check, and this client's `client` envelope.
+"""The session-divergence check, and this client's `client` envelope.
 
 `architecture.md` §"Subagent sessions — the push hook suppresses itself" is normative for
-`is_subagent_session`; §"The request envelope" for `build_envelope`.
+`sessions_diverge`; §"The request envelope" for `build_envelope`.
 
 **States the envelope's four fields locally rather than importing them, and the reason is
 measured.** This module originally reused `zikaron.service.envelope.ClientEnvelope` and
@@ -55,42 +55,21 @@ class HookEnvelope(NamedTuple):
         }
 
 
-def is_subagent_session(*, env_session_id: str | None, payload_session_id: object) -> bool:
-    """Whether this invocation is running inside a subagent session, per
-    `architecture.md`'s exact rule: the hook reads the harness's session variable from its
-    environment and compares it to its payload's `session_id`. When they **differ**, this is a
-    subagent session.
+def sessions_diverge(*, env_session_id: str | None, payload_session_id: object) -> bool:
+    """Whether the harness's session variable and this payload's `session_id` name two sessions,
+    per `architecture.md` §"Subagent sessions — the push hook suppresses itself".
 
-    **Under Claude Code this comparison is never reached for a genuine subagent**, because
-    `UserPromptSubmit` does not fire for subagents at all — the harness closes the door this rule
-    was built to guard. The rule stays because kiro still needs it, and because under Claude Code
-    a divergence means something else entirely: payload and environment are invariantly equal
-    there, so a difference is a misdetected harness rather than a subagent. `tripwire.py` owns
-    that reading; this function only states the comparison.
+    Neither harness fires a spawn or prompt hook for a subagent session, so the two are equal in
+    every hook either fires, and a divergence means the harness was misdetected: an inherited
+    variable from an enclosing session. `tripwire.py` records that; the caller prints nothing.
 
-    Resolving the environment side is `zikaron.harness.detect.session_label`'s job, not this
-    module's — the variable's *name* is harness-varying data and belongs in the one table that
-    carries such data.
+    A pure comparison of values the caller has already read, so the caller owns *when* those reads
+    happen — before any RPC — and every combination can be tested without touching `os.environ`.
 
-    A pure comparison, deliberately taking both values as already-extracted arguments rather than
-    reading the environment or a payload dict itself — the caller (`push.py`, `spawn_warm.py`)
-    owns *when* those reads happen (before any RPC, before any other action, per the same
-    section's ordering), and this function only states the comparison, so it can be tested against
-    every combination of present/absent/matching/differing without touching `os.environ` or
-    constructing a payload.
-
-    `payload_session_id` is typed `object` rather than `str | None`: the payload is untrusted JSON
-    from kiro's own stdin delivery, and a value that is present but not a string (or not present at
-    all) is treated as "no payload session id to differ from" — i.e. not a subagent session by this
-    check alone — exactly as `architecture.md` states for the *other* absence case: "when
-    `KIRO_SESSION_ID` is absent entirely, it proceeds normally." A malformed payload is a separate
-    concern the caller's own JSON handling surfaces as an ordinary failure later, not a reason for
-    this pure comparison to raise.
-
-    **When `env_session_id` is `None`, this always returns `False`** — "when... `KIRO_SESSION_ID`
-    is absent entirely, it proceeds normally" is unconditional on the payload's own value, so a
-    missing environment variable never suppresses a top-level session merely because the payload
-    happens to carry some session id.
+    **When `env_session_id` is `None`, this is always `False`**: an absent variable is no evidence
+    of another session, so it never suppresses a push. A payload value that is absent or not a
+    string differs from any present variable, and suppresses: the payload is untrusted JSON, and a
+    hook that cannot tell whose session it is in says nothing.
     """
     if env_session_id is None:
         return False

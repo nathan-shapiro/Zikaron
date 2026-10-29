@@ -1,0 +1,1 @@
+This is a harness test. Call the probe_whoami tool once and report its output verbatim.

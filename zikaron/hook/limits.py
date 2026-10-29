@@ -1,63 +1,27 @@
-"""The numbers a shipped hook entry states.
+"""The one number a shipped hook entry states.
 
-`architecture.md` §"The install contract" is normative. All are written into every installed hook
-entry rather than inherited from the harness's own defaults, and all live here rather than in
-`zikaron/install/` so there is exactly one place the installer reads them from.
+`architecture.md` §"The install contract" is normative. It is written into every installed hook
+entry rather than inherited from the harness's own default, and lives here rather than in
+`zikaron/install/` so there is exactly one place the installer reads it from. What a harness will
+inject is not here: `zikaron.harness.spec` carries it, and the runtime budget check reads it there.
 
-**The injection budget is kiro-only**: Claude Code offers no field to raise it. This module is
-deliberately not the general home for "what a harness will accept" — `zikaron.harness.spec` is, and
-the runtime budget check reads it there.
-
-**The timeout is one number in seconds, deliberately, and the conversions live at the edges.** Kiro
-states `timeout_ms` in *milliseconds*; kiro's own array format states `timeout` in *seconds*; Claude
-Code states `timeout` in *seconds* (measured, `research/claude-code-installer-probe.md` §2). That is
-three spellings of one budget, and the corpus has already recorded the seconds-versus-milliseconds
-trap between the first two. Keeping the canonical value in the coarser unit means the mistake that
-matters — writing kiro's `10000` into a seconds field, which installs a **10,000-second** budget
-during which a wedged hook blocks every user message with nothing reporting a problem — cannot be
-made by copying a constant, because no constant here carries that number.
+**The timeout is in seconds, the unit both harnesses' entries state.** Keeping the one constant in
+the coarser unit means the mistake that matters — a millisecond figure in a seconds field, which
+installs a budget a thousand times too long, during which a wedged hook blocks every user message
+with nothing reporting a problem — cannot be made by copying a constant, because no constant here
+carries that number.
 """
 
 from typing import Final
 
-from zikaron.harness.spec import KIRO
-
-#: The hook budget every shipped entry states, in **seconds**. Equal to kiro's own documented
-#: default, and stated anyway: the corpus recorded that default as 30 s for two milestones on the
-#: strength of the public docs, and a budget the hook's internal deadlines are sized against — the
-#: cold-start one is derived from it — should not be a number a harness release can move underneath
-#: it. Both expire first, so our own failure path — which produces a `hook.log` line *and* a
-#: model-facing relay — always fires before the harness's kill, which produces neither.
+#: The hook budget every shipped entry states, in **seconds**. Stated rather than inherited, because
+#: the hook's internal deadlines are sized against it — the cold-start one is derived from it — and
+#: a harness release should not be able to move it underneath them. Both expire first, so our own
+#: failure path — which produces a `hook.log` line *and* a model-facing relay — always fires before
+#: the harness's kill, which produces neither.
 #:
 #: It also has to clear the *tightest* default in the harness table, which is measured and is not
 #: the one a casual reading finds: Claude Code defaults `UserPromptSubmit` to **30 s** against 600 s
 #: for other events. 10 s sits inside that, so stating it never *raises* a budget we would not
 #: otherwise have had.
 HOOK_TIMEOUT_SECONDS: Final = 10
-
-#: The same budget in kiro's object-format unit. Derived rather than declared, so the two can never
-#: disagree about how long a hook may run.
-TIMEOUT_MS: Final = HOOK_TIMEOUT_SECONDS * 1_000
-
-#: `max_output_size` for a shipped kiro entry, in bytes. **Read from the harness table rather than
-#: declared here**, because the same number is what the runtime oversize check measures an
-#: operator's policy override against: two agreeing declarations of one harness's budget is the
-#: drift shape this corpus has already paid for, and the table is the side that a design-document
-#: test reads.
-#:
-#: Its margin is what makes overrun unreachable rather than merely unlikely, and both real worst
-#: cases are asserted in the suite rather than estimated: the shipped policy text is 2929 bytes and
-#: the subagent variant is 2860 bytes, and
-#: a five-row push block is bounded by the `gist` character bound — its figure, in UTF-16 units and
-#: at UTF-8's 3-bytes-per-unit ceiling, is stated once in `schema.md` §Bounds and recomputed by
-#: `tests/test_install_limits.py`. The policy figures are stated in the unit they are measured in,
-#: which this module of all places has to get right: a units count wearing a byte suffix is exactly
-#: the conflation the runtime budget check exists to prevent.
-#:
-#: **Exact counts rather than a rounded `kB`, and the policy figure is pinned.** It read `~6.1 kB`
-#: across a change that moved the policy from 6098 to 6230 bytes, and was defensible either way —
-#: 6098 decimal and 6230 binary both round to 6.1 — so no reader could tell a live figure from a
-#: stale one. A prefix that means two things is the same conflation the paragraph above claims to
-#: have avoided, one level down. `architecture.md` carried the fifth staleness of this one number
-#: and is guarded; this was its unguarded second site.
-MAX_OUTPUT_SIZE: Final = KIRO.injection_budget

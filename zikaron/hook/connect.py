@@ -488,7 +488,7 @@ def resolve_sock_path(store_dir: Path) -> Path:
     and `connect_once`'s own identity check stays path-only, on every connection this client ever
     makes.** `architecture.md` §"Store identity is verified, not assumed" states this as the
     hook's own permanent, documented exception to the ordinary rule that a later connection has a
-    real `store_id` to compare against: every `userPromptSubmit` is a fresh, single-shot process
+    real `store_id` to compare against: every `UserPromptSubmit` is a fresh, single-shot process
     with no connection of its own from a previous invocation to have learned anything from, and
     the only way to get a `store_id` to compare against would be to read it directly from
     `memory.db` — precisely the store access §"Degraded modes" forbids unconditionally ("the hook

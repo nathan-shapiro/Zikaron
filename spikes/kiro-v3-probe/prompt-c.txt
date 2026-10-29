@@ -1,0 +1,7 @@
+This is a harness test of the Zikaron memory tools. Do these steps in order and report each result verbatim.
+1. Quote the first two sentences of any write policy or memory instructions that appear in your context, and say where they appeared.
+2. Quote any block of memory gists that appears in your context, or say there is none.
+3. Call zikaron_memory_remember to record: gist "kiro V3 probe fixture: the probe word is TEAL-MARMOT", content "Recorded by a harness test on 2026-10-28 to check that remember works under the kiro V3 engine." Report the full result.
+4. Call zikaron_memory_search with the query "probe word" and report the full result.
+5. Call zikaron_knowledge_status and report the first 300 characters of the result.
+6. List the exact names of every Zikaron tool available to you.

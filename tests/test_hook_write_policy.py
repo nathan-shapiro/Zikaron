@@ -12,9 +12,8 @@ from pathlib import Path
 import pytest
 
 from tests.design_tables import fenced_code
-from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
 from zikaron.hook import write_policy
-from zikaron.hook.limits import MAX_OUTPUT_SIZE
 from zikaron.hook.write_policy import (
     OVERRIDE_EMPTY,
     OVERRIDE_OVERSIZE,
@@ -310,7 +309,7 @@ class TestReadPolicyOverride:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
-        oversize = "x" * (MAX_OUTPUT_SIZE + 1)
+        oversize = "x" * (KIRO.injection_budget + 1)
         (store / "write-policy.md").write_text(oversize)
         assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
             oversize,
@@ -324,64 +323,48 @@ class TestReadPolicyOverride:
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
-        at_limit = "x" * MAX_OUTPUT_SIZE
+        at_limit = "x" * KIRO.injection_budget
         (store / "write-policy.md").write_text(at_limit)
         assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (at_limit, None)
 
-    def test_kiros_bound_counts_bytes_not_characters(self, tmp_path: Path) -> None:
-        """Kiro's `max_output_size` is a byte cap, and multi-byte characters are exactly where a
-        `len(text)` check would silently under-count. One character over the cap in bytes, well
-        under it in characters.
-        """
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_the_bound_counts_characters_not_bytes(self, tmp_path: Path, spec: HarnessSpec) -> None:
+        """Both harnesses cut by characters, and multi-byte text is where a byte count would label
+        a policy the harness delivers whole."""
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
-        # Each `—` is 3 bytes in UTF-8, so this is ~1/3 the cap in characters and just over it in
-        # bytes.
-        text = "—" * (MAX_OUTPUT_SIZE // 3 + 1)
-        assert len(text) < MAX_OUTPUT_SIZE
+        text = "—" * spec.injection_budget
+        assert len(text.encode("utf-8")) > spec.injection_budget
         (store / "write-policy.md").write_text(text)
-        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
-            text,
-            OVERRIDE_OVERSIZE,
-        )
+        assert read_policy(store, spec=spec, default=WRITE_POLICY_PROMPT) == (text, None)
 
-    def test_claude_codes_bound_counts_characters_not_bytes(self, tmp_path: Path) -> None:
-        """The converse of the test above, and the reason the unit travels with the number rather
-        than being assumed by the caller: the same multi-byte text that overruns a byte-denominated
-        budget sits comfortably inside a character-denominated one three times its size in bytes.
-        A check that measured bytes here would label a policy this harness delivers whole.
-        """
-        store = tmp_path / ".zikaron"
-        store.mkdir(mode=0o700)
-        store.chmod(0o700)
-        text = "—" * CLAUDE_CODE.injection_budget
-        assert len(text.encode("utf-8")) > CLAUDE_CODE.injection_budget
-        (store / "write-policy.md").write_text(text)
-        assert read_policy(store, spec=CLAUDE_CODE, default=WRITE_POLICY_PROMPT) == (text, None)
-
-    def test_an_override_between_the_two_budgets_is_labelled_only_on_the_smaller_harness(
+    def test_an_override_between_the_two_budgets_is_labeled_only_on_the_smaller_harness(
         self, tmp_path: Path
     ) -> None:
-        """The whole reason this is a parameter. One file, two harnesses, opposite answers: a
-        policy well inside kiro's budget overruns Claude Code's by more than sixfold, and a single
-        hard-coded figure would necessarily be wrong for one of them.
+        """The whole reason this is a parameter. One file, two harnesses, opposite answers, and a
+        single hard-coded figure would necessarily be wrong for one of them.
         """
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
         store.chmod(0o700)
-        between = "x" * (CLAUDE_CODE.injection_budget + 1)
-        assert len(between.encode("utf-8")) < KIRO.injection_budget
+        between = "x" * (KIRO.injection_budget + 1)
+        assert not CLAUDE_CODE.exceeds_injection_budget(between)
         (store / "write-policy.md").write_text(between)
-        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (between, None)
-        assert read_policy(store, spec=CLAUDE_CODE, default=WRITE_POLICY_PROMPT) == (
+        assert read_policy(store, spec=KIRO, default=WRITE_POLICY_PROMPT) == (
             between,
             OVERRIDE_OVERSIZE,
         )
+        assert read_policy(store, spec=CLAUDE_CODE, default=WRITE_POLICY_PROMPT) == (between, None)
 
-    def test_the_shipped_policy_fits_every_supported_harness(self) -> None:
-        """The constant this module falls back to is the one text guaranteed to be injected, so it
-        must fit under every harness rather than only the one with the larger budget.
-        """
-        for spec in (KIRO, CLAUDE_CODE):
-            assert not spec.exceeds_injection_budget(WRITE_POLICY_PROMPT)
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    @pytest.mark.parametrize(
+        "policy",
+        [WRITE_POLICY_PROMPT, SUBAGENT_WRITE_POLICY_PROMPT],
+        ids=["primary", "subagent"],
+    )
+    def test_every_shipped_policy_fits_every_harness(self, spec: HarnessSpec, policy: str) -> None:
+        """A shipped policy is the one text guaranteed to be injected, so it must fit under every
+        harness: kiro cuts past its budget and tells only the model, so the next sentence added to
+        a policy turns this red rather than arriving cut."""
+        assert not spec.exceeds_injection_budget(policy)

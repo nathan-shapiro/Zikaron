@@ -15,7 +15,7 @@ from zikaron.install.code_knowledge import (
     ORCHESTRATOR_AGENT_NAME,
     ORCHESTRATOR_MODEL,
 )
-from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME, Commands, HookFormat
+from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME, Commands
 from zikaron.install.main import main
 from zikaron.install.targets import ClaudeCodeTarget, KiroTarget, target_for
 from zikaron.install.writer import Plan, Targets
@@ -172,7 +172,6 @@ def test_ships_orchestrator_agrees_with_what_a_memory_install_writes(
         consolidator_model="a-model",
         documenter_model="a-model",
         orchestrator_model="a-model",
-        hook_format=HookFormat.OBJECT,
         force=False,
         trust_tools=True,
         components=Components.MEMORY,

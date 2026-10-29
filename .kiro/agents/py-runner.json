@@ -9,5 +9,25 @@
   "allowedTools": [
     "shell"
   ],
-  "welcomeMessage": "py-runner ready. Give me a command; I'll run it, stash the output in /tmp, and report the exit code and any failures."
+  "welcomeMessage": "py-runner ready. Give me a command; I'll run it, stash the output in /tmp, and report the exit code and any failures.",
+  "permissions": {
+    "rules": [
+      {
+        "capability": "shell",
+        "effect": "allow"
+      },
+      {
+        "capability": "fs_read",
+        "match": [
+          "./**"
+        ],
+        "effect": "allow"
+      }
+    ]
+  },
+  "kiroUpgrade": {
+    "revision": 2,
+    "fingerprint": "sha256:c5748c7ec47ff3731cc573615f4ae95347e42520ff0b09c0b329b69d31398047",
+    "source": "sha256:607a4d1dd8c36ef3377147a3e345e37825d704738a75d5886db0fe0a4758b0db"
+  }
 }

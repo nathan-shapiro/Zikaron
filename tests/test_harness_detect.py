@@ -5,18 +5,28 @@ were previously part of `test_hook_envelope.py`, when the hook owned a hard-code
 they moved with the rule.
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
 from zikaron.harness import detect
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, SPECS, Harness, HarnessSpec
+from zikaron.hook import session_relay
 from zikaron.mcp.connection import ServiceConnection
 from zikaron.service import envelope as service_envelope
+from zikaron.service import paths
 
 #: Built from the service's own prefix rather than spelled out, so this fixture cannot drift into
 #: agreeing with a stale copy in the seam while both disagree with the service.
 _MINTED = f"{service_envelope._MINTED_PREFIX}00000000-0000-0000-0000-000000000000"
+
+#: A relay directory that does not exist, for the tests about the variable alone.
+_NO_RELAY = Path("/nonexistent/zikaron-session-relay")
+
+
+def _label(spec: HarnessSpec) -> str | None:
+    return detect.session_label(spec, relay_dir=_NO_RELAY)
 
 
 class TestDetection:
@@ -64,11 +74,11 @@ class TestSessionLabel:
         self, monkeypatch: pytest.MonkeyPatch, spec: HarnessSpec
     ) -> None:
         monkeypatch.setenv(spec.session_variable, "a-real-harness-id")
-        assert detect.session_label(spec) == "a-real-harness-id"
+        assert _label(spec) == "a-real-harness-id"
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_returns_none_when_absent(self, spec: HarnessSpec) -> None:
-        assert detect.session_label(spec) is None
+        assert _label(spec) is None
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_a_minted_value_is_treated_as_absent(
@@ -78,7 +88,7 @@ class TestSessionLabel:
         a service-minted label under either name.
         """
         monkeypatch.setenv(spec.session_variable, _MINTED)
-        assert detect.session_label(spec) is None
+        assert _label(spec) is None
 
     def test_the_seams_minted_prefix_is_the_services_own(self) -> None:
         """A guarded copy, like every other cross-boundary copy here. The prefix is how the service
@@ -100,14 +110,14 @@ class TestSessionLabel:
         differs from every real id and silently suppresses every top-level push.
         """
         monkeypatch.setenv(spec.session_variable, "")
-        assert detect.session_label(spec) is None
+        assert _label(spec) is None
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_a_value_merely_containing_the_prefix_is_not_treated_as_absent(
         self, monkeypatch: pytest.MonkeyPatch, spec: HarnessSpec
     ) -> None:
         monkeypatch.setenv(spec.session_variable, "not-zk-but-contains-it")
-        assert detect.session_label(spec) == "not-zk-but-contains-it"
+        assert _label(spec) == "not-zk-but-contains-it"
 
     def test_each_harness_reads_only_its_own_variable(
         self, monkeypatch: pytest.MonkeyPatch
@@ -117,14 +127,48 @@ class TestSessionLabel:
         """
         monkeypatch.setenv(KIRO.session_variable, "kiro-session")
         monkeypatch.setenv(CLAUDE_CODE.session_variable, "claude-session")
-        assert detect.session_label(KIRO) == "kiro-session"
-        assert detect.session_label(CLAUDE_CODE) == "claude-session"
+        assert _label(KIRO) == "kiro-session"
+        assert _label(CLAUDE_CODE) == "claude-session"
 
     def test_the_other_harnesss_variable_alone_resolves_to_nothing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(KIRO.session_variable, "kiro-session")
-        assert detect.session_label(CLAUDE_CODE) is None
+        assert _label(CLAUDE_CODE) is None
+
+
+class TestTheSessionRelay:
+    """The rung kiro needs because its session variable reaches hooks and no MCP server: the file
+    the hook wrote for this process's parent (`design/harness.md` §"The session relay")."""
+
+    def test_an_absent_variable_is_read_from_the_relay_under_kiro(self, tmp_path: Path) -> None:
+        detect.relay_file(tmp_path, os.getppid()).write_text("sess_from-the-hook")
+        assert detect.session_label(KIRO, relay_dir=tmp_path) == "sess_from-the-hook"
+
+    def test_a_present_variable_is_preferred_over_the_relay(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv(KIRO.session_variable, "sess_from-the-variable")
+        detect.relay_file(tmp_path, os.getppid()).write_text("sess_from-the-hook")
+        assert detect.session_label(KIRO, relay_dir=tmp_path) == "sess_from-the-variable"
+
+    def test_the_relay_is_not_read_under_a_harness_whose_variable_reaches_both(
+        self, tmp_path: Path
+    ) -> None:
+        detect.relay_file(tmp_path, os.getppid()).write_text("sess_from-the-hook")
+        assert detect.session_label(CLAUDE_CODE, relay_dir=tmp_path) is None
+
+    def test_a_minted_value_in_the_relay_is_treated_as_absent(self, tmp_path: Path) -> None:
+        detect.relay_file(tmp_path, os.getppid()).write_text(_MINTED)
+        assert detect.session_label(KIRO, relay_dir=tmp_path) is None
+
+    def test_another_parents_file_is_not_read(self, tmp_path: Path) -> None:
+        detect.relay_file(tmp_path, os.getppid() + 1).write_text("sess_someone-else")
+        assert detect.session_label(KIRO, relay_dir=tmp_path) is None
+
+    def test_an_undecodable_file_reads_as_absent(self, tmp_path: Path) -> None:
+        detect.relay_file(tmp_path, os.getppid()).write_bytes(b"\xff\xfe")
+        assert detect.session_label(KIRO, relay_dir=tmp_path) is None
 
 
 class TestBothClientsResolveTheSameLabel:
@@ -145,10 +189,9 @@ class TestBothClientsResolveTheSameLabel:
             monkeypatch.setenv(spec.marker_variable, "1")
         monkeypatch.setenv(spec.session_variable, "shared-session-label")
         connection = ServiceConnection(tmp_path)
-        assert connection.envelope(kind="mcp").session_id == "shared-session-label"
-        assert connection.envelope(kind="mcp").session_id == detect.session_label(
-            detect.current_spec()
-        )
+        relay_dir = paths.session_relay_dir(connection.location.runtime_dir)
+        assert relay_dir == session_relay.relay_dir()
+        assert detect.session_label(spec, relay_dir=relay_dir) == "shared-session-label"
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_both_fall_to_the_bootstrap_form_when_no_session_variable_is_present(
@@ -160,5 +203,5 @@ class TestBothClientsResolveTheSameLabel:
         """
         if spec.marker_variable is not None:
             monkeypatch.setenv(spec.marker_variable, "1")
-        assert detect.session_label(detect.current_spec()) is None
+        assert detect.session_label(detect.current_spec(), relay_dir=tmp_path) is None
         assert ServiceConnection(tmp_path).envelope(kind="mcp").session_id is None

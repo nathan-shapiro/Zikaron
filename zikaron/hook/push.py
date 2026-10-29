@@ -1,8 +1,8 @@
-"""`userPromptSubmit`: suppress, connect once, ask for the push block, print or relay a failure.
+"""`UserPromptSubmit`: suppress, connect once, ask for the push block, print or relay a failure.
 
 `architecture.md` §"Degraded modes" is normative for the whole sequence, and §"Subagent sessions"
-for step 0. Every branch below reaches exactly one of three observable outcomes, and every one
-exits 0: print `surface`'s text; print nothing (a suppressed subagent turn — not a failure); or
+for its divergence check. Every branch below reaches exactly one of three observable outcomes, and
+every one exits 0: print `surface`'s text; print nothing (a divergent turn — not a failure); or
 print a short, model-facing notice — asking the agent to relay a failure to the operator, or, for
 a service still starting, saying that memories resume once it has started.
 Every path, including an exception this module did not anticipate, reaches one of those three
@@ -24,9 +24,14 @@ from pathlib import Path
 
 from zikaron.core.errors import ZikaronError
 from zikaron.harness import detect
-from zikaron.hook import connect, envelope, failure, rpc, tripwire
+from zikaron.hook import connect, envelope, failure, rpc, session_relay, tripwire
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.service import paths
+
+#: What `hook.log` records for a push block longer than the harness will inject. The block is still
+#: printed whole: the harness cuts it and marks the cut to the model alone, so this line is the one
+#: place anyone else can see it happened.
+PUSH_OVERSIZE = "push_oversize"
 
 #: The whole push — connect, `health()`, the `surface` request — to a service already running and
 #: done starting. Short, because failing fast beats being correct and late while the user waits
@@ -74,7 +79,7 @@ _SURFACE_LIMIT = 5
 
 
 def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
-    """Run the whole `userPromptSubmit` sequence and return what to print to stdout, or `None` if
+    """Run the whole `UserPromptSubmit` sequence and return what to print to stdout, or `None` if
     nothing should be printed — the caller (`main.py`) owns the actual `print`, so this function
     stays trivially testable without capturing real stdout.
 
@@ -89,16 +94,13 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
     """
     started_at = time.monotonic()
     spec = detect.current_spec()
-    env_session_id = detect.session_label(spec)
-    if envelope.is_subagent_session(
+    env_session_id = detect.session_label(spec, relay_dir=session_relay.relay_dir())
+    if envelope.sessions_diverge(
         env_session_id=env_session_id, payload_session_id=payload_session_id
     ):
-        # Print nothing, make no RPC. Under a harness that fires this hook for subagent sessions
-        # that is the whole story and not a failure at all. Under one where payload and
-        # environment session ids are invariantly equal it instead means the harness was
-        # misdetected — the single case `tripwire` records, and the only one that writes a line
-        # here.
-        tripwire.record_if_misdetected(spec=spec, scope_dir=scope_dir)
+        # Print nothing, make no RPC: the harness was misdetected — the single case `tripwire`
+        # records, and the only one that writes a line here.
+        tripwire.record_misdetection(scope_dir=scope_dir)
         return None
 
     # `hook_log_path` is resolved *before* the degraded boundary, deliberately: it is the one
@@ -130,7 +132,7 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
         remaining = min(budget - (now - started_at), _MAX_DEADLINE_AHEAD_SECONDS)
         client_envelope = envelope.build_envelope(session_id=env_session_id, pid=pid)
         try:
-            return rpc.surface_once(
+            block = rpc.surface_once(
                 sock,
                 prompt=prompt,
                 limit=_SURFACE_LIMIT,
@@ -146,6 +148,9 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
             # listener that accepts and never answers `health` — a blocked event loop — which
             # stays `transport`.
             return _degrade(hook_log_path, "unanswered", cold_start=cold_start)
+        if spec.exceeds_injection_budget(block):
+            failure.record_failure(hook_log_path, PUSH_OVERSIZE)
+        return block
     except (connect.HookTransportError, rpc.ServiceRejectionError, ZikaronError) as error:
         kind, code = failure.classify(error)
         return _degrade(hook_log_path, kind, code=code, cold_start=cold_start)

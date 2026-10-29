@@ -482,8 +482,10 @@ would document them.
 _IN_SESSION_PERMISSIONS: Final = """
 ## Permissions
 
-This skill runs in the session that invoked it, and the documenter's own config already allows its
-tools.
+This skill runs in the session that invoked it. kiro gives each documenter only what its own config
+and this session's agent both allow, so where this agent has no `fs_write` rule covering the
+documents directory, each documenter's write asks first, and a headless run writes no document.
+When a run ends with documents missing for that reason, say so.
 """
 
 #: Claude Code's skill: the session spawns the orchestrator, whose definition carries the loop.
@@ -560,9 +562,9 @@ CLAUDE_CODE_ARGUMENTS_SOURCE: Final = (
     "first, which is empty when none were given."
 )
 
-#: Kiro's invocation, naming the tool and its `role` field as the consolidation skill's does.
-KIRO_SPAWN_INSTRUCTION: Final = """spawn a **zikaron-documenter** subagent with the `subagent`
-tool, `role: zikaron-documenter`, giving it this prompt:"""
+#: Kiro's invocation: the subagent and the prompt, as the consolidation skill's is.
+KIRO_SPAWN_INSTRUCTION: Final = """spawn a **zikaron-documenter** subagent, giving it this
+prompt:"""
 
 #: Claude Code's invocation, naming no spawning tool, for the reason `assets.py` gives for the
 #: consolidator's. The foreground is asked for because under `-p` a subagent does not wait for its

@@ -1,6 +1,8 @@
-"""`zikaron.install.writer`: what lands on disk, and what is refused.
+"""`zikaron.install.writer` and `zikaron.install.kiro_merge`: what lands on disk, and what is
+refused.
 
-`architecture.md` §"The install contract" is normative. The interesting behaviour here is all
+`architecture.md` §"The install contract" is normative, and `design/harness.md` §"The installer's
+two targets" for the profile shapes kiro's V3 engine reads. The interesting behavior here is all
 *refusal*: this is the one part of Zikaron that writes files a user owns, so every test below is
 either "it did not clobber that" or "it said what it changed".
 """
@@ -8,28 +10,31 @@ either "it did not clobber that" or "it said what it changed".
 import errno
 import json
 import os
+import re
 import shlex
 from pathlib import Path
+from typing import Final
 
 import pytest
 
-from zikaron.hook.limits import TIMEOUT_MS
+from zikaron.code_knowledge.main import DEFAULT_DOCUMENTS
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
     Commands,
-    HookFormat,
+    hooks_array,
 )
 from zikaron.install.harness import InstallError
+from zikaron.install.kiro_merge import DOCUMENTS_DIRECTORY, plan_kiro_merge
 from zikaron.install.targets import KiroTarget
 from zikaron.install.writer import (
     Plan,
     Report,
     Targets,
     commit_merge,
-    plan_kiro_merge,
     write_shipped_files,
 )
 
@@ -65,24 +70,53 @@ _OTHER_COMMANDS = Commands(
     hook=Path("/elsewhere/bin/zikaron-hook"), mcp=Path("/elsewhere/bin/zikaron-mcp")
 )
 
+#: The two rules a default merge adds to a profile's `permissions.rules`, spelled as
+#: `kiro-cli agent upgrade` derives them from a V2 profile (`research/kiro-v3-probe.md` §2).
+_MCP_RULE: Final[dict[str, object]] = {
+    "capability": "mcp",
+    "match": [f"{MCP_SERVER_NAME}/*"],
+    "effect": "allow",
+}
+_SKILL_RULE: Final[dict[str, object]] = {"capability": "skill", "effect": "allow"}
 
-def _plan(
-    project: Path,
-    *,
-    force: bool = False,
-    fmt: HookFormat = HookFormat.OBJECT,
-    trust_tools: bool = True,
-) -> Plan:
+#: The profile `kiro-cli agent create made` writes on 2.35.1 (`research/kiro-v3-probe.md` §22).
+_AGENT_CREATE_PROFILE: Final[dict[str, object]] = {
+    "name": "made",
+    "description": "",
+    "prompt": None,
+    "mcpServers": {},
+    "tools": ["*"],
+    "toolAliases": {},
+    "allowedTools": [],
+    "resources": [],
+    "toolsSettings": {},
+    "includeMcpJson": True,
+    "model": None,
+    "permissions": {"rules": [{"capability": "fs_read", "match": ["./**"], "effect": "allow"}]},
+    "kiroUpgrade": {
+        "revision": 2,
+        "fingerprint": "sha256:a491e259057c3401142cdb4355e2c5f8503003bce444a444fe1ffe204c5d33bd",
+        "source": "sha256:aaf30cb0d6d67d98141d4bb0bd1cbebee05128584714ec0d5149e275bb2b15c1",
+    },
+}
+
+
+def _plan(project: Path, *, force: bool = False, trust_tools: bool = True) -> Plan:
     return Plan(
         project=project,
         commands=_COMMANDS,
         consolidator_model="a-model",
         documenter_model="a-model",
         orchestrator_model="a-model",
-        hook_format=fmt,
         force=force,
         trust_tools=trust_tools,
     )
+
+
+def _universal(**fields: object) -> dict[str, object]:
+    """A profile carrying both engines' fields, `permissions` and `allowedTools`, as
+    `kiro-cli agent create` writes one."""
+    return {"name": "mine", "permissions": {"rules": []}, "allowedTools": [], **fields}
 
 
 def _write_agent(path: Path, document: dict[str, object]) -> None:
@@ -190,17 +224,52 @@ class TestWritingTheShippedFiles:
         assert json.loads(targets.consolidator_config.read_text())["model"] == "a-model"
 
 
-class TestMergingIntoAnObjectFormatConfig:
-    def test_it_adds_both_triggers_and_keeps_the_users_own_hook(self, tmp_path: Path) -> None:
+class TestAV2OnlyProfileIsRefused:
+    """V3 skips a profile with a V2 trust field and no `permissions` for its default agent
+    (`research/kiro-v3-probe.md` §1), so installing into one would install into a profile nothing
+    loads. Converting the user's trust settings is `kiro-cli agent upgrade`'s job, and the refusal
+    names it."""
+
+    @pytest.mark.parametrize(
+        "document",
+        [
+            pytest.param({"name": "mine", "allowedTools": ["read"]}, id="allowedTools"),
+            pytest.param({"name": "mine", "allowedTools": []}, id="an empty allowedTools"),
+            pytest.param(
+                {"name": "mine", "toolsSettings": {"shell": {"allowedCommands": ["ls"]}}},
+                id="toolsSettings",
+            ),
+        ],
+    )
+    def test_it_is_refused_naming_the_upgrade_command(
+        self, tmp_path: Path, document: dict[str, object]
+    ) -> None:
+        config = tmp_path / "agents" / "mine.json"
+        _write_agent(config, document)
+        before = config.read_text()
+        upgrade = re.escape(f"kiro-cli agent upgrade {config.parent}")
+        with pytest.raises(InstallError, match=upgrade):
+            merge_agent_config(config, _plan(tmp_path), Report())
+        assert config.read_text() == before
+        assert not config.with_name("mine.json.bak").exists()
+
+    def test_an_empty_tools_settings_is_no_trust_field(self, tmp_path: Path) -> None:
+        """`kiro-cli agent create` writes `"toolsSettings": {}`, and the upgrader calls a profile
+        with no trust field universal, so counting `{}` would refuse a profile nothing converts."""
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "hooks": {"agentSpawn": [{"command": "git status"}]}})
+        _write_agent(config, {"name": "mine", "toolsSettings": {}})
         merge_agent_config(config, _plan(tmp_path), Report())
-        hooks = json.loads(config.read_text())["hooks"]
-        assert [entry["command"] for entry in hooks["agentSpawn"]] == [
-            "git status",
-            str(_COMMANDS.hook),
-        ]
-        assert len(hooks["userPromptSubmit"]) == 1
+        written = json.loads(config.read_text())
+        assert written["toolsSettings"] == {}
+        assert written["permissions"] == {"rules": [_MCP_RULE, _SKILL_RULE]}
+
+
+class TestHooksAreWrittenInTheArrayForm:
+    def test_a_profile_with_no_hooks_gains_both_array_entries(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine"})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
 
     def test_a_second_install_replaces_rather_than_duplicates(self, tmp_path: Path) -> None:
         """Two entries on one trigger would inject two blocks per user message."""
@@ -208,9 +277,140 @@ class TestMergingIntoAnObjectFormatConfig:
         _write_agent(config, {"name": "mine"})
         merge_agent_config(config, _plan(tmp_path), Report())
         merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
+
+    def test_a_users_own_array_entry_is_kept_beside_ours(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "hooks": [
+                    {
+                        "name": "git-status",
+                        "trigger": "SessionStart",
+                        "action": {"type": "command", "command": "git status"},
+                    }
+                ],
+            },
+        )
+        merge_agent_config(config, _plan(tmp_path), Report())
         hooks = json.loads(config.read_text())["hooks"]
-        assert len(hooks["agentSpawn"]) == 1
-        assert len(hooks["userPromptSubmit"]) == 1
+        assert [entry["name"] for entry in hooks] == [
+            "git-status",
+            "zikaron-SessionStart",
+            "zikaron-UserPromptSubmit",
+        ]
+
+    def test_it_adds_the_primary_mcp_server_and_keeps_the_users_own(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "mcpServers": {"git": {"command": "mcp-server-git"}}})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        servers = json.loads(config.read_text())["mcpServers"]
+        assert set(servers) == {"git", MCP_SERVER_NAME}
+        assert servers[MCP_SERVER_NAME]["args"] == ["--mode", "primary"]
+
+
+class TestAnObjectFormatHooks:
+    """V3 reads object-format `hooks` only as compatibility input, and a key is either an object or
+    an array, so Zikaron's array entries cannot sit beside an object-format entry of the user's."""
+
+    def test_one_holding_only_our_entries_is_rewritten_as_array_entries(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-V3 install as it wrote itself: camelCase triggers, the command alone, and the two
+        V2 limit fields."""
+        old = {"command": shlex.quote(str(_COMMANDS.hook)), "timeout_ms": 10000}
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "hooks": {
+                    "agentSpawn": [{**old, "max_output_size": 65536}],
+                    "userPromptSubmit": [{**old, "max_output_size": 65536}],
+                },
+            },
+        )
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
+        assert any("rewritten from the object form into the array form" in n for n in report.notes)
+
+    def test_one_holding_a_users_entry_is_refused_showing_it_in_the_array_form(
+        self, tmp_path: Path
+    ) -> None:
+        config = tmp_path / "agents" / "mine.json"
+        entry = {"command": "git status", "matcher": "fs_write", "timeout_ms": 1500}
+        _write_agent(config, {"name": "mine", "hooks": {"agentSpawn": [entry]}})
+        before = config.read_text()
+        with pytest.raises(InstallError, match="in the object form") as raised:
+            merge_agent_config(config, _plan(tmp_path), Report())
+        converted = {
+            "name": "agentSpawn-0",
+            "trigger": "SessionStart",
+            "matcher": "fs_write",
+            "action": {"type": "command", "command": "git status"},
+            "timeout": 2,
+        }
+        assert json.dumps([converted]) in str(raised.value)
+        assert config.read_text() == before
+        assert not config.with_name("mine.json.bak").exists()
+
+    def test_an_empty_object_is_rewritten_with_no_note(self, tmp_path: Path) -> None:
+        """Nothing of Zikaron's was there to rewrite, so the install says nothing about it."""
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "hooks": {}})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
+        assert not any("rewritten from the object form" in note for note in report.notes)
+
+    @pytest.mark.parametrize(
+        "theirs",
+        [{"timeout_ms": 1500}, {"command": "'unbalanced quote"}],
+        ids=["no command", "unbalanced quotes"],
+    )
+    def test_an_entry_whose_command_is_no_program_is_the_users(
+        self, tmp_path: Path, theirs: dict[str, object]
+    ) -> None:
+        """Neither names an executable, so neither can be Zikaron's, and the object form is refused
+        rather than the entry dropped."""
+        config = tmp_path / "agents" / "mine.json"
+        _write_agent(config, {"name": "mine", "hooks": {"userPromptSubmit": [theirs]}})
+        with pytest.raises(InstallError, match="in the object form"):
+            merge_agent_config(config, _plan(tmp_path), Report())
+
+    def test_the_refusal_names_the_upgrader_only_for_a_profile_it_would_convert(
+        self, tmp_path: Path
+    ) -> None:
+        """The upgrader converts the hooks of a profile without `permissions` and leaves one that
+        has them untouched, as out of sync (`research/kiro-v3-probe.md` §19)."""
+        hooks = {"stop": [{"command": "git status"}]}
+        bare = tmp_path / "bare" / "mine.json"
+        _write_agent(bare, {"name": "mine", "hooks": hooks})
+        with pytest.raises(InstallError) as without_permissions:
+            merge_agent_config(bare, _plan(tmp_path), Report())
+        assert f"`kiro-cli agent upgrade {bare.parent}` converts it" in str(
+            without_permissions.value
+        )
+
+        permitted = tmp_path / "permitted" / "mine.json"
+        _write_agent(permitted, {"name": "mine", "permissions": {"rules": []}, "hooks": hooks})
+        with pytest.raises(InstallError) as with_permissions:
+            merge_agent_config(permitted, _plan(tmp_path), Report())
+        assert "Rewrite `hooks` in that form" in str(with_permissions.value)
+        assert "kiro-cli agent upgrade" not in str(with_permissions.value)
+
+    def test_an_entry_that_is_not_an_object_is_refused_rather_than_crashing(
+        self, tmp_path: Path
+    ) -> None:
+        """It is the user's, so it is refused like any other entry of theirs, and quoted as it
+        stands since it has no array form."""
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "hooks": {"agentSpawn": ["not an object"]}})
+        with pytest.raises(InstallError, match=re.escape('yours read: ["not an object"]')):
+            merge_agent_config(config, _plan(tmp_path), Report())
 
     def test_an_entry_from_another_interpreter_is_refused_without_force(
         self, tmp_path: Path
@@ -251,22 +451,7 @@ class TestMergingIntoAnObjectFormatConfig:
             },
         )
         merge_agent_config(config, _plan(tmp_path, force=True), Report())
-        entries = json.loads(config.read_text())["hooks"]["userPromptSubmit"]
-        assert [entry["command"] for entry in entries] == [shlex.quote(str(_COMMANDS.hook))]
-
-    def test_it_adds_the_primary_mcp_server_and_keeps_the_users_own(self, tmp_path: Path) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "mcpServers": {"git": {"command": "mcp-server-git"}}})
-        merge_agent_config(config, _plan(tmp_path), Report())
-        servers = json.loads(config.read_text())["mcpServers"]
-        assert set(servers) == {"git", MCP_SERVER_NAME}
-        assert servers[MCP_SERVER_NAME]["args"] == ["--mode", "primary"]
-
-    def test_a_config_with_no_hooks_key_gets_the_requested_format(self, tmp_path: Path) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine"})
-        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), Report())
-        assert isinstance(json.loads(config.read_text())["hooks"], list)
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
 
 
 class TestTheToolSelector:
@@ -295,29 +480,17 @@ class TestTheToolSelector:
         merge_agent_config(config, _plan(tmp_path), Report())
         assert json.loads(config.read_text())["tools"] == ["read", TOOL_SELECTOR]
 
-    def test_allowed_tools_gets_it_too_by_default(self, tmp_path: Path) -> None:
-        """Without this, every memory write interrupts the user for approval — which pushes against
-        the write policy the store depends on and trains them to click through prompts.
-        """
+    def test_a_tools_list_selecting_every_tool_gains_nothing_and_says_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """`*` already selects Zikaron's tools, so adding `@zikaron` beside it, or a note saying it
+        was added, would only be noise."""
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "allowedTools": ["read"]})
-        merge_agent_config(config, _plan(tmp_path), Report())
-        assert json.loads(config.read_text())["allowedTools"] == ["read", TOOL_SELECTOR]
-
-    def test_allowed_tools_is_left_alone_when_the_prompts_are_wanted(self, tmp_path: Path) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "allowedTools": ["read"]})
+        _write_agent(config, {"name": "mine", "tools": ["*"]})
         report = Report()
-        merge_agent_config(config, _plan(tmp_path, trust_tools=False), report)
-        assert json.loads(config.read_text())["allowedTools"] == ["read"]
-        assert any("--no-trust-tools" in note for note in report.notes)
-
-    def test_a_second_install_does_not_add_it_to_allowed_tools_twice(self, tmp_path: Path) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine"})
-        merge_agent_config(config, _plan(tmp_path), Report())
-        merge_agent_config(config, _plan(tmp_path), Report())
-        assert json.loads(config.read_text())["allowedTools"] == [TOOL_SELECTOR]
+        merge_agent_config(config, _plan(tmp_path), report)
+        assert json.loads(config.read_text())["tools"] == ["*"]
+        assert not any(f"`{TOOL_SELECTOR}` to" in note for note in report.notes)
 
     def test_a_non_array_allowed_tools_is_refused_rather_than_replaced(
         self, tmp_path: Path
@@ -330,55 +503,209 @@ class TestTheToolSelector:
         assert config.read_text() == before
 
 
-class TestTheConsolidatorIsAddedToTheCrew:
-    """Without this the consolidation skill cannot run at all — found in real use, not in review.
+class TestTheV2HalfOfAUniversalProfile:
+    """kiro documents that the TUI rebuilds an out-of-sync profile's V3 fields from its V2 ones, so
+    a universal profile's `allowedTools` gains `@zikaron` beside the `mcp` rule, and a rebuild
+    should regenerate the rule. A profile with no V2 half has nothing to feed."""
 
-    The skill spawns `zikaron-consolidator` through the `subagent` tool, and
-    `toolsSettings.crew.availableAgents` gates which agents that tool may spawn.
+    def test_a_universal_profile_gains_the_selector_in_allowed_tools(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, _universal(allowedTools=["read"]))
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["allowedTools"] == ["read", TOOL_SELECTOR]
 
-    The two lists are **not** symmetric, which is what makes this easy to get wrong: an absent or
-    empty `availableAgents` means *every* agent is available, so adding one entry there would narrow
-    the config rather than widen it. `trustedAgents` grants nothing when empty, so adding to it can
-    only widen.
+    @pytest.mark.parametrize(
+        "document",
+        [
+            pytest.param({"name": "mine", "permissions": {"rules": []}}, id="permissions"),
+            pytest.param({"name": "mine"}, id="no trust field"),
+        ],
+    )
+    def test_a_v3_only_profile_gains_no_allowed_tools(
+        self, tmp_path: Path, document: dict[str, object]
+    ) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, document)
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert "allowedTools" not in json.loads(config.read_text())
+
+    def test_allowed_tools_is_left_alone_when_the_prompts_are_wanted(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, _universal(allowedTools=["read"]))
+        merge_agent_config(config, _plan(tmp_path, trust_tools=False), Report())
+        assert json.loads(config.read_text())["allowedTools"] == ["read"]
+
+    def test_a_second_install_does_not_add_it_to_allowed_tools_twice(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, _universal())
+        merge_agent_config(config, _plan(tmp_path), Report())
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["allowedTools"] == [TOOL_SELECTOR]
+
+
+class TestThePermissionRules:
+    """Under V3 a call no rule allows asks, and a headless run refuses every ask. So a default merge
+    writes the `mcp` rule over Zikaron's tools, and the `skill` rule, without which neither skill
+    loads headless (`research/kiro-v3-probe.md` §24). Asserted on `plan_kiro_merge`'s document, the
+    one place both are decided."""
+
+    @pytest.mark.parametrize(
+        "document",
+        [
+            pytest.param({"name": "mine"}, id="V3-only"),
+            pytest.param(_universal(), id="universal"),
+        ],
+    )
+    def test_both_rules_are_written_by_default(
+        self, tmp_path: Path, document: dict[str, object]
+    ) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, document)
+        merge = plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path))
+        assert merge.document["permissions"] == {"rules": [_MCP_RULE, _SKILL_RULE]}
+
+    def test_the_users_own_rules_and_fields_are_kept_ahead_of_ours(self, tmp_path: Path) -> None:
+        mine = {"capability": "fs_read", "match": ["./**"], "effect": "allow"}
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "permissions": {"rules": [mine], "note": "kept"}})
+        merge = plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path))
+        assert merge.document["permissions"] == {
+            "rules": [mine, _MCP_RULE, _SKILL_RULE],
+            "note": "kept",
+        }
+
+    @pytest.mark.parametrize(
+        "document",
+        [
+            pytest.param({"name": "mine"}, id="V3-only"),
+            pytest.param(_universal(), id="universal"),
+        ],
+    )
+    def test_neither_is_written_under_no_trust_tools_and_the_note_names_both(
+        self, tmp_path: Path, document: dict[str, object]
+    ) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, document)
+        merge = plan_kiro_merge(
+            config, _plan(tmp_path, trust_tools=False), Targets(project=tmp_path)
+        )
+        assert merge.document.get("permissions") == document.get("permissions")
+        (note,) = [note for note in merge.notes if "--no-trust-tools" in note]
+        assert "two rules" in note
+        assert "`mcp` over `zikaron/*`" in note
+        assert "`skill`" in note
+
+    def test_a_re_install_over_equal_rules_adds_neither_again(self, tmp_path: Path) -> None:
+        """The upgrader derives both rules from a V2 profile, so a profile it converted already
+        carries them, in its own order."""
+        config = tmp_path / "mine.json"
+        rules = [_SKILL_RULE, {"capability": "fs_read", "effect": "allow"}, _MCP_RULE]
+        _write_agent(config, {"name": "mine", "permissions": {"rules": rules}})
+        merge = plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path))
+        assert merge.document["permissions"] == {"rules": rules}
+
+    def test_a_second_install_adds_neither_twice(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine"})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["permissions"] == {"rules": [_MCP_RULE, _SKILL_RULE]}
+
+
+class TestAProfileKiroCliAgentCreateWrote:
+    """The common first install: a profile `kiro-cli agent create` wrote, named straight away with
+    `--agent`. It is universal, and its `tools` holds `*`."""
+
+    def _merged(self, tmp_path: Path) -> tuple[dict[str, object], tuple[str, ...]]:
+        config = tmp_path / "made.json"
+        _write_agent(config, _AGENT_CREATE_PROFILE)
+        merge = plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path))
+        return merge.document, merge.notes
+
+    def test_its_tools_gain_no_selector_and_no_note_about_one(self, tmp_path: Path) -> None:
+        document, notes = self._merged(tmp_path)
+        assert document["tools"] == ["*"]
+        assert not any(f"`{TOOL_SELECTOR}` to" in note for note in notes)
+
+    def test_it_gains_the_selector_in_allowed_tools_and_both_rules(self, tmp_path: Path) -> None:
+        document, _notes = self._merged(tmp_path)
+        assert document["allowedTools"] == [TOOL_SELECTOR]
+        assert document["permissions"] == {
+            "rules": [
+                {"capability": "fs_read", "match": ["./**"], "effect": "allow"},
+                _MCP_RULE,
+                _SKILL_RULE,
+            ]
+        }
+        assert document["toolsSettings"] == {}
+
+    def test_it_is_reported_as_out_of_sync_with_its_grant_in_both_halves(
+        self, tmp_path: Path
+    ) -> None:
+        _document, notes = self._merged(tmp_path)
+        (note,) = [note for note in notes if "out of sync" in note]
+        assert "Zikaron's grant is in both" in note
+        assert "`kiro-cli agent create`" in note, "an agent-created profile carries `kiroUpgrade`"
+
+    def test_a_v3_only_upgraded_profile_is_told_what_a_rebuild_would_drop(
+        self, tmp_path: Path
+    ) -> None:
+        """Its V2 fields carry nothing of Zikaron's, so a rebuild from them would lose the rule."""
+        config = tmp_path / "mine.json"
+        upgrade = _AGENT_CREATE_PROFILE["kiroUpgrade"]
+        _write_agent(config, {"name": "mine", "permissions": {"rules": []}, "kiroUpgrade": upgrade})
+        merge = plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path))
+        (note,) = [note for note in merge.notes if "out of sync" in note]
+        assert "carry none of Zikaron's grant" in note
+
+
+class TestTheCrewOfAUniversalProfile:
+    """The skills spawn the consolidator and the documenter, and
+    `toolsSettings.crew.availableAgents` gates which agents may be spawned. Fed on a universal
+    profile for the reason `allowedTools` is: the upgrader converts `toolsSettings` into rules, so a
+    rebuild of the V3 half reads it.
+
+    The list is a restriction: an absent or empty `availableAgents` means *every* agent is
+    available, so adding one entry there would narrow the config rather than widen it.
     """
 
-    def test_a_populated_available_list_gains_the_consolidator(self, tmp_path: Path) -> None:
-        """The reported bug, exactly: three of the user's own agents listed, ours missing."""
+    def test_a_populated_available_list_gains_both_agents(self, tmp_path: Path) -> None:
+        """The reported bug, exactly: the user's own agents listed, ours missing."""
         config = tmp_path / "mine.json"
+        crew = {"availableAgents": ["helper-a", "helper-b"], "trustedAgents": ["helper-a"]}
+        _write_agent(config, _universal(toolsSettings={"crew": crew}))
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        merged = json.loads(config.read_text())["toolsSettings"]["crew"]
+        assert merged["availableAgents"] == ["helper-a", "helper-b", *_OURS]
+        assert merged["trustedAgents"] == ["helper-a"], "spawn trust is a separate grant, not ours"
+        for agent in _OURS:
+            assert any(agent in note and "availableAgents" in note for note in report.notes)
+
+    def test_a_v3_only_profiles_tools_settings_is_left_untouched(self, tmp_path: Path) -> None:
+        """Whether V3 reads `toolsSettings` at all is a conflict in kiro's own documentation, and a
+        V3-only profile has no V2 half for a rebuild to read."""
+        config = tmp_path / "mine.json"
+        settings = {"crew": {"availableAgents": ["helper-a"]}}
         _write_agent(
-            config,
-            {
-                "name": "mine",
-                "toolsSettings": {
-                    "crew": {
-                        "availableAgents": ["helper-a", "helper-b"],
-                        "trustedAgents": ["helper-a"],
-                    }
-                },
-            },
+            config, {"name": "mine", "permissions": {"rules": []}, "toolsSettings": settings}
         )
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert crew["availableAgents"] == ["helper-a", "helper-b", *_OURS]
-        assert crew["trustedAgents"] == ["helper-a"], "spawn trust is a separate grant, not ours"
-        for agent in _OURS:
-            assert any(agent in note and "availableAgents" in note for note in report.notes)
-            assert any(agent in note and "trustedAgents" in note for note in report.notes)
+        assert json.loads(config.read_text())["toolsSettings"] == settings
+        assert not any("availableAgents" in note for note in report.notes)
 
     def test_an_absent_available_list_is_left_alone_rather_than_narrowed(
         self, tmp_path: Path
     ) -> None:
         """The trap. An absent list means every agent is available; writing one entry into it would
-        restrict the config to the consolidator alone and silently break every other subagent the
+        restrict the config to Zikaron's agents alone and silently break every other subagent the
         user has. Nothing is added at all in that case, so no `toolsSettings` block appears either.
         """
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine"})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
+        _write_agent(config, _universal())
+        merge_agent_config(config, _plan(tmp_path), Report())
         assert "toolsSettings" not in json.loads(config.read_text())
-        assert any("every* agent" in note or "every agent" in note for note in report.notes)
 
     def test_an_empty_available_list_is_treated_the_same_as_an_absent_one(
         self, tmp_path: Path
@@ -386,7 +713,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         """`[]` and absent mean the same thing to the harness, so they must mean the same here — a
         fixture with a populated list cannot tell these two branches apart."""
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "toolsSettings": {"crew": {"availableAgents": []}}})
+        _write_agent(config, _universal(toolsSettings={"crew": {"availableAgents": []}}))
         merge_agent_config(config, _plan(tmp_path), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == []
@@ -398,8 +725,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         """
         config = tmp_path / "mine.json"
         _write_agent(
-            config,
-            {"name": "mine", "toolsSettings": {"agent_crew": {"availableAgents": ["helper-a"]}}},
+            config, _universal(toolsSettings={"agent_crew": {"availableAgents": ["helper-a"]}})
         )
         merge_agent_config(config, _plan(tmp_path), Report())
         settings = json.loads(config.read_text())["toolsSettings"]
@@ -410,13 +736,12 @@ class TestTheConsolidatorIsAddedToTheCrew:
         config = tmp_path / "mine.json"
         _write_agent(
             config,
-            {
-                "name": "mine",
-                "toolsSettings": {
+            _universal(
+                toolsSettings={
                     "write": {"allowedPaths": ["src/**"]},
                     "crew": {"availableAgents": ["helper-a"]},
-                },
-            },
+                }
+            ),
         )
         merge_agent_config(config, _plan(tmp_path), Report())
         settings = json.loads(config.read_text())["toolsSettings"]
@@ -424,9 +749,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
 
     def test_a_second_install_does_not_duplicate_the_entry(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(
-            config, {"name": "mine", "toolsSettings": {"crew": {"availableAgents": ["helper-a"]}}}
-        )
+        _write_agent(config, _universal(toolsSettings={"crew": {"availableAgents": ["helper-a"]}}))
         merge_agent_config(config, _plan(tmp_path), Report())
         merge_agent_config(config, _plan(tmp_path), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
@@ -435,7 +758,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
     def test_an_agent_already_listed_is_not_added_again(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
         crew = {"availableAgents": ["helper-a", CONSOLIDATOR_AGENT_NAME]}
-        _write_agent(config, {"name": "mine", "toolsSettings": {"crew": crew}})
+        _write_agent(config, _universal(toolsSettings={"crew": crew}))
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
         merged = json.loads(config.read_text())["toolsSettings"]["crew"]
@@ -445,46 +768,18 @@ class TestTheConsolidatorIsAddedToTheCrew:
 
     def test_an_existing_trusted_agents_list_is_never_touched(self, tmp_path: Path) -> None:
         """Spawn trust is a wider grant than Zikaron's tools — its own model invocation and four
-        mutation verbs — so it stays the user's decision even under `--force`, and the install says
-        that starting a consolidation will ask once.
-        """
+        mutation verbs — so it stays the user's decision even under `--force`."""
         config = tmp_path / "mine.json"
-        _write_agent(
-            config,
-            {
-                "name": "mine",
-                "toolsSettings": {"crew": {"availableAgents": ["a"], "trustedAgents": ["a"]}},
-            },
-        )
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path, force=True), report)
-        crew = json.loads(config.read_text())["toolsSettings"]["crew"]
-        assert crew["trustedAgents"] == ["a"]
-        assert any("will ask your permission" in note for note in report.notes)
+        crew = {"availableAgents": ["a"], "trustedAgents": ["a"]}
+        _write_agent(config, _universal(toolsSettings={"crew": crew}))
+        merge_agent_config(config, _plan(tmp_path, force=True), Report())
+        assert json.loads(config.read_text())["toolsSettings"]["crew"]["trustedAgents"] == ["a"]
 
-    def test_the_alias_with_no_available_list_is_left_alone_and_named_in_the_note(
-        self, tmp_path: Path
-    ) -> None:
-        """The note has to name the key the config actually uses, or it points at a block the user
-        does not have."""
+    def test_the_alias_with_no_available_list_is_left_alone(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "toolsSettings": {"agent_crew": {}}})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
+        _write_agent(config, _universal(toolsSettings={"agent_crew": {}}))
+        merge_agent_config(config, _plan(tmp_path), Report())
         assert json.loads(config.read_text())["toolsSettings"] == {"agent_crew": {}}
-        assert any("agent_crew.availableAgents" in note for note in report.notes)
-
-    def test_no_tools_settings_block_is_invented_when_nothing_is_trusted(
-        self, tmp_path: Path
-    ) -> None:
-        """With `--no-trust-tools` and no existing crew there is nothing to add, so a config that
-        had no `toolsSettings` should not grow an empty one."""
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine"})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path, trust_tools=False), report)
-        assert "toolsSettings" not in json.loads(config.read_text())
-        assert any("trustedAgents" in note for note in report.notes)
 
     def test_a_populated_available_list_is_still_extended_without_trust(
         self, tmp_path: Path
@@ -492,9 +787,7 @@ class TestTheConsolidatorIsAddedToTheCrew:
         """`--no-trust-tools` is about approval prompts, not availability: the skill still has to be
         able to spawn the consolidator at all."""
         config = tmp_path / "mine.json"
-        _write_agent(
-            config, {"name": "mine", "toolsSettings": {"crew": {"availableAgents": ["helper-a"]}}}
-        )
+        _write_agent(config, _universal(toolsSettings={"crew": {"availableAgents": ["helper-a"]}}))
         merge_agent_config(config, _plan(tmp_path, trust_tools=False), Report())
         crew = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert crew["availableAgents"] == ["helper-a", *_OURS]
@@ -560,6 +853,8 @@ class TestTheSkillIsAlwaysDeclared:
 
 
 class TestACrewBlockThisCannotMergeIntoIsRefused:
+    """On a universal profile, the one shape whose crew is merged into."""
+
     def test_both_crew_spellings_at_once_is_refused(self, tmp_path: Path) -> None:
         """They are documented as aliases for one block, so a config carrying both has no defined
         meaning — and picking one silently would ignore whatever the user put in the other.
@@ -567,13 +862,12 @@ class TestACrewBlockThisCannotMergeIntoIsRefused:
         config = tmp_path / "mine.json"
         _write_agent(
             config,
-            {
-                "name": "mine",
-                "toolsSettings": {
+            _universal(
+                toolsSettings={
                     "crew": {"availableAgents": ["helper-a"]},
                     "agent_crew": {"availableAgents": ["helper-b"]},
-                },
-            },
+                }
+            ),
         )
         before = config.read_text()
         with pytest.raises(InstallError, match=r"both `toolsSettings\.crew` and"):
@@ -605,7 +899,7 @@ class TestACrewBlockThisCannotMergeIntoIsRefused:
         self, tmp_path: Path, settings: object, expected: str
     ) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "toolsSettings": settings})
+        _write_agent(config, _universal(toolsSettings=settings))
         before = config.read_text()
         with pytest.raises(InstallError, match=expected):
             merge_agent_config(config, _plan(tmp_path), Report())
@@ -632,63 +926,20 @@ class TestAConfigWithSomethingUnexpectedInIt:
         with pytest.raises(InstallError, match="not an object"):
             merge_agent_config(config, _plan(tmp_path), Report())
 
-    def test_a_hook_entry_that_is_not_an_object_is_left_alone_rather_than_crashing(
+    def test_an_array_entry_that_is_not_an_object_is_left_alone_rather_than_crashing(
         self, tmp_path: Path
     ) -> None:
         """The harness would reject this config, but we read it before the harness does — and the
-        useful behaviour is to add our entry and leave the oddity for the harness to complain about,
-        not to raise on a file we were only asked to merge into.
+        useful behavior is to add our entries and leave the oddity for the harness to complain
+        about, not to raise on a file we were only asked to merge into.
         """
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "hooks": {"agentSpawn": ["not an object"]}})
+        _write_agent(config, {"name": "mine", "hooks": ["not an object"]})
         merge_agent_config(config, _plan(tmp_path), Report())
-        entries = json.loads(config.read_text())["hooks"]["agentSpawn"]
-        assert entries[0] == "not an object"
-        assert entries[1]["command"] == str(_COMMANDS.hook)
-
-
-class TestMergingIntoAnArrayFormatConfig:
-    def test_the_files_own_format_wins_over_the_requested_one(self, tmp_path: Path) -> None:
-        """The harness rewrites a config in whichever format it read, so a file carrying both shapes
-        has no defined meaning — the requested format cannot be allowed to convert one."""
-        config = tmp_path / "mine.json"
-        _write_agent(
-            config,
-            {
-                "name": "mine",
-                "hooks": [
-                    {
-                        "name": "git-status",
-                        "trigger": "agentSpawn",
-                        "action": {"type": "command", "command": "git status"},
-                    }
-                ],
-            },
-        )
-        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.OBJECT), Report())
-        hooks = json.loads(config.read_text())["hooks"]
-        assert isinstance(hooks, list)
-        assert [entry["name"] for entry in hooks] == [
-            "git-status",
-            "zikaron-agentSpawn",
-            "zikaron-userPromptSubmit",
+        assert json.loads(config.read_text())["hooks"] == [
+            "not an object",
+            *hooks_array(_COMMANDS),
         ]
-
-    def test_a_second_install_replaces_by_name(self, tmp_path: Path) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "hooks": []})
-        merge_agent_config(config, _plan(tmp_path), Report())
-        merge_agent_config(config, _plan(tmp_path), Report())
-        assert len(json.loads(config.read_text())["hooks"]) == 2
-
-    def test_it_reports_that_those_entries_have_no_output_cap_field(self, tmp_path: Path) -> None:
-        """Stated rather than hidden: the array format documents no `max_output_size`, so those
-        entries inherit the harness default and the operator should know which they got."""
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "hooks": []})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
-        assert any("max_output_size" in note for note in report.notes)
 
 
 class TestTheAtomicWrite:
@@ -973,8 +1224,8 @@ class TestShapesThatWouldBeSilentlyDropped:
         self, tmp_path: Path
     ) -> None:
         """The merge replaces an array entry by its `name`, so the guard must refuse by name too.
-        Otherwise an entry called `zikaron-agentSpawn` running something else entirely is replaced
-        without `--force`, silently.
+        Otherwise an entry called `zikaron-SessionStart` running something else entirely is
+        replaced without `--force`, silently.
         """
         config = tmp_path / "mine.json"
         _write_agent(
@@ -983,8 +1234,8 @@ class TestShapesThatWouldBeSilentlyDropped:
                 "name": "mine",
                 "hooks": [
                     {
-                        "name": "zikaron-agentSpawn",
-                        "trigger": "agentSpawn",
+                        "name": "zikaron-SessionStart",
+                        "trigger": "SessionStart",
                         "action": {"type": "command", "command": "/usr/bin/something-else"},
                     }
                 ],
@@ -1014,7 +1265,9 @@ class TestATopLevelNullIsAnAbsence:
     refused, and so is a null entry one level down under our own server name, below.
     """
 
-    @pytest.mark.parametrize("key", ["hooks", "tools", "allowedTools", "mcpServers", "resources"])
+    @pytest.mark.parametrize(
+        "key", ["hooks", "tools", "allowedTools", "mcpServers", "resources", "permissions"]
+    )
     def test_a_top_level_null_is_merged_into(self, tmp_path: Path, key: str) -> None:
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "m", key: None})
@@ -1036,7 +1289,17 @@ class TestATopLevelNullIsAnAbsence:
             pytest.param({"name": "m", "hooks": 7}, "neither an object nor an array", id="hooks"),
             pytest.param({"name": "m", "tools": "all"}, "not an array", id="tools"),
             pytest.param({"name": "m", "mcpServers": []}, "not an object", id="mcpServers"),
-            pytest.param({"name": "m", "toolsSettings": "x"}, "not an object", id="toolsSettings"),
+            pytest.param(_universal(toolsSettings="x"), "not an object", id="toolsSettings"),
+            pytest.param(
+                {"name": "m", "permissions": []},
+                "`permissions` value that is not an object",
+                id="permissions",
+            ),
+            pytest.param(
+                {"name": "m", "permissions": {"rules": {}}},
+                r"`permissions\.rules` as dict rather than an array",
+                id="permissions.rules",
+            ),
         ],
     )
     def test_a_wrong_type_is_still_refused(
@@ -1078,7 +1341,14 @@ class TestOwnershipDecidesARefusal:
             config,
             {
                 "name": "mine",
-                "hooks": {"userPromptSubmit": [{"command": str(_COMMANDS.hook), "timeout_ms": 1}]},
+                "hooks": [
+                    {
+                        "name": "zikaron-UserPromptSubmit",
+                        "trigger": "UserPromptSubmit",
+                        "action": {"type": "command", "command": shlex.quote(str(_COMMANDS.hook))},
+                        "timeout": 1,
+                    }
+                ],
                 "mcpServers": {
                     MCP_SERVER_NAME: {
                         "command": str(_COMMANDS.mcp),
@@ -1091,12 +1361,10 @@ class TestOwnershipDecidesARefusal:
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
         written = json.loads(config.read_text())
-        assert [entry["timeout_ms"] for entry in written["hooks"]["userPromptSubmit"]] == [
-            TIMEOUT_MS
-        ]
+        assert written["hooks"] == hooks_array(_COMMANDS)
         assert written["mcpServers"][MCP_SERVER_NAME]["env"] == {"MINE": "1"}
         notes = "\n".join(report.notes)
-        assert "hook on userPromptSubmit differed in `max_output_size`, `timeout_ms`" in notes
+        assert "hook on zikaron-UserPromptSubmit differed in `action`, `timeout`" in notes
         assert "`env`" in notes
 
     def test_an_earlier_array_install_upgrades_without_force(self, tmp_path: Path) -> None:
@@ -1108,39 +1376,48 @@ class TestOwnershipDecidesARefusal:
                 "name": "mine",
                 "hooks": [
                     {
-                        "name": "zikaron-agentSpawn",
-                        "trigger": "stop",
+                        "name": "zikaron-SessionStart",
+                        "trigger": "Stop",
                         "action": {"type": "command", "command": shlex.quote(str(_COMMANDS.hook))},
-                        "timeout": 10,
+                        "timeout": HOOK_TIMEOUT_SECONDS,
                     }
                 ],
             },
         )
         report = Report()
-        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), report)
+        merge_agent_config(config, _plan(tmp_path), report)
         hooks = json.loads(config.read_text())["hooks"]
-        spawn = [entry for entry in hooks if entry["name"] == "zikaron-agentSpawn"]
-        assert [entry["trigger"] for entry in spawn] == ["agentSpawn"]
-        assert any("zikaron-agentSpawn" in note and "trigger" in note for note in report.notes)
+        spawn = [entry for entry in hooks if entry["name"] == "zikaron-SessionStart"]
+        assert [entry["trigger"] for entry in spawn] == ["SessionStart"]
+        assert any("zikaron-SessionStart" in note and "trigger" in note for note in report.notes)
 
-    @pytest.mark.parametrize("fmt", [HookFormat.OBJECT, HookFormat.ARRAY])
     def test_our_command_on_a_trigger_this_install_does_not_write_is_left_alone(
-        self, tmp_path: Path, fmt: HookFormat
+        self, tmp_path: Path
     ) -> None:
-        mine: dict[str, object] = {"command": shlex.quote(str(_COMMANDS.hook)), "timeout_ms": 5}
-        hooks: object = (
-            {"stop": [mine]}
-            if fmt is HookFormat.OBJECT
-            else [{"name": "my-stop", "trigger": "stop", "action": {"type": "command", **mine}}]
-        )
+        """Nothing here replaces it, so it is neither compared nor touched."""
+        mine = {
+            "name": "my-stop",
+            "trigger": "Stop",
+            "action": {"type": "command", "command": shlex.quote(str(_COMMANDS.hook))},
+            "timeout": 5,
+        }
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "hooks": hooks})
-        merge_agent_config(config, _plan(tmp_path, fmt=fmt), Report())
-        written = json.loads(config.read_text())["hooks"]
-        if fmt is HookFormat.OBJECT:
-            assert written["stop"] == [mine]
-        else:
-            assert [entry for entry in written if entry["name"] == "my-stop"] == hooks
+        _write_agent(config, {"name": "mine", "hooks": [mine]})
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["hooks"] == [mine, *hooks_array(_COMMANDS)]
+
+    def test_our_command_on_such_a_trigger_in_the_object_form_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """The object form cannot be kept beside array entries, and this install has no entry to
+        rewrite it into, so it is the user's to convert."""
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {"name": "mine", "hooks": {"stop": [{"command": shlex.quote(str(_COMMANDS.hook))}]}},
+        )
+        with pytest.raises(InstallError, match="in the object form"):
+            merge_agent_config(config, _plan(tmp_path), Report())
 
     def test_an_unnamed_array_entry_running_our_command_is_replaced_not_duplicated(
         self, tmp_path: Path
@@ -1156,19 +1433,20 @@ class TestOwnershipDecidesARefusal:
                     "a note of the user's",
                     {
                         "name": "renamed-by-hand",
-                        "trigger": "userPromptSubmit",
+                        "trigger": "UserPromptSubmit",
                         "action": {"type": "command", "command": shlex.quote(str(_COMMANDS.hook))},
                     },
                 ],
             },
         )
         report = Report()
-        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), report)
+        merge_agent_config(config, _plan(tmp_path), report)
         hooks = json.loads(config.read_text())["hooks"]
         assert "a note of the user's" in hooks
-        prompt = [h for h in hooks if isinstance(h, dict) and h["trigger"] == "userPromptSubmit"]
-        assert [entry["name"] for entry in prompt] == ["zikaron-userPromptSubmit"]
-        assert any("hook on userPromptSubmit differed in `name`" in note for note in report.notes)
+        prompt = [h for h in hooks if isinstance(h, dict) and h["trigger"] == "UserPromptSubmit"]
+        assert [entry["name"] for entry in prompt] == ["zikaron-UserPromptSubmit"]
+        (note,) = [note for note in report.notes if "hook on UserPromptSubmit differed" in note]
+        assert "`name`" in note
 
     def test_an_unhashable_name_or_trigger_is_left_alone_rather_than_crashing(
         self, tmp_path: Path
@@ -1176,7 +1454,7 @@ class TestOwnershipDecidesARefusal:
         odd = {"name": ["x"], "trigger": {"y": 1}, "action": {"type": "command", "command": "z"}}
         config = tmp_path / "mine.json"
         _write_agent(config, {"name": "mine", "hooks": [odd]})
-        merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), Report())
+        merge_agent_config(config, _plan(tmp_path), Report())
         assert odd in json.loads(config.read_text())["hooks"]
 
     def test_an_array_entry_from_another_interpreter_is_refused(self, tmp_path: Path) -> None:
@@ -1187,11 +1465,11 @@ class TestOwnershipDecidesARefusal:
                 "name": "mine",
                 "hooks": [
                     {
-                        "name": "zikaron-userPromptSubmit",
-                        "trigger": "userPromptSubmit",
+                        "name": "zikaron-UserPromptSubmit",
+                        "trigger": "UserPromptSubmit",
                         "action": {
                             "type": "command",
-                            "command": shlex.quote(str(_OTHER_COMMANDS.hook)),
+                            "command": f"exec {shlex.quote(str(_OTHER_COMMANDS.hook))}",
                         },
                     }
                 ],
@@ -1199,8 +1477,33 @@ class TestOwnershipDecidesARefusal:
         )
         before = config.read_text()
         with pytest.raises(InstallError, match=str(_OTHER_COMMANDS.hook)):
-            merge_agent_config(config, _plan(tmp_path, fmt=HookFormat.ARRAY), Report())
+            merge_agent_config(config, _plan(tmp_path), Report())
         assert config.read_text() == before
+
+    def test_another_installs_exec_entry_is_recognized_by_its_command_and_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """Read past its `exec`, an entry under a name of the user's choosing is still found to run
+        a `zikaron-hook`, so a second install is refused rather than left beside this one."""
+        config = tmp_path / "mine.json"
+        _write_agent(
+            config,
+            {
+                "name": "mine",
+                "hooks": [
+                    {
+                        "name": "renamed-by-hand",
+                        "trigger": "SessionStart",
+                        "action": {
+                            "type": "command",
+                            "command": f"exec {shlex.quote(str(_OTHER_COMMANDS.hook))}",
+                        },
+                    }
+                ],
+            },
+        )
+        with pytest.raises(InstallError, match="differ from what this install would write"):
+            merge_agent_config(config, _plan(tmp_path), Report())
 
     def test_a_server_entry_in_another_mode_is_refused_and_names_the_mode(
         self, tmp_path: Path
@@ -1253,12 +1556,63 @@ class TestOwnershipDecidesARefusal:
             config,
             {
                 "name": "mine",
-                "hooks": {"userPromptSubmit": [{"command": str(_COMMANDS.hook), "timeout_ms": 1}]},
+                "hooks": [
+                    {
+                        "name": "zikaron-UserPromptSubmit",
+                        "trigger": "UserPromptSubmit",
+                        "action": {"type": "command", "command": str(_COMMANDS.hook)},
+                        "timeout": 1,
+                    }
+                ],
             },
         )
         merge_agent_config(config, _plan(tmp_path, force=True), Report())
-        entries = json.loads(config.read_text())["hooks"]["userPromptSubmit"]
-        assert [entry["timeout_ms"] for entry in entries] == [TIMEOUT_MS]
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
+
+
+class TestAProfileTheUpgraderConverted:
+    """`kiro-cli agent upgrade` converts a pre-V3 install's object-format entries into array
+    entries it names `agentSpawn-0` and `userPromptSubmit-0`, keeping the camelCase triggers and
+    adding a `maxOutputSize` (`research/kiro-v3-probe.md` §2). Ownership reads a trigger by meaning
+    and a command past `exec`, so an install over that profile rewrites those entries rather than
+    running the hook twice per session."""
+
+    @staticmethod
+    def _converted() -> dict[str, object]:
+        def entry(trigger: str) -> dict[str, object]:
+            return {
+                "name": f"{trigger}-0",
+                "trigger": trigger,
+                "action": {"type": "command", "command": f"'{_COMMANDS.hook}'"},
+                "timeout": 10,
+                "maxOutputSize": 65536,
+            }
+
+        return {
+            "name": "mine",
+            "tools": [TOOL_SELECTOR],
+            "allowedTools": [TOOL_SELECTOR],
+            "hooks": [entry("agentSpawn"), entry("userPromptSubmit")],
+            "mcpServers": {
+                MCP_SERVER_NAME: {"command": str(_COMMANDS.mcp), "args": ["--mode", "primary"]}
+            },
+            "permissions": {
+                "rules": [{"capability": "fs_read", "effect": "allow"}, _MCP_RULE, _SKILL_RULE]
+            },
+            "kiroUpgrade": _AGENT_CREATE_PROFILE["kiroUpgrade"],
+        }
+
+    def test_the_install_over_it_writes_one_entry_per_v3_trigger(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, self._converted())
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert json.loads(config.read_text())["hooks"] == hooks_array(_COMMANDS)
+
+    def test_a_second_install_over_it_changes_nothing(self, tmp_path: Path) -> None:
+        config = tmp_path / "mine.json"
+        _write_agent(config, self._converted())
+        merge_agent_config(config, _plan(tmp_path), Report())
+        assert plan_kiro_merge(config, _plan(tmp_path), Targets(project=tmp_path)).unchanged
 
 
 class TestMergeRefusals:
@@ -1324,55 +1678,124 @@ class TestMergeRefusals:
             config.chmod(0o600)
 
 
-class TestTheSubagentToolNote:
-    """Asserted on the note's own clause rather than on the word "subagent".
+class TestTheBuiltInGrantNotes:
+    """Under V3 a built-in tool takes both a `tools` entry and an allow rule: without the rule kiro
+    asks, and a headless run refuses (`research/kiro-v3-probe.md` §11). Granting either is the
+    user's decision, so the install says which is missing and grants nothing.
 
-    The crew note also mentions a subagent spawn, so a substring test on the bare word passes or
-    fails for reasons that have nothing to do with whether *this* note fired.
+    Asserted on each note's own clause rather than on the tool's bare name, which other notes
+    mention too.
     """
 
-    CLAUSE = "does not list the `subagent` tool"
-
-    def test_it_says_so_when_the_tool_is_missing(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("tool", ["subagent", "shell"])
+    @pytest.mark.parametrize(
+        ("tools", "rules"),
+        [
+            pytest.param(["read"], [], id="neither"),
+            pytest.param(["read", "subagent", "shell"], [], id="listed without its rule"),
+            pytest.param(
+                ["read"],
+                [
+                    {"capability": "subagent", "effect": "allow"},
+                    {"capability": "shell", "effect": "allow"},
+                ],
+                id="a rule but not listed",
+            ),
+        ],
+    )
+    def test_it_says_so_unless_the_tool_is_both_listed_and_allowed(
+        self, tmp_path: Path, tool: str, tools: list[str], rules: list[dict[str, object]]
+    ) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "tools": ["read"]})
+        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": rules}})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert any(self.CLAUSE in note for note in report.notes)
+        assert any(f"does not grant the `{tool}` tool" in note for note in report.notes)
 
-    def test_it_stays_quiet_when_the_tool_is_there(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("tool", ["subagent", "shell"])
+    @pytest.mark.parametrize(
+        "tools",
+        [
+            pytest.param(["read", "subagent", "shell"], id="listed"),
+            pytest.param(["*"], id="every tool"),
+        ],
+    )
+    def test_it_stays_quiet_when_the_tool_is_listed_and_allowed(
+        self, tmp_path: Path, tool: str, tools: list[str]
+    ) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "tools": ["read", "subagent"]})
+        rules = [
+            {"capability": "subagent", "effect": "allow"},
+            {"capability": "shell", "effect": "allow"},
+        ]
+        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": rules}})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert not any(self.CLAUSE in note for note in report.notes)
+        assert not any(f"does not grant the `{tool}` tool" in note for note in report.notes)
 
-
-class TestTheShellToolNote:
-    """The code documentation skill runs its planner as a shell command."""
-
-    CLAUSE = "does not list the `shell` tool"
-
-    def test_it_says_so_when_the_tool_is_missing(self, tmp_path: Path) -> None:
+    def test_a_subagent_rule_matching_only_the_consolidator_names_the_documenter(
+        self, tmp_path: Path
+    ) -> None:
+        """The rule `kiro-cli agent upgrade` derives from a V2 profile that trusted the
+        consolidator, as this repository's own converted dogfood profile carries."""
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "tools": ["read", "subagent"]})
+        rule = {"capability": "subagent", "match": ["zikaron-consolidator"], "effect": "allow"}
+        tools = ["read", "subagent"]
+        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": [rule]}})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert any(self.CLAUSE in note for note in report.notes)
+        (note,) = [note for note in report.notes if "`subagent` rules do not match" in note]
+        assert "`zikaron-documenter`" in note
+        assert "`zikaron-consolidator`" not in note
+        assert not any("does not grant the `subagent` tool" in note for note in report.notes)
 
-    def test_it_stays_quiet_when_the_tool_is_there(self, tmp_path: Path) -> None:
+    def test_a_subagent_rule_matching_both_agents_by_pattern_is_quiet(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "tools": ["read", "subagent", "shell"]})
+        rule = {"capability": "subagent", "match": ["zikaron-*"], "effect": "allow"}
+        tools = ["read", "subagent"]
+        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": [rule]}})
         report = Report()
         merge_agent_config(config, _plan(tmp_path), report)
-        assert not any(self.CLAUSE in note for note in report.notes)
+        clauses = ("does not grant the `subagent` tool", "`subagent` rules do not match")
+        assert not any(clause in note for note in report.notes for clause in clauses)
 
 
-def test_an_agent_already_trusted_gets_no_trust_note(tmp_path: Path) -> None:
-    config = tmp_path / "mine.json"
-    crew = {"availableAgents": ["a"], "trustedAgents": [DOCUMENTER_AGENT_NAME]}
-    _write_agent(config, {"name": "mine", "toolsSettings": {"crew": crew}})
-    report = Report()
-    merge_agent_config(config, _plan(tmp_path), report)
-    trust_notes = [note for note in report.notes if "trustedAgents" in note]
-    assert [CONSOLIDATOR_AGENT_NAME in note for note in trust_notes] == [True]
+class TestTheDocumenterParentGrantNote:
+    """kiro gives a subagent only what its own rules and its parent's both allow, so the
+    documenter's file rules are not enough by themselves: a primary profile without a write rule
+    left a spawned documenter asking, and headless writing nothing (`research/kiro-v3-probe.md`
+    §28). The install names the missing rules and grants neither."""
+
+    _CLAUSE: Final = "allow rule, and kiro gives a subagent"
+
+    def _notes(self, tmp_path: Path, rules: list[dict[str, object]]) -> list[str]:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "tools": ["*"], "permissions": {"rules": rules}})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        return [note for note in report.notes if self._CLAUSE in note]
+
+    def test_a_profile_with_neither_rule_is_told_both(self, tmp_path: Path) -> None:
+        (note,) = self._notes(tmp_path, [])
+        assert "no `fs_read` or `fs_write` allow rule" in note
+        assert '"match": ["./**"]' in note
+        assert f'"match": ["./{DOCUMENTS_DIRECTORY}/**"]' in note
+
+    def test_a_profile_that_reads_is_told_only_the_write_rule(self, tmp_path: Path) -> None:
+        """The read rule is the one `kiro-cli agent create` writes."""
+        read: dict[str, object] = {"capability": "fs_read", "match": ["./**"], "effect": "allow"}
+        (note,) = self._notes(tmp_path, [read])
+        assert "no `fs_write` allow rule" in note
+        assert "`fs_read`" not in note
+        assert "writing each document" in note
+        assert "reading each source" not in note
+
+    def test_a_profile_allowing_both_is_quiet(self, tmp_path: Path) -> None:
+        rules: list[dict[str, object]] = [
+            {"capability": "fs_read", "effect": "allow"},
+            {"capability": "fs_write", "match": ["./docs/**"], "effect": "allow"},
+        ]
+        assert self._notes(tmp_path, rules) == []
+
+    def test_the_write_rule_is_scoped_to_the_planner_default(self) -> None:
+        assert DOCUMENTS_DIRECTORY == DEFAULT_DOCUMENTS

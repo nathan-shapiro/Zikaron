@@ -199,11 +199,11 @@ class ServiceConnection:
         self._location = StoreLocation.resolve(scope_dir)
         self._sock: socket.socket | None = None
         self._health: HealthCheck | None = None
-        # Resolved through the harness seam, which is what makes this client and `zikaron-hook`
-        # speak as one session: each reads whichever variable the harness it detected actually
-        # exports, so the two arrive at an identical label under either harness rather than one
-        # of them falling back to a minted one and silently splitting the session's instruments.
-        self._session_id: str | None = detect.session_label(detect.current_spec())
+        # Resolved through the harness seam at the first labeled request, not here: under kiro this
+        # process starts in the same second as the session's start hook, whose relay is what the
+        # seam reads, and the label cannot change once a request has carried it.
+        self._session_id: str | None = None
+        self._label_resolved = False
         # Every `request()` call runs its whole body — obtain-or-establish a socket, send,
         # receive, adopt the label — under this one lock, never partially: two `tools/call`
         # dispatches can otherwise run concurrently on FastMCP's own event loop, and each `await`
@@ -321,6 +321,12 @@ class ServiceConnection:
                 never retried automatically for the reason above.
         """
         async with self._lock:
+            if not self._label_resolved:
+                self._session_id = detect.session_label(
+                    detect.current_spec(),
+                    relay_dir=paths.session_relay_dir(self._location.runtime_dir),
+                )
+                self._label_resolved = True
             current_envelope = ClientEnvelope(
                 session_id=self._session_id,
                 kind=envelope.kind,

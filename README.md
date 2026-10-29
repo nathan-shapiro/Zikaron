@@ -129,7 +129,10 @@ and never fails your turn.
   hard install failure on the third, and Windows needs a second RPC transport rather than a flag.
   `design/distribution.md` §1 has the detail.
 - **Python 3.12 or newer.** Tested versions: 3.12, 3.13, 3.14.
-- **A supported harness installed: `kiro-cli` or Claude Code.** Zikaron installs hook and MCP
+- **A supported harness installed: `kiro-cli` 2.35.1 or newer, on its V3 agent engine, or Claude
+  Code.** V3 is kiro-cli 3.0's default; on 2.35, start kiro with `--v3`. Under kiro's older V2
+  engine the shipped agents' first tool call asks for permission with nobody to answer it, and
+  the installer refuses a kiro-cli older than 2.35.1. Zikaron installs hook and MCP
   entries whose only reader is that harness's own binary, so the installer checks it is on your
   `PATH` and **refuses if it is not** — writing those files where nothing reads them would exit 0
   and leave you with no Zikaron tools and no error to search for. Pass `--print-only` to see exactly
@@ -146,8 +149,8 @@ and never fails your turn.
   set up yet, is the case where nothing says anything and `--harness` is required.
 
   Under kiro it additionally validates the shipped agents' model id against the binary, because kiro
-  substitutes an unknown model silently; Claude Code refuses one itself, at spawn, so no such check
-  is needed there.
+  replaces an unknown model with its default; Claude Code refuses one itself, at spawn, so no such
+  check is needed there.
 
 ## Install
 
@@ -239,6 +242,14 @@ Under **kiro**, also name the config for the agent you actually work in:
 zikaron install --project . --harness kiro --agent .kiro/agents/<your-agent>.json
 ```
 
+That config has to be one kiro's V3 engine reads. One `kiro-cli agent create` writes is; one written
+for V2 — `allowedTools` or a non-empty `toolsSettings`, and no `permissions` block — is refused, because V3 refuses
+it, and the refusal names `kiro-cli agent upgrade <dir>`, which converts it. **A headless run needs
+`--require-mcp-startup`**: kiro starts a session's first turn without waiting for its MCP servers, and
+`zikaron-mcp` takes about two seconds to start, so without the flag that turn has no Zikaron tools. The
+flag does not make an interactive session wait, even one given its first prompt on the command line, so
+there a first prompt may find no Zikaron tools, as it may under Claude Code.
+
 If `zikaron` is not on your `PATH` — a source checkout whose virtualenv you have not activated —
 three commands have a module form you can run with that virtualenv's interpreter, and the spelling
 is not uniform:
@@ -263,7 +274,10 @@ earlier version wrote into your project, and a release can change a merged entry
 one such change. On both harnesses re-running upgrades those entries in place and needs no
 `--force`; it refuses only where another Zikaron install owns something, or, under Claude Code,
 where you have added a hook of your own inside Zikaron's group (both below), which is what `--force`
-exists for. `zikaron doctor` afterwards says whether a Claude Code project's Zikaron entries carry
+exists for. **Under kiro it also refuses an agent config still in V2's shape** — every config an
+install made before Zikaron supported kiro's V3 engine merged into, unless kiro has converted it
+since. Run `kiro-cli agent upgrade <dir>` over that config's directory, then re-run the installer.
+`zikaron doctor` afterwards says whether a Claude Code project's Zikaron entries carry
 `alwaysLoad` — the one thing about `.mcp.json` it judges.
 
 **What upgrading the package does not do by itself:**
@@ -347,11 +361,11 @@ What it writes under **kiro**, relative to the project:
 
 | Path | What |
 |---|---|
-| `.kiro/agents/zikaron-consolidator.json` | the consolidation subagent: its model, its four tools, its prompt |
+| `.kiro/agents/zikaron-consolidator.json` | the consolidation subagent: its model, its four tools and the permission rule allowing them, its prompt |
 | `.kiro/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
-| `.kiro/agents/zikaron-documenter.json` | the documentation subagent: its model, its four file tools and `@zikaron` with its own `mcpServers` entry, its prompt |
+| `.kiro/agents/zikaron-documenter.json` | the documentation subagent: its model, its four file tools and `@zikaron` with its own `mcpServers` entry, the rules allowing reading, writing and Zikaron's tools, its prompt |
 | `.kiro/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
-| the agent config you named | `hooks` for start and per-message, an `mcpServers` entry, `@zikaron` in `tools` and `allowedTools`, the consolidator and the documenter in `toolsSettings.crew`, and both skills in `resources` |
+| the agent config you named | hooks for session start and each message, an `mcpServers` entry, `@zikaron` in `tools`, two rules in `permissions.rules` — Zikaron's tools, and loading a skill — and both skills in `resources`; on a config that also carries `allowedTools`, as one `kiro-cli agent create` writes does, `@zikaron` there too and the consolidator and the documenter in a `toolsSettings.crew.availableAgents` that already lists agents |
 
 and under **Claude Code**:
 
@@ -374,7 +388,7 @@ the start hooks carry the write policy and the guards' note.
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
 The third hook is the one with no kiro counterpart — it hands the write policy to each subagent you
-spawn, which kiro achieves by firing its ordinary hooks for subagent sessions instead.
+spawn. kiro fires no hook for a subagent, so there its subagents do not get the policy.
 
 It backs up any file it merges into (`<file>.bak`, and the first backup wins), leaving one that
 already carries every entry untouched, backup included, and **refreshes a shipped file whose
@@ -398,13 +412,18 @@ wins, so the `.bak` on disk may have been written before or after you added the 
 
 Under kiro the same rules hold inside the agent config you name: the `mcpServers` entry merges per
 key, a Zikaron hook entry whose command is this install's is rewritten and its trigger named, and
-only an entry naming a different install's command, or another `--mode`, refuses. A hook of Zikaron's
-on a trigger this install does not write is left alone. Kiro's install also validates the
-consolidator's model id, because an unknown model would otherwise be silently replaced by the
-harness's default.
+only an entry naming a different install's command, or another `--mode`, refuses. That includes an
+entry `kiro-cli agent upgrade` converted from an older Zikaron install, under the upgrader's own
+names and triggers: it is recognized and rewritten, not doubled. A hook of Zikaron's on a trigger
+this install does not write is left alone. Hooks are written in the array form V3 reads; a config
+whose `hooks` are in the older object form is rewritten if they are all Zikaron's, and refused,
+showing your entries in the array form, if any is yours. Kiro's install also validates the
+consolidator's model id, because an unknown model would otherwise be replaced by the harness's
+default.
 
 `@zikaron` has to be in `tools` or Zikaron's tools are simply absent: the `mcpServers` entry
-*configures* the server and `tools` is what *selects* from it. It goes into `allowedTools` too, so the
+*configures* the server and `tools` is what *selects* from it — unless `tools` is `["*"]`, which
+selects everything already. A rule allowing Zikaron's tools goes into `permissions.rules` too, so the
 agent can record without interrupting you. That is deliberate rather than lax — the whole design leans
 on the agent writing freely, and a permission prompt per write both suppresses that and trains you to
 click through prompts. What it trusts is still narrow, but it is not only rows. The memory tools read
@@ -418,34 +437,34 @@ into your project outside `.zikaron/`. A mistaken memory write is *recoverable* 
 undoable: `zikaron_memory_retire` withdraws a record from ordinary retrieval and leaves it
 auditable, while an amend overwrites prose that nothing restores. A mistaken
 `zikaron_knowledge_remove` destroys that corpus's index, which is rebuildable from the files it was
-built from but not instantly. Pass `--no-trust-tools` if you would rather approve each one.
+built from but not instantly. The second rule lets the agent load a skill without asking; without it
+either skill asks before it loads, and a headless run loads neither. Pass `--no-trust-tools` if you
+would rather approve each one: it withholds both rules.
 
 **That trust stops at the primary agent's tools.** Spawning the consolidator is a separate grant — a
 subagent with its own model invocation, four mutation verbs and, under Claude Code, a file read —
-and the installer does not make it for you. **Under kiro** that grant is
-`toolsSettings.crew.trustedAgents`, which the installer only ever reads: starting a consolidation
-therefore asks your permission once, and adding `zikaron-consolidator` there yourself is what stops
-it. The documentation skill spawns `zikaron-documenter` once per file, so unless you add it there
-too you are asked before each spawn, unless kiro keeps the answer, which is unmeasured. Claude Code
-has no such key, so there is nothing to add and nothing withheld.
+and the installer does not make it for you. **Under kiro** both skills spawn their agents through the
+`subagent` tool, which takes `subagent` in `tools` and a `{"capability": "subagent", "effect":
+"allow"}` rule; without the rule kiro asks before each spawn, and the documentation skill spawns
+`zikaron-documenter` once per file. Its planner runs through `shell`, which takes `shell` and, as kiro
+documents it, a `shell` rule. And kiro gives a subagent only what its own rules and your agent's both
+allow, so a documenter writes its document only if your agent allows that write too —
+`{"capability": "fs_write", "match": ["./code-knowledge/**"], "effect": "allow"}` was measured to be
+enough — and reads its source only if your agent allows reads. Their reach is much wider than
+Zikaron's own tools, so those grants stay yours, and the installer says which is missing. Claude
+Code has no such grant to make: the shipped skills are ordinary project files, and their agents are
+spawned through whatever subagent tool the harness already gives your agent.
 
-**Three keys under kiro only, and Claude Code has none of them.** The consolidator and the
-documenter also have to be reachable by the `subagent` tool, so if your config already restricts
-which agents may be spawned (`toolsSettings.crew.availableAgents`), the installer adds
-`zikaron-consolidator` and `zikaron-documenter` to that list. If you have no such restriction it
-leaves it alone — an empty list means *every* agent is available, and writing entries into it would
-restrict you to just these. Both skills are also declared in the agent's `resources` unless
-something there already covers them. Skills normally arrive by inheritance, so those entries are
-usually redundant — but they are the only thing that makes the skills loadable if you have set
-`chat.disableInheritingDefaultResources`, and declaring a resource does not disable inheritance, so
-it can only help.
-
-**One thing the kiro install deliberately does not do:** add the `subagent` tool itself, which both
-skills need to spawn their agents, or `shell`, which the documentation skill needs to run its
-planner. Their reach is much wider than Zikaron's own tools, so those grants stay yours. The
-installer says so if either is missing. Under Claude Code none of this arises — the shipped skills
-are ordinary project files, and their agents are spawned through whatever subagent tool the harness
-already gives your agent.
+**Keys under kiro only.** If your config also carries kiro's older `allowedTools`, as one
+`kiro-cli agent create` writes does, `@zikaron` goes there as well, and if it restricts which agents
+may be spawned (`toolsSettings.crew.availableAgents`), the installer adds `zikaron-consolidator` and
+`zikaron-documenter` to that list — kiro documents rebuilding a converted config's permission rules
+from those fields, so they carry Zikaron's grant too. If the list is empty it is left alone — an empty
+list means *every* agent is available, and writing entries into it would restrict you to just these.
+Both skills are also declared in the agent's `resources` unless something there already covers them.
+Skills normally arrive by inheritance, so those entries are usually redundant — but they are the only
+thing that makes the skills loadable if you have set `chat.disableInheritingDefaultResources`, and
+declaring a resource does not disable inheritance, so it can only help.
 
 **Installing into a clone of the Zikaron repository itself** finds none of the files an install
 ships already tracked, under either harness: the repository keeps a snapshot of them under
@@ -548,7 +567,6 @@ usually shows something else: told the rule when its session starts, it reaches 
 | `--consolidator-model <id>` | the consolidator's model, over `--model` |
 | `--documenter-model <id>` | the code documenter's model, over `--model` |
 | `--orchestrator-model <id>` | **Claude Code only.** The code orchestrator's model, over `--model`. Refused under kiro, which ships no orchestrator |
-| `--format {object,array}` | **kiro only.** Which hook format to write when the target config has none yet |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
 | `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; every model flag is refused with `guards`, which ships no agent |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
@@ -557,9 +575,6 @@ A model id is the harness's own: under kiro, one `kiro-cli chat --list-models` l
 install checks; under Claude Code, an alias such as `sonnet` or a full id, which Claude Code itself
 refuses at spawn if it does not know it. An install is for one harness, so a project set up for
 both installs twice, each run with that harness's ids.
-
-Both hook formats kiro accepts are supported, and a config that already uses one keeps it: kiro
-rewrites a config in whichever format it read, so mixing them in one file has no defined meaning.
 
 ## Verify
 
@@ -772,9 +787,12 @@ project, or
 since a headless run in a folder you never trusted interactively does not read the install's own
 allow rule — and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a headless run that waits
 ten idle minutes on background work is stopped. Under kiro the agent you run needs `subagent` and
-`shell` among its tools — the installer says so if they are missing — and, unless you add
-`zikaron-documenter` to `toolsSettings.crew.trustedAgents`, you are asked before each documenter is
-spawned; the documenter's own config already allows its tools.
+`shell` among its tools — the installer says so if they are missing — and, unless the agent's
+`subagent` allow rule covers `zikaron-documenter` — one with no `match`, or a `match` naming it — you
+are asked before each documenter is spawned; the installer says so when it does not. The
+documenter's own config allows its tools, but kiro allows a subagent only what the agent spawning it
+allows as well: without an `fs_write` rule covering `./code-knowledge/**` in your agent, each document
+write asks, and a headless run writes none. The installer says so.
 
 **Using it.** Ask for it in your prompt, naming the module's knowledge base to keep to one module:
 
@@ -997,12 +1015,13 @@ symptoms it cannot see.
 | nothing searchable works at all | `zikaron doctor` — extension loading, FTS5 and `sqlite-vec` are the three that fail this way, and all three are properties of the interpreter rather than of your project |
 | the MCP server starts and immediately dies | `zikaron doctor` — an over-long `$XDG_RUNTIME_DIR` makes the socket path exceed what the platform allows, and this is the only channel that says so |
 | no memories are being injected | `.zikaron/hook.log`, then `pgrep -af '[z]ikaron.service.main'` |
+| kiro: a session has none of Zikaron's hooks or tools, and nothing says why | kiro's V3 engine skipped your agent config and ran its default agent. Either the config is still in V2's shape — what an install made before Zikaron supported V3 left, and what kiro-cli 3.0's update finds — so run `kiro-cli agent upgrade <dir>` and then re-run the installer; or, interactively, the folder was not trusted at kiro's trust screen, which loads no workspace agent, hook or MCP server until it is |
 | the agent has no `zikaron_*` tools | kiro: `/tools`, and check `@zikaron` is in the agent's `tools`. Claude Code: `/mcp`, and check neither server is pending approval — then check whether that agent's own frontmatter sets `tools:`, which overrides the project-wide registration entirely (below) |
-| every Zikaron tool call asks permission | kiro: add `@zikaron` to the agent's `allowedTools`. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
+| every Zikaron tool call asks permission | kiro: the agent's `permissions.rules` lacks the `mcp` rule over `zikaron/*` — re-run the installer without `--no-trust-tools`, or add `{"capability": "mcp", "match": ["zikaron/*"], "effect": "allow"}` yourself. Claude Code: it is `permissions.allow` in `settings.local.json` that did not take |
 | a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it — and if it does not, the `log` line of `zikaron knowledge status <name>` names where that build wrote why |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
 | `zikaron init` or `zikaron knowledge` refuses: "this project's service … runs …", or "… is older than this command … and names no version" | the running service is another version than the command — usually one started before an upgrade. Do what the message says: stop that process if the command is the newer install, or run the command from the install the project's hook and `.mcp.json` name |
-| "Agents not available for crew stages: zikaron-consolidator" | add it to `toolsSettings.crew.availableAgents`, or re-run the installer |
+| "Agents not available for crew stages: zikaron-consolidator" | a profile that still carries kiro's `toolsSettings.crew.availableAgents` restricts which agents spawn: add `zikaron-consolidator` and `zikaron-documenter` there yourself. The installer adds them only on a profile that also carries `allowedTools` beside `permissions`, the shape `kiro-cli agent create` writes, and leaves `toolsSettings` alone on any other |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
 | the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af '[z]ikaron.service.main'` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
@@ -1010,12 +1029,14 @@ symptoms it cannot see.
 | a hook command "not found" | the config names a different virtualenv than the one you installed from; re-run the installer with `--force` |
 | a memory looks half-written when injected | an over-long gist; see the note below |
 
-**One known limit, now narrow.** kiro truncates a hook's output past a byte cap and says nothing
-when it does. Gist length is bounded in *tokens*, and tokens bound neither characters nor bytes — a
-single unbroken 4000-character string counts as one token — so a pathologically long gist could
-once push the injected block past that cap and lose the tail of it silently. **New writes can no
-longer do this:** a gist over 1,024 characters is rejected outright, which keeps a five-row block
-comfortably inside every supported harness's budget. (Emoji and other characters outside the common
+**One known limit, now narrow.** kiro cuts a hook's output at 3,000 characters and marks the cut
+to the model alone; Claude Code cuts at 10,000, loudly. Gist length is bounded in *tokens*, and
+tokens bound neither characters nor bytes — a single unbroken 4000-character string counts as one
+token — so a pathologically long gist could once push the injected block past a cut and lose the
+tail of it. **New writes are bounded:** a gist over 1,024 characters is rejected outright, which
+keeps a five-row block inside Claude Code's budget. Under kiro a block fits while its five gists stay
+within 404 characters each — every gist in the stores this was measured on does, the longest being
+246 — and an overrun is recorded as `push_oversize` in `.zikaron/hook.log`. (Emoji and other characters outside the common
 range count as two each, so a gist made mostly of them is capped nearer 512 — the matching count
 rather than a conservative one, because the injection budget was measured to count them the same
 way.) Only records written before that bound existed can still be over-long. If you see a

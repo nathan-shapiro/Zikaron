@@ -3037,12 +3037,10 @@ serve around. Same seeding mechanism, opposite policy, stated because the contra
 invisible.
 
 **`knowledge_scan_on_session_start` names no actor, and is therefore reserved and inert in v0.** No
-component here observes "session start": the service starts lazily, and the `userPromptSubmit` hook must
+component here observes "session start": the service starts lazily, and the `UserPromptSubmit` hook must
 stay stdlib-thin (D22). The only plausible owner is the **detached session-start warm helper** (trigger
-name per `design/harness.md`, which is normative — it is `agentSpawn` under kiro and `SessionStart`
-under Claude Code) that the hook
-already spawns — best-effort, off the user's critical path, already the process performing session
-registration. Wiring it there is small but carries a real question (a scan on every session start over a
+name per `design/harness.md`, which is normative — `SessionStart` under both harnesses) that the hook
+already spawns — best-effort, and off the user's critical path. Wiring it there is small but carries a real question (a scan on every session start over a
 large corpus is not obviously wanted), so the key exists, is documented, and **does nothing** until that
 is answered. An inert key with a stated reason beats one whose behaviour depends on which component a
 reader assumes owns it.

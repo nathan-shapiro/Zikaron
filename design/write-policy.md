@@ -1,13 +1,14 @@
 # Write policy — v0 draft
 
-> Drafted 2026-08-01, summarized as **D30** in `FINDINGS.md`. Delivered by the `agentSpawn` hook (D18), so
+> Drafted 2026-08-01, summarized as **D30** in `FINDINGS.md`. Delivered by the `SessionStart` hook (D18), so
 > it is injected once per session, sits early, and does not churn the prompt cache. **Explicitly a starting
 > point to experiment against, not a settled answer** — Open question 7 remains open, and §3 below is the
 > instrumentation that makes the experiment possible.
 >
-> **Delivery scope, narrowed 2026-08-01.** The hook prints nothing in a **subagent** session — it cannot
-> identify the agent, so it suppresses all of them (`architecture.md` §"Subagent sessions"). So this text
-> reaches top-level sessions only. That is the intended reach: the consolidator must not receive it (its verbs
+> **Delivery scope.** Under kiro no hook fires in a **subagent** session (`architecture.md` §"Subagent
+> sessions"), so there this text reaches top-level sessions only; under Claude Code `SubagentStart` delivers
+> its subagent variant to every subagent but the consolidator (`design/harness.md` §"Subagents"). Under kiro
+> that is the reach the design accepts: the consolidator must not receive it (its verbs
 > and its judgment are different, and D32 keeps its context narrow on purpose), and any other subagent that
 > writes should carry its own policy in its own agent config, which is where per-agent instructions belong —
 > M40's kiro documenter is the shipped case: its prompt carries the rule to record only what the code could
@@ -536,12 +537,12 @@ same direction:
    deadline**. Making the hook write would mean handing it a writable store handle, which is a worse trade
    than a stated caveat.
 2. Pushes come from `zikaron-hook` and writes come from `zikaron-mcp`, so **two of these six signals are
-   cross-process joins** and only work when both clients resolved the same session label. Since 2026-08-01 they
-   do so *by construction under kiro* — both read the same `KIRO_SESSION_ID` out of their own environment
-   (`architecture.md` §"Both clients resolve the same label") — but linkage is still measured, because the
-   guarantee is conditional on the harness exporting that variable: `schema.md` §"Linked sessions" restricts
-   those two signals to sessions where both clients appear and reports **link coverage** beside them. Coverage
-   should now read ~1.0, and a shortfall means the variable was missing rather than that a derivation failed.
+   cross-process joins** and only work when both clients resolved the same session label. They do so *by
+   construction* — under kiro the MCP client reads the label the hook relays (`architecture.md` §"Both clients
+   resolve the same label") — but linkage is still measured, because the guarantee is conditional on a client
+   finding the label: `schema.md` §"Linked sessions" restricts those two signals to sessions where both
+   clients appear and reports **link coverage** beside them. Coverage should read ~1.0, and a shortfall means
+   a client found no label rather than that a derivation failed.
    An unlinked writing session would otherwise be counted as a zero-write
    session — inflating exactly the under-writing rate this section exists to test, in the direction that would
    confirm its prior. Being wrong in the direction of your own hypothesis is the failure worth engineering

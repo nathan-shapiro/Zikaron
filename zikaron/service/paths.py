@@ -37,6 +37,7 @@ _SERVICE_LOG_FILENAME = "service.log"
 _WARMUP_LOG_FILENAME = "warmup.log"
 _HOOK_LOG_FILENAME = "hook.log"
 _WRITE_POLICY_FILENAME = "write-policy.md"
+_SESSION_RELAY_DIRNAME = "sessions"
 
 
 def store_dir(scope_dir: Path) -> Path:
@@ -152,6 +153,13 @@ def socket_path(runtime_directory: Path, resolved_store_dir: Path, *, platform: 
     return path
 
 
+def session_relay_dir(runtime_directory: Path) -> Path:
+    """Where the hook leaves each session's label for the MCP client under the same agent server
+    (`design/harness.md` §"The session relay"): one directory per user, not per store, since an
+    agent server's pid names its session whichever store it works in."""
+    return runtime_directory / _SESSION_RELAY_DIRNAME
+
+
 def lock_path(sock_path: Path) -> Path:
     """The `flock` target guarding start-if-absent for one socket: `<sock>.lock`, beside it."""
     return sock_path.with_name(sock_path.name + ".lock")
@@ -174,7 +182,7 @@ def warmup_log_path(store_directory: Path) -> Path:
 
 
 def hook_log_path(store_directory: Path) -> Path:
-    """The `userPromptSubmit` hook's own failure record."""
+    """The `UserPromptSubmit` hook's own failure record."""
     return store_directory / _HOOK_LOG_FILENAME
 
 

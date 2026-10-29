@@ -5,6 +5,7 @@ session identity, and the nesting limit" is normative.
 """
 
 import os
+from pathlib import Path
 from typing import Final
 
 from zikaron.harness.spec import SPECS, Harness, HarnessSpec
@@ -70,9 +71,15 @@ def current_spec() -> HarnessSpec:
     return SPECS[current_harness()]
 
 
-def session_label(spec: HarnessSpec) -> str | None:
+def session_label(spec: HarnessSpec, *, relay_dir: Path) -> str | None:
     """The `harness` rung of the two-rung session-label ladder: this harness's own session variable,
     or `None` when it is absent, **empty**, or intrudes on the service's reserved minted namespace.
+
+    Where the variable misses the MCP server, an absent one is read instead from the session relay:
+    the file in `relay_dir` the hook wrote for this process's parent (`design/harness.md` §"The
+    session relay"). `relay_dir` is the caller's, since this package imports nothing outside
+    itself; both the hook and the MCP client derive it from one function, so the writer and the
+    reader cannot name two directories.
 
     `None` means the bootstrap form — send `session_id: null` and adopt the label the service
     mints. Both clients resolve through here, so a hook and an MCP server in one session speak as
@@ -83,10 +90,23 @@ def session_label(spec: HarnessSpec) -> str | None:
     being forwarded for the service to reject. The two must agree, because a client-side consumer
     acts on this value before any request is made: the subagent-suppression check compares it to
     the payload's session id, so an exported-but-empty variable would differ from every real
-    payload id and silently suppress every top-level push — no output, and under the harness that
-    logs divergence, one tripwire line per turn for a store that is working perfectly.
+    payload id and silently suppress every top-level push.
     """
     value = os.environ.get(spec.session_variable)
+    if not value and spec.session_variable_misses_mcp_server:
+        value = _relayed_label(relay_dir)
     if not value or value.startswith(_MINTED_PREFIX):
         return None
     return value
+
+
+def relay_file(relay_dir: Path, agent_server_pid: int) -> Path:
+    """Where the session relay holds the label of the session `agent_server_pid` is running."""
+    return relay_dir / str(agent_server_pid)
+
+
+def _relayed_label(relay_dir: Path) -> str | None:
+    try:
+        return relay_file(relay_dir, os.getppid()).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None

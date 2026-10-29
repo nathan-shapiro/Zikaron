@@ -151,7 +151,7 @@ def _pid_from_health(sock_path: Path) -> int | None:
 
 
 def _reap_any_service_spawned_for(store_dir: Path) -> None:
-    """Wait for, then kill, whatever real `zikaron.service.main` process a top-level `agentSpawn`
+    """Wait for, then kill, whatever real `zikaron.service.main` process a top-level `SessionStart`
     test's own detached warm helper may have caused to exist for `store_dir` — and fail loudly if
     it cannot be confirmed gone, rather than silently returning either way.
 
@@ -165,7 +165,7 @@ def _reap_any_service_spawned_for(store_dir: Path) -> None:
     have the helper finish starting a service *after* this function had already given up looking
     for one to clean up; a warm helper that never starts anything leaves nothing here to find,
     which is the ordinary, non-leaking case for every *other* test in this class that does not
-    touch `agentSpawn` at all.
+    touch `SessionStart` at all.
     The service found this way is a **grandchild** of this test process (this process's own
     child, `main.py`'s subprocess, has already exited; the warm helper it spawned is itself
     detached and its own child is the service) — `os.waitpid` cannot reap a process that is not
@@ -259,7 +259,7 @@ class TestRunDispatchesOnHookEventName:
             return "text"
 
         monkeypatch.setattr(spawn_warm, "run", _fake_run)
-        _run_with_payload({"hook_event_name": "agentSpawn", "cwd": str(tmp_path)}, monkeypatch)
+        _run_with_payload({"hook_event_name": "SessionStart", "cwd": str(tmp_path)}, monkeypatch)
         assert len(called) == 1
 
     def test_user_prompt_submit_calls_push(
@@ -272,7 +272,7 @@ class TestRunDispatchesOnHookEventName:
 
         monkeypatch.setattr(push, "run", _fake_run)
         _run_with_payload(
-            {"hook_event_name": "userPromptSubmit", "cwd": str(tmp_path), "prompt": "what failed"},
+            {"hook_event_name": "UserPromptSubmit", "cwd": str(tmp_path), "prompt": "what failed"},
             monkeypatch,
         )
         assert len(called) == 1
@@ -294,7 +294,7 @@ class TestRunDispatchesOnHookEventName:
         called: list[object] = []
         monkeypatch.setattr(push, "run", lambda **kwargs: called.append(kwargs))
         _run_with_payload(
-            {"hook_event_name": "userPromptSubmit", "cwd": str(tmp_path), "prompt": 42},
+            {"hook_event_name": "UserPromptSubmit", "cwd": str(tmp_path), "prompt": 42},
             monkeypatch,
         )
         assert called == []
@@ -309,7 +309,7 @@ class TestRunDispatchesOnHookEventName:
         carries `cwd` per the documented shape, but this function must not raise a `KeyError` if
         a future kiro version ever omitted it."""
         monkeypatch.setattr(spawn_warm, "run", lambda **_kwargs: None)
-        _run_with_payload({"hook_event_name": "agentSpawn"}, monkeypatch)  # must not raise
+        _run_with_payload({"hook_event_name": "SessionStart"}, monkeypatch)  # must not raise
 
 
 def _run_capturing_stdout(payload: object, monkeypatch: pytest.MonkeyPatch) -> str:
@@ -543,7 +543,7 @@ class TestMainAsARealSubprocess:
         monkeypatch.setenv("KIRO_SESSION_ID", "top-level-session")
         result = _invoke_main(
             {
-                "hook_event_name": "userPromptSubmit",
+                "hook_event_name": "UserPromptSubmit",
                 "cwd": str(tmp_path),
                 "session_id": "a-subagent-session",
                 "prompt": "irrelevant",
@@ -559,7 +559,7 @@ class TestMainAsARealSubprocess:
         monkeypatch.setenv("KIRO_SESSION_ID", "top-level-session")
         result = _invoke_main(
             {
-                "hook_event_name": "agentSpawn",
+                "hook_event_name": "SessionStart",
                 "cwd": str(tmp_path),
                 "session_id": "a-subagent-session",
             }
@@ -571,15 +571,15 @@ class TestMainAsARealSubprocess:
     def test_a_top_level_agent_spawn_prints_the_write_policy_and_exits_zero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A real, top-level `agentSpawn` genuinely spawns the detached warm helper as a fire-
+        """A real, top-level `SessionStart` genuinely spawns the detached warm helper as a fire-
         and-forget side effect, which in turn genuinely spawns a real `zikaron.service.main` for
         `tmp_path` — this is the intended production behaviour, not a test artefact, so it cannot
         be mocked away without also no longer testing the real end-to-end entry point.
         `_reap_any_service_spawned_for` waits for and cleans up whatever service this test's own
-        `agentSpawn` caused to exist, rather than leaving it running for the rest of the suite.
+        `SessionStart` caused to exist, rather than leaving it running for the rest of the suite.
         """
         monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
-        result = _invoke_main({"hook_event_name": "agentSpawn", "cwd": str(tmp_path)})
+        result = _invoke_main({"hook_event_name": "SessionStart", "cwd": str(tmp_path)})
         try:
             assert result.returncode == 0
             assert "Project memory (Zikaron)" in result.stdout
@@ -598,7 +598,7 @@ class TestMainAsARealSubprocess:
         the test above does — see its own docstring — cleaned up the same way.
         """
         monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
-        result = _invoke_main({"hook_event_name": "agentSpawn", "cwd": str(tmp_path)})
+        result = _invoke_main({"hook_event_name": "SessionStart", "cwd": str(tmp_path)})
         try:
             assert result.returncode == 0
             assert result.stdout == WRITE_POLICY_PROMPT
@@ -608,7 +608,7 @@ class TestMainAsARealSubprocess:
     def test_a_successful_surface_result_reaches_stdout_byte_for_byte(
         self, tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The same byte-exact guarantee on the `userPromptSubmit` success path: `push.run`'s own
+        """The same byte-exact guarantee on the `UserPromptSubmit` success path: `push.run`'s own
         returned text must reach stdout with no extra trailing newline `print` would have added.
         """
         monkeypatch.setenv("KIRO_SESSION_ID", "s1")
@@ -620,7 +620,7 @@ class TestMainAsARealSubprocess:
                 [sys.executable, "-m", "zikaron.hook.main"],
                 input=json.dumps(
                     {
-                        "hook_event_name": "userPromptSubmit",
+                        "hook_event_name": "UserPromptSubmit",
                         "cwd": str(tmp_path),
                         "session_id": "s1",
                         "prompt": "p",
@@ -651,7 +651,7 @@ class TestMainAsARealSubprocess:
                 [sys.executable, "-m", "zikaron.hook.main"],
                 input=json.dumps(
                     {
-                        "hook_event_name": "userPromptSubmit",
+                        "hook_event_name": "UserPromptSubmit",
                         "cwd": str(tmp_path),
                         "session_id": "s1",
                         "prompt": "p",
@@ -702,7 +702,7 @@ class TestMainAsARealSubprocess:
         result = subprocess.run(
             [sys.executable, "-m", "zikaron.hook.main"],
             input=json.dumps(
-                {"hook_event_name": "userPromptSubmit", "cwd": str(store_dir), "prompt": "p"}
+                {"hook_event_name": "UserPromptSubmit", "cwd": str(store_dir), "prompt": "p"}
             ),
             capture_output=True,
             text=True,

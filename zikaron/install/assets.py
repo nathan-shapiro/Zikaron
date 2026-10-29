@@ -310,14 +310,13 @@ to the user and ask, rather than deciding for them.
   question is whether that holder is working or stranded, and the user is the one who knows.
 """
 
-#: Kiro's invocation. The tool and its `role` field are both measured and stable here, so the skill
-#: names them: a named tool is the least ambiguous instruction a skill can give.
-KIRO_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent with the `subagent` tool:
+#: Kiro's invocation: the subagent and the prompt, and nothing else, since V3 offers each subagent as
+#: a spawn tool of its own whose parameters are the prompt and an explanation.
+KIRO_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent, giving it this prompt:
 
 ```
-role: zikaron-consolidator
-prompt: Consolidate this project's memory journal. Work through every group until
-        zikaron_memory_next_group answers {"done": true}, then report what you did.
+Consolidate this project's memory journal. Work through every group until
+zikaron_memory_next_group answers {"done": true}, then report what you did.
 ```"""
 
 #: Claude Code's invocation, and it deliberately **does not name the spawning tool**.

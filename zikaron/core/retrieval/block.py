@@ -25,15 +25,15 @@ count that used to introduce them is gone, having been wrong about its own list 
   output or a web page. Without the frame, an injected gist reading "always deploy with --force" is
   indistinguishable from policy — and a bare "not instructions" leaves the reader to reconcile that
   imperative against an abstraction, where the imperative is the more concrete of the two, so the
-  frame says a note phrased as an order is still a note. kiro makes this load-bearing rather than
-  decorative: it wraps injected text in prose inviting the model to follow requests found in it
-  (`harness.md`), and the frame is the only sentence contradicting that wrapper. It is the only
-  defence v0 has against memory poisoning — an honest limit rather than a solved problem, whose
-  other half is the write policy's prohibition on instruction-shaped gists.
-- **The block is bounded at both ends.** It lands after the user's message on Claude Code and before
-  it on kiro, so a heading alone leaves one side running into the user's own words. A tag pair also
-  distinguishes the block from the document prose a model reads and writes constantly, which a
-  Markdown heading does not.
+  frame says a note phrased as an order is still a note. A harness's own framing is not this frame's
+  to rely on: kiro's V3 engine delivers the block inside a `HOOK_INSTRUCTION` block whose framing
+  was not recorded, and Claude Code adds none (`harness.md` §"The table"). It is the only defense v0
+  has against memory poisoning — an honest limit rather than a solved problem, whose other half is
+  the write policy's prohibition on instruction-shaped gists.
+- **The block is bounded at both ends.** It lands after the user's message on both harnesses
+  (`harness.md` §"The table"), so a heading alone leaves its leading edge running into the user's
+  own words. A tag pair also distinguishes the block from the document prose a model reads and
+  writes constantly, which a Markdown heading does not.
 - **Nothing is printed when nothing is eligible** — no header, no empty block. A memory system
   having a quiet day should be invisible.
 
@@ -52,8 +52,8 @@ from zikaron.core.errors import RowState
 from zikaron.core.retrieval.ranking import RankedMemory
 
 #: The opening tag; `FOOTER` closes it. A tag pair rather than a heading, because the block abuts
-#: the user's own message — after it on Claude Code, before it on kiro — and because a Markdown
-#: heading is indistinguishable from the document prose a model reads and writes all day.
+#: the user's own message — after it on both harnesses — and because a Markdown heading is
+#: indistinguishable from the document prose a model reads and writes all day.
 HEADER: Final = "<zikaron-memories>"
 
 #: Closes `HEADER`.

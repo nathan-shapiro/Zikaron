@@ -8,12 +8,16 @@ module's own behaviour under test is what it does with the label a *response* ca
 it gets a socket in the first place (`test_mcp_connection_integration.py` already covers that).
 """
 
+import os
 from pathlib import Path
 
 import pytest
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.harness import detect
 from zikaron.mcp.connection import ServiceConnection
+from zikaron.service import paths
+from zikaron.service.envelope import ClientEnvelope
 
 
 @pytest.fixture
@@ -21,16 +25,8 @@ def connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServiceConnec
     """A `ServiceConnection` whose socket-establishing seam is stubbed out entirely — every test
     in this file is about label bookkeeping around `_send`, never about the connection sequence
     itself, so `_connected_socket` is replaced with a stub that hands back an object `_send` is
-    also monkeypatched not to look at.
-
-    `KIRO_SESSION_ID` is cleared **before** constructing `ServiceConnection`, in this fixture
-    rather than in each test body: the constructor reads it once, at `__init__` time, so a test
-    that called `monkeypatch.delenv` in its own body — after this fixture has already run — would
-    be clearing the variable too late to affect a connection this fixture already built. Any test
-    that needs a *present* harness value constructs its own `ServiceConnection` directly instead
-    of using this fixture, for the identical reason in reverse.
+    also monkeypatched not to look at. The harness's variables are already absent (`conftest`).
     """
-    monkeypatch.delenv("KIRO_SESSION_ID", raising=False)
     conn = ServiceConnection(tmp_path)
 
     class _FakeSocket:
@@ -44,23 +40,26 @@ def connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ServiceConnec
     return conn
 
 
-def _script_responses(monkeypatch: pytest.MonkeyPatch, responses: list[dict[str, object]]) -> None:
+def _script_responses(
+    monkeypatch: pytest.MonkeyPatch, responses: list[dict[str, object]]
+) -> list[ClientEnvelope]:
     """Replace module-level `_send_request`/`_read_response` so `ServiceConnection.request`
     "sends" nothing for real and "reads" each of `responses` in order — the two seams that
     replaced one combined `_send` when the send and receive halves of one round trip were split
     apart, so a caller could tell "never sent" from "sent, response lost" (`connection.py`'s own
-    docstring on `request`).
+    docstring on `request`). Returns the envelopes "sent", in order.
     """
     queue = list(responses)
+    sent: list[ClientEnvelope] = []
 
     def fake_send_request(
         _sock: object,
         _method: str,
         _params: dict[str, object],
         *,
-        envelope: object,  # noqa: ARG001 — keyword-only name must match `_send_request`'s own.
+        envelope: ClientEnvelope,
     ) -> None:
-        return None
+        sent.append(envelope)
 
     def fake_read_response(_sock: object) -> dict[str, object]:
         if not queue:
@@ -69,6 +68,10 @@ def _script_responses(monkeypatch: pytest.MonkeyPatch, responses: list[dict[str,
 
     monkeypatch.setattr("zikaron.mcp.connection._send_request", fake_send_request)
     monkeypatch.setattr("zikaron.mcp.connection._read_response", fake_read_response)
+    return sent
+
+
+_ANSWER: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "result": {}}
 
 
 async def test_with_no_harness_session_id_the_first_response_label_is_adopted_for_the_next_call(
@@ -129,7 +132,7 @@ async def test_a_label_is_adopted_from_an_application_error_response_too(
 
 
 async def test_a_zk_prefixed_harness_value_is_treated_as_absent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`architecture.md`'s client contract, stated for exactly this case: "a client that finds a
     `zk-`-prefixed value in `KIRO_SESSION_ID` must treat it as absent." The `zk-` prefix is how the
@@ -137,29 +140,52 @@ async def test_a_zk_prefixed_harness_value_is_treated_as_absent(
     a harness masquerade as the service's own reserved namespace, breaking the one thing
     `label_source` is derived from.
     """
+    sent = _script_responses(monkeypatch, [_ANSWER])
     monkeypatch.setenv("KIRO_SESSION_ID", "zk-a-harness-should-not-be-allowed-to-claim-this")
-
-    conn = ServiceConnection(tmp_path)
-    envelope = conn.envelope(kind="mcp")
-    assert envelope.session_id is None
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
+    assert sent[0].session_id is None
 
 
 async def test_an_ordinary_harness_value_is_forwarded_unchanged(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    sent = _script_responses(monkeypatch, [_ANSWER])
     monkeypatch.setenv("KIRO_SESSION_ID", "a-genuine-kiro-session-id")
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
+    assert sent[0].session_id == "a-genuine-kiro-session-id"
 
-    conn = ServiceConnection(tmp_path)
-    envelope = conn.envelope(kind="mcp")
-    assert envelope.session_id == "a-genuine-kiro-session-id"
+
+async def test_the_label_is_resolved_at_the_first_request_not_at_construction(
+    connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kiro MCP server starts in the same second as the session's start hook, whose relay is
+    what the seam reads under kiro: a label resolved when the server was built would be the minted
+    one the relay was meant to replace."""
+    sent = _script_responses(monkeypatch, [_ANSWER])
+    relay_dir = paths.session_relay_dir(connection.location.runtime_dir)
+    relay_dir.mkdir(parents=True)
+    detect.relay_file(relay_dir, os.getppid()).write_text("sess_written-after-the-server-started")
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
+    assert sent[0].session_id == "sess_written-after-the-server-started"
+
+
+async def test_the_resolved_label_does_not_change_after_the_first_request(
+    connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent = _script_responses(monkeypatch, [_ANSWER, _ANSWER])
+    monkeypatch.setenv("KIRO_SESSION_ID", "the-first-label")
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
+    monkeypatch.setenv("KIRO_SESSION_ID", "a-later-label")
+    await connection.request("memory_search", {}, envelope=connection.envelope(kind="mcp"))
+    assert [envelope.session_id for envelope in sent] == ["the-first-label", "the-first-label"]
 
 
 async def test_an_already_adopted_label_is_not_overwritten_by_a_later_harness_read(
     connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`envelope()` must read the connection's own held `_session_id`, never `os.environ` again
-    after construction — this guards against a regression back toward re-reading the environment
-    on every call, which is the exact defect this whole module was fixed to remove.
+    after the first request — this guards against a regression back toward re-reading the
+    environment on every call, which would split one process's writes across labels.
     """
     _script_responses(
         monkeypatch,

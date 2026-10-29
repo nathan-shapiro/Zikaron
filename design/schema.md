@@ -191,7 +191,7 @@ CREATE TABLE read_receipt (
   session_id   TEXT    NOT NULL,
   client_kind  TEXT    NOT NULL,    -- REQUIRED in the key: since 2026-08-01 every client of one
                                     -- kiro session shares one session_id (a subagent's MCP client
-                                    -- reads the PARENT's KIRO_SESSION_ID), so without this column a
+                                    -- takes the PARENT session's label), so without this column a
                                     -- receipt minted by next_group's serve would license the PRIMARY
                                     -- agent to amend that row without ever fetching it. Lost-update
                                     -- protection never depended on it (the version must still match)
@@ -1259,12 +1259,13 @@ not quietly break the no-logger property.
 
 Two of D30's six signals join events emitted by **different clients** under one session: a push comes from
 `zikaron-hook`, while `remember`/`amend` come from `zikaron-mcp`. That join only works if both clients
-resolved the *same* session label. As of 2026-08-01 they do, **by construction under kiro** — both read
-`KIRO_SESSION_ID` out of their own environment and it is the same string in every process kiro spawns
-(`architecture.md` §"Both clients resolve the same label"). The join is no longer resting on a derivation.
+resolved the *same* session label. They do, **by construction**: under Claude Code both read the session
+variable out of their own environment, and under kiro, whose variable misses the MCP server, the MCP client
+reads the label the hook relays through the agent server both share (`architecture.md` §"Both clients resolve
+the same label"). The join is not resting on a derivation.
 
-Linkage stays **observable rather than assumed**, because "by construction under kiro" is a conditional and the
-condition is exactly what an env-less harness breaks:
+Linkage stays **observable rather than assumed**, because "by construction" is a conditional, and the condition
+is exactly what an env-less client breaks:
 
 - A session is **linked** iff at least one event with `client_kind='hook'` and at least one event with
   `client_kind='mcp'` share its `session_id`.
@@ -1272,8 +1273,9 @@ condition is exactly what an env-less harness breaks:
   the two cross-client signals, every time.
 - **The expectation is now ~1.0, and that changes how a low value reads.** Under the old three-rung ladder a
   shortfall meant *a derivation failed or lost a race* — an expected, tolerated, hard-to-diagnose event. Now a
-  shortfall means **`KIRO_SESSION_ID` was absent from some client's environment**, so both clients fell to
-  minting and minted *different* labels. That is a one-line diagnosis with a one-line check, and it is the only
+  shortfall means **some client found neither a session variable nor a relayed label** — under kiro, an
+  install whose hook command predates the relay's `exec` — so it fell to minting and minted a *different*
+  label. That is a one-line diagnosis with a one-line check, and it is the only
   remaining way to be unlinked.
 - `label_source` still says which happened — `harness` vs `minted`, derived from the label's prefix rather than
   read from a column — so a `minted`-heavy population is visible immediately. Two rungs, two values; the third
@@ -1311,8 +1313,8 @@ zero-write rate is conditional on the service having been reachable, **healthy, 
 hook's deadline**. That is a stated limitation, not a fixed one — making the hook write would mean giving it
 a writable store handle, which is a worse trade.
 
-**Subagent sessions are absent from both sides, and that is why they create no artifact.** The hook prints
-nothing and calls nothing in a subagent session (`architecture.md` §"Subagent sessions"), so a subagent
+**Subagent sessions are absent from both sides, and that is why they create no artifact.** No spawn or
+prompt hook fires in a subagent session under either harness (`architecture.md` §"Subagent sessions"), so a subagent
 contributes no `surface_call` and never enters the denominator. An MCP client *inside* a subagent sends the
 **top-level** label, so any write it makes lands on the parent session's row — where the work was actually
 requested. The denominator and the numerator therefore move together, which is the property rounds 9–11 kept
@@ -1579,7 +1581,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
 | Bound | Value | Why |
 |---|---|---|
 | `gist` | ≤ **64 tokens** (`gist_max_tokens`), non-empty | D13 wants triage-length prose, and `indexing.md`'s preflight must fit gist + separator + content + special tokens under the embedder's 512. Over-budget **rejects**; the agent still holds the text and can shorten it in the same turn. |
-| `gist.characters` | ≤ **1024** code units, a fixed constant | Tokens bound neither characters nor bytes — the deployed WordPiece tokenizer maps an unbroken 4,000-character run to a single `[UNK]` — so the token bound above cannot make the injected block's size provable, and without a second bound the block can overrun any harness's injection budget. `harness.md` §"Injection budgets" carries the derivation; the number is chosen so a five-row block is **6,097 units, 61%** of the smallest budget any supported harness states, and at UTF-8's 3-bytes-per-UTF-16-unit ceiling **18,291 bytes, 28%** of the largest byte-denominated one. *Every figure here is framing plus five gists, so any edit to the preamble moves all four — which is why `tests/test_install_limits.py` recomputes them from `block.render` rather than trusting this sentence.* **The unit is UTF-16 code units, not code points**, matching the injection budget's own conservative count — the two halves of one argument must measure the same thing, or five astral-heavy gists satisfy the bound and overrun the budget it exists to prove. **Fixed, not configurable**: an output cap cannot be proven against a limit an operator can raise. **The trade it makes, stated because it is observable**: measured at 3.89–6.55 characters per token across prose styles, this binds above ~156 tokens of plain English, so it is *not* reachable at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding constraint in the top of that key's 8–256 range. Admitting prose at the 256-token ceiling would need ≥1584, putting the five-row block at 92% of budget — a loud rejection naming the character count is the better failure than a block that fits by luck. |
+| `gist.characters` | ≤ **1024** code units, a fixed constant | Tokens bound neither characters nor bytes — the deployed WordPiece tokenizer maps an unbroken 4,000-character run to a single `[UNK]` — so the token bound above cannot make the injected block's size provable, and without a second bound the block can overrun any harness's injection budget. `harness.md` §"Injection budgets" carries the derivation; the number is chosen so a five-row block is **6,097 units, 61%** of Claude Code's 10,000. Under kiro's 3,000 the block can overrun the cut, and that section says when. *The figure is framing plus five gists, so any edit to the preamble moves it — which is why `tests/test_install_limits.py` recomputes it from `block.render` rather than trusting this sentence.* **The unit is UTF-16 code units, not code points**, matching the injection budget's own conservative count — the two halves of one argument must measure the same thing, or five astral-heavy gists satisfy the bound and overrun the budget it exists to prove. **Fixed, not configurable**: an output cap cannot be proven against a limit an operator can raise. **The trade it makes, stated because it is observable**: measured at 3.89–6.55 characters per token across prose styles, this binds above ~156 tokens of plain English, so it is *not* reachable at the default `gist_max_tokens` of 64 (worst case 363 characters) but *is* the binding constraint in the top of that key's 8–256 range. Admitting prose at the 256-token ceiling would need ≥1584, putting the five-row block at 89% of Claude Code's budget — a loud rejection naming the character count is the better failure than a block that fits by luck. |
 | `content` | non-empty, **no upper limit** | D4 stores content untruncated. Length is handled by chunking, never by refusal. |
 | `limit` on `search`/`surface` | 1–50, default 5 | The **output** budget: how many memories come back. It does *not* set retrieval depth. |
 | `uuids` on `fetch` | 1–50 per call | The **bound** is all-or-nothing — a call naming 0 or >50 uuids is rejected whole and returns nothing. The **contents** are not: a well-formed call answers partially, returning every known record and reporting unknown uuids in `missing`, because a dead handle is something the agent needs told rather than a reason to fail the batch (`architecture.md` §`zikaron_memory_fetch`). All-or-nothing in the error table means *mutating* batches. |
@@ -1694,7 +1696,7 @@ truncation. `design/architecture.md` §"Errors" carries the codes.
    versions to the same session, and a plain insert would violate the primary key.
    **The receipt is scoped to `(session, client kind)`, never to a process**, and the `client_kind` half of
    that was added on 2026-08-01 to close a hole the shared label opened. Every client of one kiro session now
-   shares one `session_id` — a subagent's MCP client reads the *parent's* `KIRO_SESSION_ID`
+   shares one `session_id` — a subagent's MCP client takes the *parent* session's label
    (`architecture.md` §"What the shared label affects") — so on the old `(session_id, …)` key a receipt minted
    by `next_group`'s serve would have satisfied this invariant for the **primary agent** on that row, letting it
    amend a memory it never fetched. Lost-update protection never depended on the receipt (the version must

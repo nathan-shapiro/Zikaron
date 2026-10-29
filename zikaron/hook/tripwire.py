@@ -7,14 +7,9 @@ cannot see it: both clients read the environment by construction, so both read t
 value, they agree, and coverage reads as healthy while the inner session's work is attributed to
 the outer, live one.
 
-**Why the scoping is load-bearing rather than tidy.** The naive rule — log whenever the payload's
-session id differs from the environment's — is the *identical* predicate as
-`envelope.is_subagent_session`. Under a harness that fires its ordinary hooks for subagent sessions,
-that divergence is the routine, expected case, so an unscoped tripwire would fire on every subagent
-turn: it would drown the signal and pollute a log whose whole value is a closed vocabulary of
-failure kinds. So the tripwire fires only under a harness where payload and environment are
-invariantly equal, and that property travels as a field on the harness spec rather than as an
-identity test against a particular harness here.
+**Under both harnesses a hook's payload and environment carry one session id**, since neither fires
+a spawn or prompt hook for a subagent session (`design/harness.md` §"Subagents"). So a divergence is
+a misdetection wherever it is seen, and this records it wherever it is seen.
 
 **On that divergence the hook prints nothing and makes no RPC**, which the callers own and this
 module does not. Making no call is what delivers the reasoning, not merely printing nothing: a push
@@ -27,7 +22,6 @@ that depends on no hook at all.
 import contextlib
 from pathlib import Path
 
-from zikaron.harness.spec import HarnessSpec
 from zikaron.hook import failure
 from zikaron.service import paths
 
@@ -37,9 +31,8 @@ from zikaron.service import paths
 SESSION_ENV_MISMATCH = "session_env_mismatch"
 
 
-def record_if_misdetected(*, spec: HarnessSpec, scope_dir: Path) -> None:
-    """Write one `session_env_mismatch` line, if this harness is one where the divergence the
-    caller just observed means a misdetection rather than a subagent.
+def record_misdetection(*, scope_dir: Path) -> None:
+    """Write one `session_env_mismatch` line for the divergence the caller just observed.
 
     Called on the suppression path of a hook that has already decided to print nothing, so it must
     never raise: the caller's guarantee is that it exits quietly, and a tripwire that turned a
@@ -47,8 +40,6 @@ def record_if_misdetected(*, spec: HarnessSpec, scope_dir: Path) -> None:
     whole rather than per-step, so a failure while deriving the log path is swallowed exactly like
     a failure while writing to it.
     """
-    if spec.fires_hooks_for_subagent_sessions:
-        return
     with contextlib.suppress(Exception):
         store_dir = paths.store_dir(scope_dir)
         failure.record_failure(paths.hook_log_path(store_dir), SESSION_ENV_MISMATCH)

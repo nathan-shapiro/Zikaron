@@ -55,6 +55,7 @@ from aiosqlite.core import _connection_worker_thread
 
 from zikaron.harness.spec import KIRO, SPECS
 from zikaron.install import harness as install_harness
+from zikaron.service import paths
 
 
 @pytest.fixture(scope="session")
@@ -155,6 +156,26 @@ def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(spec.project_dir_variable, raising=False)
 
 
+#: Bound at import: this fixture's teardown runs while a test's own patch of `shutil.rmtree`, which
+#: some tests make refuse, is still in place.
+_REMOVE_TREE: Final = shutil.rmtree
+
+
+@pytest.fixture(autouse=True)
+def _no_session_relay_outlives_its_test() -> Iterator[None]:
+    """Remove the session relay after each test.
+
+    A relay file is named for its writer's parent, and every hook a test runs in-process shares
+    pytest's parent, so a file one test left would be the label the next test's MCP client reads.
+    """
+    yield
+    for runtime in _SESSION_RUNTIME_DIR:
+        relay = paths.session_relay_dir(
+            paths.runtime_dir(xdg_runtime_dir=str(runtime), uid=os.getuid())
+        )
+        _REMOVE_TREE(relay, ignore_errors=True)
+
+
 #: The tiers whose whole purpose is to notice a wrong `HarnessSpec.harness_binary`, and which
 #: therefore may never report success for a machine that could not run them.
 #: `pytester` runs a nested pytest in a temporary directory, which is the only way to test a hook
@@ -208,14 +229,18 @@ def stub_harness_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
     The distinction this exists to draw is between two kinds of "real". `tests/test_install_e2e.py`
     and `tests/test_install_takeover.py` spawn real hook processes, a real service, a real socket
     and a real MCP client — all Zikaron's own, all reproducible anywhere. They touch `kiro-cli` only
-    because an install validates each shipped agent's model on the way past, which is incidental
-    to everything they assert. Stubbing that one call makes them hermetic without weakening them by
-    a single assertion, and what a real binary genuinely establishes stays in
+    because an install reads its version and validates each shipped agent's model on the way past,
+    which is incidental to everything they assert. Stubbing those calls makes them hermetic without
+    weakening them by a single assertion, and what a real binary genuinely establishes stays in
     `test_install_harness.py::TestAgainstTheRealBinary` behind `integration_kiro`.
 
-    Both harnesses are answered for, so a test using this can install for either.
+    Both harnesses are answered for, so a test using this can install for either. The version
+    answered is kiro's floor, the oldest an install accepts.
     """
     monkeypatch.setattr(install_harness, "binary_is_available", lambda _name: True)
+    monkeypatch.setattr(
+        install_harness, "installed_version", lambda: install_harness.MINIMUM_VERSION
+    )
     monkeypatch.setattr(
         install_harness, "available_model_ids", lambda: frozenset({KIRO.consolidator_model})
     )

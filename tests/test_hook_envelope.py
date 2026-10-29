@@ -1,4 +1,4 @@
-"""`zikaron.hook.envelope`: subagent suppression and the `client` envelope.
+"""`zikaron.hook.envelope`: the session-divergence check and the `client` envelope.
 
 `architecture.md` §"Subagent sessions" and §"The request envelope" are normative. Resolving the
 session label itself is the harness seam's job, not this module's — those tests live in
@@ -13,38 +13,31 @@ from zikaron.hook.envelope import (
     CLIENT_KIND,
     HookEnvelope,
     build_envelope,
-    is_subagent_session,
+    sessions_diverge,
 )
 from zikaron.service.envelope import ClientEnvelope, parse_envelope
 
 
-class TestIsSubagentSession:
-    def test_matching_ids_is_not_a_subagent_session(self) -> None:
-        assert not is_subagent_session(env_session_id="abc", payload_session_id="abc")
+class TestSessionsDiverge:
+    def test_matching_ids_do_not_diverge(self) -> None:
+        assert not sessions_diverge(env_session_id="abc", payload_session_id="abc")
 
-    def test_differing_ids_is_a_subagent_session(self) -> None:
-        """The exact case the probe measured: a subagent's payload carries its own session id
-        while `KIRO_SESSION_ID` still holds the top-level one."""
-        assert is_subagent_session(env_session_id="top-level", payload_session_id="subagent-own")
+    def test_differing_ids_diverge(self) -> None:
+        """An inherited variable from an enclosing session beside this session's own payload."""
+        assert sessions_diverge(env_session_id="enclosing", payload_session_id="this-one")
 
-    def test_env_absent_is_never_a_subagent_session_regardless_of_payload(self) -> None:
-        """`architecture.md`: "when `KIRO_SESSION_ID` is absent entirely, it proceeds normally" —
-        unconditional on the payload's own value, including a payload that happens to carry some
-        session id that would differ from anything."""
-        assert not is_subagent_session(env_session_id=None, payload_session_id="anything")
-        assert not is_subagent_session(env_session_id=None, payload_session_id=None)
+    def test_an_absent_variable_never_diverges_whatever_the_payload(self) -> None:
+        """An absent variable is no evidence of another session, so it never suppresses a push."""
+        assert not sessions_diverge(env_session_id=None, payload_session_id="anything")
+        assert not sessions_diverge(env_session_id=None, payload_session_id=None)
 
-    def test_a_non_string_payload_session_id_never_matches_a_present_env_value(self) -> None:
-        """A malformed payload (a payload session id that is not a string, or entirely absent —
-        modelled here as `None`, the value `dict.get` returns for a missing key) differs from any
-        real string `env_session_id`, so this reports a subagent session — the conservative
-        direction, since suppressing a push costs a convenience recoverable by asking, per
-        `architecture.md`'s own stated asymmetry."""
-        assert is_subagent_session(env_session_id="top-level", payload_session_id=None)
-        assert is_subagent_session(env_session_id="top-level", payload_session_id=42)
-
-    def test_env_present_and_payload_absent_is_a_subagent_session(self) -> None:
-        assert is_subagent_session(env_session_id="top-level", payload_session_id=None)
+    def test_a_non_string_payload_session_id_diverges_from_a_present_variable(self) -> None:
+        """A malformed payload (a session id that is not a string, or entirely absent — modeled
+        here as `None`, the value `dict.get` returns for a missing key) differs from any real
+        variable, so the push is suppressed: the conservative direction, since a lost push is
+        recoverable through pull."""
+        assert sessions_diverge(env_session_id="enclosing", payload_session_id=None)
+        assert sessions_diverge(env_session_id="enclosing", payload_session_id=42)
 
 
 class TestBuildEnvelope:
