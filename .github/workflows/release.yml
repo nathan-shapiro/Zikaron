@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
 
       - name: Refuse a release whose tag disagrees with the version being published
         # The one failure a human makes here: tagging `v0.2.0` against a tree that still says
@@ -89,4 +89,4 @@ jobs:
       # this kind, which the first release discovered after a successful build.
       # `@release/v1` is what pypa's own docs recommend and is a branch that moves, which the
       # moving-ref guard rejects — hardest, deliberately, for the one action holding a credential.
-      - uses: pypa/gh-action-pypi-publish@v1.14.2
+      - uses: pypa/gh-action-pypi-publish@v1.14.3

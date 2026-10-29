@@ -60,7 +60,7 @@ jobs:
       # resolves to a **frozen historical tag** — whatever that major pointed at when it was last
       # moved, which can be years and several majors behind, missing every hardening default since.
       # A missing tag fails loudly; this fails silently, running stale code and reporting green.
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
 
       - name: Point fastembed at a cacheable directory
         # The embedder is 64 MB and fastembed otherwise caches it under `tempfile.gettempdir()`,
@@ -213,7 +213,7 @@ jobs:
 
       # Pinned to a full patch version for the reason given in the linux job — there is no floating
       # `v10` tag, and a bare major silently resolves to a frozen historical one.
-      - uses: astral-sh/setup-uv@v10.3.0
+      - uses: astral-sh/setup-uv@v10.3.2
 
       - name: Point fastembed at a cacheable directory
         # See the header — `runner` is step-level only, so this comes from `$RUNNER_TEMP` rather than
