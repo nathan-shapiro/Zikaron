@@ -21,12 +21,11 @@ nothing from this session's reasoning leaks into judgments that will outlive it.
 
 ## How to run it
 
-Spawn the **zikaron-consolidator** subagent with the `subagent` tool:
+Spawn the **zikaron-consolidator** subagent, giving it this prompt:
 
 ```
-role: zikaron-consolidator
-prompt: Consolidate this project's memory journal. Work through every group until
-        zikaron_memory_next_group answers {"done": true}, then report what you did.
+Consolidate this project's memory journal. Work through every group until
+zikaron_memory_next_group answers {"done": true}, then report what you did.
 ```
 
 That is the whole invocation. The consolidator's own tooling claims the store's consolidation lock

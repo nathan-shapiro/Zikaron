@@ -40,8 +40,11 @@ from pathlib import Path
 from zikaron.guard.start_text import GUARD_START_TEXT
 from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
-from zikaron.hook import push, reminder, spawn_warm, subagent_policy
+from zikaron.hook import push, reminder, session_relay, spawn_warm, subagent_policy
 from zikaron.hook.components import Components
+
+#: The events that leave the session's label for the MCP client, before anything else they do.
+_RELAYED = frozenset({HookEvent.SPAWN, HookEvent.PROMPT})
 
 
 def main() -> None:
@@ -77,6 +80,10 @@ def _dispatch(event: HookEvent, payload: dict[str, object], components: Componen
     A start trigger emits the write policy for the memory store and the guard start text for the
     guards, in that order; a guards-only start makes no service connection at all.
     """
+    if components.memory and event in _RELAYED:
+        session_relay.record(
+            detect.current_spec(), payload.get("session_id"), sweep=event is HookEvent.SPAWN
+        )
     if event is HookEvent.PROMPT:
         return _push(payload) if components.memory else None
     if event is HookEvent.SEARCH:

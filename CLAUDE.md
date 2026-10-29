@@ -399,7 +399,10 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
   installer output (operator, 2026-10-16): the kiro fallback is restored by re-running
   `python -m zikaron.install --project . --harness kiro --agent .kiro/agents/zikaron-dogfood.json`,
   which writes the consolidator, the documenter and their two skills — both agents' configs
-  carrying this machine's `zikaron-mcp` path — and merges into the dogfood config. **Four kinds of
+  carrying this machine's `zikaron-mcp` path — and merges into the dogfood config. kiro's V3 engine
+  reads only V3-shape profiles, so a config that comes back in V2's shape is converted first with
+  `kiro-cli agent upgrade --no-backup .kiro/agents` — `--no-backup` because the originals are in git
+  and `.json.bak` files would land in a tracked directory. **Four kinds of
   file live under `.kiro/` and the rule is not the same for all four:**
   - **Crew configs** — `agents/memory-*.json`, `agents/py-runner.json`. The kiro mirrors of
     `.claude/agents/`. **Editable**, per the operator, and worth keeping in step with their twins.

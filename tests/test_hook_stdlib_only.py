@@ -1,5 +1,5 @@
 """A test asserts stdlib-only imports, and specifically that `logging` is
-not among them, for every module on the `agentSpawn`/`userPromptSubmit` critical path.
+not among them, for every module on the `SessionStart`/`UserPromptSubmit` critical path.
 
 `architecture.md` §Components: "`zikaron-hook` stays stdlib-only." `coding-standards.md` §6 gives
 the number the rule rests on — `import logging` alone costs ~15 ms, the same class of number as

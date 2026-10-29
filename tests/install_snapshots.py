@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Final
 
 from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
-from zikaron.install.entries import Commands, HookFormat
+from zikaron.install.entries import Commands
 from zikaron.install.targets import ClaudeCodeTarget, HarnessTarget, KiroTarget
 from zikaron.install.writer import Plan
 
@@ -38,7 +38,6 @@ def rendered() -> dict[str, str]:
             consolidator_model=target.spec.consolidator_model,
             documenter_model=target.spec.documenter_model,
             orchestrator_model=ORCHESTRATOR_MODEL,
-            hook_format=HookFormat.OBJECT,
             force=False,
             trust_tools=True,
         )

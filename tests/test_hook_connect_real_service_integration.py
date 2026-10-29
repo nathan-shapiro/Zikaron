@@ -123,7 +123,7 @@ def test_connecting_to_an_already_warm_real_service_reuses_it(
 ) -> None:
     """A second `connect_once` call against a store the first call already warmed must connect
     directly rather than spawning a second server — the ordinary case every real
-    `userPromptSubmit` after the first in a session goes through."""
+    `UserPromptSubmit` after the first in a session goes through."""
     store_dir, store_id = store
     sock_path = socket_dir / "test.sock"
     command = default_server_command(sock_path, store_dir)

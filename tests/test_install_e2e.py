@@ -8,14 +8,16 @@ interpreter, a `--mode` argument spelled wrong, or an entry point that was never
 
 What it cannot do is drive kiro. So it exercises the same two things kiro does with what was
 installed — run the hook command with a JSON payload on stdin, and speak MCP over stdio to the
-server command — and the claim that kiro itself reads these files is checked by using them, not
-here.
+server command, with no session variable, as kiro does, so the label crosses by the session relay —
+and the claim that kiro itself reads these files is checked by using them, in
+`tests/test_install_kiro_live.py`.
 """
 
 import json
 import os
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -92,10 +94,10 @@ def _install(project: Path) -> dict[str, Any]:
 
 
 def _hook_command(agent_config: dict[str, Any]) -> str:
-    """The `userPromptSubmit` command string, read back out of what was installed."""
-    entries = agent_config["hooks"]["userPromptSubmit"]
+    """The `UserPromptSubmit` command string, read back out of what was installed."""
+    entries = [entry for entry in agent_config["hooks"] if entry["trigger"] == "UserPromptSubmit"]
     assert len(entries) == 1
-    command = entries[0]["command"]
+    command = entries[0]["action"]["command"]
     assert isinstance(command, str)
     return command
 
@@ -110,11 +112,11 @@ def _hook_env(session_id: str) -> dict[str, str]:
     """The environment kiro gives a hook: its own session id, and nothing Zikaron-specific.
 
     Taken from the payload the caller is about to send rather than from a module constant, because
-    the two being *equal* is what makes this a top-level session — when they differ the hook
-    correctly treats the invocation as a subagent one and suppresses everything, warm spawn
-    included. An earlier version of this helper read a constant, and a second test file passing its
-    own session id got silently suppressed: the service never started and the failure surfaced as a
-    timeout waiting for it.
+    the two being *equal* is what the hook sees in every session kiro fires it for — when they
+    differ the hook reads a misdetected harness and suppresses everything, warm spawn included. An
+    earlier version of this helper read a constant, and a second test file passing its own session
+    id got silently suppressed: the service never started and the failure surfaced as a timeout
+    waiting for it.
 
     **`os.environ` is safe here only because `conftest._no_inherited_harness_environment` has
     already emptied it of harness markers**, and that is worth stating where the line is rather than
@@ -230,19 +232,37 @@ def _stop_service(project: Path) -> None:
 
 
 def _stdio(command: str, mode: str, project: Path) -> StdioTransport:
-    """A real `zikaron-mcp` subprocess in `project`, exactly as kiro spawns one.
+    """A real `zikaron-mcp` subprocess in `project`, spawned as kiro's agent server spawns one: in
+    the workspace directory, and with no session variable, so its label is whatever the session
+    relay holds for its parent — here the test process, which is also the parent the `exec`'d hook
+    wrote for (`design/harness.md` §"The session relay").
 
-    `cwd` is the load-bearing argument: the client scopes its store to its own working directory
-    (under kiro, which exports no project variable), and kiro was measured to spawn an MCP server
-    in the workspace directory — so a test spawning it anywhere else would be testing a different
-    store than the hooks use.
+    `cwd` is the load-bearing argument for the store: the client scopes its store to its own working
+    directory (under kiro, which exports no project variable), and kiro was measured to spawn an MCP
+    server in the workspace directory — so a test spawning it anywhere else would be testing a
+    different store than the hooks use.
     """
     return StdioTransport(
         command=command,
         args=["--mode", mode],
         cwd=str(project),
-        env={**os.environ, "KIRO_SESSION_ID": _SESSION_ID},
+        env=dict(os.environ),
     )
+
+
+def _client_labels(project: Path) -> dict[str, set[str]]:
+    """The session labels each client kind wrote events under, read-only."""
+    db_path = paths.store_db_path(paths.store_dir(project))
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    labels: dict[str, set[str]] = {}
+    try:
+        for session_id, client_kind in connection.execute(
+            "SELECT session_id, client_kind FROM event"
+        ):
+            labels.setdefault(str(client_kind), set()).add(str(session_id))
+    finally:
+        connection.close()
+    return labels
 
 
 async def _call(client: Client[Any], tool: str, args: dict[str, Any] | None = None) -> Any:  # noqa: ANN401 — a tool's result shape is the wire's, deliberately not narrowed here.
@@ -262,12 +282,12 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
     hook_command = _hook_command(agent_config)
     mcp_command = _mcp_command(agent_config)
 
-    # 1. `agentSpawn`: the write policy reaches stdout, and the detached warm helper starts a
+    # 1. `SessionStart`: the write policy reaches stdout, and the detached warm helper starts a
     #    service for a store that does not exist yet.
     spawned = _run_hook(
         hook_command,
         project,
-        {"hook_event_name": "agentSpawn", "cwd": str(project), "session_id": _SESSION_ID},
+        {"hook_event_name": "SessionStart", "cwd": str(project), "session_id": _SESSION_ID},
     )
     assert spawned.returncode == 0
     assert spawned.stderr == ""
@@ -299,7 +319,7 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
         hook_command,
         project,
         {
-            "hook_event_name": "userPromptSubmit",
+            "hook_event_name": "UserPromptSubmit",
             "cwd": str(project),
             "session_id": _SESSION_ID,
             "prompt": "why do the integration tests hang on connect?",
@@ -358,6 +378,15 @@ async def test_a_clean_install_does_write_pull_push_and_a_consolidation_run(reap
         for uuid in written:
             record = by_uuid[uuid]
             assert record["tier"] == "long_term" or record["superseded_by"] in promoted
+
+    # 7. One label across the clients: the hook read the session variable, and both MCP servers,
+    #    which had none, read what the hook relayed.
+    labels = _client_labels(project)
+    assert set(labels) >= {"hook", "mcp", "consolidator"}, labels
+    assert all(labels[kind] == {_SESSION_ID} for kind in ("hook", "mcp", "consolidator")), (
+        f"the clients resolved {labels}, not the hook's {_SESSION_ID!r} alone; the MCP servers "
+        'read it through the session relay (`design/harness.md` §"The session relay")'
+    )
 
 
 async def test_the_installed_skill_and_consolidator_config_are_where_kiro_looks(

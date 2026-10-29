@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from zikaron.harness.spec import KIRO
 from zikaron.hook import connect, failure, spawn_warm, write_policy
-from zikaron.hook.limits import MAX_OUTPUT_SIZE
 from zikaron.hook.write_policy import OVERRIDE_REFUSED, WRITE_POLICY_PROMPT
 
 
@@ -43,7 +43,7 @@ def test_a_subagent_session_never_spawns_the_warm_helper(
 ) -> None:
     """`architecture.md` §"Subagent sessions": suppression is unconditional, ahead of the RPC and
     ahead of the degraded chain — the warm helper's own spawn is the `agentSpawn` equivalent of
-    the RPC a `userPromptSubmit` would otherwise make, so it must not run either."""
+    the RPC a `UserPromptSubmit` would otherwise make, so it must not run either."""
     monkeypatch.setenv("KIRO_SESSION_ID", "top-level-session")
     spawned: list[list[str]] = []
 
@@ -174,7 +174,7 @@ class TestTheOverrideReachesStdoutAndItsLabelReachesHookLog:
         self._top_level(monkeypatch)
         store = tmp_path / ".zikaron"
         store.mkdir(mode=0o700)
-        oversize = "y" * (MAX_OUTPUT_SIZE + 1)
+        oversize = "y" * (KIRO.injection_budget + 1)
         (store / "write-policy.md").write_text(oversize)
 
         def _raise(*_args: object, **_kwargs: object) -> None:

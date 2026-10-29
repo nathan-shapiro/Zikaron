@@ -1,4 +1,4 @@
-"""`agentSpawn`: print the write policy, spawn the detached warm helper, never fail.
+"""`SessionStart`: print the write policy, spawn the detached warm helper, never fail.
 
 `architecture.md` §"Warming" is normative: "the hook process prints the write policy — static
 text, no RPC, so it can never fail — and spawns a detached warm helper, then exits." The split
@@ -7,9 +7,9 @@ matters, and the section says why: "the `agentSpawn` hook talks to the service" 
 no socket call at all — it prints a constant string and asks the OS to start a *different*
 process, `zikaron.hook.warm_helper`, which does the work that can fail.
 
-§"Subagent sessions" applies here identically to `push.py`: "When they **differ**, this is a
-subagent session and the hook **prints nothing and exits 0** — for `userPromptSubmit` *and*
-`agentSpawn`."
+§"Subagent sessions" applies here identically to `push.py`: when the payload's session id and the
+environment's differ, the hook prints nothing and exits 0, for the prompt trigger and the spawn
+trigger alike.
 """
 
 import contextlib
@@ -18,20 +18,20 @@ import sys
 from pathlib import Path
 
 from zikaron.harness import detect
-from zikaron.hook import connect, envelope, tripwire, write_policy
+from zikaron.hook import connect, envelope, session_relay, tripwire, write_policy
 from zikaron.service import paths
 
 
 def run(*, scope_dir: Path, payload_session_id: object) -> str | None:
-    """Return the write-policy text to print, or `None` in a subagent session — and, as a side
-    effect on the non-subagent path, best-effort spawn the detached warm helper.
+    """Return the write-policy text to print, or `None` when the session ids diverge — and, as a
+    side effect otherwise, best-effort spawn the detached warm helper.
 
     Never raises: the only real action on the critical path is holding a string constant, and the
     spawn is deliberately best-effort — a `subprocess.Popen` failure here (a missing interpreter,
     an unreadable working directory) is caught and produces no output change at all, since
     `architecture.md` gives the warm helper no observable effect on this hook's own behaviour one
-    way or the other. It exists purely to make the *next* `userPromptSubmit` warmer than it would
-    otherwise be; failing to start it changes nothing about what `agentSpawn` itself prints.
+    way or the other. It exists purely to make the *next* `UserPromptSubmit` warmer than it would
+    otherwise be; failing to start it changes nothing about what `SessionStart` itself prints.
 
     The one part that is not a bare constant is the operator's optional
     `.zikaron/write-policy.md` override (`write_policy.read_policy`), and it is read inside the same
@@ -40,11 +40,11 @@ def run(*, scope_dir: Path, payload_session_id: object) -> str | None:
     returns the shipped text.
     """
     spec = detect.current_spec()
-    env_session_id = detect.session_label(spec)
-    if envelope.is_subagent_session(
+    env_session_id = detect.session_label(spec, relay_dir=session_relay.relay_dir())
+    if envelope.sessions_diverge(
         env_session_id=env_session_id, payload_session_id=payload_session_id
     ):
-        tripwire.record_if_misdetected(spec=spec, scope_dir=scope_dir)
+        tripwire.record_misdetection(scope_dir=scope_dir)
         return None
     _spawn_warm_helper_best_effort(scope_dir)
     return write_policy.resolved_policy_text(scope_dir, spec=spec)
@@ -56,7 +56,7 @@ def _spawn_warm_helper_best_effort(scope_dir: Path) -> None:
     `contextlib.suppress(OSError)` would leave path derivation (`resolve_sock_path`'s own
     `Path.resolve()`, which can raise on a symlink loop) unguarded — a failure there would
     propagate straight past this function, past `run()` (which has no `try` of its own), and into
-    `main.py`'s own outermost catch-all, which for `agentSpawn` would then suppress the
+    `main.py`'s own outermost catch-all, which for `SessionStart` would then suppress the
     **write-policy print itself**, not merely the warm-up this function exists to attempt.
     Catching a genuine `Exception` around the whole body, not a narrower list, is what keeps that
     guarantee true regardless of which step inside it fails.

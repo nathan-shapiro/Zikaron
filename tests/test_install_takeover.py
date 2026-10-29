@@ -155,7 +155,7 @@ async def test_reinvoking_consolidation_takes_over_a_stranded_run(project: Path)
     _run_hook(
         hook_command,
         project,
-        {"hook_event_name": "agentSpawn", "cwd": str(project), "session_id": _SESSION_ID},
+        {"hook_event_name": "SessionStart", "cwd": str(project), "session_id": _SESSION_ID},
     )
     _await_service(project)
     written = await _seed_journal(project, mcp_command)

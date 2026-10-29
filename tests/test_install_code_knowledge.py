@@ -43,6 +43,7 @@ from zikaron.install.entries import (
     claude_tool_vocabulary,
     documenter_agent_config,
     documenter_agent_markdown,
+    mcp_rule,
     mcp_servers_value,
     orchestrator_agent_markdown,
 )
@@ -157,11 +158,21 @@ class TestTheDocumentersGrant:
         assert "model: sonnet\neffort: medium\n" in markdown
 
     def test_under_kiro_it_is_the_file_tools_and_the_primary_server_configured_here(self) -> None:
-        """A kiro agent config configures its own servers, and the hook is silent in every kiro
-        subagent session, so the config carries the server and no `hooks`."""
+        """A kiro agent config configures its own servers, and no hook fires for a kiro subagent,
+        so the config carries the server and no `hooks`. Its rules allow reading, writing and
+        Zikaron's tools, the three a headless run was measured to need where an `ask` is a deny
+        (`research/kiro-v3-probe.md` §17), and it carries no V2 trust field. Its `tools` are
+        sorted, the one order the upgrader does not call out of sync (§26)."""
         config = documenter_agent_config(_COMMANDS, model="claude-sonnet-5")
-        assert config["tools"] == [*KIRO.file_tools, TOOL_SELECTOR]
-        assert config["allowedTools"] == [*KIRO.file_tools, TOOL_SELECTOR]
+        assert config["tools"] == sorted([*KIRO.file_tools, TOOL_SELECTOR])
+        assert config["permissions"] == {
+            "rules": [
+                {"capability": "fs_read", "effect": "allow"},
+                {"capability": "fs_write", "effect": "allow"},
+                mcp_rule(),
+            ]
+        }
+        assert "allowedTools" not in config
         assert config["mcpServers"] == mcp_servers_value(_COMMANDS, mode="primary")
         assert "hooks" not in config
 
@@ -326,9 +337,12 @@ class TestTheSkill:
         assert ORCHESTRATOR_AGENT_NAME not in _KIRO_SKILL
         assert "This skill runs in the session that invoked it" in _flat(_KIRO_SKILL)
 
-    def test_kiro_spawns_through_the_subagent_tool(self) -> None:
-        assert "`subagent`" in KIRO_SPAWN_INSTRUCTION
-        assert "role: zikaron-documenter" in KIRO_SPAWN_INSTRUCTION
+    def test_kiro_names_the_documenter_and_its_prompt(self) -> None:
+        """V3 offers each subagent as a spawn tool of its own, whose parameters are the prompt and
+        an explanation (`research/kiro-v3-probe.md` §11), so a `role:` field names nothing there."""
+        assert f"**{DOCUMENTER_AGENT_NAME}** subagent" in KIRO_SPAWN_INSTRUCTION
+        assert "giving it this prompt" in _flat(KIRO_SPAWN_INSTRUCTION)
+        assert "role:" not in _KIRO_SKILL
 
 
 class TestTheLaunch:
@@ -598,7 +612,7 @@ class TestAnInstall:
         agents = tmp_path / ".kiro" / "agents"
         skill = tmp_path / ".kiro" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md"
         config = json.loads((agents / f"{DOCUMENTER_AGENT_NAME}.json").read_text(encoding="utf-8"))
-        assert config["tools"] == [*KIRO.file_tools, TOOL_SELECTOR]
+        assert config["tools"] == sorted([*KIRO.file_tools, TOOL_SELECTOR])
         assert list(config["mcpServers"]) == ["zikaron"]
         assert not list(agents.glob(f"{ORCHESTRATOR_AGENT_NAME}.*"))
         assert skill.read_text(encoding="utf-8") == _KIRO_SKILL

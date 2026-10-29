@@ -27,7 +27,6 @@ from zikaron.harness.spec import (
     KIRO,
     SPECS,
     TRIGGERS,
-    BudgetUnit,
     Harness,
     HarnessSpec,
     HookEvent,
@@ -46,6 +45,9 @@ _NUMBER = re.compile(r"\d[\d,]*")
 
 #: Cell texts that state a value is not applicable to a harness at all, rather than naming one.
 _ABSENT_MARKERS = ("absent", "none", "n/a")
+
+#: The one unit every injection budget is stated in.
+_BUDGET_UNIT = "characters"
 
 
 @pytest.fixture(scope="module")
@@ -106,21 +108,20 @@ def _identifier(cell: str) -> str | None:
     raise AssertionError(message)
 
 
-def _quantity(cell: str) -> tuple[int, str]:
-    """The single number and single unit word a budget cell states.
+def _quantity(cell: str) -> int:
+    """The single number a budget cell states, in the one unit every budget is stated in.
 
     Section references are stripped first: `(§5, §7a)` contains digits that are not the quantity,
-    and a naive scan would read one of them. Anything other than exactly one number and exactly one
-    unit word raises rather than picking a candidate, since guessing which digits were meant is the
-    failure mode this whole file exists to prevent.
+    and a naive scan would read one of them. Anything other than exactly one number, or a cell
+    that does not name the unit, raises rather than picking a candidate, since guessing which digits
+    were meant is the failure mode this whole file exists to prevent.
     """
     prose = _SECTION_REFERENCE.sub("", cell)
     numbers = _NUMBER.findall(prose)
-    units = [unit.value for unit in BudgetUnit if unit.value in prose.lower()]
-    if len(numbers) != 1 or len(units) != 1:
-        message = f"expected exactly one number and one unit in {cell!r}, found {numbers}, {units}"
+    if len(numbers) != 1 or _BUDGET_UNIT not in prose.lower():
+        message = f"expected exactly one number, in {_BUDGET_UNIT}, in {cell!r}; found {numbers}"
         raise AssertionError(message)
-    return int(numbers[0].replace(",", "")), units[0]
+    return int(numbers[0].replace(",", ""))
 
 
 class TestTheCodeTableMatchesTheDesignTable:
@@ -252,12 +253,34 @@ class TestTheCodeTableMatchesTheDesignTable:
         )
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
-    def test_injection_budget_value_and_unit(
+    def test_injection_budget(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        assert _quantity(_cell(rows, "Injection budget", spec)) == spec.injection_budget
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_session_variable_reach(
         self, rows: dict[str, dict[str, str]], spec: HarnessSpec
     ) -> None:
-        value, unit = _quantity(_cell(rows, "Injection budget", spec))
-        assert value == spec.injection_budget
-        assert unit == spec.budget_unit.value
+        """Whether the session variable misses the MCP server, which is what makes the hook relay
+        the label to the MCP client: a cell opening **hooks** says the server is not among what it
+        reaches, **both** that it is."""
+        cell = _cell(rows, "Session variable reaches", spec)
+        answer = _leading_bold(cell)
+        if answer not in {"hooks", "both"}:
+            message = f"cell does not open with **hooks** or **both**: {cell!r}"
+            raise ValueError(message)
+        assert (answer == "hooks") == spec.session_variable_misses_mcp_server
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_hook_command_prefix(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """What opens every hook command: the backticked word the cell opens with, or nothing where
+        the cell opens with `none`."""
+        cell = _cell(rows, "Hook `command`", spec)
+        opening = _BACKTICKED.match(cell)
+        if opening is None and not cell.lower().startswith("none"):
+            message = f"cell opens with neither a backticked prefix nor `none`: {cell!r}"
+            raise ValueError(message)
+        prefix = "" if opening is None else f"{opening.group(1)} "
+        assert prefix == spec.hook_command_prefix
 
     def test_spawn_and_prompt_go_out_on_stdout_under_both_harnesses(
         self, rows: dict[str, dict[str, str]]
@@ -293,19 +316,6 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert KIRO.search_reminder is None
         assert channel_for(HookEvent.SEARCH) is OutputChannel.ADDITIONAL_CONTEXT
 
-    def test_the_harness_firing_hooks_for_subagents_is_the_one_without_a_subagent_trigger(
-        self, rows: dict[str, dict[str, str]]
-    ) -> None:
-        """The field the tripwire's scoping depends on, read from the row that states it. The
-        design's own wording for the harness with no subagent trigger is that hooks fire *for*
-        subagent sessions instead — which is precisely the property that makes a payload/environment
-        divergence routine there and anomalous elsewhere.
-        """
-        for spec in SPECS.values():
-            cell = _cell(rows, "Subagent triggers", spec).lower()
-            states_no_trigger = any(marker in cell for marker in _ABSENT_MARKERS)
-            assert spec.fires_hooks_for_subagent_sessions == states_no_trigger
-
 
 class TestTheTableIsInternallyConsistent:
     def test_every_declared_harness_has_a_spec(self) -> None:
@@ -334,16 +344,6 @@ class TestTheTableIsInternallyConsistent:
             if spec.search_reminder is not None:
                 assert event_for(spec.search_reminder.trigger) is HookEvent.SEARCH
 
-    def test_the_other_harnesss_spawn_name_is_a_synonym_rather_than_an_unknown_trigger(
-        self,
-    ) -> None:
-        """One vocabulary with synonyms, not two languages: kiro's array hook format accepts
-        PascalCase trigger names, so a payload naming the other harness's spawn trigger still means
-        spawn. Structural here rather than asserted, since the map is the union of both specs.
-        """
-        assert event_for(CLAUDE_CODE.spawn_trigger) is HookEvent.SPAWN
-        assert event_for(KIRO.spawn_trigger) is HookEvent.SPAWN
-
     def test_every_event_has_a_channel(self) -> None:
         """A new event with no channel would emit nothing at all, silently, which is the failure
         the subagent trigger already demonstrated once.
@@ -351,9 +351,16 @@ class TestTheTableIsInternallyConsistent:
         for event in HookEvent:
             assert channel_for(event) in set(OutputChannel)
 
-    @pytest.mark.parametrize("unknown", ["", "postToolUse", "SessionEnd", "SubagentStop"])
+    @pytest.mark.parametrize(
+        "unknown",
+        ["", "postToolUse", "SessionEnd", "SubagentStop", "agentSpawn", "userPromptSubmit"],
+    )
     def test_an_unrecognised_trigger_name_resolves_to_nothing(self, unknown: str) -> None:
-        """`SubagentStop` among them, deliberately: it is a real trigger one harness sends and this
+        """kiro's camelCase names among them: its V3 payload names the event in PascalCase even for
+        an entry configured with one (`research/kiro-v3-probe.md` §3), so the hook needs no
+        synonyms.
+
+        `SubagentStop` among them, deliberately: it is a real trigger one harness sends and this
         hook has no work for, and the hook having no write path at all depends on it staying out of
         the vocabulary rather than merely being unhandled downstream.
         """
@@ -412,17 +419,12 @@ class TestTheTableFailsClosedOnAMalformedEntry:
 
 
 class TestInjectionBudgetMeasurement:
-    def test_a_byte_denominated_budget_measures_encoded_length(self) -> None:
-        assert KIRO.budget_unit is BudgetUnit.BYTES
-        just_over = "—" * (KIRO.injection_budget // 3 + 1)
-        assert len(just_over) < KIRO.injection_budget
-        assert KIRO.exceeds_injection_budget(just_over)
-
-    def test_a_character_denominated_budget_does_not_measure_bytes(self) -> None:
-        assert CLAUDE_CODE.budget_unit is BudgetUnit.CHARACTERS
-        multi_byte = "—" * CLAUDE_CODE.injection_budget
-        assert len(multi_byte.encode("utf-8")) > CLAUDE_CODE.injection_budget
-        assert not CLAUDE_CODE.exceeds_injection_budget(multi_byte)
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_a_budget_does_not_measure_bytes(self, spec: HarnessSpec) -> None:
+        """kiro's cut was measured in characters too (`research/kiro-v3-probe.md` §21)."""
+        multi_byte = "—" * spec.injection_budget
+        assert len(multi_byte.encode("utf-8")) > spec.injection_budget
+        assert not spec.exceeds_injection_budget(multi_byte)
 
     def test_astral_characters_count_two_against_a_character_budget(self) -> None:
         """The **measured** reading, pinned so it cannot be quietly relaxed to `len()`.
@@ -454,18 +456,6 @@ class TestInjectionBudgetMeasurement:
             assert utf16_units(at_the_budget) == CLAUDE_CODE.injection_budget, filler
             assert not CLAUDE_CODE.exceeds_injection_budget(at_the_budget), filler
             assert CLAUDE_CODE.exceeds_injection_budget(at_the_budget + filler), filler
-
-    def test_a_byte_denominated_budget_also_tolerates_a_lone_surrogate(self) -> None:
-        """The other branch's totality, which every other surrogate test here misses: they all drive
-        the character path, so dropping `surrogatepass` from the UTF-8 branch alone would pass.
-
-        Also pins three UTF-8 bytes per lone surrogate — the figure the three-bytes-per-unit ceiling
-        relies on for this character class, and the reason a surrogate cannot smuggle a block past
-        the byte budget.
-        """
-        assert KIRO.budget_unit is BudgetUnit.BYTES
-        assert not KIRO.exceeds_injection_budget("\ud800" * 3)
-        assert len("\ud800".encode("utf-8", errors="surrogatepass")) == 3
 
     def test_the_conservative_count_never_under_reports_against_code_points(self) -> None:
         """Stated as the general property rather than one fixture: whatever the text, the measure

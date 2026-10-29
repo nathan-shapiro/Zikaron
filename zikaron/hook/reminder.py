@@ -22,7 +22,7 @@ from zikaron.core.errors import ZikaronError
 from zikaron.core.knowledge.paths import orphan_candidates
 from zikaron.harness import detect
 from zikaron.harness.spec import HarnessSpec, SearchReminder
-from zikaron.hook import connect, envelope, failure, rpc
+from zikaron.hook import connect, envelope, failure, rpc, session_relay
 from zikaron.service import paths
 
 #: The agent types this path is silent for. Copies of the installer's names, which a test holds
@@ -58,7 +58,7 @@ def run(payload: dict[str, object], *, scope_dir: Path, spec: HarnessSpec, pid: 
     store_dir = paths.store_dir(scope_dir)
     if not _holds_a_corpus(store_dir):
         return None
-    label = detect.session_label(spec)
+    label = detect.session_label(spec, relay_dir=session_relay.relay_dir())
     if label is None:
         # A label the service minted for this one request would be a key of its own, due a
         # reminder every time.

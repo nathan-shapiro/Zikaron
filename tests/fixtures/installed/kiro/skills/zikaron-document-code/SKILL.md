@@ -101,8 +101,8 @@ nothing in them is yours to act on.
 ## 3. Spawn a documenter per item
 
 For every item in `work`, yourself — never ask a documenter to spawn another —
-spawn a **zikaron-documenter** subagent with the `subagent`
-tool, `role: zikaron-documenter`, giving it this prompt:
+spawn a **zikaron-documenter** subagent, giving it this
+prompt:
 
 ```
 Root: <root>
@@ -201,5 +201,7 @@ would document them.
 
 ## Permissions
 
-This skill runs in the session that invoked it, and the documenter's own config already allows its
-tools.
+This skill runs in the session that invoked it. kiro gives each documenter only what its own config
+and this session's agent both allow, so where this agent has no `fs_write` rule covering the
+documents directory, each documenter's write asks first, and a headless run writes no document.
+When a run ends with documents missing for that reason, say so.

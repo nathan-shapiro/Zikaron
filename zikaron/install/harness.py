@@ -2,20 +2,22 @@
 
 **Mostly kiro's**, and one question that is not: `binary_is_available` answers *is this harness
 installed at all* for **either** harness, which is what `HarnessTarget.refuse_absent_harness` is
-built on. The rest — the model list and the config validator — exist only because kiro substitutes
-an unknown model silently, and have no Claude Code counterpart.
+built on. The rest have no Claude Code counterpart: the version, because Zikaron supports kiro's V3
+engine and no release before it was run; the model list and the config validator, because kiro
+replaces an unknown model with its default.
 
 The reason these live here rather than inline in `main.py` is that all of them are *measurements of
 the local machine* — the answers differ per install, and a test can substitute these functions
 without simulating a CLI.
 
-`architecture.md` §"The install contract" is normative, including the measured reason the second
+`architecture.md` §"The install contract" is normative, including the measured reason the model
 question cannot be answered by the obvious command: `kiro-cli agent validate` accepts an unknown
 `model` silently, so an installer that relied on it would leave the consolidator's model — the one
-variable the design asks us to hold fixed and measure — set by a silent fallback instead.
+variable the design asks us to hold fixed and measure — set by the harness's default instead.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -33,6 +35,12 @@ from zikaron.harness.spec import KIRO
 #: into, this is the user's own kiro, and whichever one their shell finds is the one that will run
 #: the hooks.
 KIRO_BINARY: Final = KIRO.harness_binary
+
+#: The oldest kiro-cli whose V3 agent engine Zikaron was run against (`research/kiro-v3-probe.md`).
+MINIMUM_VERSION: Final = (2, 35, 1)
+
+#: The binary's name and the release after it, as `kiro-cli --version` prints them.
+_VERSION: Final = re.compile(rf"\s*{re.escape(KIRO_BINARY)}\s+(\d+)\.(\d+)\.(\d+)")
 
 #: Every harness call is bounded. A hung `kiro-cli` must fail the install loudly rather than leave a
 #: terminal sitting on a subprocess with no output: generous enough for a cold start on a slow
@@ -64,6 +72,53 @@ def binary_is_available(name: str) -> bool:
 def harness_is_available() -> bool:
     """Whether `kiro-cli` is on `PATH` at all."""
     return binary_is_available(KIRO_BINARY)
+
+
+def installed_version() -> tuple[int, int, int]:
+    """The release `kiro-cli --version` names.
+
+    Raises:
+        InstallError: the binary is absent, failed, timed out, or printed no version `parse_version`
+            can read.
+    """
+    if not harness_is_available():
+        raise InstallError(f"{KIRO_BINARY} is not on PATH, so its version cannot be checked.")
+    try:
+        completed = subprocess.run(  # noqa: S603 — a fixed argv, no shell, nothing interpolated.
+            [KIRO_BINARY, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(f"could not run `{KIRO_BINARY} --version`: {exc}") from exc
+    if completed.returncode != 0:
+        raise InstallError(
+            f"`{KIRO_BINARY} --version` exited {completed.returncode}: "
+            f"{completed.stderr.strip() or '(no stderr)'}"
+        )
+    return parse_version(completed.stdout)
+
+
+def parse_version(raw: str) -> tuple[int, int, int]:
+    """The `N.N.N` that follows the binary's name, compared field by field as numbers.
+
+    A suffix after it is read past, so `kiro-cli 3.0.0-rc1` is 3.0.0. An output that does not open
+    with the name and a version is refused rather than assumed new enough, as an unreadable model
+    list is refused rather than read as empty.
+
+    Raises:
+        InstallError: no version follows the binary's name.
+    """
+    match = _VERSION.match(raw)
+    if match is None:
+        raise InstallError(
+            f"`{KIRO_BINARY} --version` printed {raw.strip()!r}, which names no version this can "
+            "read, so it is refused rather than assumed new enough."
+        )
+    major, minor, patch = (int(field) for field in match.groups())
+    return major, minor, patch
 
 
 def available_model_ids() -> frozenset[str]:

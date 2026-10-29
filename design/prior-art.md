@@ -65,13 +65,13 @@ Elsewhere:
   carried into D29, where per-group tool calls make it structural rather than a text-parsing retry.
 - **Keep surfaced memories ephemeral**, place them late in the context, and exclude them from the
   summarizer input. kiro's equivalents appear to be `compaction.excludeMessages` and
-  `compaction.excludeContextWindowPercent` — untested. **Partly answered 2026-08-01, and not in our favour on
-  the placement half:** `userPromptSubmit` stdout arrives as a context entry framed *"I have gathered this
-  context from valuable programmatic script hooks"*, positioned **before** the user message in the same turn.
-  So placement is fixed by the harness and it is early, not late — the ephemerality and summarizer-exclusion
-  halves of the lesson are the ones still actionable. The framing is worth noting on its own: the wrapper
-  instructs the model to follow requests found in the injected text, which is the opposite of what
-  `retrieval.md`'s push format asserts in its own untrusted-reference-data preamble.
+  `compaction.excludeContextWindowPercent` — untested. **Placement is fixed by the harness**: under kiro's V3
+  engine the prompt hook's stdout arrives in a `HOOK_INSTRUCTION` block **after** the user's text in the same
+  message (`research/kiro-v3-probe.md` §6), and under Claude Code after the user message too — so it is late,
+  as the lesson wants, and the ephemerality and summarizer-exclusion halves are the ones still actionable.
+  Measured 2026-08-01 on kiro's V2 engine, it came *before* the user message, inside a wrapper instructing the
+  model to follow requests found in the injected text — the opposite of what `retrieval.md`'s push format
+  asserts in its own untrusted-reference-data preamble, which is kept for whatever framing a harness uses.
 - **No query may assume `active=0 ⇒ superseded_by NOT NULL`.** That exact assumption was a review BLOCKER
   there; it is invariant 5 in `design/schema.md`.
 - **Same-dimension embedding model swaps corrupt `vec0` silently.** Hence D20's per-vector model id and

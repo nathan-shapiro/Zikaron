@@ -13,7 +13,7 @@ is not either: its import cost is paid by a process nothing is waiting on, spawn
 module pulls in `aiosqlite`, `sqlite-vec` and `fastembed`'s dependency chain (verified directly:
 importing it adds `aiosqlite`, `numpy` and `sqlite_vec` to `sys.modules`), which is exactly why
 `connect.py` reimplements a narrower version of the same sequence rather than importing it — but
-that reasoning is specific to a process on the `userPromptSubmit` or `agentSpawn` critical path.
+that reasoning is specific to a process on the `UserPromptSubmit` or `SessionStart` critical path.
 This process has no such deadline: nothing waits for it, its failure is invisible to the session
 it is warming, and reusing `connect_start_if_absent` here means this helper's start-if-absent
 behaviour is *identical* to `zikaron-mcp`'s own, rather than a third independently-written copy

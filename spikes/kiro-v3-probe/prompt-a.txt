@@ -1,0 +1,7 @@
+This is a harness test. Do these steps in order, then write a final report.
+1. Quote, verbatim, every sentence of the form "The secret ... word is ..." that appears anywhere in your context so far, and say for each where it appeared (system prompt, before this user message, after it, or elsewhere).
+2. Call the probe_whoami tool. Report the exact tool name you invoked.
+3. Call the probe_sleep tool with seconds set to 7. Report exactly what came back, including any error text.
+4. Call the probe_sleep tool with seconds set to 1.
+5. After each tool result, say whether a new "The secret ... word is ..." sentence appeared with or after it, and quote it exactly.
+6. List the exact names of all tools available to you.

@@ -6,9 +6,17 @@
   "tools": [
     "@zikaron"
   ],
-  "allowedTools": [
-    "@zikaron"
-  ],
+  "permissions": {
+    "rules": [
+      {
+        "capability": "mcp",
+        "match": [
+          "zikaron/*"
+        ],
+        "effect": "allow"
+      }
+    ]
+  },
   "mcpServers": {
     "zikaron": {
       "command": "/venv/bin/zikaron-mcp",

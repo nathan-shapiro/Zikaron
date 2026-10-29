@@ -673,9 +673,9 @@ interactively does not read (§Q2a there). A headless run also sets
 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`: `-p` stops waiting for background work after ten idle
 minutes by default and drops its result (§Q4 there), and the spawned orchestrator is such work;
 `tests/test_code_knowledge_claude_live.py` runs the shape end to end. Under kiro the documenter's
-config carries
-`allowedTools` equal to its grant, as the consolidator's does, so the install has already answered
-it. The skill's body and `README.md` say so.
+config carries permission rules allowing its grant, as the consolidator's does, so the install has
+already answered it; a headless kiro run is refused every question no rule answers
+(`research/kiro-v3-probe.md` §17, §24). The skill's body and `README.md` say so.
 
 ### 5.3 One corpus per module, each registered with `git_mode: off`
 
@@ -741,36 +741,36 @@ harness hands one back. Its body names no built-in tool, the grant being the one
 named, and names Zikaron's verbs in Claude Code's form, as the skill's text did.
 
 **Under kiro two files are not the whole install, since the merge into the user's agent config
-reaches both.** `zikaron-documenter` joins `zikaron-consolidator` in
-`toolsSettings.crew.availableAgents` on the same condition — only where that list is already set,
-since an absent one admits every agent — and stays out of `trustedAgents` on the same reasoning;
-and the second skill joins the first in `resources`, so it loads under
-`chat.disableInheritingDefaultResources` (`zikaron/install/writer.py` `_merged_tools_settings`,
-`_merged_resources`). Without the first, the `subagent` tool refuses the documenter in every config
-that restricts its crew — the failure that found the consolidator's entry, in real use. Staying out
-of `trustedAgents` costs what the install's note states, a permission prompt to spawn the agent,
-and for this skill that prompt recurs per documenter unless kiro keeps the answer, which is
-unmeasured — so a kiro user documenting a module of any size adds `zikaron-documenter` there.
+reaches both.** On a universal profile — `allowedTools` beside `permissions`, the shape `kiro-cli agent
+create` writes (`design/harness.md` §"What a kiro install writes") — `zikaron-documenter` joins
+`zikaron-consolidator` in `toolsSettings.crew.availableAgents` on the same condition — only where
+that list is already set, since an absent one admits every agent — and the second skill joins the
+first in `resources`, so it loads under `chat.disableInheritingDefaultResources`
+(`zikaron/install/kiro_merge.py` `_merged_tools_settings`, `_merged_resources`). Spawning either
+agent takes `subagent` in the primary's `tools` and a `subagent` allow rule, which stay the user's
+to grant: without the rule kiro asks before each spawn, and for this skill that is once per
+documenter, so a kiro user documenting a module of any size grants it (`design/harness.md` §"What a
+kiro install writes").
 
 **The documenter's grant is a value that differs per harness, so it lives on the seam**: a
 `HarnessSpec` field, `file_tools`, with a "Documenter tool grant" row in `design/harness.md`
 §"The table" that `tests/test_harness_table.py` reads, never a literal in the installer: `Read`,
-`Grep`, `Glob`, `Write` and `Edit` under Claude Code, and under kiro the aliases this repository's
-own kiro agents use, `read`, `grep`, `glob` and `write`
-(`research/kiro-cli-hooks-and-introspect.md`'s tool table; kiro also accepts `fs_read` and
-`fs_write`). `kiro-cli` offers no offline tool listing, and
-`kiro-cli agent validate` accepts an unknown tool name without a word (2.28.0, measured at build
-time), so the evidence for the spellings is those agents running with them. **Zikaron's tools join
+`Grep`, `Glob`, `Write` and `Edit` under Claude Code, and under kiro `read`, `grep`, `glob` and
+`write`: a hand-written V3 profile carrying those selectors loaded and ran headless, using
+`read_file`, `fs_write` and `str_replace` (`research/kiro-v3-probe.md` §17). What `grep` and `glob`
+select is unmeasured, since V3's `read` covers searching too. `kiro-cli agent validate` accepts an
+unknown tool name without a word (2.28.0, measured at build time), so the evidence for the
+spellings is an agent running with them. **Zikaron's tools join
 the file tools by the server grant every agent definition uses**: `mcp__zikaron` under Claude Code,
 whose subagents share the session's MCP servers; and under kiro `@zikaron`, beside its own
 `mcpServers` entry for the primary server, since a kiro agent config configures its servers
 itself, as the consolidator's does. So the documenter's kiro config carries this machine's
 `zikaron-mcp` path and is rewritten by every install, and each kiro documenter starts a
 `zikaron-mcp` of its own, since kiro scopes a server per agent instance — a per-spawn cost the toy
-run, under Claude Code, does not measure. The kiro config carries `allowedTools` equal to the
-grant, and no `hooks`: the hook suppresses itself in every kiro subagent session
+run, under Claude Code, does not measure. The kiro config carries `fs_read`, `fs_write` and `mcp`
+rules allowing the grant, and no `hooks`: no hook fires for a kiro subagent
 (`design/architecture.md` §"Subagent sessions"), so a kiro documenter is never handed the write
-policy — the gap every kiro subagent holding the memory verbs shares.
+policy — a row of `design/kiro-gaps.md`.
 
 **So the prompt can say *read* and *write* and still name no tool**: kiro's aliases are the English
 verbs. The prompt is written in the second person — *you read*, *you write* — so no sentence opens
@@ -1401,8 +1401,9 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
   code could not tell a later reader; the read side is the push preamble; neither detects a record
   after the fact (`design/write-policy.md` §1). Under Claude Code a record of theirs carries the
   invoking session's id, since both write through the session's shared server, so nothing after
-  the fact tells it from the user's own; under kiro each documenter's own server carries its
-  subagent session's. The toy run's count of what the documenters recorded (§7) is the first
+  the fact tells it from the user's own; under kiro each documenter's own server reads the label
+  the invoking session's hooks relayed, so the same holds (`design/harness.md` §"The session
+  relay"). The toy run's count of what the documenters recorded (§7) is the first
   measurement.
 - **A search naming no corpus is cut short across many modules**: each knowledge base's group —
   every module's, and every hand-written corpus's — carries up to `limit_per_kb` results, and past

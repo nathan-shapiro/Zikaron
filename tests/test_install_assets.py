@@ -15,9 +15,11 @@ from fastmcp import Client
 
 from tests.design_tables import literal, table_with_columns
 from zikaron.core.retrieval.block import PREAMBLE
-from zikaron.harness.spec import KIRO
-from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
+from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook.components import Components
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
+from zikaron.install import entries
 from zikaron.install.assets import (
     CONSOLIDATOR_PROMPT,
     KIRO_SPAWN_INSTRUCTION,
@@ -31,17 +33,16 @@ from zikaron.install.entries import (
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
     Commands,
-    HookFormat,
+    claude_hooks_value,
     consolidator_agent_config,
+    hook_command_string,
     hooks_array,
-    hooks_object,
     mcp_servers_value,
 )
 from zikaron.mcp.server import build_server
 
 _DISTRIBUTION_HEADING = "### The consolidator's model is a shipped config field, not a `meta` key"
 _MODEL_TABLE_COLUMNS = ("Setting", "Location", "Type", "v0 default", "Rule")
-_MS_PER_SECOND = 1000
 
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
@@ -86,21 +87,27 @@ class TestTheModelDefaultComesFromTheDesign:
 
 
 class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
-    def test_the_allowlist_covers_the_whole_server_so_every_tool_is_pre_approved(self) -> None:
+    def test_its_one_rule_covers_the_whole_server_so_every_tool_is_pre_approved(self) -> None:
         """A subagent has nobody to answer a permission prompt, so an available-but-not-allowed tool
-        is one that fails at the moment it is needed."""
+        is one that fails at the moment it is needed. The rule is the one `kiro-cli agent upgrade`
+        derives, under which the consolidator's `next_group` call succeeded headless
+        (`research/kiro-v3-probe.md` §2, §17)."""
         config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         assert config["tools"] == [f"@{MCP_SERVER_NAME}"]
-        assert config["allowedTools"] == [f"@{MCP_SERVER_NAME}"]
+        assert config["permissions"] == {
+            "rules": [
+                {"capability": "mcp", "match": [f"{MCP_SERVER_NAME}/*"], "effect": "allow"},
+            ]
+        }
 
     def test_it_grants_no_filesystem_or_shell_tool(self) -> None:
         config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         tools = config["tools"]
-        allowed = config["allowedTools"]
+        permissions = config["permissions"]
         assert isinstance(tools, list)
-        assert isinstance(allowed, list)
-        granted = {*tools, *allowed}
-        assert granted.isdisjoint({"read", "write", "shell", "grep", "glob", "code", "@builtin"})
+        assert isinstance(permissions, dict)
+        assert set(tools).isdisjoint({"read", "write", "shell", "grep", "glob", "code", "*"})
+        assert {rule["capability"] for rule in permissions["rules"]} == {"mcp"}
 
     def test_it_declares_no_hooks(self) -> None:
         """Its session must not fire the push hook — it has no `search` to spend a result on — and
@@ -346,30 +353,39 @@ class TestTheSkillFile:
         the only place a user encounters it."""
         assert "takes the run over" in _KIRO_SKILL
 
+    def test_its_spawn_names_the_consolidator_and_the_prompt_and_passes_no_role(self) -> None:
+        """V3 offers each subagent as a spawn tool of its own, whose parameters are the prompt and
+        an explanation, and the model spawning the consolidator reported that the skill's `role:`
+        line had no matching parameter (`research/kiro-v3-probe.md` §11)."""
+        assert f"**{CONSOLIDATOR_AGENT_NAME}** subagent" in KIRO_SPAWN_INSTRUCTION
+        assert "giving it this prompt" in KIRO_SPAWN_INSTRUCTION
+        assert "role:" not in _KIRO_SKILL
 
-class TestTheShippedEntriesStateBothLimits:
-    def test_object_format_entries_state_the_timeout_and_the_output_cap(self) -> None:
-        for entries in hooks_object(_COMMANDS).values():
-            assert len(entries) == 1
-            assert entries[0]["timeout_ms"] == TIMEOUT_MS
-            assert entries[0]["max_output_size"] == MAX_OUTPUT_SIZE
 
-    def test_array_format_entries_state_the_timeout_in_seconds(self) -> None:
-        """The one place the two formats disagree about a *value* rather than a shape: seconds here,
-        milliseconds there. Writing the millisecond number into this field would install a timeout
-        of 10000 seconds, which no test of shape alone would notice.
-        """
+def _action_command(entry: dict[str, object]) -> str:
+    """The shell command an array-form kiro hook entry runs."""
+    action = entry["action"]
+    assert isinstance(action, dict)
+    command = action["command"]
+    assert isinstance(command, str)
+    return command
+
+
+class TestTheShippedHookEntries:
+    def test_each_entry_states_its_timeout_in_seconds_and_no_size_field(self) -> None:
+        """V3's array entry takes `timeout` in seconds, and neither spelling of a size field moved
+        kiro's 3,000-character cut (`research/kiro-v3-probe.md` §19, §21), so an entry carries
+        none. Compared as the whole key set, so a `timeout_ms` or a `maxOutputSize` written beside
+        it fails here."""
         for entry in hooks_array(_COMMANDS):
-            assert entry["timeout"] == TIMEOUT_MS // _MS_PER_SECOND
-            assert "timeout_ms" not in entry
-            assert "max_output_size" not in entry
+            assert set(entry) == {"name", "trigger", "action", "timeout"}
+            assert entry["timeout"] == HOOK_TIMEOUT_SECONDS
 
-    def test_both_formats_register_exactly_the_two_triggers(self) -> None:
-        assert set(hooks_object(_COMMANDS)) == {"agentSpawn", "userPromptSubmit"}
-        assert {entry["trigger"] for entry in hooks_array(_COMMANDS)} == {
-            "agentSpawn",
-            "userPromptSubmit",
-        }
+    def test_they_register_exactly_the_two_v3_triggers_under_reserved_names(self) -> None:
+        assert [(entry["name"], entry["trigger"]) for entry in hooks_array(_COMMANDS)] == [
+            ("zikaron-SessionStart", "SessionStart"),
+            ("zikaron-UserPromptSubmit", "UserPromptSubmit"),
+        ]
 
     def test_the_command_is_shell_quoted_because_the_harness_runs_it_through_a_shell(self) -> None:
         """Measured: an unquoted path with a space produced `/bin/bash: line 1: ... No such file or
@@ -380,9 +396,38 @@ class TestTheShippedEntriesStateBothLimits:
             hook=Path("/home/me/My Projects/.venv/bin/zikaron-hook"),
             mcp=Path("/home/me/My Projects/.venv/bin/zikaron-mcp"),
         )
-        entry = hooks_object(spaced)["agentSpawn"][0]
-        assert entry["command"] == "'/home/me/My Projects/.venv/bin/zikaron-hook'"
-        assert shlex.split(str(entry["command"])) == [str(spaced.hook)]
+        command = _action_command(hooks_array(spaced)[0])
+        assert command == "exec '/home/me/My Projects/.venv/bin/zikaron-hook'"
+        assert shlex.split(command) == ["exec", str(spaced.hook)]
+
+    def test_a_kiro_hook_command_opens_with_exec_and_a_claude_code_one_does_not(self) -> None:
+        """Under kiro `exec` makes the agent server the hook's parent rather than `sh`, which is
+        the process the session relay is keyed by (`research/kiro-v3-probe.md` §13). Claude Code's
+        command has no such use for it."""
+        for entry in hooks_array(_COMMANDS):
+            assert shlex.split(_action_command(entry)) == ["exec", str(_COMMANDS.hook)]
+        claude_commands: list[object] = []
+        for groups in claude_hooks_value(_COMMANDS, Components.MEMORY).values():
+            for group in groups:
+                handlers = group["hooks"]
+                assert isinstance(handlers, list)
+                claude_commands.extend(handler["command"] for handler in handlers)
+        assert claude_commands
+        for command in claude_commands:
+            assert isinstance(command, str)
+            assert shlex.split(command)[0] == str(_COMMANDS.hook)
+
+    def test_the_hook_command_prefix_is_read_from_the_spec(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A prefix spelled in the installer instead would leave the spec's field reaching nothing,
+        and `design/harness.md`'s "Hook `command`" row disagreeing with what is written."""
+        quoted = shlex.quote(str(_COMMANDS.hook))
+        changed = KIRO._replace(hook_command_prefix="nohup ")
+        assert hook_command_string(_COMMANDS.hook, changed) == f"nohup {quoted}"
+        assert hook_command_string(_COMMANDS.hook, CLAUDE_CODE) == quoted
+        monkeypatch.setattr(entries, "KIRO", changed)
+        assert {_action_command(entry) for entry in hooks_array(_COMMANDS)} == {f"nohup {quoted}"}
 
     def test_the_mcp_command_is_not_quoted_because_that_field_is_not_shell_source(self) -> None:
         """`mcpServers` takes a program plus a separate `args` array — exec-style. Quoting it would
@@ -395,23 +440,15 @@ class TestTheShippedEntriesStateBothLimits:
         assert isinstance(entry, dict)
         assert entry["command"] == "/home/me/My Projects/.venv/bin/zikaron-mcp"
 
-    def test_both_formats_run_the_same_absolute_command(self) -> None:
-        from_object = {
-            entry["command"] for entries in hooks_object(_COMMANDS).values() for entry in entries
+    def test_both_triggers_run_the_same_absolute_command(self) -> None:
+        """One executable for both, which dispatches on its payload's `hook_event_name`."""
+        assert {_action_command(entry) for entry in hooks_array(_COMMANDS)} == {
+            f"exec {shlex.quote(str(_COMMANDS.hook))}"
         }
-        from_array = set()
-        for entry in hooks_array(_COMMANDS):
-            action = entry["action"]
-            assert isinstance(action, dict)
-            from_array.add(action["command"])
-        assert from_object == from_array == {shlex.quote(str(_COMMANDS.hook))}
 
     def test_the_primary_mcp_entry_names_primary_mode(self) -> None:
         entry = mcp_servers_value(_COMMANDS, mode="primary")[MCP_SERVER_NAME]
         assert entry == {"command": str(_COMMANDS.mcp), "args": ["--mode", "primary"]}
-
-    def test_the_hook_format_enum_covers_exactly_the_two_documented_formats(self) -> None:
-        assert {member.value for member in HookFormat} == {"object", "array"}
 
 
 class TestTheTrackedDogfoodConfig:
@@ -421,7 +458,10 @@ class TestTheTrackedDogfoodConfig:
 
     def test_the_tracked_dogfood_config_selects_the_memory_tools(self) -> None:
         """The measured failure this repository would hit first: an agent whose `tools` omits the
-        server reports no Zikaron tools at all."""
+        server reports no Zikaron tools at all. V3 loads the profile only with a `permissions`
+        block (`research/kiro-v3-probe.md` §1), and runs `zikaron-hook` once on each of its two
+        triggers, whether an entry spells its trigger as this installer does or as
+        `kiro-cli agent upgrade` kept it (§2)."""
         tracked = (
             Path(__file__).resolve().parent.parent / ".kiro" / "agents" / "zikaron-dogfood.json"
         )
@@ -431,7 +471,14 @@ class TestTheTrackedDogfoodConfig:
         assert TOOL_SELECTOR in document["tools"]
         assert "subagent" in document["tools"]
         assert MCP_SERVER_NAME in document["mcpServers"]
-        assert set(document["hooks"]) == {"agentSpawn", "userPromptSubmit"}
+        assert isinstance(document["permissions"], dict)
+        meaning = {"agentSpawn": "SessionStart", "userPromptSubmit": "UserPromptSubmit"}
+        triggers = [
+            meaning.get(entry["trigger"], entry["trigger"])
+            for entry in document["hooks"]
+            if Path(shlex.split(entry["action"]["command"])[-1]).name == "zikaron-hook"
+        ]
+        assert sorted(triggers) == ["SessionStart", "UserPromptSubmit"]
 
 
 class TestTheWholeConfigIsSerializable:

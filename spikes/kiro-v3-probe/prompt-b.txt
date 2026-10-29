@@ -1,0 +1,1 @@
+This is a harness test. 1. Call the probe_whoami tool and report its output verbatim. 2. Call the probe_sleep tool with seconds set to 150 and report exactly what came back, including any error or timeout text. Do not retry anything.

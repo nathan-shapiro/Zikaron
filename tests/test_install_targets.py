@@ -24,7 +24,7 @@ import pytest
 import yaml
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
-from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, TIMEOUT_MS
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT
 from zikaron.install import agent_scan, harness
 from zikaron.install.assets import (
@@ -34,16 +34,15 @@ from zikaron.install.assets import (
     render,
     skill_markdown,
 )
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME
 from zikaron.install.entries import (
     ALWAYS_LOAD_KEY,
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
     Commands,
-    HookFormat,
     claude_tool_vocabulary,
     consolidator_agent_config,
     hooks_array,
-    hooks_object,
     mcp_servers_value,
 )
 from zikaron.install.harness import InstallError
@@ -93,6 +92,7 @@ def _harness_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(harness, "validate_agent_config", lambda _path: None)
     monkeypatch.setattr(harness, "binary_is_available", lambda _name: True)
+    monkeypatch.setattr(harness, "installed_version", lambda: harness.MINIMUM_VERSION)
 
 
 @pytest.fixture(autouse=True)
@@ -191,7 +191,6 @@ class TestKiroArtefactsChangeOnlyWhenSomebodyMeansThemTo:
             consolidator_model="a-model",
             documenter_model="a-model",
             orchestrator_model="a-model",
-            hook_format=HookFormat.OBJECT,
             force=False,
             trust_tools=True,
         )
@@ -209,8 +208,7 @@ class TestKiroArtefactsChangeOnlyWhenSomebodyMeansThemTo:
         rendered = skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION)
         assert rendered == golden["skill_markdown"]
 
-    def test_both_hook_formats_are_identical(self, golden: dict[str, object]) -> None:
-        assert hooks_object(_FIXTURE_COMMANDS) == golden["hooks_object"]
+    def test_the_hook_entries_are_identical(self, golden: dict[str, object]) -> None:
         assert hooks_array(_FIXTURE_COMMANDS) == golden["hooks_array"]
 
     def test_the_mcp_server_entry_is_identical(self, golden: dict[str, object]) -> None:
@@ -438,12 +436,12 @@ class TestACleanClaudeCodeInstall:
 
 
 class TestTheHookTimeoutUnit:
-    """One budget, three spellings, and the mistake that must stay unreachable.
+    """One budget, in seconds on both harnesses, and the mistake that must stay unreachable.
 
-    Kiro's `timeout_ms` carries 10000; Claude Code's `timeout` is **seconds** (measured,
-    `claude-code-installer-probe.md` §2). Copying the integer across installs a 10,000-second
-    budget — nearly three hours in which a wedged hook blocks every user message, with the harness
-    doing exactly as told and nothing reporting a problem.
+    Claude Code's `timeout` is **seconds** (measured, `claude-code-installer-probe.md` §2), as V3's
+    array entry is (`research/kiro-v3-probe.md` §19). Writing the budget in milliseconds installs a
+    10,000-second one — nearly three hours in which a wedged hook blocks every user message, with
+    the harness doing exactly as told and nothing reporting a problem.
     """
 
     def test_claude_entries_state_seconds(self, tmp_path: Path) -> None:
@@ -457,8 +455,8 @@ class TestTheHookTimeoutUnit:
 
     def test_no_claude_entry_ever_carries_a_millisecond_figure(self, tmp_path: Path) -> None:
         """The tripwire, stated as the shape of the bug rather than as the value: any timeout at or
-        above kiro's millisecond figure is a unit error, whatever the canonical seconds value later
-        becomes."""
+        above the budget's millisecond figure is a unit error, whatever the canonical seconds value
+        later becomes."""
         project = _project(tmp_path, dotdirs=(".claude",))
         main(["--project", str(project)])
         raw = _claude_paths(project)["settings"].read_text(encoding="utf-8")
@@ -470,14 +468,39 @@ class TestTheHookTimeoutUnit:
             for entry in group["hooks"]
         ]
         assert timeouts
-        assert all(value < TIMEOUT_MS for value in timeouts)
+        assert all(value < HOOK_TIMEOUT_SECONDS * 1000 for value in timeouts)
 
-    def test_the_two_kiro_formats_state_one_budget_in_their_own_units(self) -> None:
-        """Derived from one constant rather than converted from each other, so neither can drift
-        into the other's unit."""
-        assert hooks_object(_FIXTURE_COMMANDS)["agentSpawn"][0]["timeout_ms"] == TIMEOUT_MS
-        assert hooks_array(_FIXTURE_COMMANDS)[0]["timeout"] == HOOK_TIMEOUT_SECONDS
-        assert TIMEOUT_MS == HOOK_TIMEOUT_SECONDS * 1000
+    def test_kiro_entries_state_the_same_seconds(self) -> None:
+        """Both harnesses' entries read one constant, so neither can drift into another unit."""
+        assert [entry["timeout"] for entry in hooks_array(_FIXTURE_COMMANDS)] == [
+            HOOK_TIMEOUT_SECONDS,
+            HOOK_TIMEOUT_SECONDS,
+        ]
+
+
+class TestTheShippedKiroProfilesCarryNoV2TrustField:
+    """The consolidator's and the documenter's profiles, as an install writes them.
+
+    `kiro-cli agent upgrade --dry-run` classified these profiles `v3-only` and `already universal`,
+    and both ran headless, measured on `permissions` present and neither `allowedTools` nor
+    `kiroUpgrade` (`research/kiro-v3-probe.md` §17). A subagent has nobody to answer a prompt, so
+    each one's `mcp` rule is written whatever `--no-trust-tools` says.
+    """
+
+    @pytest.mark.parametrize("flags", [[], ["--no-trust-tools"]], ids=["default", "no-trust"])
+    def test_each_has_permissions_and_its_mcp_rule_and_no_v2_field(
+        self, tmp_path: Path, flags: list[str]
+    ) -> None:
+        project = _project(tmp_path, dotdirs=(".kiro",))
+        assert main(["--project", str(project), *flags]) == 0
+        agents = project / ".kiro" / "agents"
+        for name in (CONSOLIDATOR_AGENT_NAME, DOCUMENTER_AGENT_NAME):
+            profile = json.loads((agents / f"{name}.json").read_text(encoding="utf-8"))
+            assert "allowedTools" not in profile, name
+            assert "kiroUpgrade" not in profile, name
+            assert {"capability": "mcp", "match": ["zikaron/*"], "effect": "allow"} in profile[
+                "permissions"
+            ]["rules"], name
 
 
 class TestToolNamesInShippedProse:
@@ -1849,7 +1872,6 @@ class TestTheNoteAboutBlindSubagents:
             consolidator_model="a-model",
             documenter_model="a-model",
             orchestrator_model="a-model",
-            hook_format=HookFormat.OBJECT,
             force=False,
             trust_tools=True,
         )

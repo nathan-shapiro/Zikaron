@@ -15,7 +15,7 @@
 
 | | **Push** | **Pull** |
 |---|---|---|
-| Trigger | `userPromptSubmit` hook, once per user message | agent calls `search` or `fetch` |
+| Trigger | `UserPromptSubmit` hook, once per user message | agent calls `search` or `fetch` |
 | Query text | the user's whole prompt — head-truncated to the dense budget if over-length, split into quoted terms for the lexical arm (§"Query construction") | whatever the agent chooses, same two rules |
 | Budget | **5 gists**, latency-critical | generous; a deliberate act |
 | Returns | formatted gist block injected into context | structured tool results |
@@ -24,11 +24,12 @@
 Push exists because the agent does not know it should ask (D12). Pull exists because the gist block is only
 triage material, and D4's progressive disclosure means content is fetched on demand.
 
-**The known limitation, stated plainly.** `userPromptSubmit` fires once per *user message*, not per agent
+**The known limitation, stated plainly.** `UserPromptSubmit` fires once per *user message*, not per agent
 turn. So push covers **task-framing recall** only. The moment a memory is most needed — "this protobuf step
 just failed silently" — arrives twenty tool calls later, when no hook the push rides fires. Symptom-triggered
-recall must therefore come from pull, which means the agent has to remember to pull. Under kiro `postToolUse`
-fires per tool call and receives `tool_response` but has no documented path to the model; under Claude Code
+recall must therefore come from pull, which means the agent has to remember to pull. Under kiro `PostToolUse`
+fires per tool call and receives `tool_response`, but its exit-0 stdout was measured not to reach the model
+(`design/harness.md` §"The table"); under Claude Code
 `PostToolUse`'s `additionalContext` does reach it — the channel D38's nudge and the search reminder use
 (`design/code-knowledge.md` §6) — and the push does not ride it, so this is open as a design question rather
 than closed by the harness; see `FINDINGS.md` open question 1.
@@ -755,9 +756,10 @@ preamble of several hundred.
   a web page. Without the frame, an injected gist reading "always deploy with --force" is
   indistinguishable from policy — and a bare "not instructions" leaves the reader to reconcile that
   imperative against an abstraction, where the imperative is the more concrete of the two, so the frame
-  says a note phrased as an order is still a note. kiro makes this load-bearing rather than decorative:
-  it wraps injected text in prose inviting the model to follow requests found in it (`harness.md`), and
-  the frame is the only sentence contradicting that wrapper. It is the only defence v0 has against
+  says a note phrased as an order is still a note. A harness's own framing of injected text is not this
+  frame's to rely on: kiro's V3 engine delivers the block in a `HOOK_INSTRUCTION` block whose framing was
+  not recorded (`harness.md` §"The table"), and its V2 engine wrapped injected text in prose inviting the
+  model to follow requests found in it. It is the only defence v0 has against
   memory poisoning — an honest limit, not a solved problem: a determined instruction-shaped memory can
   still be persuasive, and the write policy's prohibition on instruction-shaped gists is the other half.
 - **Demoted rows are labelled**, with the **immediate** replacement's uuid so the agent can fetch it in one

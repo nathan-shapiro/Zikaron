@@ -5,12 +5,9 @@ derived from those fields. A test reads the design document itself and asserts t
 it, so an edit on either side fails rather than drifting — the arrangement `coding-standards.md` §2
 requires for anything the design states as a table.
 
-**The trigger vocabulary is derived from the specs rather than written a second time.** Kiro's array
-hook format accepts PascalCase trigger names generally, and `SessionStart` as an alias for
-`agentSpawn`, so the two harnesses' names are one vocabulary with synonyms rather than two
-languages. Building the map as the union of both specs' own trigger fields makes that structural: a
-name either is some harness's stated trigger or is not a trigger at all, and there is no third place
-for the two to disagree.
+**The trigger vocabulary is derived from the specs rather than written a second time**, as the
+union of both specs' own trigger fields: a name either is some harness's stated trigger or is not a
+trigger at all, and there is no third place for the two to disagree.
 """
 
 import enum
@@ -59,30 +56,6 @@ class OutputChannel(enum.Enum):
 
     STDOUT = "stdout"
     ADDITIONAL_CONTEXT = "additional_context"
-
-
-class BudgetUnit(enum.Enum):
-    """What an injection budget counts. The distinction is load-bearing and was pinned by
-    experiment rather than inferred: an ASCII bisection cannot tell bytes from characters, and
-    ~9,000 characters of a 3-byte-per-character script plus its ASCII markers — 27,016 bytes —
-    arrived whole under a 10,000-*character* cap.
-
-    **Which kind of character is now measured: UTF-16 code units**
-    (`research/claude-code-dogfood-checkpoint.md` §3). The earlier experiment could not settle it,
-    because the text it used lies in the Basic Multilingual Plane, where one code point is also
-    exactly one UTF-16 code unit. The astral rerun separates all three candidates: 6,000 astral code
-    points — 12,000 UTF-16 units — **truncate** under the 10,000 cap, while 4,600 (9,200 units)
-    arrive whole. So a `len()`-based count is **wrong**, not merely less conservative: it would pass
-    a block the harness then truncates.
-
-    **The member is still named `CHARACTERS`, and that name is now known to be the ambiguous word.**
-    Renaming it is the honest fix and was deliberately not done inside a checkpoint milestone; note
-    that `tests/test_harness_table.py` parses the design table's budget cell for one number and one
-    unit word, so a unit whose name contains a digit needs that parser taught first.
-    """
-
-    BYTES = "bytes"
-    CHARACTERS = "characters"
 
 
 class GuardHook(NamedTuple):
@@ -148,12 +121,18 @@ class HarnessSpec(NamedTuple):
     harness: Harness
     marker_variable: str | None
     session_variable: str
+    #: Whether the session variable reaches hooks and the agent's shell but no MCP server, so that
+    #: the hook relays its session's label to the MCP client through the agent server both share
+    #: (`design/harness.md` §"The session relay").
+    session_variable_misses_mcp_server: bool
     spawn_trigger: str
     prompt_trigger: str
     subagent_start_trigger: str | None
-    fires_hooks_for_subagent_sessions: bool
+    #: The characters a hook's output may run to before the harness cuts it, counted as UTF-16
+    #: code units.
     injection_budget: int
-    budget_unit: BudgetUnit
+    #: What opens every hook command, before the quoted hook path.
+    hook_command_prefix: str
     consolidator_model: str
     #: The code documenter's default model.
     documenter_model: str
@@ -185,26 +164,18 @@ class HarnessSpec(NamedTuple):
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
 
-        Measures in **this harness's own unit**. Comparing a byte length against a
-        character-denominated cap under-reports by up to the encoding's expansion factor, and
-        comparing a character length against a byte-denominated cap over-reports by the same — so
-        the unit travels with the number rather than being assumed by the caller.
-
         Characters are counted as **UTF-16 code units**, not as `len(text)`. The two agree for
         every character in the Basic Multilingual Plane and differ by a factor of two for astral
-        ones — and UTF-16 units are what a character-denominated harness was **measured** to count
-        (`research/claude-code-dogfood-checkpoint.md` §3; see `BudgetUnit`). This is therefore the
-        correct count rather than a conservative one: `len(text)` would pass 6,000 astral characters
-        against a 10,000 cap that truncates them.
+        ones. Claude Code was **measured** to count units: 6,000 astral code points, 12,000 units,
+        are cut under its 10,000 cap while 4,600 arrive whole
+        (`research/claude-code-dogfood-checkpoint.md` §3), so `len(text)` would pass a block the
+        harness then cuts. Which of the two kiro counts is unmeasured, and units bound either.
 
-        `surrogatepass` on both branches keeps this total. A lone surrogate is legal in a Python
-        string decoded from JSON and would otherwise raise out of a bound check whose callers treat
-        it as a plain predicate.
+        `surrogatepass` keeps this total. A lone surrogate is legal in a Python string decoded from
+        JSON and would otherwise raise out of a bound check whose callers treat it as a plain
+        predicate.
         """
-        if self.budget_unit is BudgetUnit.BYTES:
-            measured = len(text.encode("utf-8", errors="surrogatepass"))
-        else:
-            measured = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+        measured = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
         return measured > self.injection_budget
 
     def store_scope_dir(self, fallback: Path) -> Path:
@@ -228,7 +199,7 @@ class HarnessSpec(NamedTuple):
         not would reproduce the split this exists to close.
 
         **The fallback is not a degraded mode for kiro** — kiro exports no such variable (measured:
-        17 `KIRO_*` names across 42 probe records, none spatial) and appears not to need one,
+        six `KIRO_*` names across 270 probe records, none spatial) and appears not to need one,
         because its shell restores the working directory rather than persisting it. That last
         clause is an operator observation plus twelve days and ~8,000 events producing no stray
         store; it is **not measured**, and `tests/test_harness_store_scope.py` pins the dependency
@@ -279,57 +250,50 @@ class HarnessSpec(NamedTuple):
         return candidate if candidate.is_absolute() and candidate.is_dir() else None
 
 
-#: Kiro states `max_output_size` explicitly in every object-format hook entry, so the budget here is
-#: the value the installer writes rather than the harness's own 10240-byte default.
+#: kiro-cli's V3 engine, as `research/kiro-v3-probe.md` measured it on 2.35.1.
 KIRO: Final = HarnessSpec(
     harness=Harness.KIRO,
     marker_variable=None,
     session_variable="KIRO_SESSION_ID",
-    spawn_trigger="agentSpawn",
-    prompt_trigger="userPromptSubmit",
+    session_variable_misses_mcp_server=True,
+    spawn_trigger="SessionStart",
+    prompt_trigger="UserPromptSubmit",
+    # No hook fires for a subagent session at all, so a subagent has no trigger of its own here.
     subagent_start_trigger=None,
-    # Kiro has no subagent trigger because it fires the ordinary hooks *for* a subagent session
-    # instead. So a payload whose `session_id` differs from the environment's is the routine,
-    # expected subagent case here — which is exactly why the tripwire that reads the same
-    # divergence as an anomaly must not fire under this harness.
-    fires_hooks_for_subagent_sessions=True,
-    injection_budget=65_536,
-    budget_unit=BudgetUnit.BYTES,
-    # Pinned to a concrete id, and it has to be: this harness substitutes its own default for an
-    # id it does not recognise, *silently*, so the installer validates membership against
+    # The cut is the harness's own; neither spelling of an entry's size field moves it.
+    injection_budget=3_000,
+    # `exec` makes the agent server the hook's parent, as it is the MCP server's, which is what the
+    # session relay is keyed on.
+    hook_command_prefix="exec ",
+    # Pinned to a concrete id: an id this harness does not recognize is documented to be replaced
+    # by its default with no more than a warning, so the installer validates membership against
     # `chat --list-models` — a check an alias would fail, since that command lists ids.
     consolidator_model="claude-sonnet-5",
     documenter_model="claude-sonnet-5",
     harness_binary="kiro-cli",
-    # Measured, not assumed: the lifecycle probe captured every `KIRO_*` variable across 42
-    # records and none names a workspace or project directory.
+    # Measured, not assumed: of the six `KIRO_*` variables across 270 hook and MCP server records,
+    # none names a workspace or project directory.
     project_dir_variable=None,
     # What this harness does with an over-large MCP result is **unmeasured**. Rather than invent a
     # remedy for behaviour nobody has observed, every payload is returned inline here exactly as
     # before, and the consolidator keeps the four verbs and nothing else.
     consolidator_can_read_files=False,
-    # Not offered: this harness's `postToolUse` has no documented path to the model.
+    # Not offered: a `PostToolUse` hook's output was measured not to reach the model.
     guards=None,
     search_reminder=None,
     file_tools=("read", "grep", "glob", "write"),
 )
 
-#: Claude Code's budget is fixed: there is no configuration field to raise it, so unlike kiro's this
-#: number is the harness's own and not something an installer chose.
 CLAUDE_CODE: Final = HarnessSpec(
     harness=Harness.CLAUDE_CODE,
     marker_variable="CLAUDECODE",
     session_variable="CLAUDE_CODE_SESSION_ID",
+    session_variable_misses_mcp_server=False,
     spawn_trigger="SessionStart",
     prompt_trigger="UserPromptSubmit",
     subagent_start_trigger="SubagentStart",
-    # `UserPromptSubmit` does not fire for subagents at all here; a subagent is reached through its
-    # own trigger, whose payload carries the agent identity kiro's cannot express. Payload and
-    # environment session ids are therefore invariantly equal in any hook this harness fires, which
-    # is what makes a divergence meaningful enough to log.
-    fires_hooks_for_subagent_sessions=False,
     injection_budget=10_000,
-    budget_unit=BudgetUnit.CHARACTERS,
+    hook_command_prefix="",
     # An alias, and safely so: this harness refuses an unknown id loudly at spawn, so both rules
     # `architecture.md` §"The consolidator's model" states are satisfied — the field is present
     # explicitly, and the harness serves exactly what was asked for. A *pinned* default would rot

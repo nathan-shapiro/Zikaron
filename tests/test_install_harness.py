@@ -1,8 +1,8 @@
 """`zikaron.install.harness`: what install asks a harness binary, and what it does with each answer.
 
-Three functions now, not two, and one of them is not kiro's: `binary_is_available` answers *is this
-harness installed at all* for **either** harness, and is what `HarnessTarget.refuse_absent_harness`
-is built on. The model list and the config validator are kiro's alone.
+Four functions, and one of them is not kiro's: `binary_is_available` answers *is this harness
+installed at all* for **either** harness, and is what `HarnessTarget.refuse_absent_harness` is built
+on. The version, the model list and the config validator are kiro's alone.
 
 Most tests here substitute `subprocess.run`, because the point is what this module does with each
 possible answer — including the answers a real harness gives rarely and the ones it should never
@@ -17,6 +17,7 @@ my own assumptions about the format, and a wrapper checked only against fixtures
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,16 +26,18 @@ import pytest
 
 from zikaron.harness.spec import KIRO
 from zikaron.install import harness
-from zikaron.install.entries import (
-    CONSOLIDATOR_AGENT_NAME,
-    Commands,
-    consolidator_agent_config,
-)
+from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
+from zikaron.install.entries import Commands
 from zikaron.install.harness import (
+    MINIMUM_VERSION,
     InstallError,
     available_model_ids,
+    installed_version,
+    parse_version,
     validate_agent_config,
 )
+from zikaron.install.targets import KiroTarget
+from zikaron.install.writer import Plan
 
 #: These tests never touch the filesystem — `subprocess.run` is substituted — so the path is only
 #: ever stringified into an argv this fake records. Named rather than written inline so it reads as
@@ -145,6 +148,87 @@ class TestListingModels:
         assert available_model_ids() == frozenset({"a-model"})
 
 
+class TestTheVersionFloor:
+    """`kiro-cli --version`, read as numbers and held against the oldest release whose V3 engine
+    Zikaron was run against. Every output below is in the binary's own shape, which prints
+    `kiro-cli 2.35.1` (`research/kiro-v3-probe.md` §20), and every case goes through the target's
+    refusal, so the reading and the comparison are tested together."""
+
+    @pytest.mark.parametrize(
+        "found",
+        [
+            pytest.param("2.4.0", id="above the floor compared as text"),
+            pytest.param("2.35.0", id="one patch below"),
+        ],
+    )
+    def test_a_release_below_the_floor_is_refused_naming_it_and_the_floor(
+        self, monkeypatch: pytest.MonkeyPatch, found: str
+    ) -> None:
+        _fake_run(monkeypatch, _completed(stdout=f"kiro-cli {found}\n"))
+        with pytest.raises(
+            InstallError, match=rf"kiro-cli {re.escape(found)} is older than 2\.35\.1"
+        ):
+            KiroTarget().refuse_unsupported_version()
+
+    @pytest.mark.parametrize(
+        "found",
+        [
+            pytest.param("2.35.1", id="the floor"),
+            pytest.param("3.0.0-rc1", id="a suffix"),
+            pytest.param("10.0.0", id="below the floor compared as text"),
+        ],
+    )
+    def test_the_floor_and_every_release_after_it_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, found: str
+    ) -> None:
+        _fake_run(monkeypatch, _completed(stdout=f"kiro-cli {found}\n"))
+        KiroTarget().refuse_unsupported_version()
+
+    def test_a_suffix_is_read_past_rather_than_refused(self) -> None:
+        assert parse_version("kiro-cli 3.0.0-rc1\n") == (3, 0, 0)
+
+    def test_an_output_naming_no_version_is_refused_and_quoted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refused rather than assumed new enough, as an unreadable model list is refused rather
+        than read as empty."""
+        _fake_run(monkeypatch, _completed(stdout="kiro-cli (dev)\n"))
+        with pytest.raises(InstallError, match=r"printed 'kiro-cli \(dev\)'"):
+            KiroTarget().refuse_unsupported_version()
+
+    def test_it_asks_the_binary_for_its_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = _fake_run(monkeypatch, _completed(stdout="kiro-cli 2.35.1\n"))
+        assert installed_version() == (2, 35, 1)
+        assert calls == [["kiro-cli", "--version"]]
+
+    def test_an_absent_binary_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(harness, "harness_is_available", lambda: False)
+        with pytest.raises(InstallError, match="not on PATH"):
+            installed_version()
+
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            pytest.param(
+                _completed(returncode=2, stderr="unknown flag"), "unknown flag", id="exit"
+            ),
+            pytest.param(
+                subprocess.TimeoutExpired(cmd="kiro-cli", timeout=60), "could not run", id="timeout"
+            ),
+            pytest.param(OSError("permission denied"), "could not run", id="exec"),
+        ],
+    )
+    def test_a_binary_that_does_not_answer_is_refused(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        result: subprocess.CompletedProcess[str] | Exception,
+        expected: str,
+    ) -> None:
+        _fake_run(monkeypatch, result)
+        with pytest.raises(InstallError, match=expected):
+            installed_version()
+
+
 class TestValidatingAConfig:
     def test_a_clean_validation_reports_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _fake_run(monkeypatch, _completed())
@@ -217,15 +301,25 @@ class TestAgainstTheRealBinary:
         assert ids, "the real harness answered with no model ids"
         assert all(model_id != "" for model_id in ids)
 
-    def test_the_real_validator_accepts_the_config_we_actually_ship(self, tmp_path: Path) -> None:
-        """The **real shipped artefact**, serialized exactly as `KiroTarget.shipped_files` does.
+    def test_the_real_harness_prints_a_version_this_parser_can_read(self) -> None:
+        """Read through the same parser an install uses, so a change in what `--version` prints is
+        seen here rather than as every install refusing."""
+        _require_kiro()
+        assert installed_version() >= MINIMUM_VERSION, (
+            "this machine's kiro-cli is older than the floor, so nothing this tier runs says "
+            "anything about a supported install"
+        )
 
-        It used to validate a four-key toy, which asserted a belief about a document nothing ships.
-        That matters more since the tiering: before it, every `test_install_e2e.py`
-        run incidentally drove this validator over the real written config through
-        `complaints_about`, and stubbing the binary there removed the only place the shipped JSON
-        met the real validator at all. This is where that check belongs anyway — the tier that
-        exists for claims about the harness's own behaviour.
+    def test_the_real_validator_accepts_the_configs_we_actually_ship(self, tmp_path: Path) -> None:
+        """The **real shipped artefacts**, the consolidator's and the documenter's, as
+        `KiroTarget.shipped_files` serializes them.
+
+        A schema check and nothing more: `agent validate` passed the V2 profile V3 refuses
+        (`research/kiro-v3-probe.md` §23), so whether V3 loads these is what a live run shows.
+        Before the tiering, every `test_install_e2e.py` run incidentally drove this validator over
+        the real written config through `complaints_about`, and stubbing the binary there removed
+        the only place the shipped JSON met the real validator at all. This is where that check
+        belongs anyway — the tier that exists for claims about the harness's own behaviour.
         """
         _require_kiro()
         scripts = tmp_path / "bin"
@@ -234,14 +328,25 @@ class TestAgainstTheRealBinary:
         for path in (commands.hook, commands.mcp):
             path.write_text("#!/bin/sh\n")
             path.chmod(0o755)
-
-        config = tmp_path / f"{CONSOLIDATOR_AGENT_NAME}.json"
-        config.write_text(
-            json.dumps(consolidator_agent_config(commands, model=KIRO.consolidator_model), indent=2)
-            + "\n",
-            encoding="utf-8",
+        plan = Plan(
+            project=tmp_path,
+            commands=commands,
+            consolidator_model=KIRO.consolidator_model,
+            documenter_model=KIRO.documenter_model,
+            orchestrator_model=ORCHESTRATOR_MODEL,
+            force=False,
+            trust_tools=True,
         )
-        assert validate_agent_config(config) is None
+        profiles = [
+            shipped
+            for shipped in KiroTarget().shipped_files(plan)
+            if shipped.path.suffix == ".json"
+        ]
+        assert len(profiles) == 2
+        for shipped in profiles:
+            config = tmp_path / shipped.path.name
+            config.write_text(shipped.content, encoding="utf-8")
+            assert validate_agent_config(config) is None, shipped.path.name
 
     def test_the_real_validator_does_not_check_model_ids(self, tmp_path: Path) -> None:
         """**The one assertion here a stub genuinely cannot make**, and the reason this tier exists

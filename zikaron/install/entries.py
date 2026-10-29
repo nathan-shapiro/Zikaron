@@ -1,28 +1,27 @@
 """The JSON Zikaron adds to a harness configuration: hook entries, the MCP server, and the
 definitions of the agents Zikaron ships.
 
-`architecture.md` §"Two hook formats, both inside the stable agent config" and §"The install
-contract" are normative.
+`architecture.md` §"The install contract" is normative.
 
 Dicts are the return type here and that is deliberate rather than a lapse from
 `coding-standards.md` §2's types-not-dicts rule: these functions *are* the serialization boundary —
 their output goes straight to `json.dump` into a file whose schema belongs to the harness, not to
 us.
-The typed values live on the input side (`Commands`, `HookFormat`), which is where a mistake would
+The typed values live on the input side (`Commands`, `HarnessSpec`), which is where a mistake would
 otherwise be silent.
 """
 
+import copy
 import os
 import shlex
 import sysconfig
-from enum import StrEnum
 from pathlib import Path
 from typing import Final, NamedTuple
 
 from zikaron.guard.limits import TIMEOUT_SECONDS as GUARD_TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, KIRO, SearchReminder
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec, SearchReminder
 from zikaron.hook.components import Components
-from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS, MAX_OUTPUT_SIZE, TIMEOUT_MS
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install.assets import consolidator_prompt, identity_vocabulary
 from zikaron.install.code_knowledge import (
     CLAUDE_CODE_ARGUMENTS_SOURCE,
@@ -40,9 +39,9 @@ from zikaron.install.code_knowledge import (
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
 
 #: The `mcpServers` key, and therefore the `@zikaron` selector. One declaration, because the name
-#: appears in three places that must agree — the server map, `tools`, and `allowedTools` — and a
-#: mismatch in the second silently produces an agent with no Zikaron tools at all (measured; see
-#: `TOOL_SELECTOR`).
+#: appears in places that must agree — the server map, `tools`, the `mcp` rule's `match`, and a
+#: universal profile's `allowedTools` — and a mismatch in `tools` silently produces an agent with no
+#: Zikaron tools at all (measured; see `TOOL_SELECTOR`).
 MCP_SERVER_NAME: Final = "zikaron"
 
 #: How an agent config selects this server's tools. **Configuring `mcpServers` is not sufficient**,
@@ -64,9 +63,37 @@ _GUARD_SCRIPT: Final = "zikaron-guard"
 #: would drift: the harness-table drift guard covers spec↔design and nothing covers
 #: spec↔installer, so a trigger renamed in the spec would move the *hook* (whose tests read the
 #: spec) while the *installer* kept writing the old name — an installed config naming a trigger the
-#: hook does not recognise, which fails as no output and exit 0.
-_AGENT_SPAWN: Final = KIRO.spawn_trigger
-_USER_PROMPT_SUBMIT: Final = KIRO.prompt_trigger
+#: hook does not recognize, which fails as no output and exit 0.
+KIRO_TRIGGERS: Final = (KIRO.spawn_trigger, KIRO.prompt_trigger)
+
+#: The permission rule that lets an agent call this server's tools without asking. Under kiro's V3
+#: engine a call no rule allows asks, and a headless run refuses every ask.
+_MCP_RULE: Final[dict[str, object]] = {
+    "capability": "mcp",
+    "match": [f"{MCP_SERVER_NAME}/*"],
+    "effect": "allow",
+}
+
+#: The rule that lets the primary agent load a skill without asking. Loading one runs nothing, and
+#: `kiro-cli agent upgrade` derives exactly this rule from a V2 profile.
+_SKILL_RULE: Final[dict[str, object]] = {"capability": "skill", "effect": "allow"}
+
+#: The documenter's file grant, as rules: it reads its source and writes its document.
+_FILE_RULES: Final[tuple[dict[str, object], ...]] = (
+    {"capability": "fs_read", "effect": "allow"},
+    {"capability": "fs_write", "effect": "allow"},
+)
+
+
+def mcp_rule() -> dict[str, object]:
+    """A fresh copy of the rule allowing every Zikaron tool."""
+    return copy.deepcopy(_MCP_RULE)
+
+
+def primary_rules() -> list[dict[str, object]]:
+    """The rules a user's own agent profile gains: Zikaron's tools, then loading a skill."""
+    return [mcp_rule(), copy.deepcopy(_SKILL_RULE)]
+
 
 #: Shared by both harnesses' consolidator definitions, which is why it is a constant rather than a
 #: literal inside either builder: it is the text a harness reads to decide the agent is relevant,
@@ -86,8 +113,7 @@ _CONSOLIDATOR_DESCRIPTION: Final = (
 
 #: Claude Code's start, prompt and subagent triggers, derived from the seam for the reason above.
 #: `SubagentStart` has no kiro counterpart and is not optional: the write-policy-per-subagent path
-#: sits behind it, and kiro reaches the same place by firing its ordinary hooks *for* a subagent
-#: session instead. Leaving it out would leave that path dead with nothing failing — no error, no
+#: sits behind it. Leaving it out would leave that path dead with nothing failing — no error, no
 #: log line, just subagents that never see the policy. The `is not None` filter is a type narrowing
 #: and not a real branch: this tuple is Claude Code's, and Claude Code has each of them.
 _CLAUDE_TRIGGERS: Final = tuple(
@@ -113,17 +139,6 @@ _CLAUDE_GUARD_HOOKS: Final = tuple(
 _CLAUDE_REMINDERS: Final = tuple(
     reminder for reminder in (CLAUDE_CODE.search_reminder,) if reminder is not None
 )
-
-
-class HookFormat(StrEnum):
-    """Which of the two formats the harness accepts to write.
-
-    Not a preference: a config already using one format must be merged in that format, because the
-    harness rewrites the file in whichever it read and a mixed file has no defined meaning.
-    """
-
-    OBJECT = "object"
-    ARRAY = "array"
 
 
 class Commands(NamedTuple):
@@ -176,42 +191,27 @@ class Commands(NamedTuple):
         return tuple(path for path in needed if not (path.is_file() and os.access(path, os.X_OK)))
 
 
-def hooks_object(commands: Commands) -> dict[str, list[dict[str, object]]]:
-    """The object-format `hooks` value: one entry per trigger, keyed by trigger name.
+def hooks_array(commands: Commands) -> list[dict[str, object]]:
+    """Kiro's `hooks` value: a flat list carrying its own `trigger` per entry, which is V3's form.
 
     Both triggers point at the same executable, which dispatches on `hook_event_name` from its own
-    stdin payload — kiro's hook fields carry no per-trigger argument mechanism, so the payload is
-    the only place the trigger name is available (`zikaron/hook/main.py`).
+    stdin payload (`zikaron/hook/main.py`). No entry carries a size field: kiro cuts a hook's
+    output at its own limit whatever an entry says (`design/harness.md` §"Injection budgets").
     """
-    return {
-        _AGENT_SPAWN: [_object_entry(commands.hook)],
-        _USER_PROMPT_SUBMIT: [_object_entry(commands.hook)],
-    }
-
-
-def hooks_array(commands: Commands) -> list[dict[str, object]]:
-    """The array-format `hooks` value: a flat list carrying its own `trigger` per entry."""
     return [
-        _array_entry(commands.hook, _AGENT_SPAWN),
-        _array_entry(commands.hook, _USER_PROMPT_SUBMIT),
+        {
+            "name": f"zikaron-{trigger}",
+            "trigger": trigger,
+            "action": {"type": "command", "command": hook_command_string(commands.hook, KIRO)},
+            "timeout": HOOK_TIMEOUT_SECONDS,
+        }
+        for trigger in KIRO_TRIGGERS
     ]
 
 
-def hooks_value(commands: Commands, hook_format: HookFormat) -> object:
-    """Whichever of the two the caller asked for, for a caller that only serializes it.
-
-    Two typed builders and this one-line dispatcher, rather than a single function returning a
-    union:
-    `writer.py` merges into an existing value and needs the concrete type to do it, while the
-    fragment printer only hands the result to `json.dumps` and does not care.
-    """
-    if hook_format is HookFormat.OBJECT:
-        return hooks_object(commands)
-    return hooks_array(commands)
-
-
-def hook_command_string(hook_command: Path) -> str:
-    """The `command` string for a hook entry: the executable path, **shell-quoted**.
+def hook_command_string(hook_command: Path, spec: HarnessSpec) -> str:
+    """The `command` string for a hook entry: the harness's prefix, then the executable path,
+    **shell-quoted**.
 
     Measured, not inferred: this field is run through a shell. An unquoted
     `/home/me/My Projects/.venv/bin/zikaron-hook` produced
@@ -222,43 +222,14 @@ def hook_command_string(hook_command: Path) -> str:
     A single-quoted path was then measured to run correctly.
 
     So a project or venv directory containing a space is enough to break the whole install, with no
-    attacker and nothing exotic. `shlex.quote` is applied here rather than at each call site so both
-    formats are quoted by construction.
+    attacker and nothing exotic. `shlex.quote` is applied here rather than at each call site so
+    every entry is quoted by construction.
 
     `mcpServers`' own `command` is deliberately **not** quoted: that field takes a program and a
     separate `args` array, which is exec-style rather than shell-style, and quoting it would make
     the harness look for a file whose name contains the quotes.
     """
-    return shlex.quote(str(hook_command))
-
-
-def _object_entry(hook_command: Path) -> dict[str, object]:
-    """One object-format entry: the command, and both limits stated rather than inherited."""
-    return {
-        "command": hook_command_string(hook_command),
-        "timeout_ms": TIMEOUT_MS,
-        "max_output_size": MAX_OUTPUT_SIZE,
-    }
-
-
-def _array_entry(hook_command: Path, trigger: str) -> dict[str, object]:
-    """One array-format entry.
-
-    `max_output_size` is **absent**, and that is a fact about the format rather than an omission:
-    the harness documents that field for object-format entries only. An installer that added it here
-    anyway would be writing a key with no documented meaning and no way to tell whether it took
-    effect — so an array-format install inherits the 10240-byte default, which is why
-    `writer.py` reports that difference instead of hiding it.
-    """
-    return {
-        "name": f"zikaron-{trigger}",
-        "trigger": trigger,
-        "action": {"type": "command", "command": hook_command_string(hook_command)},
-        # Seconds here, milliseconds in the object entry above — the one place kiro's two formats
-        # disagree about a value rather than a shape. Both read the same canonical seconds constant
-        # rather than converting from each other, so neither can drift into the other's unit.
-        "timeout": HOOK_TIMEOUT_SECONDS,
-    }
+    return spec.hook_command_prefix + shlex.quote(str(hook_command))
 
 
 #: The `.mcp.json` key that exempts one server from Claude Code's deferred tool loading.
@@ -350,14 +321,14 @@ def claude_hooks_value(
 
 
 def _claude_group(script: Path, arguments: tuple[str, ...], timeout: int) -> dict[str, object]:
-    command = " ".join((hook_command_string(script), *arguments))
+    command = " ".join((hook_command_string(script, CLAUDE_CODE), *arguments))
     return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
 
 
 def _reminder_group(script: Path, reminder: SearchReminder) -> dict[str, object]:
     """The reminder's one group: both arms' tools in its matcher, and a handler per `if` filter,
     each a string, since a list of them is never matched (`research/m40-4-hook-probes.md`)."""
-    command = hook_command_string(script)
+    command = hook_command_string(script, CLAUDE_CODE)
     return {
         "matcher": reminder.matcher,
         "hooks": [
@@ -452,12 +423,11 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
       server while `tools` is what selects its tools. No `read`, `write` or `shell`: the design's
       claim is that *code* selects the candidates, and a consolidator that can read the repository
       can wander outside the group it was handed.
-    - `allowedTools` repeats it, because a subagent has no user to answer a permission prompt — an
-      available-but-not-allowed tool is one that fails at the moment it is needed. (The primary
-      agent's own config gets the same treatment by default, for a different reason that
-      `writer._selecting` sets out.)
-    - there is **no** `hooks` key. This session must not fire the push hook (it has no `search` to
-      spend a result on) and must not print the write policy (its policy is this prompt).
+    - `permissions.rules` allows those tools, because an available-but-not-allowed tool asks, and
+      headless V3 refuses every ask. The rule is not enough alone: kiro gives a subagent only what
+      its parent's rules allow as well (`design/harness.md` §Subagents). It carries no V2 trust
+      field, so V3 reads it as a profile of its own engine.
+    - there is **no** `hooks` key: no hook fires for a kiro subagent, and its policy is this prompt.
     """
     return {
         "name": CONSOLIDATOR_AGENT_NAME,
@@ -467,7 +437,7 @@ def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, ob
             identity_vocabulary(), can_read_files=KIRO.consolidator_can_read_files
         ),
         "tools": [TOOL_SELECTOR],
-        "allowedTools": [TOOL_SELECTOR],
+        "permissions": {"rules": [mcp_rule()]},
         "mcpServers": mcp_servers_value(commands, mode="consolidator"),
     }
 
@@ -547,18 +517,22 @@ class _ClaudeAgent(NamedTuple):
 def documenter_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
     """The whole `.kiro/agents/zikaron-documenter.json`.
 
-    `tools` is the file tools and `@zikaron`, and `allowedTools` repeats it, as the consolidator's
-    does, because a subagent has no user to answer a permission prompt. The primary server is
-    configured here, since a kiro agent config carries its own `mcpServers`. No `hooks`: the hook
-    suppresses itself in every kiro subagent session (`architecture.md` §"Subagent sessions").
+    `tools` is the file tools and `@zikaron`, and `permissions.rules` allows reading, writing and
+    Zikaron's tools, as the consolidator's allows its own; the profile spawning it must allow them
+    too, which the install reports rather than grants (`design/harness.md` §Subagents). The primary
+    server is configured here, since a kiro agent config carries its own `mcpServers`. No `hooks`:
+    no hook fires for a kiro subagent.
+
+    `tools` is sorted: with these selectors in any other order, `kiro-cli agent upgrade` calls the
+    profile out of sync, the class kiro documents the TUI answering by a rebuild
+    (`research/kiro-v3-probe.md` §26), which no measured launch or reselection triggered (§30).
     """
-    tools = [*KIRO.file_tools, TOOL_SELECTOR]
     return {
         "name": DOCUMENTER_AGENT_NAME,
         "description": DOCUMENTER_DESCRIPTION,
         "model": model,
         "prompt": DOCUMENTER_PROMPT,
-        "tools": tools,
-        "allowedTools": list(tools),
+        "tools": sorted([*KIRO.file_tools, TOOL_SELECTOR]),
+        "permissions": {"rules": [*copy.deepcopy(_FILE_RULES), mcp_rule()]},
         "mcpServers": mcp_servers_value(commands, mode="primary"),
     }

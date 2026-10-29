@@ -53,7 +53,6 @@ from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
-    HookFormat,
     claude_hooks_value,
     claude_mcp_servers_value,
     claude_tool_vocabulary,
@@ -61,20 +60,20 @@ from zikaron.install.entries import (
     consolidator_agent_markdown,
     documenter_agent_config,
     documenter_agent_markdown,
-    hooks_value,
+    hooks_array,
     mcp_servers_value,
     orchestrator_agent_markdown,
+    primary_rules,
 )
 from zikaron.install.harness import InstallError
+from zikaron.install.kiro_merge import plan_kiro_merge
 from zikaron.install.ownership import merged_server, refuse_conflicting
 from zikaron.install.writer import (
-    ARRAY_FORMAT_OUTPUT_CAP_NOTE,
     MergePlan,
     Plan,
     ShippedFile,
     Targets,
     guard_backup_path,
-    plan_kiro_merge,
 )
 
 _JSON_INDENT = 2
@@ -94,8 +93,8 @@ _JSON_INDENT = 2
 _MODEL_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]*")
 
 #: The settings key that pre-approves project-scoped MCP servers. Written under the same
-#: `--no-trust-tools` flag that governs kiro's `allowedTools`, because it answers the same question:
-#: does this install trust its own tools, or make the user approve them one at a time.
+#: `--no-trust-tools` flag that governs kiro's permission rules, because it answers the same
+#: question: does this install trust its own tools, or make the user approve them one at a time.
 _ENABLED_SERVERS_KEY: Final = "enabledMcpjsonServers"
 
 #: Claude Code's permission key. **Distinct from `_ENABLED_SERVERS_KEY`, and the two are easy to
@@ -277,6 +276,14 @@ class HarnessTarget(ABC):
             InstallError: the id is not one this harness accepts.
         """
 
+    @abstractmethod
+    def refuse_unsupported_version(self) -> None:
+        """Refuse a release of this harness older than the one Zikaron supports.
+
+        Raises:
+            InstallError: the harness is older than its floor, or names no version this can read.
+        """
+
     def notes(self, plan: Plan) -> list[str]:
         """Anything true of this harness that the user should be told after a successful install."""
         del plan
@@ -295,12 +302,8 @@ class HarnessTarget(ABC):
 
 
 class KiroTarget(HarnessTarget):
-    """kiro-cli: shipped files under `.kiro/`, and one merge into a user-named agent config.
-
-    Byte-for-byte what kiro already shipped, asserted by a regression guard rather than hoped for:
-    the risk in generalising the writer is that it quietly changes a working harness's output, and
-    "we did not mean to" is not evidence.
-    """
+    """kiro-cli on its V3 agent engine: shipped files under `.kiro/`, and one merge into a
+    user-named agent profile (`kiro_merge.py`)."""
 
     spec = KIRO
 
@@ -348,47 +351,72 @@ class KiroTarget(HarnessTarget):
         return (plan_kiro_merge(agent, plan, Targets(project=plan.project)),)
 
     def fragment(self, plan: Plan) -> str:
-        entries = json.dumps(
-            {
-                "hooks": hooks_value(plan.commands, plan.hook_format),
-                "mcpServers": mcp_servers_value(plan.commands, mode="primary"),
-            },
-            indent=_JSON_INDENT,
-        )
+        entries: dict[str, object] = {
+            "hooks": hooks_array(plan.commands),
+            "mcpServers": mcp_servers_value(plan.commands, mode="primary"),
+        }
+        if plan.trust_tools:
+            entries["permissions"] = {"rules": primary_rules()}
         caveats = [
-            f"`{TOOL_SELECTOR}` must be in that agent's `tools`, or Zikaron's tools are simply "
-            "absent — `mcpServers` configures the server and `tools` selects from it. Put it in "
-            "`allowedTools` as well, or every Zikaron tool call will interrupt you for approval.",
-            f"The agent also needs `subagent` among its `tools` for the {SKILL_NAME} and "
-            f"{DOCUMENT_SKILL_NAME} skills to spawn their agents, and `shell` for "
-            f"{DOCUMENT_SKILL_NAME} to run its planner.",
+            f"`{TOOL_SELECTOR}` must be in that agent's `tools`, unless `tools` holds `*`, or "
+            "Zikaron's tools are simply absent — `mcpServers` configures the server and `tools` "
+            "selects from it.",
+            "Add the `permissions.rules` entries to the agent's own rules, or every Zikaron tool "
+            "call asks for approval and neither skill loads headless."
+            if plan.trust_tools
+            else "--no-trust-tools leaves out the two rules a default install writes, so every "
+            "Zikaron tool call asks for approval and neither skill loads headless.",
+            "The agent also needs `subagent` in its `tools` and a "
+            '`{"capability": "subagent", "effect": "allow"}` rule for the '
+            f"{SKILL_NAME} and {DOCUMENT_SKILL_NAME} skills to spawn their agents, and `shell` "
+            f"with its rule for {DOCUMENT_SKILL_NAME} to run its planner.",
         ]
-        if plan.hook_format is HookFormat.ARRAY:
-            caveats.append(ARRAY_FORMAT_OUTPUT_CAP_NOTE)
         return (
             "Add these to the agent config you actually use (or re-run with --agent <path> to have "
             "them merged in, with a backup):\n\n"
-            + entries
+            + json.dumps(entries, indent=_JSON_INDENT)
             + "\n\n"
             + "\n".join(f"- {caveat}" for caveat in caveats)
         )
+
+    def refuse_unsupported_version(self) -> None:
+        """Refuse a kiro-cli older than the floor, whose V3 engine this was never run against."""
+        found = harness_cli.installed_version()
+        if found >= harness_cli.MINIMUM_VERSION:
+            return
+        raise InstallError(
+            f"kiro-cli {_dotted(found)} is older than {_dotted(harness_cli.MINIMUM_VERSION)}, the "
+            "oldest release whose V3 agent engine Zikaron supports. Upgrade kiro-cli and re-run."
+        )
+
+    def notes(self, plan: Plan) -> list[str]:
+        del plan
+        return [
+            "Zikaron runs on kiro's V3 agent engine: the default from kiro-cli 3.0, and `--v3` on "
+            "2.35. Under V2 the consolidator's and the documenter's first tool call asks for "
+            "permission, with nobody to answer it.",
+            "kiro starts a session's first turn without waiting for its MCP servers, and "
+            "`zikaron-mcp` takes about two seconds to start, so a headless run "
+            "(`kiro-cli chat --no-interactive`) needs `--require-mcp-startup` or its first turn "
+            "has no Zikaron tools. The flag does not make an interactive session wait, even one "
+            "given its first prompt on the command line.",
+        ]
 
     def refuse_unknown_model(self, model: str) -> None:
         """`architecture.md`'s no-silent-fallback rule, enforced where a config is about to be
         written.
 
         The check is *membership*, not a regex or a prefix: the harness answers with an exact set,
-        and accepting anything outside it would install a config whose model the harness silently
-        replaces with its own default — leaving two consolidation runs incomparable while both look
-        healthy.
+        and kiro documents an unknown id as replaced by its default, with a warning at most, which
+        leaves two consolidation runs incomparable while both look healthy.
         """
         available = harness_cli.available_model_ids()
         if model in available:
             return
         raise InstallError(
             f"{model!r} is not a model this harness offers. `kiro-cli agent validate` would accept "
-            "it silently and the harness would fall back to its default, so it is refused here "
-            f"instead. Available: {', '.join(sorted(available))}"
+            "it silently and the harness would run its default instead, so it is refused here. "
+            f"Available: {', '.join(sorted(available))}"
         )
 
     def complaints_about(self, paths: list[Path]) -> list[str]:
@@ -582,6 +610,9 @@ class ClaudeCodeTarget(HarnessTarget):
             return plan.components
         return settings_hooks.start_selection(by_trigger, plan)
 
+    def refuse_unsupported_version(self) -> None:
+        """No release floor: nothing an install writes here depends on one Claude Code release."""
+
     def refuse_unknown_model(self, model: str) -> None:
         """Refuse a model id that cannot be written into YAML frontmatter as given.
 
@@ -734,11 +765,10 @@ def _merged_permissions(
 ) -> tuple[dict[str, object], list[str]]:
     """`permissions` with Zikaron's tools pre-approved, and whatever else was there left alone.
 
-    **The consolidator's server is allowed unconditionally**, and that is the same argument
-    `architecture.md` §"The install contract" already makes about kiro's `allowedTools`: a subagent
-    has no user to answer a permission prompt, so a tool that is available but not allowed is a tool
-    that hangs or fails at the moment the consolidator needs it. `--no-trust-tools` is a statement
-    about *your* writes, not about whether consolidation can run at all.
+    **The consolidator's server is allowed unconditionally**: a subagent has no user to answer a
+    permission prompt, so a tool that is available but not allowed is a tool that hangs or fails at
+    the moment the consolidator needs it. `--no-trust-tools` is a statement about *your* writes,
+    not about whether consolidation can run at all.
 
     The primary server follows `--no-trust-tools`, which reproduces kiro's asymmetry exactly.
 
@@ -831,3 +861,7 @@ def _load_json_object_or_empty(path: Path) -> dict[str, object]:
     if not isinstance(document, dict):
         raise InstallError(f"{path} is not a JSON object, so there is nothing to merge into")
     return document
+
+
+def _dotted(version: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in version)

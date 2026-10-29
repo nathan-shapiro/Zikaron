@@ -1,28 +1,19 @@
-"""What the shipped `max_output_size` does and does not bound.
+"""What bounds a hook's output against each harness's injection budget.
 
-The harness truncates hook stdout past `max_output_size` **silently**, so the failure this number
-guards against is a write policy the model received two thirds of, or an injected block cut off
-mid-memory, with nothing on any channel saying so.
+Both harnesses cut a hook's output past a fixed number of characters, and kiro marks the cut to the
+model alone, so the failure these guard against is a write policy the model received part of, or an
+injected block cut off mid-memory, with nothing anyone else can see.
 
-**The first version of this file proved the wrong thing.** It multiplied `gist_max_tokens` by four
-bytes per token and called the product a worst case. Measured against the real tokenizer, that
-factor is not a bound at all: WordPiece maps anything outside its vocabulary to a single `[UNK]`
-token, so a 4000-character unbroken run counts as **one token**, and so do 256 emoji.
-`gist_max_tokens` therefore does not constrain bytes in the adversarial direction at all, and the
-tests below state what is actually true rather than restating the assumption:
-
-- the shipped policy fits, with the real number;
-- a block of five gists of *ordinary prose* at the configured token ceiling fits;
-- a single pathological gist can exceed any cap **through the token bound alone**, which is why the
-  write path also bounds a gist's *characters*. That bound is what turns the worst-case block
-  assertions below from an observation about one prose sample into arithmetic over a limit the
-  write path enforces — and it is enforced in the bounds ladder, not here, since an output cap
-  cannot fix a store's own bounds.
+**A token bound is not a size bound.** WordPiece maps anything outside its vocabulary to a single
+`[UNK]` token, so a 4000-character unbroken run counts as **one token**. The write path therefore
+also bounds a gist's *characters*, and that bound is what turns the block assertions below into
+arithmetic over a limit the write path enforces. It proves the block fits Claude Code's budget;
+under kiro's smaller one it does not, and the per-harness figure in `design/harness.md` §"Injection
+budgets" says how long the five gists may be before the block overruns it.
 """
 
 import re
 import uuid as uuid_module
-from pathlib import Path
 
 import pytest
 
@@ -35,22 +26,23 @@ from zikaron.core.retrieval.block import render
 from zikaron.core.retrieval.ranking import PoolRow, RankedMemory
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import connect, push
-from zikaron.hook import limits as limits_module
-from zikaron.hook.limits import MAX_OUTPUT_SIZE, TIMEOUT_MS
+from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
 
 #: The push limit the design fixes for the injected block: the top five gists.
 _PUSH_LIMIT = 5
-
-#: The harness's own default, which an array-format entry inherits because that format documents no
-#: `max_output_size` field to state.
-_HARNESS_DEFAULT_OUTPUT_SIZE = 10_240
 
 #: Where the design states the shipped policy's measured size, for the guard below.
 _POLICY_SIZE_DOCUMENT = "architecture.md"
 _POLICY_SIZE_HEADING = "## Distribution artefacts"
 
 _MODEL = "BAAI/bge-small-en-v1.5"
+
+#: The figure `schema.md` states for the worst-case block, in UTF-16 units.
+_STATED_WORST_CASE = re.compile(r"\*\*([\d,]+) units")
+
+#: The figure `harness.md` states for the longest gists a kiro block fits with.
+_STATED_KIRO_GIST = re.compile(r"\*\*([\d,]+)\*\* units per gist")
 
 
 def _gist_max_tokens_ceiling() -> int:
@@ -62,16 +54,6 @@ def _gist_max_tokens_ceiling() -> int:
     ceiling = bounds.maximum
     assert ceiling is not None, "an unbounded token count would make this whole bound unprovable"
     return ceiling
-
-
-#: The two figures `schema.md` states for the worst-case block: its UTF-16 units and, at the
-#: encoding ceiling below, its bytes. Matched as "N,NNN units" and "N,NNN bytes" so a reworded
-#: sentence keeps working while a changed number does not.
-_STATED_WORST_CASE = re.compile(r"\*\*([\d,]+) units[^*]*\*\*|\*\*([\d,]+) bytes")
-
-#: UTF-8 needs at most three bytes per UTF-16 code unit, which is what lets a unit bound stand
-#: in for a byte bound.
-_UTF8_BYTES_PER_UTF16_UNIT = 3
 
 
 def _block_of(gist: str) -> str:
@@ -97,21 +79,13 @@ def _block_of(gist: str) -> str:
     return render(rows)
 
 
-def test_the_write_policy_fits_inside_the_shipped_output_cap() -> None:
-    assert len(WRITE_POLICY_PROMPT.encode("utf-8")) < MAX_OUTPUT_SIZE
-
-
 def test_the_design_states_the_size_the_shipped_policy_actually_is() -> None:
     """The figure `architecture.md` quotes, against the constant it describes.
 
-    **This number has gone stale four times** and no test saw any of them, because the assertions
-    around it check that the policy *fits* rather than what it measures — and every edit to the
-    prompt's prose moves it. The paragraph that carries the figure says so about itself, three
-    times over, which is what makes leaving it unpinned indefensible rather than merely untidy.
-
-    Both spellings are checked. Bytes bound the harness's output cap; characters are what the
-    paragraph's UTF-16 arithmetic continues from, and an edit that swaps an ASCII character for a
-    multi-byte one moves only the first.
+    Pinned because every edit to the prompt's prose moves it, and the assertions that the policy
+    *fits* say nothing about what it measures. Both spellings are checked: characters are what both
+    harnesses' budgets count, and an edit that swaps an ASCII character for a multi-byte one moves
+    only the byte figure.
     """
     section = "\n".join(section_lines(_POLICY_SIZE_DOCUMENT, _POLICY_SIZE_HEADING))
     stated = re.findall(r"\*\*(\d+) bytes\*\* \((\d+)\s*\n?\s*characters\)", section)
@@ -126,50 +100,13 @@ def test_the_design_states_the_size_the_shipped_policy_actually_is() -> None:
     ]
 
 
-def test_the_comment_on_the_cap_states_the_size_the_shipped_policy_actually_is() -> None:
-    """The same figure's **second** site, which the guard above never reached.
-
-    The test above pins `architecture.md`. `limits.py`'s own comment states the same quantity to
-    justify the cap's margin, and nothing compared it — so it sat at a rounded `~6.1 kB` across a
-    change that moved the policy from 6098 to 6230 bytes, which that prefix does not distinguish
-    (6098 decimal and 6230 binary both round to 6.1). Guarding one site of a two-site claim is the
-    shape this corpus keeps paying for, and the rounding is what let this half hide.
-
-    Reads the module's **source** rather than a docstring, because the figure lives in a `#:`
-    comment that carries no runtime value to assert against.
-    """
-    source = Path(limits_module.__file__).read_text(encoding="utf-8")
-    stated = re.search(
-        r"the shipped policy text is (\d+) bytes and\s*\n?#:\s*"
-        r"the subagent variant is (\d+) bytes",
-        source,
-    )
-    assert stated is not None, (
-        "zikaron/hook/limits.py no longer states both policy sizes in the form this guard reads; "
-        "restate them or move the guard, but do not leave either unpinned — and do not round to a "
-        "`kB` prefix, which is what hid the last staleness"
-    )
-    assert (int(stated[1]), int(stated[2])) == (
-        len(WRITE_POLICY_PROMPT.encode("utf-8")),
-        len(SUBAGENT_WRITE_POLICY_PROMPT.encode("utf-8")),
-    )
-
-
-def test_the_write_policy_also_fits_the_default_an_array_install_inherits() -> None:
-    """Worth its own test: an array-format install cannot state `max_output_size`, so if the policy
-    did not fit the harness default those installs would be silently broken and the test above would
-    not say so.
-    """
-    assert len(WRITE_POLICY_PROMPT.encode("utf-8")) < _HARNESS_DEFAULT_OUTPUT_SIZE
-
-
 @pytest.mark.integration
-def test_ordinary_prose_at_the_token_ceiling_fits_the_shipped_cap() -> None:
+def test_ordinary_prose_at_the_token_ceiling_fits_claude_codes_budget() -> None:
     """Five gists of real English, each as long as the largest `gist_max_tokens` any configuration
     allows, counted by the tokenizer that will actually count them.
 
-    Integration tier because it loads the real tokenizer — and it has to: the defect in the previous
-    version of this test was substituting an assumed token/byte ratio for the measured one.
+    Integration tier because it loads the real tokenizer — and it has to: substituting an assumed
+    token-to-size ratio for the measured one is the defect a test like this exists to avoid.
     """
     encoder = FastEmbedEncoder.load(_MODEL)
     ceiling = _gist_max_tokens_ceiling()
@@ -178,40 +115,35 @@ def test_ordinary_prose_at_the_token_ceiling_fits_the_shipped_cap() -> None:
     while encoder.count_tokens(gist + words) <= ceiling:
         gist += words
     assert encoder.count_tokens(gist) <= ceiling
-    block = _block_of(gist)
-    assert len(block.encode("utf-8")) < MAX_OUTPUT_SIZE
+    assert not CLAUDE_CODE.exceeds_injection_budget(_block_of(gist))
 
 
 @pytest.mark.integration
-def test_the_token_bound_does_not_bound_bytes_at_all() -> None:
-    """The measurement that overturned this file's first version, kept as a test so the hole is a
-    recorded fact rather than a remembered one — and now paired with the bound that closes it.
+def test_the_token_bound_does_not_bound_size_at_all() -> None:
+    """The measurement behind the character bound, kept as a test so the hole is a recorded fact
+    rather than a remembered one — and paired with the bound that closes it.
 
     An unbroken run of 4000 characters is **one** token: WordPiece has no vocabulary entry for it,
     so it becomes a single `[UNK]`. A gist like that satisfies every *token* bound the write path
-    states, and the run can grow without the token count moving, so no output cap is safe from it.
+    states, and the run can grow without the token count moving, so no budget is safe from it.
     """
     encoder = FastEmbedEncoder.load(_MODEL)
     modest = "a" * 4000
     assert encoder.count_tokens(modest) == 1, "an unbroken run is one [UNK], whatever its length"
-    assert len(_block_of(modest).encode("utf-8")) > _HARNESS_DEFAULT_OUTPUT_SIZE
-
     enormous = "a" * 20_000
     assert encoder.count_tokens(enormous) <= _gist_max_tokens_ceiling()
-    assert len(_block_of(enormous).encode("utf-8")) > MAX_OUTPUT_SIZE
-
-    # What changed: neither of those gists can reach a block any more, because the write path now
-    # bounds a gist in a unit that actually constrains size. The hole is closed at the source
-    # rather than papered over at the output cap.
+    for spec in (KIRO, CLAUDE_CODE):
+        assert spec.exceeds_injection_budget(_block_of(modest))
+    # Neither gist can reach a block, because the write path bounds a gist in a unit that actually
+    # constrains size.
     assert len(modest) > GIST_MAX_CHARACTERS
     assert len(enormous) > GIST_MAX_CHARACTERS
 
 
-#: One UTF-16 unit and three UTF-8 bytes — the most bytes any single unit can cost.
+#: One UTF-16 unit and three UTF-8 bytes.
 _BMP_THREE_BYTE = "漢"
 
-#: Two UTF-16 units and four UTF-8 bytes, so two bytes per unit: cheaper *per unit* than the above,
-#: which is the non-obvious part.
+#: Two UTF-16 units and four UTF-8 bytes.
 _ASTRAL_FOUR_BYTE = "\U00010348"
 
 
@@ -222,46 +154,30 @@ def _at_the_gist_bound(filler: str) -> str:
     return gist
 
 
-def test_a_worst_case_block_fits_every_supported_harnesss_injection_budget() -> None:
-    """The assertion the character bound exists to make possible, and the one that could previously
-    only be made by accident: five rows, each gist as long as the write path will accept, measured
-    against each harness in that harness's own unit.
+def test_a_worst_case_block_fits_claude_codes_budget() -> None:
+    """The assertion the character bound exists to make possible: five rows, each gist as long as
+    the write path will accept.
 
     Exercised with the cheapest and the most expensive characters the bound admits, because an
-    ASCII-only fixture is the *best* case per character and would prove the universal claim only
-    for one-unit-per-character content — which is precisely the gap that made an earlier version of
-    this test pass while the claim it stated was false for astral text.
-
-    No tokenizer here, deliberately. The claim is arithmetic over a bound the write path enforces,
-    not an observation about how one prose sample happened to tokenize, which is why it needs no
-    model and belongs in the default tier.
+    ASCII-only fixture is the *best* case per character and would prove the claim only for
+    one-unit-per-character content. No tokenizer here, deliberately: the claim is arithmetic over a
+    bound the write path enforces, so it needs no model and belongs in the default tier.
     """
     for filler in ("a", _BMP_THREE_BYTE, _ASTRAL_FOUR_BYTE):
-        block = _block_of(_at_the_gist_bound(filler))
-        for spec in (KIRO, CLAUDE_CODE):
-            assert not spec.exceeds_injection_budget(block), filler
+        assert not CLAUDE_CODE.exceeds_injection_budget(_block_of(_at_the_gist_bound(filler)))
 
 
-def test_the_byte_worst_case_is_a_three_byte_bmp_character_not_a_four_byte_astral_one() -> None:
-    """The cross-unit step, made concrete rather than argued — and the direction is not the obvious
-    one, which is why it is asserted.
-
-    Once the gist bound counts UTF-16 units, the widest character in *bytes* is not the widest in
-    UTF-8. A three-byte Basic-Multilingual-Plane character is one unit, so it spends three bytes
-    per unit; a four-byte astral character is two units, so it spends only two. The ceiling that
-    carries the kiro byte claim is therefore three bytes per unit, and this pins both the ordering
-    and the resulting fit.
+def test_the_kiro_figure_is_the_longest_gist_a_five_row_block_fits_with() -> None:
+    """`harness.md` states how long five gists may be before a block overruns kiro's cut, and the
+    figure is framing plus five gists, so it moves whenever the block's prose moves. Measured here
+    from `block.render` rather than trusted: five gists at the figure fit, five one longer do not.
     """
-    assert len(_BMP_THREE_BYTE.encode("utf-8")) == 3
-    assert utf16_units(_BMP_THREE_BYTE) == 1
-    assert len(_ASTRAL_FOUR_BYTE.encode("utf-8")) == 4
-    assert utf16_units(_ASTRAL_FOUR_BYTE) == 2
-
-    widest = _block_of(_at_the_gist_bound(_BMP_THREE_BYTE))
-    astral = _block_of(_at_the_gist_bound(_ASTRAL_FOUR_BYTE))
-    assert len(widest.encode("utf-8")) > len(astral.encode("utf-8"))
-    assert len(widest.encode("utf-8")) < MAX_OUTPUT_SIZE
-    assert not KIRO.exceeds_injection_budget(widest)
+    section = "\n".join(section_lines("harness.md", "## Injection budgets"))
+    stated = [int(found.replace(",", "")) for found in _STATED_KIRO_GIST.findall(section)]
+    assert len(stated) == 1, f"expected one per-gist figure for kiro, found {stated}"
+    (per_gist,) = stated
+    assert not KIRO.exceeds_injection_budget(_block_of("a" * per_gist))
+    assert KIRO.exceeds_injection_budget(_block_of("a" * (per_gist + 1)))
 
 
 #: What the hook's own process start before `run` and its print after are allowed out of the
@@ -281,33 +197,21 @@ def test_the_stated_timeout_leaves_the_hooks_own_deadline_room_to_fire_first() -
     `_CONNECT_TIMEOUT_SECONDS` and one poll interval before it, then this process's own start and
     print.
     """
-    assert push._DEADLINE_SECONDS * 2 <= TIMEOUT_MS / 1000
+    assert push._DEADLINE_SECONDS * 2 <= HOOK_TIMEOUT_SECONDS
     assert push._DEADLINE_SECONDS < push._COLD_START_DEADLINE_SECONDS
     connect_overrun = 2 * connect._CONNECT_TIMEOUT_SECONDS + connect._POLL_INTERVAL_SECONDS
-    margin = TIMEOUT_MS / 1000 - push._COLD_START_DEADLINE_SECONDS
+    margin = HOOK_TIMEOUT_SECONDS - push._COLD_START_DEADLINE_SECONDS
     assert margin >= connect_overrun + _PROCESS_START_AND_PRINT_SECONDS
 
 
 def test_the_designs_stated_worst_case_block_matches_what_the_block_actually_renders() -> None:
-    """The one hand-carried figure a test can read, and it has drifted twice.
-
-    `schema.md`'s `gist.characters` row states the worst-case block in both units as the derivation
-    that makes `GIST_MAX_CHARACTERS` worth having. That figure is framing plus five gists, so it
-    moves whenever the preamble's prose moves — which it did repeatedly while being re-carried by
-    hand to several sites no test reads. Those sites now point here instead of restating it, so this
-    is the only place the figure lives and it is the normative one.
+    """`schema.md`'s `gist.characters` row states the worst-case block as the derivation that makes
+    `GIST_MAX_CHARACTERS` worth having. That figure is framing plus five gists, so it moves whenever
+    the block's prose moves; this is the only place it is checked.
     """
     rows = table_with_columns("schema.md", "## Bounds", ("Bound", "Value", "Why"))
     why = [row["Why"] for row in rows if "gist.characters" in row["Bound"]]
     assert len(why) == 1, "schema.md must state the gist character bound exactly once"
-    found = [
-        int(group.replace(",", ""))
-        for pair in _STATED_WORST_CASE.findall(why[0])
-        for group in pair
-        if group
-    ]
-    assert len(found) == 2, f"expected a units and a bytes figure, found {found}"
-    stated_units, stated_bytes = found
-    rendered = _block_of(_at_the_gist_bound("a"))
-    assert utf16_units(rendered) == stated_units
-    assert stated_units * _UTF8_BYTES_PER_UTF16_UNIT == stated_bytes
+    found = [int(group.replace(",", "")) for group in _STATED_WORST_CASE.findall(why[0])]
+    assert len(found) == 1, f"expected one units figure, found {found}"
+    assert utf16_units(_block_of(_at_the_gist_bound("a"))) == found[0]

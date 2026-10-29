@@ -16,11 +16,14 @@ import pytest
 
 from zikaron.harness.spec import KIRO
 from zikaron.install import harness
-from zikaron.install.entries import MCP_SERVER_NAME, TOOL_SELECTOR, Commands, HookFormat
+from zikaron.install.entries import MCP_SERVER_NAME, TOOL_SELECTOR, Commands, hooks_array
 from zikaron.install.main import main
 from zikaron.install.writer import Targets
 
 _MODELS = frozenset({KIRO.consolidator_model, "claude-haiku-4.5"})
+
+#: A profile carrying both engines' fields, the one shape whose `toolsSettings` a merge reads.
+_UNIVERSAL: dict[str, object] = {"name": "m", "permissions": {"rules": []}, "allowedTools": []}
 
 
 def _kiro_install(argv: list[str]) -> int:
@@ -72,10 +75,11 @@ def _harness_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     """No real `kiro-cli` in the unit tier: these tests are about the command's own decisions."""
     monkeypatch.setattr(harness, "available_model_ids", lambda: _MODELS)
     monkeypatch.setattr(harness, "validate_agent_config", lambda _path: None)
-    # Presence is answered too, and pinned rather than left to the machine: an unpinned check makes
-    # this file pass on a workstation with kiro installed and refuse everything in a container,
-    # which is a suite testing its environment rather than its code.
+    # Presence and version are answered too, and pinned rather than left to the machine: an unpinned
+    # check makes this file pass on a workstation with kiro installed and refuse everything in a
+    # container, which is a suite testing its environment rather than its code.
     monkeypatch.setattr(harness, "binary_is_available", lambda _name: True)
+    monkeypatch.setattr(harness, "installed_version", lambda: harness.MINIMUM_VERSION)
 
 
 class TestASuccessfulInstall:
@@ -95,20 +99,28 @@ class TestASuccessfulInstall:
         _kiro_install(["--project", str(project)])
         printed = capsys.readouterr().out
         assert '"mcpServers"' in printed
-        assert '"userPromptSubmit"' in printed
+        assert '"UserPromptSubmit"' in printed
         assert "subagent" in printed
 
-    def test_the_printed_fragment_is_valid_json_in_the_requested_format(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize("flags", [[], ["--no-trust-tools"]], ids=["default", "no-trust"])
+    def test_the_printed_fragment_is_valid_json_in_the_v3_shape(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: list[str]
     ) -> None:
-        """Printed for a human to paste into a JSON file, so it has to parse as JSON on its own."""
+        """Printed for a human to paste into a JSON file, so it has to parse as JSON on its own,
+        and in the form V3 reads: array hooks, and the rules a merge would write unless the flag
+        withholds them."""
         project = tmp_path / "project"
         project.mkdir()
-        _kiro_install(["--project", str(project), "--format", "array"])
+        _kiro_install(["--project", str(project), *flags])
         printed = capsys.readouterr().out
-        fragment = json.loads(printed[printed.index("{") : printed.rindex("}") + 1])
-        assert isinstance(fragment["hooks"], list)
-        assert "10240" in printed, "an array install inherits the default, and is told so"
+        fragment, _end = json.JSONDecoder().raw_decode(printed, printed.index("{"))
+        assert fragment["hooks"] == hooks_array(Commands.from_this_interpreter())
+        rules = [
+            {"capability": "mcp", "match": [f"{MCP_SERVER_NAME}/*"], "effect": "allow"},
+            {"capability": "skill", "effect": "allow"},
+        ]
+        assert fragment.get("permissions") == (None if flags else {"rules": rules})
+        assert "allowedTools" not in fragment
 
     def test_with_an_agent_it_merges_instead_of_printing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -121,7 +133,9 @@ class TestASuccessfulInstall:
         merged = json.loads(agent.read_text())
         assert MCP_SERVER_NAME in merged["mcpServers"]
         assert TOOL_SELECTOR in merged["tools"]
-        assert TOOL_SELECTOR in merged["allowedTools"], "memory writes would prompt every time"
+        assert {"capability": "mcp", "match": [f"{MCP_SERVER_NAME}/*"], "effect": "allow"} in (
+            merged["permissions"]["rules"]
+        ), "memory writes would prompt every time"
         printed = capsys.readouterr().out
         assert "merged" in printed
         assert "backed up" in printed
@@ -220,6 +234,8 @@ class TestASuccessfulInstall:
             json.dumps(
                 {
                     "name": "mine",
+                    "permissions": {"rules": []},
+                    "allowedTools": [],
                     "toolsSettings": {"crew": {"availableAgents": ["helper-a"]}},
                 }
             )
@@ -232,23 +248,27 @@ class TestASuccessfulInstall:
             "zikaron-documenter",
         ]
         assert "trustedAgents" not in crew, "spawn trust is a separate grant, left to the user"
-        printed = capsys.readouterr().out
-        assert "availableAgents" in printed
-        assert "will ask your permission" in printed
+        assert "availableAgents" in capsys.readouterr().out
 
-    def test_no_trust_tools_leaves_the_allowlist_alone_and_says_so(
+    def test_no_trust_tools_leaves_the_grants_alone_and_says_so(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
         agent = project / "mine.json"
-        agent.write_text(json.dumps({"name": "mine", "allowedTools": ["read"]}))
+        agent.write_text(
+            json.dumps({"name": "mine", "permissions": {"rules": []}, "allowedTools": ["read"]})
+        )
         assert (
             _kiro_install(["--project", str(project), "--agent", str(agent), "--no-trust-tools"])
             == 0
         )
-        assert json.loads(agent.read_text())["allowedTools"] == ["read"]
-        assert "ask your permission" in capsys.readouterr().out
+        merged = json.loads(agent.read_text())
+        assert merged["allowedTools"] == ["read"]
+        assert merged["permissions"] == {"rules": []}
+        printed = " ".join(capsys.readouterr().out.split())
+        assert "--no-trust-tools withheld the two rules" in printed
+        assert "kiro gives a subagent only what its parent's rules allow as well" in printed
 
     def test_the_model_can_be_overridden_for_a_comparison_run(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
@@ -257,14 +277,14 @@ class TestASuccessfulInstall:
         written = json.loads(Targets(project=project).consolidator_config.read_text())
         assert written["model"] == "claude-haiku-4.5"
 
-    def test_the_default_format_is_the_object_one(self, tmp_path: Path) -> None:
+    def test_a_merge_writes_the_array_form_v3_reads(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
         project.mkdir()
         agent = project / "mine.json"
         agent.write_text(json.dumps({"name": "mine"}))
-        _kiro_install(["--project", str(project), "--agent", str(agent)])
-        assert isinstance(json.loads(agent.read_text())["hooks"], dict)
-        assert HookFormat.OBJECT is HookFormat("object")
+        assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
+        written = json.loads(agent.read_text())["hooks"]
+        assert written == hooks_array(Commands.from_this_interpreter())
 
 
 class TestTheDocumentedInvocation:
@@ -384,6 +404,42 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         assert not (project / ".kiro").exists()
         assert "not on PATH" in capsys.readouterr().err
 
+    def test_a_kiro_older_than_the_floor_is_refused_and_nothing_is_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(harness, "installed_version", lambda: (2, 35, 0))
+        project = tmp_path / "project"
+        project.mkdir()
+        assert _kiro_install(["--project", str(project)]) == 1
+        assert not (project / ".kiro").exists()
+        assert "kiro-cli 2.35.0 is older than 2.35.1" in capsys.readouterr().err
+
+    def test_under_print_only_an_old_kiro_is_a_note_rather_than_a_refusal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A preview's job is to show what would be written, as it does for an absent harness."""
+        monkeypatch.setattr(harness, "installed_version", lambda: (2, 35, 0))
+        project = tmp_path / "project"
+        project.mkdir()
+        assert _kiro_install(["--project", str(project), "--print-only"]) == 0
+        printed = capsys.readouterr().out
+        assert "a real install would refuse here (kiro-cli 2.35.0 is older than 2.35.1" in printed
+        assert '"mcpServers"' in printed
+        assert not (project / ".kiro").exists()
+
+    def test_the_report_says_v3_must_be_the_engine_and_what_fails_otherwise(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        assert _kiro_install(["--project", str(project)]) == 0
+        printed = " ".join(capsys.readouterr().out.split())
+        assert "V3 agent engine" in printed
+        assert "`--v3` on 2.35" in printed
+        assert "first tool call asks for permission, with nobody to answer it" in printed
+        assert "--require-mcp-startup" in printed
+        assert "does not make an interactive session wait" in printed
+
 
 class TestNothingIsWrittenWhenTheMergeIsRefused:
     """The ordering the install contract states, asserted where it is decided rather than only in
@@ -460,25 +516,22 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
                 id="allowedTools",
             ),
             pytest.param(
-                {"name": "m", "toolsSettings": "nope"},
+                {**_UNIVERSAL, "toolsSettings": "nope"},
                 "`toolsSettings` value that is not an object",
                 id="toolsSettings",
             ),
             pytest.param(
-                {"name": "m", "toolsSettings": {"crew": []}},
+                {**_UNIVERSAL, "toolsSettings": {"crew": []}},
                 "`toolsSettings.crew` value that is not an object",
                 id="crew",
             ),
             pytest.param(
-                {"name": "m", "toolsSettings": {"crew": {"availableAgents": "a"}}},
+                {**_UNIVERSAL, "toolsSettings": {"crew": {"availableAgents": "a"}}},
                 "availableAgents",
                 id="availableAgents",
             ),
             pytest.param(
-                {
-                    "name": "m",
-                    "toolsSettings": {"crew": {"a": 1}, "agent_crew": {"b": 2}},
-                },
+                {**_UNIVERSAL, "toolsSettings": {"crew": {"a": 1}, "agent_crew": {"b": 2}}},
                 "both `toolsSettings.crew` and",
                 id="both crew spellings",
             ),
@@ -488,18 +541,33 @@ class TestNothingIsWrittenWhenTheMergeIsRefused:
                 id="resources",
             ),
             pytest.param(
+                {"name": "m", "permissions": "all"},
+                "`permissions` value that is not an object",
+                id="permissions",
+            ),
+            pytest.param(
                 {
                     "name": "m",
                     "hooks": [
                         {
-                            "name": "zikaron-agentSpawn",
-                            "trigger": "stop",
+                            "name": "zikaron-SessionStart",
+                            "trigger": "Stop",
                             "action": {"type": "command", "command": "/x/zikaron-hook"},
                         }
                     ],
                 },
                 "differ from what this install would write",
                 id="reserved array name",
+            ),
+            pytest.param(
+                {"name": "m", "allowedTools": ["read"]},
+                "kiro-cli agent upgrade",
+                id="a V2-only profile",
+            ),
+            pytest.param(
+                {"name": "m", "hooks": {"agentSpawn": [{"command": "git status"}]}},
+                "in the object form",
+                id="a user's object-format hook",
             ),
         ],
     )
@@ -655,7 +723,11 @@ class TestTheWrittenCommandRunsThroughAShell:
         agent.write_text(json.dumps({"name": "mine"}))
         assert _kiro_install(["--project", str(project), "--agent", str(agent)]) == 0
 
-        written = json.loads(agent.read_text())["hooks"]["userPromptSubmit"][0]["command"]
+        (written,) = [
+            entry["action"]["command"]
+            for entry in json.loads(agent.read_text())["hooks"]
+            if entry["trigger"] == "UserPromptSubmit"
+        ]
         completed = subprocess.run(  # noqa: S602 — a shell is exactly what is under test.
             written,
             shell=True,
