@@ -8,7 +8,7 @@ name = "zikaron"
 # cannot open a store an earlier one wrote says so in its number. Every other change is a patch, a
 # changed installed artifact included; a release that needs an existing install refreshed says so
 # in its release note. `design/distribution.md` §"The version scheme" is normative.
-version = "0.4.1"
+version = "0.4.2.dev0"
 # What a package index renders as the one-line summary, so it must name both stores: the memory
 # store, for what was learned by working here, and the knowledge index, for what the project already
 # wrote down. The guards, which ship on request, are the README's to describe.

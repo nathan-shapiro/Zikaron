@@ -2893,8 +2893,10 @@ why the retry works. A start that has died instead ends the poll as it happens �
 watches the process it spawned — and `init` then points at `service.log` in the store directory
 rather than a retry, which alone would loop on it. A fresh CI container is a cold cache by
 definition, so the `init` that opens a provisioning sequence is the call most likely to meet
-this. Whether the deadline should be longer here — a miss fails a command, where on the hook's
-path it costs only a skipped injection — or whether a script owes the retry, is open.
+this. **The deadline stays 10 s, and the retry stays the script's**: on an idle host five cold
+`init`s, each fetching the model over the network, finished in 3.41–3.66 s against 1.23–1.32 s
+warm, so a miss needs the 66 MB fetch to run below about 8 MB/s
+(`research/owed-measurements-2026-10-30.md` §4).
 
 *Spelled `python -m zikaron.knowledge …` until M30, which put these verbs behind the `zikaron`
 console script.* **That form still works and is not deprecated** — under a host-Python install with

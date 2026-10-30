@@ -56,10 +56,10 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M40, M41-1 and M41-2 are built, reviewed and landed**, the last through PR #31 as
-`9455d52`. Each milestone's record is in `FINDINGS-archive.md` (M41-2's in §"M41-2 as built"), its
+**M0–M40, M40-6, M41-1 and M41-2 are built, reviewed and landed**, the last through PR #32 as
+`f6a0a34`. Each milestone's record is in `FINDINGS-archive.md` (M40-6's in §"M40-6 as built"), its
 brief in `design/build-plan.md`. M40 is code knowledge: the planner, documenter, orchestrator and
-skill (D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-5, and the Warp
+skill (D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-6, and the Warp
 evaluation — results in `research/m40-evaluation.md` §4–§6, written up for readers outside the
 project in `research/knowledge-index-issue-triage.md`. M41-1 put the kiro install on kiro's V3
 engine only: V3's profile shape, the session relay, and the install reporting the parent rules a
@@ -67,37 +67,22 @@ spawned subagent needs (`design/harness.md`; `research/kiro-v3-probe.md`). M41-2
 `design/kiro-gaps.md` rows V3 can carry — the guards on kiro's shell tool, the orchestrator as a
 subagent the session waits for, one model per agent on both harnesses, per-agent effort, the
 write policy in the code-knowledge prompts, and the spill — and that file states what stays open.
+M40-6 scoped a documenter's test absences to the files it read and corrected the documented
+headless `--allowedTools` (`research/m40-toy-run.md` §18).
 
-**Release.** `0.4.0` is released (tag `v0.4.0`, 2026-10-22), the minor M39's schema move forced;
-its note links the research write-up. A minor bump means a `meta.schema_version` bump and nothing
-else (D36, `design/distribution.md` §3).
+**Release.** `0.4.1` is released (tag `v0.4.1` on `f6a0a34`, 2026-10-30), a patch carrying M41
+and M40-6; the tree carries `0.4.2.dev0`. A minor bump means a `meta.schema_version` bump and
+nothing else (D36, `design/distribution.md` §3).
 
-**Next (operator, 2026-10-30): M40-6's pull request sets `0.4.1`, and the operator tags its merge
-commit `v0.4.1` and publishes the release; the next pull request moves the tree to
-`0.4.2.dev0`.** A patch, since no schema moved (D36), carrying M41 and M40-6. Its note tells kiro
-users that kiro-cli ≥ 2.35.1 is required, and every user to re-run the installer after upgrading,
-since M41 changes kiro's install and M40-6 the documenter's prompt and the code-documentation
-skill, which an install writes into the project. Releasing before the fixes was proposed and
-declined: kiro-cli 3.0's auto-update refuses `0.4.0`'s kiro install, but the four stores here run
-this checkout, not PyPI.
-
-**M40-6 — built, verified and reviewed to APPROVED; the pull request next.** The two documenter
-fixes, both in `DOCUMENTER_PROMPT`, which both harnesses install: a test absence names the test
-files the documenter read, by their paths from the root, or says it read none; and a block the
-harness attaches beside a tool result is not the file's content. A third rides along, found by the
-verification: a headless run's `--allowedTools` needs `Bash(pwd:*)` and `Bash(cat:*)`, missing
-from the README, `design/code-knowledge.md` §5.2 and the skill. Decisions (operator, 2026-10-30):
-documents already written stay as they are until their sources change, LeibaTrader's included;
-the author drafts the wording, and memory-reviewer is asked to hold the prompt to its own bar; one
-short brief, and one review covering the brief and the build. Plan: (1) the brief in
-`design/build-plan.md` §M40-6 — done; (2) the build — done; (3) the regeneration of seven Warp
-documents in a scratch copy — done, 1 bare absence in 53 under the scoped wording
-(`research/m40-toy-run.md` §18); (4) `./check.sh`, the sweep and the review — APPROVED
-(`reviews/m40-6-review.md`); (5) the pull request when the operator asks, carrying the 2026-10-30
-archival pass of this file and the `0.4.1` version (operator, 2026-10-30).
-
-The rest of §"Owed work" waits on that. **Each milestone is brainstormed with the operator before
-its brief is written** (operator, 2026-10-13).
+**The owed measurements were taken on 2026-10-30, on an idle host** (operator's request):
+Q22's marker rate, the push block against kiro's cut, K14's partial coverage, Q17's cold `init`,
+and the hooks' cost per call and share of a session — all five in
+`research/owed-measurements-2026-10-30.md`, each owed entry below carrying its number and the
+operator's decision on it. The two transcript measurements followed —
+turns that end on a promise, and readers checking a code-knowledge result's source — in
+`research/transcript-measurements-2026-10-30.md`. **Next: the next milestone, chosen from
+§"Owed work" with the operator.** **Each milestone is brainstormed with the operator before its
+brief is written** (operator, 2026-10-13).
 
 **Guards (D38, `design/guards.md`).** Installed with the memory store (`--components both`) in
 `~/Trading/LeibaTrader`, `~/Dividends`, `~/Memory` and `~/PythonPlayground`; a project that
@@ -107,9 +92,6 @@ observed command, never on a conceived edge, and never toward evaluating the she
 or §8 edit run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`. The replay's
 verbatim deny list stays out of the repository (`experiments/m37_guard_replay.py --dump`
 re-derives it here).
-
-**Dated re-run**, on its date regardless (§"Owed work"): Q22's post-release measurement on
-2026-10-30.
 
 ### Facts that constrain how you work in this repository
 
@@ -159,13 +141,12 @@ Nothing here is scoped; each entry says what it is, the fix proposed and what to
 An owed item goes here the moment it is identified. The detail behind each is in
 `FINDINGS-archive.md` §"FINDINGS as it stood before the 2026-10-22 trim" and the notes named.
 
-- **Q22's post-release measurement — re-run 2026-10-30**: `VERDICT_MARKER` from
-  `experiments/m34_gist_replay.py` over each store's gists written since 2026-09-30, against
-  Q22's 169-record baseline (archive §"Closed with `0.3.0`"). Near the baseline, the write-side
-  rule does not bind, which argues for the corpus repair pass first.
 - **The corpus repair pass**: re-seed live long-term records as journal entries (a `--tier
   long_term` option on `m34_gist_replay.py`) and consolidate them in a replay store, judged on
-  M34's four bars, before any live store.
+  M34's four bars, before any live store. **Not urgent** (operator, 2026-10-30): Q22's rule binds
+  on new writes (26% marked since `0.3.0` against 56% before,
+  `research/owed-measurements-2026-10-30.md` §1), and what remains is the old corpus, 79 of
+  LeibaTrader's 150 pre-release live long-term rows marked.
 - **A prompt-only arm for the Warp evaluation's medium issues** — proposed, not approved: the
   treatment's prompt with no documents, about $65–90, to separate the prompt's checking paragraph
   from the documents as the cause of the extra cost (`research/m40-evaluation.md` §6). It needs
@@ -178,21 +159,19 @@ An owed item goes here the moment it is identified. The detail behind each is in
   `design/knowledge-index.md` §8.3, so it is brainstormed first. Readers already ask for 10
   results in 57 of 194 searches, yet only 1 of 48 runs opened a document file after a search;
   measure page fetches in a live arm first.
-- **K14's partial-coverage field** — `zikaron-coverage: partial` on a document the writer could
-  not read whole, reported beside `source.state`; a format change, brainstormed first. Measure how
-  many sources in a real module exceed the writer's window.
 - **A dependency that moves while its users' bytes do not** leaves `Depends on:` naming a gone
   path under a `fresh` document. Proposed, once one is seen to mislead: the planner rewrites the
   path on a move it detects and lists a document naming a missing path as stale
   (`design/code-knowledge.md` §8).
 - **Code knowledge documents prose as code** (low priority): the planner skips `.md`, `.rst` and
   `.txt` under code knowledge by default, `--include` keeping the way back.
-- **A push block that fits the harness's budget by construction** (after M41-1, if a truncated
-  push is ever seen): kiro V3 cuts hook output at 3,000 characters, marked `...[truncated]` to the
-  model alone (`research/kiro-v3-probe.md` §21). The 1,024-character gist bound admits a five-row
-  block of 6,097 units. The real worst block is ~2,125, from the longest gist of 652 in the four
-  stores, 246. The fix: render rows only while the block fits, and record surface rows for what was
-  shown. M41-1 makes the trigger observable: a `push_oversize` line in `hook.log`.
+- **A push block that fits the harness's budget by construction** — **built only once a
+  `push_oversize` line appears in a store's `hook.log`** (operator, 2026-10-30): kiro V3 cuts hook
+  output at 3,000 characters, marked `...[truncated]` to the model alone
+  (`research/kiro-v3-probe.md` §21). The 1,024-character gist bound admits a five-row block of
+  6,097 units, but of the 7,003 pushes the four stores recorded none passes 1,921, and the longest
+  live gist is 246 (`research/owed-measurements-2026-10-30.md` §2). The fix, then: render rows only
+  while the block fits, and record surface rows for what was shown.
 - **A kiro install with no custom agent** (after M41): kiro V3 reads workspace `.kiro/hooks/*.json`
   and `.kiro/settings/mcp.json` for its default agent, measured working
   (`research/kiro-v3-probe.md` §15), so `--agent` could become optional, as Claude Code needs
@@ -210,19 +189,22 @@ An owed item goes here the moment it is identified. The detail behind each is in
 - **A reader's verification late in a long session**: measure, where a session crosses
   unfamiliar code, how often a code-knowledge search is followed by a read of the top result's
   source; if it decays, a `PostToolUse` line on `zikaron_knowledge_search` to verify before
-  editing.
-- **A stop guard for the turn that ends on a promise**: a deterministic D38 guard on the stop
-  hook, asking for the evidence the goal is met or the blocker. Count such turns in the guarded
-  projects' transcripts first, and probe `Stop` output handling before building.
-- **A native hook client** (operator, 2026-10-21: *"rewriting hook (only hook, not service) in
-  rust"*): the hook forwards the payload and prints the service's answer; the cold-start spawn,
-  `hook.log` and the guards stay Python. Measure the share of session wall time hooks take first
-  (`research/m40-4-live-session.md` §3).
-- **Cheap and never run**: Q17's `init` connect-deadline measurement (`design/knowledge-index.md`
-  §9), and trademark clearance on `Zikaron`.
+  editing. **Waits on reader traffic**: readers searched code knowledge 27 times in all the
+  transcripts, in five sessions, 4 followed by a read of the top source
+  (`research/transcript-measurements-2026-10-30.md` §2). Proposed: measure it in the transcripts
+  of paged search's live arm or the closed-issue stage, whichever runs first.
+- **Cheap and never run**: trademark clearance on `Zikaron`.
 - **Refused, so not re-proposed**: a relevance floor on push, and degrading the re-shown gist
   (archive §"The read path is barely used"); retrieval-quality tuning has no non-proxy dependent
-  variable while D14 defers end-task evaluation.
+  variable while D14 defers end-task evaluation. **Declined on measurement** (operator,
+  2026-10-30; `research/owed-measurements-2026-10-30.md`): a native hook client, since the hooks
+  take 57–81 ms a call and 0.18% of a session's active time, so one that started in no time would
+  return under 0.2% (§5); K14's `zikaron-coverage: partial` field, since 4 of Warp's 407
+  documents and none of LeibaTrader's 196 are partial, and each already says so in the role line
+  every search result shows (§3); and a D38 stop guard for the turn that ends on a promise, since
+  7 to about 25 of 5,608 turn endings do, every narrow-screen hit Opus 5's and none in Opus 5.5's
+  1,143, a miss costing the user one message
+  (`research/transcript-measurements-2026-10-30.md` §1).
 
 ### How the next review should be briefed
 
@@ -267,8 +249,6 @@ Ids are stable and never reused; closed ones are in `FINDINGS-archive.md`. Detai
   seam for a rule that must bind (`research/m30-docker-end-to-end.md` §Coexistence).
 - **Q16** — does the agent reach for memory unprompted? Unattributable from the store; the
   harness transcripts can answer it while they last.
-- **Q17** — whether `zikaron init` owes a connect deadline longer than 10 s on a cold model
-  cache, or a script owes the retry (`design/knowledge-index.md` §9).
 - **Q19** — the corpus skews negative by the scope gate's construction; closing it needs Q7 first,
   then whether outcome belongs in the record and in push's selection.
 - **Q21** — a consolidator pass that neutralizes register without touching severity; closed only
