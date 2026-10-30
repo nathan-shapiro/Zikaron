@@ -3250,6 +3250,12 @@ Plan:
 
 
 ## References
+- **Two transcript measurements (2026-10-30)** — `research/transcript-measurements-2026-10-30.md`:
+  turns that end on a promise not kept, for the stop guard, and readers checking a code-knowledge
+  result's source, which waits on reader traffic.
+- **The owed measurements (2026-10-30)** — `research/owed-measurements-2026-10-30.md`: Q22's
+  post-release marker rate, every recorded push against kiro's 3,000-character cut, K14's partial
+  coverage, Q17's cold `init`, and the hooks' cost per call and share of a session.
 - **M40-6, the documenter's test absences (2026-10-30)** — `research/m40-toy-run.md` §17's
   corrected count of wrong claims and §18 (seven Warp documents regenerated in a scratch copy: a
   test absence scoped to the files read, the read-none form, tests written inside a source; the
@@ -7597,6 +7603,17 @@ verb) first calls refused `bounds`, across a month of `call` rows — 95 on `~/T
 
 `WITH c AS (SELECT session_id s, json_extract(detail,'$.method') m, json_extract(detail,'$.error_code') e, id FROM event WHERE kind='call' AND session_id IS NOT NULL) SELECT c.m, count(*), sum(coalesce(c.e,'')='bounds') FROM c JOIN (SELECT s, m, min(id) i FROM c GROUP BY s, m) f ON c.id=f.i GROUP BY c.m`
 
+## Q22's post-release measurement and Q17 (closed 2026-10-30)
+
+Both measured on an idle host after `0.4.1` shipped (`research/owed-measurements-2026-10-30.md`).
+**Q22's post-release rate**, re-run on its date: on LeibaTrader, the one store with new traffic,
+18 of 70 gists written since 2026-09-30 carry `VERDICT_MARKER`, against 160 of 284 before it on the
+same screen; read one by one, about four of the 18 state a conclusion. The write-side rule binds, so
+the corpus repair pass stays owed for the old corpus only. **Q17**, whether `zikaron init` owes a
+deadline longer than 10 s on a cold model cache: five cold `init`s finished in 3.41–3.66 s, each
+fetching the model, so the deadline and the script-side retry stay as they are
+(`design/knowledge-index.md` §9).
+
 ## M41-2 as built (moved out of FINDINGS 2026-10-30, once it landed through PR #31 as `9455d52`)
 
 Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
@@ -7666,6 +7683,25 @@ values.
 Reviewed to APPROVED (`reviews/m41-2-review.md`); sent as a pull request on 2026-10-30.
 Live tests stay small: one module of a few files for code knowledge, never a large codebase
 (operator, 2026-10-28).
+
+## M40-6 as built (moved out of FINDINGS 2026-10-30, once it landed through PR #32 as `f6a0a34`)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
+
+**M40-6 — built, verified and reviewed to APPROVED; the pull request next.** The two documenter
+fixes, both in `DOCUMENTER_PROMPT`, which both harnesses install: a test absence names the test
+files the documenter read, by their paths from the root, or says it read none; and a block the
+harness attaches beside a tool result is not the file's content. A third rides along, found by the
+verification: a headless run's `--allowedTools` needs `Bash(pwd:*)` and `Bash(cat:*)`, missing
+from the README, `design/code-knowledge.md` §5.2 and the skill. Decisions (operator, 2026-10-30):
+documents already written stay as they are until their sources change, LeibaTrader's included;
+the author drafts the wording, and memory-reviewer is asked to hold the prompt to its own bar; one
+short brief, and one review covering the brief and the build. Plan: (1) the brief in
+`design/build-plan.md` §M40-6 — done; (2) the build — done; (3) the regeneration of seven Warp
+documents in a scratch copy — done, 1 bare absence in 53 under the scoped wording
+(`research/m40-toy-run.md` §18); (4) `./check.sh`, the sweep and the review — APPROVED
+(`reviews/m40-6-review.md`); (5) the pull request when the operator asks, carrying the 2026-10-30
+archival pass of this file and the `0.4.1` version (operator, 2026-10-30).
 
 ## FINDINGS as it stood before the 2026-10-22 trim (moved verbatim)
 
