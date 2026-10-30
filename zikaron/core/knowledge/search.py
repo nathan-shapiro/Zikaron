@@ -8,6 +8,9 @@ raises and a memory store does not:
 - **A result is a fragment with an address**, so it carries the line range its snippet covers and a
   reader can widen it. The snippet is verbatim file content: no ellipses, no match markers, no
   normalization, and no path prefix — so reading those lines back returns the same bytes.
+- **Past the first few, a result is named rather than shown**: its address and how its file opens,
+  at the rank it holds, since most of what a reader is shown below the top it never acts on, and
+  what it does act on it reads from the file.
 - **One file may not fill an answer.** A large document chunks into many pieces that all resemble
   each other, and without a per-file cap the best few of them crowd out every other file.
 - **A result says whether it may be out of date**, because the file on disk is the authority and
@@ -21,12 +24,11 @@ raises and a memory store does not:
 import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from itertools import accumulate
 from pathlib import Path
 
 import aiosqlite
 
-from zikaron.core.knowledge import arms, chunking, link_store, source_hash
+from zikaron.core.knowledge import arms, excerpts, link_store, source_hash
 from zikaron.core.knowledge.links import SourceLink
 from zikaron.core.knowledge.meta import KnowledgeMeta
 from zikaron.core.retrieval.arms import cosine_from_distance
@@ -36,7 +38,7 @@ from zikaron.core.retrieval.ranking import rrf_score
 
 @dataclass(frozen=True, slots=True)
 class SearchSettings:
-    """The three bounds one search answers under, all already resolved and checked.
+    """The bounds one search answers under, all already resolved and checked.
 
     `limit_per_kb` arrives clamped rather than validated: a caller asking for more results than the
     cap allows is asking for as many as it can have, and refusing the call would hand back nothing
@@ -46,6 +48,7 @@ class SearchSettings:
     limit_per_kb: int
     max_chunks_per_file: int
     snippet_max_chars: int
+    whole_results: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,23 @@ class Result:
 
 
 @dataclass(frozen=True, slots=True)
+class NamedResult:
+    """A result past the whole ones: where it is and how its file opens, in place of its snippet.
+
+    It stands at the rank its whole result would. `end_line` is the chunk's own, since no snippet
+    cut applies, and `score` orders its group as a whole result's does but is not reported.
+    """
+
+    path: str
+    start_line: int
+    end_line: int
+    opening: str
+    score: float
+    stale: bool
+    source: ResultSource | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Links:
     """What a search needs in order to check linked results: the directory the declared paths are
     relative to, and the hashing budget the whole search shares."""
@@ -102,6 +122,7 @@ class _StoredChunk:
 
     path: str
     start_line: int
+    end_line: int
     text: str
 
 
@@ -168,14 +189,29 @@ async def _stored_chunks(
         return {}
     placeholders = ", ".join("?" for _ in chunk_ids)
     rows = await db.execute_fetchall(
-        "SELECT id, path, start_line, text FROM chunks "  # noqa: S608 — placeholders only; every id is a bound parameter.
+        "SELECT id, path, start_line, end_line, text FROM chunks "  # noqa: S608 — placeholders only; every id is a bound parameter.
         f"WHERE id IN ({placeholders})",
         tuple(chunk_ids),
     )
     return {
-        int(chunk_id): _StoredChunk(path=str(path), start_line=int(start_line), text=str(text))
-        for chunk_id, path, start_line, text in rows
+        int(chunk_id): _StoredChunk(
+            path=str(path), start_line=int(start_line), end_line=int(end_line), text=str(text)
+        )
+        for chunk_id, path, start_line, end_line, text in rows
     }
+
+
+async def _openings(db: aiosqlite.Connection, paths: Sequence[str]) -> dict[str, str]:
+    """Each file's opening, read from its first chunk, in one statement for every named path."""
+    if not paths:
+        return {}
+    placeholders = ", ".join("?" for _ in paths)
+    rows = await db.execute_fetchall(
+        "SELECT path, text FROM chunks "  # noqa: S608 — placeholders only; every path is a bound parameter.
+        f"WHERE part_index = 0 AND path IN ({placeholders})",
+        tuple(paths),
+    )
+    return {str(path): excerpts.opening_of(str(text)) for path, text in rows}
 
 
 async def _missing_cosines(
@@ -201,43 +237,6 @@ async def _missing_cosines(
         (vector, *chunk_ids),
     )
     return {int(chunk_id): cosine_from_distance(float(distance)) for chunk_id, distance in rows}
-
-
-def cut_to_snippet(text: str, *, start_line: int, max_chars: int) -> tuple[str, int, bool]:
-    """A chunk's text as a snippet, with the last line it covers and whether it was cut.
-
-    The governing property is that the snippet is byte-identical to lines `start_line` through the
-    returned line of the file, so a caller can read that range and get the same bytes, quote a
-    command out of it, or widen it for context. A cut therefore removes **whole lines from the
-    end** — the result is fewer lines of the file, never a doctored version of more.
-
-    **The one exception is when not even the chunk's first line fits.** There is then no whole-line
-    prefix to return, so the cut lands *inside* that line: the snippet is a prefix of it, `end_line`
-    names it, and any further lines of the chunk are outside the snippet entirely — `truncated` is
-    all that says so. The alternative is an unbounded string in a bounded response, and nothing
-    useful can be done about a forty-kilobyte minified line the text detection admitted.
-
-    Note that this does **not** require the chunk to be one line: a chunk of six lines whose first
-    is longer than the cap takes the same path.
-
-    Args:
-        text: the chunk's stored text, verbatim. A chunk always holds at least one line.
-        start_line: the file line `text` begins at.
-        max_chars: `knowledge_snippet_max_chars`, counted in Unicode code points.
-
-    Returns:
-        The snippet, the file line it ends at, and whether anything was left out.
-    """
-    lines = chunking.split_lines(text)
-    if len(text) <= max_chars:
-        return text, start_line + len(lines) - 1, False
-    # How many whole lines fit, counted from the running total rather than by accumulating and
-    # breaking: the totals only increase, so counting the ones within the cap *is* the greedy
-    # answer — and it has no loop exit that the arithmetic above has already made unreachable.
-    fitting = sum(1 for total in accumulate(len(line) for line in lines) if total <= max_chars)
-    if fitting == 0:
-        return text[:max_chars], start_line, True
-    return "".join(lines[:fitting]), start_line + fitting - 1, True
 
 
 async def _pending_paths(db: aiosqlite.Connection, paths: Sequence[str]) -> set[str]:
@@ -342,7 +341,7 @@ async def search_one(
     corpus: KnowledgeMeta,
     settings: SearchSettings,
     links: Links,
-) -> tuple[Result, ...]:
+) -> tuple[Result | NamedResult, ...]:
     """Search one knowledge base and return its results, best first.
 
     Args:
@@ -351,13 +350,15 @@ async def search_one(
             is a cosine.
         corpus: this knowledge base's own `meta` — its `rrf_k`, its `fusion_depth`, and the root its
             paths are relative to.
-        settings: the output limit, the per-file cap and the snippet cap.
+        settings: the output limit, the per-file cap, the snippet cap, and how many of the results
+            are whole.
         links: where a linked result's source path is resolved from, and the budget its hashing
             spends. Ranking does not read it.
 
     Returns:
-        At most `limit_per_kb` results, ordered by fused rank. **`score` is deliberately not
-        monotone down that list**, because it is a cosine and the order is a fusion of two arms.
+        At most `limit_per_kb` results, ordered by fused rank: the first `whole_results` whole and
+        the rest named. **`score` is deliberately not monotone down that list**, because it is a
+        cosine and the order is a fusion of two arms.
     """
     dense_rows = await arms.dense(db, vector=query.vector, fusion_depth=corpus.fusion_depth)
     lexical_rows: tuple[arms.ArmRow, ...] = ()
@@ -371,14 +372,8 @@ async def search_one(
     cosines = await _missing_cosines(
         db, [one.chunk_id for one in kept if one.distance is None], vector=query.vector
     )
-    # Distinct, because the per-file cap lets one file hold several of these and a repeated path
-    # would mean two `stat` calls and a longer `IN` list for one answer.
-    paths = sorted({stored[one.chunk_id].path for one in kept})
-    stale = await _stale_paths(db, paths, root=Path(corpus.root_path))
-    sources = await _sources(db, paths, corpus=corpus, links=links)
-    results: list[Result] = []
+    ranked: list[tuple[_StoredChunk, float]] = []
     for one in kept:
-        chunk = stored[one.chunk_id]
         score = (
             cosine_from_distance(one.distance)
             if one.distance is not None
@@ -390,7 +385,31 @@ async def search_one(
             # omitting the chunk is the honest answer where inventing a score would put a number
             # nothing produced beside numbers that mean something.
             continue
-        snippet, end_line, truncated = cut_to_snippet(
+        ranked.append((stored[one.chunk_id], score))
+    # Distinct, because the per-file cap lets one file hold several of these and a repeated path
+    # would mean two `stat` calls and a longer `IN` list for one answer.
+    paths = sorted({chunk.path for chunk, _ in ranked})
+    stale = await _stale_paths(db, paths, root=Path(corpus.root_path))
+    sources = await _sources(db, paths, corpus=corpus, links=links)
+    openings = await _openings(
+        db, sorted({chunk.path for chunk, _ in ranked[settings.whole_results :]})
+    )
+    results: list[Result | NamedResult] = []
+    for position, (chunk, score) in enumerate(ranked):
+        if position >= settings.whole_results:
+            results.append(
+                NamedResult(
+                    path=chunk.path,
+                    start_line=chunk.start_line,
+                    end_line=chunk.end_line,
+                    opening=openings.get(chunk.path, ""),
+                    score=score,
+                    stale=chunk.path in stale,
+                    source=sources.get(chunk.path),
+                )
+            )
+            continue
+        snippet, end_line, truncated = excerpts.cut_to_snippet(
             chunk.text, start_line=chunk.start_line, max_chars=settings.snippet_max_chars
         )
         results.append(

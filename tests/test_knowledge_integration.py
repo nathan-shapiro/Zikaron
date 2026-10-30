@@ -28,6 +28,7 @@ from zikaron.core.knowledge import disposal, groups, lifecycle, vectors
 from zikaron.core.knowledge.chunking import FileChunkPlan, plan_file_chunks
 from zikaron.core.knowledge.groups import Group, SearchRequest
 from zikaron.core.knowledge.meta import GitMode
+from zikaron.core.knowledge.search import Result
 
 pytestmark = pytest.mark.integration
 
@@ -137,6 +138,7 @@ async def test_a_real_corpus_answers_a_real_query(
     assert isinstance(group, Group)
     assert group.results
     best = group.results[0]
+    assert isinstance(best, Result)
     assert best.path == "design/retrieval.md"
     assert "reciprocal rank" in best.snippet or "dense arm" in best.snippet
     assert -1.0 <= best.score <= 1.0
@@ -157,7 +159,9 @@ async def test_a_real_snippet_reads_back_off_the_file(
         )
         (group,) = response.groups
         assert isinstance(group, Group)
-        for result in group.results:
+        whole = [result for result in group.results if isinstance(result, Result)]
+        assert whole
+        for result in whole:
             text = (corpus.root / result.path).read_bytes().decode("utf-8")
             lines = text.split("\n")
             kept = [f"{line}\n" for line in lines[:-1]]

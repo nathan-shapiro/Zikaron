@@ -28,7 +28,7 @@ from tests.knowledge_fixtures import (
 from zikaron.core.config.keys import CONFIG_KEYS_BY_NAME, IntBounds
 from zikaron.core.config.resolution import EffectiveConfig
 from zikaron.core.knowledge import database as knowledge_database
-from zikaron.core.knowledge import groups, lifecycle, lock, paths, registry, reporting
+from zikaron.core.knowledge import groups, lifecycle, lock, paths, registry, reporting, search
 from zikaron.core.knowledge import pending as knowledge_pending
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.groups import Group, SearchRequest, SearchResponse, UnknownGroup
@@ -110,6 +110,13 @@ class TestTheAssemblyRules:
         schema's maximum and this cap are the same number — stated in two places and checked
         here, because the argument for that maximum is this constant."""
         bounds = CONFIG_KEYS_BY_NAME["knowledge_max_chunks_per_file"].bounds
+        assert isinstance(bounds, IntBounds)
+        assert bounds.maximum == groups.LIMIT_PER_KB_CAP
+
+    def test_the_cap_is_the_largest_whole_result_count(self) -> None:
+        """At the output cap every result is whole, which is what turns naming off; a larger
+        count could never bind."""
+        bounds = CONFIG_KEYS_BY_NAME["knowledge_whole_results"].bounds
         assert isinstance(bounds, IntBounds)
         assert bounds.maximum == groups.LIMIT_PER_KB_CAP
 
@@ -271,6 +278,63 @@ async def _search_all(
                     migrate=True,
                 )
         return await groups.search_all(store_dir, db, config, asked, encoder=using, migrate=True)
+
+
+class TestNamedEntriesInGroups:
+    """What named entries change about the assembled answer: what a result past the cutoff
+    carries, and nothing about which corpora answer or in what order."""
+
+    _LAYOUTS: Final = {
+        "docs": {f"d{index}.md": _PROTOBUF for index in range(6)},
+        "runbooks": {f"r{index}.md": b"protobuf runbook step\n" for index in range(6)},
+    }
+
+    async def test_a_named_entry_carries_its_address_and_opening_and_no_fragment(
+        self, tmp_path: Path
+    ) -> None:
+        response = await _search_all(tmp_path, {"docs": self._LAYOUTS["docs"]})
+        (group,) = response.groups
+        assert isinstance(group, Group)
+        results = [groups._result_payload(result) for result in group.results]
+        assert {"snippet", "truncated", "score"} <= set(results[0])
+        named = results[3]
+        assert set(named) == {"path", "start_line", "end_line", "opening", "stale"}
+        assert named["opening"] == "the protobuf step fails silently"
+
+    async def test_the_cutoff_does_not_change_which_corpora_answer(self, tmp_path: Path) -> None:
+        named = await _search_all(
+            tmp_path / "named", self._LAYOUTS, request=_asking(limit_per_kb=6)
+        )
+        (tmp_path / "whole").mkdir()
+        write_config(tmp_path / "whole", "[retrieval]\nknowledge_whole_results = 20\n")
+        whole = await _search_all(
+            tmp_path / "whole", self._LAYOUTS, request=_asking(limit_per_kb=6)
+        )
+        assert [group.knowledge_base for group in named.groups] == [
+            group.knowledge_base for group in whole.groups
+        ]
+
+    def test_a_named_entry_s_cosine_orders_its_group(self) -> None:
+        """A cosine is not monotone down a fused list, so a group's best one can be a named
+        entry's, and leaving `score` out of its payload must not leave it out of the order."""
+        named = search.NamedResult(
+            path="b.md", start_line=1, end_line=1, opening="", score=0.9, stale=False
+        )
+        group = Group(
+            knowledge_base="docs",
+            description="docs corpus",
+            state=KnowledgeState.OK,
+            files_remaining=None,
+            results=(_result(score=0.2), named),
+        )
+        assert group.order_key == 0.9
+
+    def test_a_named_entry_counts_as_a_result_and_as_stale(self) -> None:
+        named = search.NamedResult(
+            path="b.md", start_line=1, end_line=1, opening="", score=0.9, stale=True
+        )
+        tally = groups._tally((_result(), named))
+        assert (tally.results, tally.stale) == (2, 1)
 
 
 class TestWhichCorporaAnswer:

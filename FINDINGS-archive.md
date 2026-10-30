@@ -4117,6 +4117,9 @@ of this file) and it is worth re-running whenever either directory grows.
 | `research/claude-code-job-dir-hook-probe.md` | for M40-1, measured on Claude Code 2.1.304: a background job's hook environment carries `CLAUDE_JOB_DIR`, `TMPDIR` is unset there, and the payload now sends `scratchpad_dir`; the replay of every local command naming a job directory, before and after, its false denies of the job's own `tmp` cleared; a live job undenied, its job-tmp overwrite unnudged against a nudged control; and that a background session edits the shared checkout only after `EnterWorktree` |
 | `research/m40-5-spawned-orchestrator-probe.md` | for M40-5 on Claude Code 2.1.304: a field run's second `/zikaron-document-code`, invoked while the first ran, recorded as a foreground fork that ended at its first wait, as the docs' §Q8(c) rule says, with 18 of its 19 spawns refused at the session's limit; interactive probes in `tmux` — a second fork of one skill backgrounded as `-2`, and two overlapping session-spawned agents each waiting out its own spawn and handing back |
 | `reviews/m40-5-spawned-orchestrator-review.md` | the M40-5 brief, reviewed to APPROVED |
+| `reviews/m42-paged-search-brief-review.md` | the M42 brief, reviewed to APPROVED: the opening made structure-free under §1.1, the invariant bounded by the clamp, the counters under paging |
+| `reviews/m42-paged-search-review.md` | the M42 build's trail: memory-reviewer's wording of the search description, then the build review rounds to APPROVED |
+| `research/paged-search-replay.md` | paged knowledge search: stage 1's offline replay of the Warp runs, and the build's replay through `groups.search_all` that set `OPENING_MAX_CHARS` at 400 |
 | `research/m37-guard-field-counts.md` | `design/guards.md` §7's counts (a)–(e), first read 2026-10-21 over the three guarded projects' transcripts, only LeibaTrader with sessions since the install: find-replace forms from 13.1% of `Bash` calls to 0.19%, 3 true and 4 false denies, 3 of those fixed since; 8 overrides, every reason substantive; no true deny overridden or routed around; re-reads after the last edit 81% to 90% on a small post-install count; 8 of 11 self-match denies a deliberate probe |
 | `research/claude-code-agent-tools-pattern-probe.md` | on Claude Code 2.1.304, three haiku subagents in `bypassPermissions`, `default` and `auto`: a `Bash(ls:*)` or `Bash(ls *)` on a `tools:` line grants the whole `Bash` tool, silently, behaving exactly as a plain-`Bash` control; every refusal is the permission mode's |
 | `research/m40-eval-sonnet5-issue-sets.md` | for the evaluation's larger stage as an issue-triage test: Opus 4.5/4.6, Sonnet 4.6/5/5.5 cutoffs and retirement floors (Sonnet 4.6's sources disagree), the five candidates screened against each, Warp's ~230 qualifying issue→PR pairs and why no 150–500-file module catches most fixes, and the confounds — bot diagnoses, cause-stating bodies, flag-promotion fixes |
@@ -7613,6 +7616,20 @@ the corpus repair pass stays owed for the old corpus only. **Q17**, whether `zik
 deadline longer than 10 s on a cold model cache: five cold `init`s finished in 3.41–3.66 s, each
 fetching the model, so the deadline and the script-side retry stay as they are
 (`design/knowledge-index.md` §9).
+
+## The owed measurements of 2026-10-30 (moved out of FINDINGS 2026-10-30, once they landed through PR #33 as `aa1ecf8`)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
+
+**The owed measurements were taken on 2026-10-30, on an idle host** (operator's request):
+Q22's marker rate, the push block against kiro's cut, K14's partial coverage, Q17's cold `init`,
+and the hooks' cost per call and share of a session — all five in
+`research/owed-measurements-2026-10-30.md`, each owed entry below carrying its number and the
+operator's decision on it. The two transcript measurements followed —
+turns that end on a promise, and readers checking a code-knowledge result's source — in
+`research/transcript-measurements-2026-10-30.md`. **Next: the next milestone, chosen from
+§"Owed work" with the operator.** **Each milestone is brainstormed with the operator before its
+brief is written** (operator, 2026-10-13).
 
 ## M41-2 as built (moved out of FINDINGS 2026-10-30, once it landed through PR #31 as `9455d52`)
 

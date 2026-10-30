@@ -119,7 +119,7 @@ class Group:
     description: str
     state: KnowledgeState
     files_remaining: int | None
-    results: tuple[search.Result, ...]
+    results: tuple[search.Result | search.NamedResult, ...]
     dropped: bool = False
 
     @property
@@ -187,16 +187,17 @@ class SearchResponse:
         }
 
 
-def _result_payload(result: search.Result) -> dict[str, object]:
+def _result_payload(result: search.Result | search.NamedResult) -> dict[str, object]:
     payload: dict[str, object] = {
         "path": result.path,
         "start_line": result.start_line,
         "end_line": result.end_line,
-        "snippet": result.snippet,
-        "truncated": result.truncated,
-        "score": result.score,
-        "stale": result.stale,
     }
+    if isinstance(result, search.NamedResult):
+        payload["opening"] = result.opening
+    else:
+        payload |= {"snippet": result.snippet, "truncated": result.truncated, "score": result.score}
+    payload["stale"] = result.stale
     if result.source is not None:
         payload["source"] = {"path": result.source.path, "state": result.source.state.value}
     return payload
@@ -336,7 +337,7 @@ async def _serve(
     raw = await database.read_meta(opened.connection)
     state = corpus_state.resolve(corpus_state.inputs_for_open(opened, raw, config))
     remaining = await reporting.files_remaining(opened.connection, raw)
-    results: tuple[search.Result, ...] = ()
+    results: tuple[search.Result | search.NamedResult, ...] = ()
     if state in _SERVING:
         results = await search.search_one(
             opened.connection,
@@ -355,8 +356,8 @@ async def _serve(
     )
 
 
-def _tally(results: Sequence[search.Result]) -> counters.SearchTally:
-    """What one corpus's results add to its counters."""
+def _tally(results: Sequence[search.Result | search.NamedResult]) -> counters.SearchTally:
+    """What one corpus's results add to its counters: every one of them, whole or named."""
     states = [result.source.state for result in results if result.source is not None]
     return counters.SearchTally(
         results=len(results),
@@ -459,6 +460,7 @@ async def search_all(  # noqa: PLR0913 — `migrate` is the opener's, not part o
             limit_per_kb=clamp_limit(request.limit_per_kb),
             max_chunks_per_file=config.get_int("knowledge_max_chunks_per_file"),
             snippet_max_chars=config.get_int("knowledge_snippet_max_chars"),
+            whole_results=config.get_int("knowledge_whole_results"),
         )
         # Built once for every corpus, and off the event loop: it runs the model. A request naming
         # only corpora that do not exist never reaches here, so a typo costs no inference.

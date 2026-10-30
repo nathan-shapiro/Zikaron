@@ -8862,6 +8862,171 @@ against.
   aside (M41).
 - **Not** kiro's dropping of loaded tools at compaction, which is kiro's behavior.
 
+## M42 — Paged knowledge search: each corpus's first results whole, the rest by name
+
+Normative, written by the build: **`design/knowledge-index.md` §8.3** (the result, the
+description and its account of whose wording it is, and why there is no further page), **§2** (the
+one-page summary's account of what a result is), **§10** (the key, and its count of the keys that
+shape one response), **§12** (that a named entry counts as a result), **§13** (item 8 below) and
+**§14** (a K15 row); `design/schema.md`'s configuration table; `design/code-knowledge.md` §5.3's
+and §8's estimates of how many groups fit the response cap, and §8's sentence that a search result
+never carries a document's title or role line; and `README.md`'s configuration table and its two
+sentences that a search returns verbatim fragments. Decisions (operator, 2026-10-30): build it,
+then measure it live; the cutoff is configuration, since *"these measurements might suffer from
+overfitting that we are just looking at small subset of issues within a single codebase"*; *"Any
+model facing prose (eg tool descriptions) should be provided by the reviewer"*, so memory-reviewer
+writes the description, verbatim, in the build review file, under `DESCRIPTION_BUDGET`; the build
+follows `design/coding-standards.md`, and every review round is preceded by `CLAUDE.md`'s re-read
+and sweep. **Amended** (operator, 2026-10-31), on the live measurements below: *"let's ship it
+without offset and used freed up budget for clearer wording (ask reviewer to provide it to
+you)."* Evidence: `research/paged-search-replay.md`; `research/m40-evaluation.md` §6.
+
+**What was found.** A knowledge result is 7–9 k characters, carried on every later call, and on
+Warp's medium issues the readers' searches replaced no reading (`research/m40-evaluation.md` §6).
+Replayed over the 48 kept treatment runs: of the 136 paths a search showed that a tool call named
+within 20 calls, 32 had been shown only below rank 3, every one a source path; of the 197 files
+the answers named, one came only from a snippet below rank 3, and it was not a truth file.
+Showing every result below rank 3 by name keeps 65.5% of the search-result characters, so it
+saves at most 5.7% of a medium run's carried characters and 9.2% of a hard run's — a ceiling,
+since a named entry's lines read from its file add back what its snippet would have carried. Readers act on ranks 4–5 about as often as on
+ranks 2–3, so 3 is not a knee in the reads. In the answers, a cutoff of 3 left one answer with a
+file seen only in a withheld snippet, 2 left four such files, and only 1 withheld a truth file — in
+one module of one codebase. The 65.5% was measured with an entry carrying the role line alone and
+no `stale`; the entry that ships is larger (items 2 and 3), and done-when 2 measures it.
+
+**What was measured live, on the build as first made with an `offset` to page.** Readers almost
+never fetched a further page: none of the 144 searches made against it — in three probes and a
+one-repeat paged-against-unpaged check of the 11 medium and hard issues — and 1 of 129 searches
+across 80 sessions given a task whose query's page 2 held what it needed, whatever the description
+said and whatever the response said, a `has_more` flag on every group included. In stage 1, before
+an `offset` existed, no reader repeated a query to ask for more. Readers act on a named entry by
+reading the file it names, or reword the query. The paged-against-unpaged check was
+indistinguishable from noise on grade and on dollars at its size. So the `offset` is withdrawn, and the description
+budget it used goes to clearer wording: a cold read by two models understood every concept, but
+found that a reader is not told where a named entry's `path` lives and can mistake a document's
+lines for its source's.
+
+### What ships
+
+1. **`knowledge_whole_results`**, a `[retrieval]` key, an int in 1–20, default 3: how many of a
+   group's results carry their snippet. 20, `limit_per_kb`'s cap, turns naming off. Declared in
+   `schema.md`'s table and its TOML sample, from which `zikaron/core/config/keys.py` follows, and
+   listed in §10 and `README.md`.
+2. **A result past that count is a named entry**: `path`, `start_line`, `end_line`, `stale`,
+   `opening`, and `source` where the whole result would carry one — no `snippet`, `truncated` or
+   `score`. `end_line` is the chunk's own, read from `chunks.end_line`, since no snippet cut
+   applies. `stale` stays because it qualifies the line range a reader may open, and its `stat` is
+   already made once per path. **Naming changes what is shown, never what is ranked**: an entry
+   stands at the rank its whole result would, and the per-file cap and fusion are unchanged.
+   Leaving out `score` is the payload's alone: every result keeps its cosine, a lexical-only named
+   entry's still looked up, and a group's order is its best cosine, as today.
+3. **`opening` is the file's opening text**, read from its first chunk (`part_index = 0`, the join
+   `link_store.py` already makes) and from that chunk's text alone: after a front-matter block
+   `read_link` answers other than `None` for, malformed or not, where it closes within the first
+   `LINK_PREFIX_CHARS` of that chunk — its end found by a helper in `links.py` sharing
+   `read_link`'s line reader, so the two split lines the same way — and from the chunk's first
+   character otherwise, so a block that closes only in a later chunk, or carries neither K14 key,
+   stays in the opening; whitespace runs collapsed to one space and the ends stripped; cut at the
+   last space before `OPENING_MAX_CHARS`, or at that limit where there is no space, a closing `…`
+   counted inside it. `OPENING_MAX_CHARS` is a module constant in `excerpts.py`, set to 400 and
+   read where the opening is cut, never bound as a default, beside `cut_to_snippet`, which moves
+   there from `search.py` with it so `search.py` does not grow further past `coding-standards.md`
+   §1's size. An opening with nothing in it is `""`, never absent. **No markdown is parsed**
+   (§1.1: no heading extraction): a code-knowledge document's opening is its `#` title line, §4's
+   role line and whatever of `## Purpose` fits, and a hand-written document's is whatever it
+   begins with. **It is a label, not a quotation**: K13 governs snippets, and `opening` makes no
+   line-range claim. One query per group reads its named paths' first chunks; nothing is stored, so
+   no schema moves and the next release stays a patch. Done-when 2 measures its length.
+4. **No further page.** The search takes no `offset`, and a named entry is read, not fetched:
+   lines `start_line` to `end_line` of `path`, under the knowledge base's root that `status`
+   reports, are the chunk's bytes for an unchanged file (invariant 16), and a linked document's
+   `source.path` is the file it describes. §8.3 says why, from the live measurements above.
+5. **The service applies the cutoff from its configuration**, read at startup as every key is.
+   `zikaron knowledge` has no search, so no CLI changes.
+6. **The tool description is memory-reviewer's**, written in the build review file before the code
+   that ships it is final, and copied verbatim into §8.3 and `zikaron/mcp/primary.py`. It is
+   rewritten whole under `DESCRIPTION_BUDGET` for clarity, with the room the `offset` left, so
+   K14's paragraph may be re-cut under the same authority, and §8.3's account of whose wording it
+   is changes with it. It keeps what `tests/test_mcp_tool_descriptions.py` pins — its phrases, the
+   name `zikaron_memory_search`, no tool the server lacks — and matches §8.3's quote paragraph for
+   paragraph, a comparison keyed on its opening sentence, *Search indexed project documents by
+   relevance.*, so a rewrite that changes that sentence moves the test's `_QUOTED_DESCRIPTIONS` row
+   with it. **It stays true at every configured cutoff**: it names the key or says *by default*
+   rather than asserting a number. Its untrusted-input sentence covers `opening` as it covers a
+   snippet. It says what a named entry is, what `opening` is, and how to read one — the cold
+   read's two weak spots in view.
+7. **§8.7's cap and its shedding are unchanged**; named entries are smaller, and the cap counts the
+   response as it is sent. **§12's result counters count every result, whole or named**, as
+   `_tally` does; nothing new is counted.
+8. **One invariant joins §13**: naming is presentation only — for one corpus and query, at any
+   cutoff, the results hold the same `path` and `start_line` at every rank as the same search with
+   every result whole, and each whole result equals its counterpart. A named entry's `end_line` is
+   the chunk's own and a whole result's the snippet's, which differ wherever `truncated` would be
+   true, except for a one-line chunk cut inside its line. **K15 joins §14**: no further page,
+   naming is presentation only, the cutoff is configuration, and nothing about it is stored.
+9. **No kiro gap**: both harnesses call the one tool.
+
+### Invariants and properties to cover
+
+- §13's new invariant, as a property over every `limit_per_kb` up to the cap, on a small real
+  corpus, at cutoffs of 1 and 3 against 20; the first `min(cutoff, L)` results carry `snippet`
+  and the rest do not.
+- For one call, group order at a cutoff of 3 equals group order at 20.
+- The same call twice is byte-identical, named entries included (`coding-standards.md` §4).
+- A whole result is unchanged in every field, so K13's tests hold for it unmodified; a named entry
+  carries none of the three fields item 2 leaves out, and does carry `stale`.
+- A named entry's `end_line` is `chunks.end_line`: equal to its whole result's for a chunk within
+  `knowledge_snippet_max_chars`, greater for a chunk cut at a line boundary, and equal for a
+  one-line chunk cut inside its line.
+- Invariant 17 at every rank: a named entry carries `source` exactly where its whole result would.
+- `opening` on a linked document with K14 front matter, on an unlinked one, on one that begins
+  with front matter of another kind, which stays in, on a malformed K14 block within the first
+  chunk, which is skipped, on a K14 block that closes only after the first chunk, on a first chunk
+  with no space before the limit, and at the cut on both sides of a space, the `…` inside the
+  limit.
+- The key's row and sample line agree with `schema.md`, its maximum is `LIMIT_PER_KB_CAP` as
+  `knowledge_max_chunks_per_file`'s is, and the description stays under the budget and keeps its
+  pinned phrases, through the existing drift, budget and phrase tests.
+
+### Done when
+
+1. `./check.sh` is green, and `experiments/new_line_coverage.py` names no uncovered line.
+2. **Stage 1's 176 queries are replayed through the build** by a new
+   `experiments/m42_paged_replay.py`, in-process through `groups.search_all` with the real
+   encoder, against the treatment copy's store, `~/Zikaron-m40/eval/root/b/warp/.zikaron` (every
+   kept treatment run used copy `b`), each query with its own `limit_per_kb`, at
+   `knowledge_whole_results` 3 and 20, each resolved from a scratch copy of the store's
+   `config.toml` with the key set, never by editing the store's own, which stage 2's arms set. The
+   store must open at today's schema with its corpus `ok`; one that must be migrated or rebuilt
+   first is, and the note says so, since its corpus then differs from the runs'.
+   `research/paged-search-replay.md` reports, at 3 against 20, the result lists' characters —
+   `json.dumps` of each group's `results`, stage 1's 65.5% quantity — and
+   `groups.response_bytes` of the whole responses, each with `OPENING_MAX_CHARS` at 400 and at
+   200 — the replay setting `excerpts.OPENING_MAX_CHARS` for its second pass, which item 3's reading
+   it at the cut allows — and how many openings each limit cut. **The operator sets the constant
+   from those numbers before stage 2 runs**, and the replay is rerun at the value set if it is not
+   400, with §8.3's statement of the limit and `code-knowledge.md` §5.3's and §8's estimates of
+   how many groups fit the cap set from it. **Set: 400, kept** (operator, 2026-10-30), so nothing
+   reruns.
+3. memory-reviewer reaches APPROVED on the brief and the build together, and the shipped
+   description is its wording.
+4. **The cold read is rerun on the shipped description** — the description and input schema as the
+   server sends them, a response with named entries, and questions whose expected answers are
+   written first, two of them the weak spots — by Haiku and Sonnet, and
+   `research/paged-search-replay.md` reports what each read answered. A weak spot that remains
+   goes back to memory-reviewer for wording. **Rerun**: all four reads answered as expected, both
+   weak spots included (§"Without `offset`: the description read again").
+
+### Scope fence
+
+- **Not** a further live measurement: the paged-against-unpaged check above is what of stage 2
+  ran, and the closed-issue stage is its own milestone.
+- **Not** any change to ranking, fusion, the per-file cap, group order or §8.7's shedding.
+- **Not** a further page — an `offset`, a page token or a cursor — a per-call cutoff, or a stored
+  `opening`.
+- **Not** an amendment of §1.1: `opening` parses no markdown.
+- **Not** the memory store's search.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

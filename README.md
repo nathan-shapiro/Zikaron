@@ -19,7 +19,8 @@ this as they go and read it back in later sessions.
 
 **Institutional knowledge — knowledge bases.** What the project *did* write down, indexed and made
 searchable: a docs tree, a directory of run books, design records, a vendored dependency's manual.
-The agent searches a named corpus and gets fragments back with real line ranges, quoted verbatim.
+The agent searches a named corpus and gets fragments back with real line ranges, quoted verbatim —
+the best few in full and the rest named, to read when it wants them.
 
 The two differ in where they come from and therefore in who maintains them. Memory accumulates
 without anybody curating it, and goes stale when the code moves under it — so the agent that a memory
@@ -88,7 +89,7 @@ comes only from the files on disk: an indexer walks the tree you pointed it at, 
 stores the text with its line ranges. What an agent *does* write is the corpus's **definition** —
 the name, description, root and filters it passes to `zikaron_knowledge_add`, of which
 `zikaron_knowledge_rename` changes the name alone, and the name and description come back on every
-search as the label on each group — plus a build's own metadata and the four search counters
+search as the label on each group — plus a build's own metadata and the search counters
 described under [Files and logs](#files-and-logs). The agent reaches them through
 `zikaron_knowledge_search` and a handful of management verbs — every tool name carries its
 subsystem, `zikaron_memory_*` or `zikaron_knowledge_*`, so a model choosing between the two stores
@@ -667,7 +668,8 @@ If a run ever seems stuck, ask again: a second invocation takes the abandoned ru
 Memory holds the **tribal** knowledge agents learned by working here. A **knowledge base** is the
 **institutional** half: a named, indexed corpus of text files the project already has — a docs tree,
 a directory of run books, a vendored dependency's documentation. The agent searches it and gets back
-fragments with line ranges, quoted verbatim, so it can read further or quote them as they stand.
+fragments with line ranges, quoted verbatim, so it can read further or quote them as they stand —
+the best few in full, and the rest by path and line range, to read when it wants them.
 
 Ask the agent to create one and it will, without leaving the session: *"index the docs directory as
 a knowledge base called design docs"*. It has tools to list, create, rename, refresh, inspect and
@@ -894,6 +896,7 @@ idle_timeout = 1800        # seconds of inactivity before the service stops itse
 | `retrieval` | `fts_query_max_terms` | `64` | 1–512 | the largest full-text query built from one prompt |
 | `retrieval` | `knowledge_max_chunks_per_file` | `2` | 1–20 | **knowledge bases:** how many fragments one file may contribute to a result set |
 | `retrieval` | `knowledge_snippet_max_chars` | `1200` | 80–24000 | **knowledge bases:** how much text a single returned fragment carries, counted in code points |
+| `retrieval` | `knowledge_whole_results` | `3` | 1–20 | **knowledge bases:** how many of each corpus's results come back as fragments; the rest are named by path, line range and how the file opens, for the agent to read when it wants them. 20 returns every result as a fragment |
 | `retrieval` | `knowledge_reminder_interval` | `300` | 0–86400 | **code knowledge, Claude Code:** seconds an agent goes unreminded after a search of a documented module reminds it; `0` reminds on every such search |
 | `dedup` | `dedup_threshold` | `0.8` | 0.0–1.0 | how similar a new record must be to be offered back as a near-duplicate |
 | `dedup` | `dedup_max` | `3` | 0–20 | how many near-duplicates are handed back at once |

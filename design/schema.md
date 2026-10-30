@@ -602,10 +602,12 @@ supersession_penalty   = 0.5
 retired_penalty        = 0.5
 supersession_max_depth = 32
 fts_query_max_terms    = 64
-# knowledge search only: how much of one file may fill a group, and how long a
-# returned fragment may be before it is cut at a line boundary
+# knowledge search only: how much of one file may fill a group, how long a
+# returned fragment may be before it is cut at a line boundary, and how many of
+# a group's results carry their fragment before the rest are named
 knowledge_max_chunks_per_file = 2
 knowledge_snippet_max_chars   = 1200
+knowledge_whole_results       = 3
 # seconds an agent's searches of documented modules go unreminded after a reminder
 knowledge_reminder_interval   = 300
 
@@ -647,6 +649,7 @@ signal_horizon_days = 30
 | `retrieval` | `fts_query_max_terms` | int | 1–512 | `64` | cap on quoted terms per lexical query (§Bounds, `retrieval.md` §"Query construction") |
 | `retrieval` | `knowledge_max_chunks_per_file` | int | 1–20 | `2` | how many chunks of one file may appear in one knowledge-search group (`knowledge-index.md` §7.3), so a single large document cannot fill it. Its **maximum** is the cap on that call's own `limit_per_kb`: above 20 the key could never bind, and a range admitting values that cannot take effect is a range that misleads |
 | `retrieval` | `knowledge_snippet_max_chars` | int | 80–24000 | `1200` | how long a returned fragment may be before it is cut at a line boundary and flagged (`knowledge-index.md` §8.3), counted in Unicode code points — which is why the **ceiling** is a sanity bound rather than a derivation: the response cap is in *bytes*, and 24,000 code points can be four times that many bytes, so this borrows that number as an order-of-magnitude limit past which a single snippet is undeliverable whatever the encoding. The **floor** still shows a line or two of context |
+| `retrieval` | `knowledge_whole_results` | int | 1–20 | `3` | how many of a knowledge-search group's results carry their fragment; the rest are named entries — path, line range and the file's opening — that a reader acts on by reading the file (`knowledge-index.md` §8.3). Its **maximum** is the cap on `limit_per_kb`, as `knowledge_max_chunks_per_file`'s is, and at 20 every result is whole, which turns naming off |
 | `retrieval` | `knowledge_reminder_interval` | seconds int | 0–86400 | `300` | after the hook reminds an agent that a search reached a documented module, how long that agent's next such searches go unreminded (`code-knowledge.md` §6); a user prompt ends it for the main session, and **0** reminds on every such search. The default is the operator's, set without a base rate; the ceiling bounds a typo rather than a use |
 | `dedup` | `dedup_threshold` | float | [0, 1] | `0.80` | floor on `s(new row → candidate)` for D15's advisory near-duplicate list |
 | `dedup` | `dedup_max` | int | 0–20 | `3` | how many near-duplicates `remember` hands back |

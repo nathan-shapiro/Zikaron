@@ -204,6 +204,16 @@ def _letters(state: dict[str, object]) -> dict[str, str]:
     return {str(arm): str(letter) for arm, letter in arms.items()}
 
 
+def _paging_ab(state: dict[str, object]) -> bool:
+    """Whether this preparation compares paged search with unpaged (M42): both arms read the
+    documents under the treatment's prompt, and the control's store returns every result whole."""
+    return state.get("mode") == "paging"
+
+
+def _reads_documents(state: dict[str, object], arm: str) -> bool:
+    return arm == "treatment" or _paging_ab(state)
+
+
 # --- the copies ---------------------------------------------------------------------------------
 
 
@@ -276,9 +286,18 @@ def _strip_install_and_store(copy: Path) -> None:
     settings.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
 
 
-def _provision(copy: Path, *, treatment: bool) -> None:
-    """A fresh store, and in the treatment the module's corpus registered and built (§5.2 step 6)."""
+def _provision(copy: Path, *, treatment: bool, unpaged: bool = False) -> None:
+    """A fresh store, and in the treatment the module's corpus registered and built (§5.2 step 6).
+
+    `unpaged` sets the store to return every search result whole, before the service that will
+    serve the corpus starts, since configuration is read once at startup.
+    """
     _zikaron("init", "--project", str(copy))
+    if unpaged:
+        _stop_service(copy)
+        (copy / ".zikaron" / "config.toml").write_text(
+            "[retrieval]\nknowledge_whole_results = 20\n", encoding="utf-8"
+        )
     if not treatment:
         return
     documents = copy / CORPUS
@@ -381,7 +400,7 @@ def _assert_package_unchanged(state: dict[str, object] | None) -> str:
     return head
 
 
-def prepare(layout: Layout, seed: int) -> None:
+def prepare(layout: Layout, seed: int, *, paging: bool = False) -> None:
     if layout.eval.exists():
         raise Refused(
             f"{layout.eval} exists: prepare starts from nothing — remove it first (the copies' "
@@ -428,7 +447,8 @@ def prepare(layout: Layout, seed: int) -> None:
     _assert_cut_off(t, pr_heads)
     c.parent.mkdir()
     _run(["cp", "-a", str(t), str(c)])
-    shutil.rmtree(c / "code-knowledge")
+    if not paging:
+        shutil.rmtree(c / "code-knowledge")
     _assert_cut_off(c, pr_heads)
     for copy in (t, c):
         _strip_install_and_store(copy)
@@ -436,11 +456,12 @@ def prepare(layout: Layout, seed: int) -> None:
         layout.pristine(letter).parent.mkdir(parents=True)
         _run(["cp", "-a", str(copy), str(layout.pristine(letter))])
     _provision(t, treatment=True)
-    _provision(c, treatment=False)
+    _provision(c, treatment=paging, unpaged=paging)
     entry = json.loads((layout.clone / ".mcp.json").read_text())["mcpServers"]["zikaron"]
     layout.mcp_config.write_text(json.dumps({"mcpServers": {"zikaron": entry}}, indent=2) + "\n")
     state = {
         "seed": seed,
+        "mode": "paging" if paging else "documents",
         "arms": {"treatment": treatment, "control": control},
         "zikaron_head": zikaron_head,
         "claude_binary": claude_binary,
@@ -464,7 +485,7 @@ def check(layout: Layout) -> None:
         copy = layout.copy(letter)
         _assert_cut_off(copy, pr_heads)
         _assert_tree(copy, baseline[letter], letter)
-        _assert_store(copy, treatment=arm == "treatment")
+        _assert_store(copy, treatment=_reads_documents(state, arm))
         _assert_no_auto_memory(copy)
     print("check: both copies cut off, at their baseline, and their stores as §7 requires")
 
@@ -766,7 +787,12 @@ def _restore_copy(layout: Layout, letter: str) -> None:
     _stop_service(copy)
     shutil.rmtree(copy)
     _run(["cp", "-a", str(layout.pristine(letter)), str(copy)])
-    _provision(copy, treatment=_letters(state)["treatment"] == letter)
+    arm = "treatment" if _letters(state)["treatment"] == letter else "control"
+    _provision(
+        copy,
+        treatment=_reads_documents(state, arm),
+        unpaged=_paging_ab(state) and arm == "control",
+    )
 
 
 # --- the timed runs ------------------------------------------------------------------------------
@@ -817,9 +843,9 @@ _NAVIGATION = TREATMENT_PROMPT[
 CONTROL_PROMPT = TREATMENT_PROMPT.replace(_NAVIGATION, "")
 
 
-def issue_prompt(arm: str, issue: dict[str, object]) -> str:
+def issue_prompt(arm: str, issue: dict[str, object], *, reads_documents: bool = False) -> str:
     """The arm's prompt with the issue filled in — by `replace`, since a body may hold braces."""
-    template = TREATMENT_PROMPT if arm == "treatment" else CONTROL_PROMPT
+    template = TREATMENT_PROMPT if arm == "treatment" or reads_documents else CONTROL_PROMPT
     return template.replace("{title}", str(issue["title"])).replace("{body}", str(issue["body"]))
 
 
@@ -1075,7 +1101,7 @@ def audit(
                 discards.append(f"{call.name} reached outside its copy: {token[:200]}")
             elif place == "outside":
                 outside.add(str(path))
-        if arm == "control":
+        if not _reads_documents(_load_state(layout), arm):
             seen = json.dumps(call.input) + (call.result or "")
             if "code-knowledge/" in seen:
                 discards.append(f"{call.name} saw a code-knowledge/ path")
@@ -1170,7 +1196,7 @@ def _unsettled(layout: Layout, state: dict[str, object], arm: str, letter: str) 
     if _baseline(copy) != baseline[letter]:
         reasons.append("HEAD or git status moved")
     try:
-        _assert_store(copy, treatment=arm == "treatment")
+        _assert_store(copy, treatment=_reads_documents(state, arm))
     except Refused as refused:
         reasons.append(str(refused))
     try:
@@ -1200,7 +1226,13 @@ def run_issue(
     names = {arm: f"r{repeat}-{number}-{arm}-{attempt}" for arm in letters}
     began = time.monotonic()
     processes = {
-        arm: _launch(layout, layout.copy(letter), issue_prompt(arm, issue), names[arm], budget)
+        arm: _launch(
+            layout,
+            layout.copy(letter),
+            issue_prompt(arm, issue, reads_documents=_reads_documents(state, arm)),
+            names[arm],
+            budget,
+        )
         for arm, letter in letters.items()
     }
     elapsed: dict[str, float] = {}
@@ -1266,7 +1298,11 @@ def _search_reminders(records: list[dict[str, object]]) -> int | None:
     `hook_additional_context` attachment, and the stream-json transcript does not; `None` when that
     file is gone."""
     session = next(
-        (r.get("session_id") for r in records if r.get("type") == "system" and r.get("subtype") == "init"),
+        (
+            r.get("session_id")
+            for r in records
+            if r.get("type") == "system" and r.get("subtype") == "init"
+        ),
         None,
     )
     found = sorted(Path.home().glob(f".claude/projects/*/{session}.jsonl")) if session else []
@@ -1303,7 +1339,11 @@ def analysis(layout: Layout, record: dict[str, object]) -> dict[str, object]:
     result = next((r for r in records if r.get("type") == "result"), None) or {}
     calls = _tool_calls(records)
     session = next(
-        (str(r["session_id"]) for r in records if r.get("type") == "system" and r.get("subtype") == "init"),
+        (
+            str(r["session_id"])
+            for r in records
+            if r.get("type") == "system" and r.get("subtype") == "init"
+        ),
         None,
     )
     checked = audit(calls, copy, layout, arm, session)
@@ -1885,7 +1925,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base", type=Path, default=Path.home() / "Zikaron-m40")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("prepare").add_argument("--seed", type=int, required=True)
+    preparing = commands.add_parser("prepare")
+    preparing.add_argument("--seed", type=int, required=True)
+    preparing.add_argument(
+        "--paging", action="store_true", help="both arms read the documents; the control unpaged"
+    )
     commands.add_parser("check")
     commands.add_parser("probe")
     commands.add_parser("install-hook")
@@ -1906,7 +1950,7 @@ def main() -> int:
     layout = Layout(args.base.expanduser().resolve())
     try:
         if args.command == "prepare":
-            prepare(layout, args.seed)
+            prepare(layout, args.seed, paging=args.paging)
         elif args.command == "check":
             check(layout)
         elif args.command == "probe":

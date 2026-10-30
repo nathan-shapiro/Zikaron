@@ -306,6 +306,14 @@ CONFIG_KEYS: Final[tuple[ConfigKey, ...]] = (
     ),
     ConfigKey(
         ConfigSection.RETRIEVAL,
+        "knowledge_whole_results",
+        # The maximum is the same per-corpus result cap as above: at 20 every result carries its
+        # snippet, which is what turns naming off.
+        IntBounds(1, 20),
+        3,
+    ),
+    ConfigKey(
+        ConfigSection.RETRIEVAL,
         "knowledge_reminder_interval",
         # How long after reminding an agent of a documented module its next such search goes
         # unreminded (`design/code-knowledge.md` §6); 0 reminds on every one. A day is far past any
