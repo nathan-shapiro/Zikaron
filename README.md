@@ -802,21 +802,26 @@ Zikaron's tools — the project's memory, which it may search and add to, and it
 which it may search, code knowledge's own excepted since a document there can be stale, and
 changes none of — and nothing else; it has no shell. Under Claude Code the background run's
 permission prompts appear in your session, naming the subagent asking: you are asked to approve the
-planner's command when it first runs — allow it for the session, or you are asked again at later
-batches — and the first document a documenter writes. Under auto mode, the interactive default
-since Claude Code 2.1.283, neither is put to you: the classifier decides the command, and an edit
-inside the project is approved outright. One run at a time in a session: a second request while a
-run is out waits, and your session starts it when the first run reports. A headless run asks nothing and so is refused unless you
-give it the permission up front: `--permission-mode bypassPermissions`, best kept to a copy of the
-project, or
-`--allowedTools` naming the planner command, the subagent tool, the file tools and `mcp__zikaron`,
-since a headless run in a folder you never trusted interactively does not read the install's own
-allow rule — and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a headless run that waits
-ten idle minutes on background work is stopped. **Under kiro your agent's rules decide what the
-orchestrator and its documenters may do**, since an agent your session spawns may do only what your
-session's rules allow, whatever its own say. So the agent you run needs `subagent` among its tools,
-to spawn the orchestrator, and allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over
-`./code-knowledge/**`; it need not hold `shell` or `write` as tools. Unless the `subagent` rule
+orchestrator's shell commands — the one it finds the project root with, then the planner's when it
+first runs; allow that for the session, or you are asked again at later batches — and each
+document a documenter writes, unless you allow edits for the session. Under auto mode, the
+interactive default since Claude Code 2.1.283, none is put to you: the classifier decides the
+commands, and an edit inside the project is approved outright. One run at a time in a session: a
+second request while a run is out waits, and your session starts it when the first run reports. A
+headless run asks nothing and so is refused unless you give it the permission up front:
+`--permission-mode bypassPermissions`, best kept to a copy of the project, or `--allowedTools`
+naming the planner command by the path the orchestrator runs it with —
+`Bash(<venv>/bin/zikaron code-knowledge plan:*)`, the `zikaron` beside the install's
+`zikaron-mcp`, never a bare `zikaron`, which it does not use — then `Bash(pwd:*)` and
+`Bash(cat:*)` — the orchestrator has found the project root with `pwd -P && cat .mcp.json` in
+every measured run, and a run without them writes nothing — `Agent`, `Skill`, the file tools
+`Read`, `Grep`, `Glob`, `Write` and `Edit`, and `mcp__zikaron`, since a headless run in a folder you never trusted interactively does not read the
+install's own allow rule — and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a headless
+run that waits ten idle minutes on background work is stopped. **Under kiro your agent's rules
+decide what the orchestrator and its documenters may do**, since an agent your session spawns may
+do only what your session's rules allow, whatever its own say. So the agent you run needs
+`subagent` among its tools, to spawn the orchestrator, and allow rules for `subagent`, `shell`,
+`fs_read`, and `fs_write` over `./code-knowledge/**`; it need not hold `shell` or `write` as tools. Unless the `subagent` rule
 covers `zikaron-code-orchestrator` and `zikaron-documenter` — one with no `match`, or a `match` naming
 them — you are asked before each spawn; without the `shell` rule, before each planner run; without
 the `fs_write` rule, before each document write, and a headless run writes none. The installer says

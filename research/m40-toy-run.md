@@ -644,14 +644,120 @@ that text.
 | issue, PR or bug wording | 145 hits in 42 documents, each an identifier, a constant or a source comment; the four issue numbers cited (9286, 9916, 11477, 13228) are all in the source |
 | claims in 15666's two truth files, `cli_agent.rs` and `cli_agent_sessions/listener/mod.rs`, against the code (an Opus 5.5 subagent, one finding re-checked by hand) | about 190 checked; 3 wrong, 1 unsupported, no invented issue or fix |
 
-**The wrong claims are of two kinds.** Two say no test pins a behavior that a test outside the
-file's own test module does pin — `from_harness` in `app/src/ui_components/agent_icon_tests.rs`,
-`supported_skill_providers` for `WarpTui` — so a *"no test covers"* line reads as broader than
-what the documenter searched. One vouches that a file's comments match its code when a trait
-comment names Codex alone and Grok shares the handler. The unsupported one cites a test as
-pinning a case it never builds.
+**The wrong claims are of three kinds.** One says no test pins a behavior that a test outside the
+file's own test module does pin — `from_harness`, in `app/src/ui_components/agent_icon_tests.rs`
+— so a *"no test covers"* line reads as broader than what the documenter searched. One says
+`supported_skill_providers` is pinned only for `Muse`, where the file's own
+`app/src/terminal/cli_agent_tests.rs` pins it for `WarpTui` too, at line 684: a test missed in a
+file the documenter found. One vouches that a file's comments match its code when a trait comment
+names Codex alone and Grok shares the handler. The unsupported one cites a test as pinning a case
+it never builds.
 
 Re-derive the format, path and wording checks with `.venv/bin/python
 experiments/m40_doc_sanity.py ~/Zikaron-m40/warp app/src/terminal
 ~/Zikaron-m40-archive/warp-code-knowledge-sonnet46`, and the cost from the stream's last `result`
 record's `modelUsage`.
+
+## 18. §17's two checked documents, two with no tests, and a module with inline tests, regenerated under M40-6's wording
+
+2026-10-30, by memory-researcher, for M40-6's done-when 2 (`design/build-plan.md` §M40-6). In a
+scratch copy of `~/Zikaron-m40/warp` at `b80b4e3e0`, with a fresh `.zikaron/` holding §17's
+`config.toml` and `zikaron init`, and this tree installed with `--components memory` and no
+`--model`, runs 1 to 4 removed the documents under test, so the planner listed those and nothing
+else: `cli_agent.rs`'s and `cli_agent_sessions/listener/mod.rs`'s in each, and in run 4 also
+`blockgrid_element.rs`'s and `input/inline_menu/message_bar.rs`'s — two sources with no test
+module, no sibling test file and no mention in any `*_tests.rs` under `app/src`. No non-test
+source of `app/src/terminal` holds its tests inside it — `ref_tests/mod.rs`, a test harness whose
+`#[test]`s a macro writes, is the one file with one outside a `*_tests.rs` — so run 5 documented
+`crates/warp_terminal/src/shell` whole: `mod.rs`, its `mod_tests.rs`, and `unescape.rs`, whose
+four tests are written inside it.
+Claude Code 2.1.308; the `-p` session on `claude-haiku-5-5`, the orchestrator on
+`claude-opus-5-5` at `high`, the documenters on `claude-haiku-5-5` at `medium`. Each run's stream
+`result` recorded $0.15 to $0.35.
+
+**The permission set.** Headless, with `--permission-mode acceptEdits` and `--allowedTools`
+naming the planner command (`Bash(<venv>/bin/zikaron code-knowledge plan:*)`), `mcp__zikaron`,
+`Agent`, `Skill`, `Read`, `Grep`, `Glob`, `Write` and `Edit`, the first run wrote nothing: the
+orchestrator's first call, `pwd -P && cat .mcp.json`, finding the project root and the install's
+`zikaron-mcp` path, was refused, and it reported that. With `Bash(pwd:*)` and `Bash(cat:*)` added,
+every later run went to `up_to_date` — runs 4 and 5 with `--allowedTools` alone and no
+`--permission-mode`, the form `README.md` and `design/code-knowledge.md` §5.2 give.
+
+**What the documents say of tests.** An absence is counted as a sentence of a Behavior section
+saying that a test does not cover, check, exercise or pin a behavior, or pins it only in part —
+*"No test in … covers"*, *"is not covered by any test in …"*, *"is checked in … only for
+WarpTui"*, *"none exercises `detect` without one"* — found by a search for those phrasings over
+each Behavior section, its two hits that are not absences, *"runs only for the `Claude` entry"*
+and *"is false only for `WarpTui`"*, struck by hand, and classed by hand by how each names the test
+file it is about: in runs 2 to 4 those of `cli_agent.rs`'s and `listener/mod.rs`'s documents, in
+run 5 those of `unescape.rs`'s, `mod.rs`'s and `mod_tests.rs`'s, whose one is *"The test checks the
+escape count only"*. Run 2's documents did not survive and were counted only by the sentences
+carrying *"no test"*, so its row is a lower bound; runs 3 to 5 were counted from the documents on
+disk.
+
+| Run, and its wording | Absences | The path from the root, in the sentence | A short name, or a file named earlier in the section | None — bare |
+|---|---|---|---|---|
+| 2: the build's first (*"say that of those tests, by their paths"*) | ≥ 16 | 0 | 10 — `cli_agent_tests.rs`, `listener/mod_tests.rs` | ≥ 6 |
+| 3: *"every sentence saying so names the test files it is about, by their paths from the root"*, the bare form named as never to write | 18 | 17 | 1 — *"No test covers that either"*, after a sentence naming the path | 0 |
+| 4: run 3's, and the read-none form below | 18 | 10 | 8 — *"no test there"* after the path; `mod_tests.rs` under a Behavior that opens with its path | 0 |
+| 5: the shipped — run 4's, the source's own path where its tests are inside it, and the read-none form for a source with no tests at all | 17 | 14 | 2 — *"`test_unescape_double_quotes` checks only the escaped forms"*, the test named; *"The test checks the escape count only"*, in the test file's own document | 1 — *"no test checks a bare `$` outside quotes"*, in a sentence naming a test in the source |
+
+**Done-when 2 is read as met**: across runs 3 to 5, one absence of 53 is bare, and every other is
+about a named file — by its path in the sentence, or by a short name or a reference to a path the
+same section gives. Done-when 2's wording does not demand the path in every sentence; the prompt's
+*every sentence* does, and it was met in 17 of 18, 10 of 18 and 14 of 17 — one run each, so no
+difference between them is claimed — and the shortfall is accepted because a reference to a path
+just given is not a claim about the project. **The rule stays per sentence all the same**: a
+search returns a chunk of at most 450 tokens, not the section (`design/knowledge-index.md` §4.3),
+so a reference form in a later chunk reaches a reader without its referent — the argument §4 of
+`design/code-knowledge.md` makes for dependency bullets. The read-none opener's place held in 1 of
+2; done-when 2 asks for the statement, not its place.
+
+**The read-none form**, run 4: `message_bar.rs`'s Behavior opens *"No test file was read for this
+file."*, as asked. `blockgrid_element.rs`'s says the same sentence as a later bullet, not first, and
+adds the search behind it — *"the search for `BlockGridElement` and `blockgrid_element` across
+`app/src` found no test file that names it"*. That is a third form of absence, which the prompt's
+Rules bullet, naming two, does not permit; it is true and about its own search rather than the
+project, so it is recorded as drift, not as a wrong claim. The documents §17 left for both said
+*"No test covers this"* of behavior after behavior, and `blockgrid_element.rs`'s *"No test file in
+the project was found that names this file"*.
+
+**Tests written inside the source**, run 5: `unescape.rs`'s Behavior opens *"The tests are written
+inside this file, so each behavior below names the test function that pins it"*, names a test for
+each pinned behavior, and scopes five of its six absences to
+`crates/warp_terminal/src/shell/unescape.rs`; the read-none opener appears in none of the three
+documents, each source having tests. `mod.rs`'s says it read `mod_tests.rs`'s test names and lines
+320 to 400, and scopes all nine of its absences to `crates/warp_terminal/src/shell/mod_tests.rs` —
+one of them that `supports_autocd`, among seven other functions, is *"not exercised by any test in
+`crates/warp_terminal/src/shell/mod_tests.rs`"*, which is true, where the project-wide form would
+have been false: `crates/warp_completer/src/completer/suggest/test.rs` calls `supports_autocd`
+eight times. Those nine rest on `mod_tests.rs`'s test names for its lines 1 to 319, not their
+bodies, so a file-scoped absence can still be wider than the read behind it, at a finer grain
+than the project-wide form was; each of the nine was checked by search and is true, and the form
+is not proof the file was read whole.
+
+Under runs 3 and 4, `cli_agent.rs`'s document says *"No test in
+`app/src/terminal/cli_agent_tests.rs` covers `from_harness`"*, which is true — the test is in
+`app/src/ui_components/agent_icon_tests.rs` — and makes no claim about `supported_skill_providers`'
+tests. Each of run 3's 17 scoped absences was checked by searching the named file for what it is
+about — `from_harness`, `build_diff_context_prompt`, the serialized names, `brand_icon_color`'s
+dark branch, the parse-failure path, an assignment prefix with no escape character, a backslash
+path or another case, overlapping prefixes, an assignment ahead of an alias word, a command such as
+`aifx agent run claudex`, an all-outdated batch, an empty hunk list; `new` and its panic, the two
+agent lists, `SessionStart` forwarding, trimming a non-empty body — and none is false. So were
+all 18 of run 4's, the eight reference forms with their referent resolved — `cli_agent.rs`'s
+against `app/src/terminal/cli_agent_tests.rs`, where `from_harness`, `telemetry_name`, `Hermes`,
+`Kiro` and `CLIAgent::Pi` occur nowhere, `skill_command_prefix` only for Grok and Muse, `.icon(`
+only for Grok, Muse and WarpTui, `brand_icon_color` only for WarpTui, and every
+`detect("aifx agent run claude", …)` after a `UserWorkspaces` mock; `listener/mod.rs`'s three
+against `app/src/terminal/cli_agent_sessions/listener/mod_tests.rs`, which never constructs
+`CLIAgentSessionListener` and passes `true` to `try_parse` only on the Codex and Grok handlers —
+and all 17 of run 5's, the bare one included: no test in `unescape.rs` passes a `$` outside quotes
+but as an ANSI-C opener.
+Seven documents across two modules are a small sample: the wording's effect across a module is
+unmeasured.
+
+`~/Zikaron-m40/warp`'s documents and databases are unchanged since 2026-10-22; reading its
+registry and corpus `meta` read-only left empty `-wal` and `-shm` files beside them. The runs'
+streams are `regen.jsonl` to `regen5.jsonl` in the session's scratch directory, which does not
+outlive it.

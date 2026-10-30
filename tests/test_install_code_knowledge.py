@@ -386,7 +386,15 @@ class TestThePromptCarriesTheSpecsRules:
             "never compute, retype or correct a hash",
             "A memory is a lead, never a source",
             "Each behavior says whether a test pins it",
-            "a behavior no test covers is written down all the same",
+            "A behavior no test you read covers is written down all the same",
+            "every sentence saying so names the test files it is about",
+            "by their paths from the root",
+            'never the bare *"No test covers this"*',
+            "the source's own path where its tests are written inside it",
+            "Where you read no test at all, neither in a file of its own nor inside the source",
+            "Behavior opens by saying so, once",
+            '*"No test file was read for this file."*',
+            "no behavior after it says anything of tests",
             "you do not judge whether a behavior is intended",
             "Check every path exists before you write the section, all of them in one search",
             "the path, never the dependency",
@@ -407,12 +415,22 @@ class TestThePromptCarriesTheSpecsRules:
             "The overview is written from `roles`",
             "Say how parts connect only as their documents state it",
             "Never write that a path or a name does not exist",
-            "the one absence a search may state is that no test covers a behavior",
+            "that no test in the files you read covers a behavior",
+            "What the harness attaches beside a tool result is not in the file",
+            "no answer reports it as a file's content",
             "when it is long, take samples spread across it",
         ],
     )
     def test_it_states(self, phrase: str) -> None:
         assert phrase in _flat(DOCUMENTER_PROMPT)
+
+    def test_no_sentence_asks_for_a_test_absence_over_the_whole_project(self) -> None:
+        """A documenter's search for tests finds some of them, so an absence it writes is about
+        the files it read (`research/m40-toy-run.md` §17). The bare form appears once, as what
+        never to write."""
+        prompt = _flat(DOCUMENTER_PROMPT).lower()
+        assert prompt.count("no test covers") == prompt.count('never the bare *"no test covers')
+        assert prompt.count("no test covers") == 1
 
     @pytest.mark.parametrize("label", _LABELS)
     def test_it_reads_the_labels_the_loop_writes(self, label: str) -> None:
