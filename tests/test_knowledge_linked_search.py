@@ -234,34 +234,43 @@ class TestOneBudgetForTheWholeSearch:
             for name in ("a", "b", "c")
         }
         async with _store(tmp_path, corpora) as (store_dir, db, config):
-            monkeypatch.setattr(source_hash, "LINK_HASH_TIMEOUT_SECONDS", 0.3)
+            # A budget of a second against a check blocked for ten, and another request at a tenth
+            # of one. The ceiling below is not corrected for lateness: a check run on the loop
+            # rather than on its own thread is a defect it must see, and would be lateness. So the
+            # margin is the defence — a search abandoning the check answers in about a second, one
+            # waiting for it in ten, and the ceiling sits at five.
+            monkeypatch.setattr(source_hash, "LINK_HASH_TIMEOUT_SECONDS", 1.0)
             real_check = source_hash._checked
             calls: list[str] = []
 
             def _check(root: Path, declared: str) -> object:
                 calls.append(declared)
                 if len(calls) == 2:
-                    time.sleep(1)
+                    time.sleep(10)
                 return real_check(root, declared)
 
             monkeypatch.setattr(source_hash, "_checked", _check)
-            other_answered_at: list[float] = []
+            answered_at: dict[str, float] = {}
+
+            async def _the_search() -> groups.SearchResponse:
+                found = await _search(store_dir, db, config, "linked")
+                answered_at["search"] = time.monotonic()
+                return found
 
             async def _another_request() -> None:
                 await asyncio.sleep(0.1)
                 await reporting.list_bases(store_dir, db, config, migrate=True)
-                other_answered_at.append(time.monotonic())
+                answered_at["other"] = time.monotonic()
 
             started = time.monotonic()
-            response, _ = await asyncio.gather(
-                _search(store_dir, db, config, "linked"), _another_request()
-            )
+            response, _ = await asyncio.gather(_the_search(), _another_request())
             searched_for = time.monotonic() - started
         results = _results(response)
         assert results["a/a.md"]["source"] == {"path": "src/fresh.py", "state": "fresh"}
         assert results["b/b.md"]["source"]["state"] == "unverifiable"  # type: ignore[index]
         assert results["c/c.md"]["source"]["state"] == "unverifiable"  # type: ignore[index]
         assert len(calls) == 2, "the corpus after the spent budget ran no check"
-        assert searched_for < 1, "the blocked check was abandoned at the budget"
-        assert other_answered_at
-        assert other_answered_at[0] - started < searched_for, "another request was answered"
+        assert searched_for < 5, f"the blocked check was not abandoned: {searched_for:.3f}s"
+        assert answered_at["other"] < answered_at["search"], (
+            "no other request was answered while the check was blocked"
+        )

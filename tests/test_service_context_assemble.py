@@ -344,7 +344,7 @@ async def test_assemble_releases_the_loader_when_the_store_cannot_be_opened(
         await ServiceContext.assemble(store_dir, config)
 
     assert loaders, "the load must have been started before the open was attempted"
-    loaders[0].join(timeout=2.0)
+    loaders[0].join(timeout=10.0)
     assert not loaders[0].is_alive(), (
         "the loader was left waiting for a width declaration that will never come"
     )

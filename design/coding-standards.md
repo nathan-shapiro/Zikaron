@@ -196,6 +196,35 @@ tests that make the design enforceable rather than aspirational; they are also w
 refactor confidently. If an invariant is genuinely untestable, say so in the test file and explain why —
 do not silently skip it.
 
+**A test may not bound wall-clock time with a ceiling a stall of the process can cross.** A loaded
+runner or a collection pause delays everything in the process at once, so an absolute ceiling on how
+long a request took is a verdict the machine can flip; one did, on `main`'s CI. A ceiling therefore
+takes one of three forms: it subtracts the lateness measured beside the request — `loop_lateness`
+or, for code with no event loop, `thread_lateness`, both in `tests/loop_lateness.py`, entered where
+the timing starts and left where it ends, since a stall outside the timed region is subtracted from
+it all the same — which is sound only where the wait under test runs off the loop or releases the
+GIL (a thread, a subprocess, an awaited timer), since a wait that blocks the loop is counted as
+lateness and a ceiling that subtracts it cannot see it; it bounds a difference between two
+measurements taken under one stall; or, where it only has to tell a fast path from a wait, it is a
+watchdog far below a wait made long on purpose — a budget of tens of seconds, a timeout of ten. A
+lower bound on elapsed time needs none of this, since a stall only lengthens what it bounds; a lower
+bound on how often the loop turned is a ceiling on its blockage, which a stall crosses, so it needs
+a margin a stall cannot eat.
+
+**Nor may a verdict rest on two timers' order** — a count of polls in a fixed sleep, a lock
+released by a timer set before the request it must still block, whether by `call_later` or a
+`threading.Timer` — since a stall makes both due at once and either may run first. Drive the one
+from the other, or wait for the event itself under a watchdog. A watchdog that catches only a hang
+is not this rule's concern once it is five seconds or more, over ten times the 0.3 s stall that
+failed `main`'s CI run 40891600850. Both rules reach a ceiling the test inherits from the code under
+test as well as one it writes: a timeout the code sets on an exchange the test is not about is
+lengthened by the test — as `conftest.generous_hook_deadlines` lengthens the hook's for every test
+whose hook connects to a live peer in this process, and `_generous_service_connect_timeout` beside
+it, autouse, lengthens `lifecycle`'s for every test — and a test whose premise is the real value,
+whether it tests the timeout or what the code does after it, sets the value it means.
+`experiments/stall_plugin.py` runs any test under stalls of the process, at a random phase per
+test, and is how a new timing test is checked against both rules.
+
 **Determinism gets asserted, not assumed.** Wherever the design requires a deterministic result —
 group ordering, tie-breaks, chunk boundaries, shard splits — a test runs the operation twice on the
 same input and asserts byte-identical output. "It was deterministic on my machine" is how ordering

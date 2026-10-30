@@ -23,6 +23,7 @@ import pytest
 
 from tests.contention_fixtures import call, error_of, external_writer
 from tests.fake_encoder import FakeEncoder
+from tests.loop_lateness import loop_lateness
 from tests.service_fixtures import open_context
 from zikaron.core.retrieval import reads
 from zikaron.core.retrieval.retrieve import retrieve as real_retrieve
@@ -72,11 +73,16 @@ def _slow_embed(encoder: FakeEncoder, seconds: float) -> None:
     encoder.embed = slow  # type: ignore[method-assign]
 
 
-async def test_an_ample_deadline_behaves_as_a_push_always_has(tmp_path: Path) -> None:
+async def test_an_ample_deadline_behaves_as_a_push_always_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Thirty seconds, so no stall of the process makes "ample" a deadline that passes; the
+    budget is raised only so the bounds check admits a deadline that far ahead."""
+    monkeypatch.setattr(ddl, "BUSY_TIMEOUT_MS", 60_000)
     async with open_context(tmp_path) as ctx:
         await _seeded(ctx)
         answered = await call(
-            ctx, "memory_surface", {"prompt": "proto", "deadline_at_ms": _deadline_in(3)}
+            ctx, "memory_surface", {"prompt": "proto", "deadline_at_ms": _deadline_in(30)}
         )
         assert error_of(answered) is None, answered
         assert await _surface_rows(ctx) == ["surface_call", "surface"]
@@ -96,13 +102,14 @@ async def test_a_writers_hold_past_the_deadline_answers_deadline_passed_and_comm
         await _seeded(ctx)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            started = time.monotonic()
-            answered = await call(
-                ctx, "memory_surface", {"prompt": "proto", "deadline_at_ms": _deadline_in(0.6)}
-            )
-            elapsed = time.monotonic() - started
+            async with loop_lateness() as lateness:
+                started = time.monotonic()
+                answered = await call(
+                    ctx, "memory_surface", {"prompt": "proto", "deadline_at_ms": _deadline_in(0.6)}
+                )
+                elapsed = time.monotonic() - started
         assert error_of(answered) == (_DEADLINE_PASSED, {"verb": "surface"}), answered
-        assert elapsed < 0.45, elapsed
+        assert elapsed - lateness.seconds < 0.45, (elapsed, lateness)
         assert await _surface_rows(ctx) == []
 
 

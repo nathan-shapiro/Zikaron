@@ -26,7 +26,6 @@ import pytest
 
 from zikaron.harness.spec import KIRO
 from zikaron.install import harness
-from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
 from zikaron.install.entries import Commands
 from zikaron.install.harness import (
     MINIMUM_VERSION,
@@ -311,8 +310,8 @@ class TestAgainstTheRealBinary:
         )
 
     def test_the_real_validator_accepts_the_configs_we_actually_ship(self, tmp_path: Path) -> None:
-        """The **real shipped artefacts**, the consolidator's and the documenter's, as
-        `KiroTarget.shipped_files` serializes them.
+        """The **real shipped artefacts**, the consolidator's, the documenter's and the
+        orchestrator's, as `KiroTarget.shipped_files` serializes them.
 
         A schema check and nothing more: `agent validate` passed the V2 profile V3 refuses
         (`research/kiro-v3-probe.md` §23), so whether V3 loads these is what a live run shows.
@@ -333,7 +332,7 @@ class TestAgainstTheRealBinary:
             commands=commands,
             consolidator_model=KIRO.consolidator_model,
             documenter_model=KIRO.documenter_model,
-            orchestrator_model=ORCHESTRATOR_MODEL,
+            orchestrator_model=KIRO.orchestrator_model,
             force=False,
             trust_tools=True,
         )
@@ -342,7 +341,7 @@ class TestAgainstTheRealBinary:
             for shipped in KiroTarget().shipped_files(plan)
             if shipped.path.suffix == ".json"
         ]
-        assert len(profiles) == 2
+        assert len(profiles) == len(("consolidator", "documenter", "orchestrator"))
         for shipped in profiles:
             config = tmp_path / shipped.path.name
             config.write_text(shipped.content, encoding="utf-8")

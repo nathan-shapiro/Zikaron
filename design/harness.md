@@ -59,39 +59,44 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Spawn trigger | `SessionStart`, which the payload names even for an entry configured with the camelCase `agentSpawn` (kiro-probe §3) | `SessionStart` (§2) |
 | Prompt trigger | `UserPromptSubmit` (kiro-probe §3) | `UserPromptSubmit` (§2) |
 | Prompt field | `prompt`, the whole prompt; the documented `USER_PROMPT` variable is empty (kiro-probe §3) | `prompt` (§2) |
-| Subagent triggers | none — and no hook fires for a subagent session at all: a child agent got neither a session-start nor a prompt hook (kiro-probe §12) | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3) |
+| Tool event payload | `hook_event_name`, `session_id`, `cwd`, `tool_name` — the tool id, `execute_bash` for the shell — and `tool_input` as a JSON object, the shell's carrying `command`, `description`, `cwd` (`null` in every call), `run_in_background` and `timeout`; a matcher naming the tool id selects that tool alone (kiro-probe §32, §48) | `hook_event_name`, `cwd`, `tool_name`, `tool_input` as an object, `scratchpad_dir` since 2.1.304, and `tool_response` after a call (`design/guards.md` §2) |
+| Subagent triggers | none — a subagent's own hooks never fire, so it gets neither a session-start nor a prompt hook, and its tool calls fire the root session's tool hooks, under the root's session id (kiro-probe §12, §38) | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3) |
 | Output channel, spawn/prompt | exit-0 stdout, reaching the model in a `HOOK_INSTRUCTION` block (kiro-probe §6) | exit-0 stdout (§5) |
 | Output channel, subagent | n/a | **`hookSpecificOutput.additionalContext` only** — plain stdout reaches nobody (§7b) |
-| Output channel, tool event | none measured: a `PostToolUse` hook's exit-0 stdout reached neither the model nor the run's event stream; its stderr on a non-zero exit, the one documented route, is unmeasured (kiro-probe §6) | **`hookSpecificOutput.additionalContext`** — plain stdout goes to the debug log alone (`tool-hook-probe`), measured reaching the main session and a subagent alike (`m40-4-hook-probes`) |
-| Injection budget | fixed **3,000 characters** on the spawn and prompt hooks alike, no field to raise it: neither spelling of an entry's size field moved it, and it counts characters rather than bytes — *which* kind is unmeasured, see §"Injection budgets" (kiro-probe §21) | fixed **10,000 characters**, no field to raise it — and *which* kind of character is now measured rather than inferred: see §"Injection budgets" (§5, §7a) |
+| Output channel, tool event | none after a call: no post-tool output reaches the model on any exit code — `PostToolUse` after a shell, write, search or MCP call, nor `PostFileCreate` or `PostFileSave` (kiro-probe §6, §35, §36). Before a call, a `PreToolUse` hook's exit 2 blocks it and its stderr reaches the model framed as a hook instruction, a 5,000-character stderr whole; exit 0 stdout and exit 1 stderr reach nobody, and exit 1 lets the call run (kiro-probe §33, §34) | **`hookSpecificOutput.additionalContext`** — plain stdout goes to the debug log alone (`tool-hook-probe`), measured reaching the main session and a subagent alike (`m40-4-hook-probes`) |
+| Injection budget | fixed **3,000 characters** per hook, on the spawn and prompt hooks alike, no field to raise it: neither spelling of an entry's size field moved it, it counts characters rather than bytes — *which* kind is unmeasured, see §"Injection budgets" — and two entries on one trigger each arrived whole just under it (kiro-probe §21, §49) | fixed **10,000 characters**, no field to raise it — and *which* kind of character is now measured rather than inferred: see §"Injection budgets" (§5, §7a) |
 | Overrun behaviour | cut, and marked `...[truncated]` to the model and to no one else (kiro-probe §21) | loud: notice + 2 KB preview + path to full text (§5) |
 | Subagent budget | n/a | `additionalContext` ≥12,000 characters, ceiling unmeasured (§7f) |
 | MCP server process scope | one per **agent instance**, a child of the agent server that also parents every hook; each launch had an agent server of its own, and two sessions in one TUI process were not run (kiro-probe §5, §18) | **one or more per session** — two observed starting, only one ever served — shared by subagents (§4, §7g) |
 | Harness binary | `kiro-cli`, release 2.35.1 or later on its V3 engine (kiro-probe §20) | `claude` |
 | Unknown model id | **replaced by a default**, as V3 documents it and **unmeasured** here: the TUI's first prompt can fail, and a headless run warns on stderr and continues, which is still a substitution — hence the install-time check (kiro-cli-v3-migration §9) | **refused at spawn**, loudly, before any turn (§7d) |
-| Shipped consolidator `model` | pinned `claude-sonnet-5`, which `--list-models` lists under `--v3` (kiro-probe §10); an alias would fail that check — *inferred*, not measured | the `sonnet` alias — *decided*, see §"The consolidator's model" |
-| Shipped documenter `model` | pinned `claude-sonnet-5`, the consolidator's — `--list-models` offered no Haiku 5.5 on 2026-10-20, and lists `claude-haiku-5.5` now (kiro-probe §10) | the `haiku` alias — *decided* (operator, 2026-10-20); Claude Code 2.1.304 serves it as `claude-haiku-5-5`, measured, where 2.1.292 resolved it to Haiku 4.5 — not pinned, since Haiku 5.5 is a month old and every Claude Code release from here resolves the alias to it (operator) |
+| Shipped consolidator `model` | pinned `claude-sonnet-5.5`, the model Claude Code's `sonnet` resolves to, which `--list-models` lists under `--v3` (kiro-probe §10); an alias would fail that check — *inferred*, not measured — see §"The consolidator's model" | the `sonnet` alias — *decided*, see §"The consolidator's model" |
+| Shipped documenter `model` | pinned `claude-haiku-5.5`, the model Claude Code's `haiku` resolves to, listed by `--list-models` (kiro-probe §10) | the `haiku` alias — *decided* (operator, 2026-10-20); Claude Code 2.1.304 serves it as `claude-haiku-5-5`, measured, where 2.1.292 resolved it to Haiku 4.5 — not pinned, since Haiku 5.5 is a month old and every Claude Code release from here resolves the alias to it (operator) |
+| Shipped orchestrator `model` | pinned `claude-opus-5.5`, the model Claude Code's `opus` resolves to, listed by `--list-models` (kiro-probe §10) | the `opus` alias — *decided* (operator, 2026-10-20), for following the documentation skill's spawn rules |
 | Hook timeout | `timeout`, **seconds**, documented default 60 (kiro-cli-v3-migration §2), stated explicitly in every entry | `timeout`, **seconds**, default **30 s on `UserPromptSubmit`** (600 s elsewhere), stated explicitly in every entry (`installer-probe` §2, §3) |
 | Hook timeout overrun | **unmeasured** under V3 | **silent** — output discarded, nothing on stderr, nothing in the result object (`installer-probe` §4) |
 | Hook `command` | `exec`, then the shell-quoted path: a shell command line, run as `sh` under the agent server, and `exec` makes the agent server the hook's own parent, as it is the MCP server's (kiro-probe §5, §13) | none prefixed — a **shell command line** too — an unquoted path containing a space does not run at all, so the path is shell-quoted and a start entry's `--components` is its arguments (`hook-command-shell-probe`) |
-| Guard hooks (`guards`) | none — not offered: a post-tool hook's output was measured not to reach the model (kiro-probe §6), so the installer refuses the guards here (guards §2) | `PreToolUse` matcher `Bash\|Monitor`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/guards.md` §5) |
+| Guard hooks (`guards`) | `PreToolUse` matcher `execute_bash`, the shell tool's id, which selects it and nothing else (kiro-probe §32, §48); no re-read hook, since no post-tool output reaches the model (kiro-probe §35, §36) | `PreToolUse` matcher `Bash\|Monitor`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/guards.md` §5) |
+| Guard deny (`guards.deny`) | **stderr** — exit 2, the reason on stderr and nothing on stdout, which blocks the call and reaches the model framed as a hook instruction; an accepted override prints nothing, since exit-0 output reaches nobody (kiro-probe §33, §34) | **envelope** — exit 0 with `hookSpecificOutput.permissionDecision: "deny"`, whose reason becomes the tool result, and `additionalContext` acknowledging an accepted override (`design/guards.md` §2) |
 | Search reminder (`search_reminder`) | none — a post-tool hook's output was measured not to reach the model (kiro-probe §6), so a memory install writes no reminder (kiro-gaps) | `PostToolUse`; files matcher `Grep\|Glob`, a handler for each of `Grep` and `Glob`; shell matcher `Bash`, a handler for each of `Bash(*grep *)` and `Bash(rg *)` — installed as one group whose matcher joins the two, each handler's filter a string, since a list is never matched (`m40-4-hook-probes`) |
 | MCP tool-call duration | a 330 s call **completed** under V3, with no `requestTimeout` on the server entry: the call returned `slept 330.0s` (kiro-probe §9) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
-| Consolidator tool grant | `tools: ["@zikaron"]` and one `mcp` rule over `zikaron/*` in the agent config, server registered in that same config; its `next_group` call succeeded headless under that rule alone (kiro-probe §17) | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) |
-| Over-large MCP tool result | **unmeasured** — no probe has observed what kiro does when a tool result exceeds what it will deliver, and nothing here infers one | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
+| Consolidator tool grant | `tools: ["@zikaron", "read"]`, an `mcp` rule over `zikaron/*`, an `fs_read` allow rule matching `./.zikaron/spill/**` and an `fs_read` deny rule excluding it, in the agent config, server registered in that same config; its `next_group` call succeeded headless under the `mcp` rule alone (kiro-probe §17), and the deny refused reads and searches outside the directory (kiro-probe §53, §55) | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) — and `Read` |
+| Over-large MCP tool result | at **30,000 characters** or more, replaced by a notice, the first and last 500 characters, and the path of a file under `~/.kiro/sessions/<hash>/<session id>/tool-outputs/` holding the whole; counted on the text block alone, so a result `zikaron-mcp` sends as text and again as structured content arrived intact at 29,500 (kiro-probe §40, §51) | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
 | MCP server start-up refusal (`zikaron-mcp` prints one line to stderr and exits 1) | **unmeasured** — no probe has recorded where kiro puts an MCP server's stderr, or whether a server that exits before serving is reported at all | **unmeasured** — same; `claude-code-harness-probe` §7g observed servers *starting*, never one that failed to |
-| Reading a spilled payload | **n/a** — no spill, no file-reading tool, no gate | **prompts**, measured in an operator-driven session: the consolidator's first `Read` of a spill file raises a permission request offering to allow that directory for the session. Deliberately **not** answered by `permissions.allow` — `Read` is unscopable in subagent frontmatter, so this is the one place D32's widening is a check an operator *answers* rather than prose (`m18-spill-end-to-end` §"The approval gate") |
+| Reading a spilled payload | no prompt where the session's rules allow `fs_read` over the store, as the `./**` rule `kiro-cli agent create` writes does (kiro-probe §22, §47), since a subagent's read is decided by the session's rules; an ask otherwise, which a headless run refuses (kiro-probe §28, §52, §54) | **prompts**, measured in an operator-driven session: the consolidator's first `Read` of a spill file raises a permission request offering to allow that directory for the session. Deliberately **not** answered by `permissions.allow` — `Read` is unscopable in subagent frontmatter, so this is the one place D32's widening is a check an operator *answers* rather than prose (`m18-spill-end-to-end` §"The approval gate") |
 | Documenter tool grant (`file_tools`) | `read`, `grep`, `glob`, `write`, then `@zikaron`, beside the config's own `mcpServers` entry for the primary server, with `fs_read`, `fs_write` and `mcp` rules: a hand-written profile carrying those loaded and ran headless, using `read_file`, `fs_write` and `str_replace` (kiro-probe §17). What the `grep` and `glob` selectors select is unmeasured, since V3's `read` covers searching too (kiro-cli-v3-migration §3) | `Read`, `Grep`, `Glob`, `Write`, `Edit` in the agent's frontmatter `tools:`, then `mcp__zikaron` — no shell, no spawn tool; `Edit` because a Haiku 5.5 documenter corrects its draft in place half the time (`design/code-knowledge.md` §5.1) |
-| Consolidator reads files | **no** — `consolidator_can_read_files=False`: no file-reading tool in the agent config, no spill, every payload returned inline, and no prompt text about files | **yes** — `Read` in the agent's frontmatter `tools:`, and the client writes an over-threshold consolidator result to a line-paginable file in the runtime directory, returning a pointer |
+| Consolidator reads files | **yes** — `read` in the agent config's `tools`, confined by its rules to the spill directory, and the client writes an over-threshold consolidator result to a line-paginable file there, returning a pointer; `read_file` pages a file by line offset, 30,000 characters a read (kiro-probe §41) | **yes** — `Read` in the agent's frontmatter `tools:`, and the client writes an over-threshold consolidator result to a line-paginable file in the runtime directory, returning a pointer |
+| Spill file location (`spill_location`) | **store** — the store directory's `spill/`, where the consolidator's own rules can name it, under a project its session's rules allow reading | **runtime** — the runtime directory beside the socket, shared by every store of the user |
+| Tool ids the model sees (`tool_ids`) | `read_file`, `str_replace`, `fs_write`, `execute_bash` — the read, edit, write and shell tools as a payload and a policy line name them (kiro-probe §7, §32), not the profile selectors `file_tools` holds | `Read`, `Edit`, `Write`, `Bash` |
 | Tool name the model sees | `zikaron::zikaron_memory_search`, the `<server>::<tool>` form behind `tool_load` (kiro-probe §7) | `mcp__zikaron__zikaron_memory_search` — byte-identical to the config form (`installer-probe` §6) |
 | Injected block placement | **after** the user message, in a `HOOK_INSTRUCTION` block (kiro-probe §6) | **after** the user message, no framing wrapper (§5) |
 | Hook config lives in | the agent profile's `hooks` array; kiro also reads standalone `.kiro/hooks/*.json` files, which this install does not write (kiro-probe §15) | `.claude/settings.local.json` — *decision, M15*: shipped `command`s are absolute venv paths and therefore machine-local, so they must not enter the checked-in `settings.json` layer, which would break every other clone |
 | MCP config lives in | the agent config's `mcpServers` field | `.mcp.json` (project-scoped) |
-| Approval gates | **two**: an interactive **trust screen** on a folder's first launch, before any of its agents, hooks or MCP servers load, whose answer is recorded outside the repository so no install can pre-answer it (kiro-cli-v3-migration §8; kiro-probe §30, §31); and a tool call no permission rule allows, which asks, a subagent's call needing a rule of its own and one of its parent's (kiro-probe §28) — headless, every ask is refused, so the install writes the rules (kiro-probe §17, §24). A headless run is not trust-gated | **three**, in order: folder trust (the *user's* own — the install's entries are read back at them there), MCP load, per-call; the install pre-answers the last two — measured, see §"Three approval gates" — **plus the spill-`Read` prompt, deliberately left live** (row above) |
+| Approval gates | **two**: an interactive **trust screen** on a folder's first launch, before any of its agents, hooks or MCP servers load, whose answer is recorded outside the repository so no install can pre-answer it, and whose decline exits kiro with no session (kiro-cli-v3-migration §8; kiro-probe §30, §31, §44); and a tool call no permission rule allows, which asks — a subagent's call allowed by the session's rules, less what any rule in the chain denies, its own allow rules adding nothing (kiro-probe §28, §52 to §56). Headless, every ask is refused, so the install writes the rules (kiro-probe §17, §24), and a headless run loads a workspace with no trust record (kiro-probe §43) | **three**, in order: folder trust (the *user's* own — the install's entries are read back at them there), MCP load, per-call; the install pre-answers the last two — measured, see §"Three approval gates" — **plus the spill-`Read` prompt, deliberately left live** (row above) |
 | Tool availability to the model | MCP tools are **deferred** behind `tool_load` and `tool_call`, a tool's description arriving in the `tool_load` result; the identity vocabulary the consolidator's prompt and both skills use was measured to work anyway (kiro-probe §7, §8, §11) | MCP tools may arrive **deferred**: present to the harness, absent from the model's initial tool list until it loads them *by exact name*. Measured (`dogfood-checkpoint` §2) |
 | Consolidator agent | `.kiro/agents/zikaron-consolidator.json` | `.claude/agents/zikaron-consolidator.md`, YAML frontmatter + prompt as body — frontmatter `tools:`/`model:` exercised by §6/§7c/§7d; the file layout itself is *documented* |
 | Skill | `.kiro/skills/zikaron-consolidate/SKILL.md` — **measured**: consolidation ran end to end through it under V3, spawning the consolidator on its own `--mode consolidator` server (kiro-probe §11) | `.claude/skills/zikaron-consolidate/SKILL.md` — **measured**: M16 drove it end to end, spawning the consolidator subagent (`dogfood-checkpoint` §7) |
-| Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, the skill run by the session that invoked it | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill has the session spawn in the background, its definition carrying the loop (`design/code-knowledge.md` §5.2, §5.4) |
+| Documenter agent and its skill | `.kiro/agents/zikaron-documenter.json`, `.kiro/skills/zikaron-document-code/SKILL.md`, and `.kiro/agents/zikaron-code-orchestrator.json`, the agent the skill has the session spawn and wait for, its prompt carrying the loop; a subagent spawns a subagent under V3 (kiro-probe §37) | `.claude/agents/zikaron-documenter.md`, `.claude/skills/zikaron-document-code/SKILL.md`, and `.claude/agents/zikaron-code-orchestrator.md`, the agent the skill has the session spawn in the background, its definition carrying the loop (`design/code-knowledge.md` §5.2, §5.4) |
 
 Trigger names normalize internally onto `HookEvent`'s members, each name to the one member it
 means: spawn and prompt under both harnesses, and under Claude Code alone the subagent start,
@@ -211,6 +216,14 @@ from its own. **So the MCP write path — the half named unguarded above — has
 named repair.** The resolver is deliberately not the place to invent one; the root cause is
 misdetection.
 
+**Two more consequences follow for a nested kiro session, and both are stated limits with no
+mechanism.** *The spill:* its consolidator's `zikaron-mcp` misdetects too, so `_spill_policy` writes an
+over-large group to the runtime directory, where the kiro consolidator's deny rule refuses its read, and
+that group stalls as it would with no spill. *The guard start text:* `zikaron-hook --components guards`
+prints the start text of the harness it detects, so a nested kiro session reads Claude Code's tool
+names in it (`design/guards.md` §7). The guard itself is immune, since it takes its harness from its
+command line, which the installer wrote for kiro (`design/guards.md` §5).
+
 **Marked, per this document's own rule: the inheritance mechanism is *unmeasured*, argued by construction
 from how environment variables descend.** What §1 *does* measure, and the honest evidence that outer-session
 values leak into nested trees, is a stale **`CLAUDE_PID`** — observed while the session variable itself was
@@ -225,13 +238,14 @@ prevents the shortfall from appearing, so this must not be claimed as observable
 
 **The tripwire's predicate is the suppression check's own.** The hook compares its payload's `session_id`
 with the resolved environment value — `hook/envelope.py::sessions_diverge` — and since neither harness fires
-a spawn or prompt hook for a subagent session (§3; kiro-probe §12), the two agree in every hook either
+a spawn or prompt hook for a subagent session (§3; kiro-probe §12, §38), the two agree in every hook either
 harness fires. So a divergence is a misdetection wherever it is seen. Therefore:
 
 - **The tripwire fires under both harnesses.** Payload-equals-environment is measured invariant under
-  Claude Code (§1) and under kiro's V3 engine (kiro-probe §4, §12). Should a V3 build ever fire a hook for a
-  subagent, the cost is one line per such turn with the push still suppressed — noise, not a push into the
-  consolidator.
+  Claude Code (§1) and under kiro's V3 engine (kiro-probe §4, §12), whose subagents' tool calls fire the
+  session's tool hooks under the session's own id (kiro-probe §38). Should a V3 build ever fire a start or
+  prompt hook for a subagent, the cost is one line per such turn with the push still suppressed — noise,
+  not a push into the consolidator.
 - It writes one line of kind **`session_env_mismatch`**, named so `hook.log`'s vocabulary stays closed.
 - **On that divergence the hook prints nothing and makes no RPC, and this is a decision rather than an accident.** Making no call is what delivers the rationale, not merely printing nothing: a push
   resolved under the stale label would be injected into — and counted against — a different, live session's
@@ -260,24 +274,40 @@ Separate sessions in separate terminals each get their own variable and never me
 door D32's push-suppression rule was built to guard: no push can inject retrieval into a consolidator's
 context, because no push fires there at all.
 
-- **No hook fires for a subagent under kiro either.** A child agent got no `SessionStart` and no
-  `UserPromptSubmit`, and its own tool call's `PreToolUse` carried the parent's session id in both the
-  payload and the environment (kiro-probe §12). So the divergence check `push.py` and `spawn_warm.py` run
-  is no subagent check under either harness: a divergence means the harness was misdetected, which the
-  tripwire records under both (§"The nesting limit"). That rests on one run of one build; should a V3 build
-  ever fire a hook for a subagent, the cost is one `session_env_mismatch` line per such turn, with the push
-  still suppressed.
+- **Under kiro a subagent's own hooks never fire, and its tool calls fire the root session's tool
+  hooks, under the root's session id** (kiro-probe §12, §38). A child agent got no `SessionStart` and no
+  `UserPromptSubmit`, from its own profile or the session's, and every tool call of a subagent and of
+  the subagent it spawned fired the session's `PreToolUse` and `PostToolUse`, carrying the session's id
+  in both the payload and the environment. So no session-start or prompt hook fires for a subagent, the
+  push and the policy never reach one by a hook, and the divergence check `push.py` and `spawn_warm.py`
+  run is no subagent check under either harness: a divergence means the harness was misdetected, which the
+  tripwire records under both (§"The nesting limit"). A subagent's tool hooks carry the root's id, so the
+  tripwire holds; should a V3 build ever fire a start or prompt hook for a subagent, the cost is one
+  `session_env_mismatch` line per such turn, with the push still suppressed. **A session's guard judges its
+  subagents' shell calls**, and its exit 2 blocks a subagent's call, the stderr reaching the subagent as
+  its tool result (kiro-probe §57), so Zikaron's subagent profiles carry no `hooks` of their own.
 - **Per-agent rules are exact here**, because `SubagentStart` and `SubagentStop` carry `agent_id` **and
-  `agent_type`**. kiro has no subagent trigger at all, so under kiro the write policy reaches no subagent —
-  a row of `design/kiro-gaps.md`.
-- **A kiro subagent gets only what its own rules and its parent's both allow** — the documentation's
-  "deny-wins intersection" (kiro-cli-v3-migration §4). Measured for writes: a documenter spawned under a
-  parent with no `fs_write` rule asked before each write and, headless, wrote nothing; under a parent
-  allowing `fs_write` over `./code-knowledge/**` it wrote (kiro-probe §28) — and for Zikaron's tools: a
-  consolidator spawned under a parent with no `mcp` rule, as `--no-trust-tools` leaves it, had each of its
-  `next_group` calls ask, headless refused, and the journal entry stayed where it was (kiro-probe §28). So
-  a shipped agent's own rules are necessary and not sufficient, and an interactive session puts a
-  subagent's question to the user (kiro-probe §30).
+  `agent_type`**. kiro has no subagent trigger at all, so under kiro the write policy reaches a subagent
+  only in its prompt: the install ends the documenter's and the orchestrator's prompts with
+  `SUBAGENT_WRITE_POLICY_PROMPT`, fixed at install, and a subagent of the user's own that holds the memory
+  verbs meets no policy — a row of `design/kiro-gaps.md`.
+- **A kiro subagent may do what the session's rules allow, less what any rule in the chain denies; its
+  own allow rules add nothing** (kiro-probe §28, §52 to §56). A child allowed to read one directory read
+  outside it under a session allowing every read (§52); the same child with a deny rule carrying
+  `exclude` was refused outside the excluded path (§53), for reads and for the search and listing tools
+  (§55); a session's `fs_write` rule decided a leaf's write two levels down, through a middle agent with
+  no rule of its own (§54); and a child with no rules did what the session allowed (§56). Measured for
+  Zikaron's agents: a documenter spawned under a session with no `fs_write` rule asked before each write
+  and, headless, wrote nothing, and one under a session allowing `fs_write` over `./code-knowledge/**`
+  wrote; a consolidator spawned under a session with no `mcp` rule, as `--no-trust-tools` leaves it, had
+  each of its `next_group` calls ask, headless refused, and the journal entry stayed where it was
+  (kiro-probe §28). **So a shipped agent's allow rules decide nothing for it spawned**, and decide only
+  where it runs as a session of its own; a deny in its profile does confine it, which is how the
+  consolidator's read is held to the spill directory (§"The consolidator's model" has its grant). An
+  interactive session puts a subagent's question to the user (kiro-probe §30).
+- **A kiro subagent spawns a subagent** (kiro-probe §37), so the code orchestrator runs under kiro too,
+  spawned by the session, which waits for it, and it spawns the documenters (`design/code-knowledge.md`
+  §5.2). `research/nested-subagent-probe.md`'s stripped `subagent` tool was V2's.
 
 **The write policy is delivered to subagents, precisely.** `SessionStart` fires once per session, so a
 subagent would otherwise inherit Zikaron's tools having never seen D30's policy. The rule is: inject the
@@ -303,9 +333,12 @@ the policy text sees it in both places.
 **`SessionStart` re-fires on resume** with `source: "resume"` (§7h), so the policy is re-injected. That is
 desirable rather than a defect — a resumed session may have lost it. If `source: "compact"` fires as
 documented (**unmeasured**), the policy is restored automatically after a compaction, which is exactly when
-it is most likely to have been dropped. Whether kiro's `SessionStart` re-fires on resume or after a
-compaction is unmeasured; its compaction keeps the session rather than forking one
-(kiro-cli-v3-migration §7).
+it is most likely to have been dropped. **Under kiro, `SessionStart` fires on neither, and the policy
+stays in context through both**: `--resume` kept the session id and fired only the prompt hook;
+`/compact` kept the session, its label and the policy, whose session-start output kiro stores as a record
+of its own, though the compaction summary does not carry it; and an interactive resume of the compacted
+session quoted the policy's first sentence (kiro-probe §42, §45, §46). Compaction did drop the loaded
+MCP tools, which the agent loaded again — kiro's behavior, not Zikaron's.
 
 ## Tool gating — D32 splits, and only one half ports
 
@@ -378,11 +411,21 @@ and that substitution is the *sole* reason the install-time `kiro-cli chat --lis
 exists. **So no install-time validation is needed under Claude
 Code** — the harness enforces no-silent-fallback itself.
 
-**Under Claude Code the shipped default is the `sonnet` alias; kiro keeps its pinned
-`claude-sonnet-5` and its install-time check, because an alias would fail `--list-models`. So this
-field *is* harness-varying data and has a table row — probe §7d's own closing inference that it was
-not is a probe-note conclusion the design deliberately did not adopt, for the reason below.
-Experiments pin, on both harnesses.** `architecture.md` §"The consolidator's model
+**Both harnesses run the same model for the same agent** (operator, 2026-10-29: *"We should make sure
+that both claude code and kiro use the same models for the same tasks, with only difference is that in
+claude code we use alises while in kiro we have to use a specific version because there are no aliases
+in kiro"*). **Under Claude Code each shipped default is an alias; under kiro it is kiro's id for the
+model that alias was measured to resolve to, pinned, with its install-time check, because an alias
+would fail `--list-models`.** Claude Code 2.1.306 and 2.1.308 resolve `sonnet` to `claude-sonnet-5-5`,
+`haiku` to `claude-haiku-5-5` and `opus` to `claude-opus-5-5` (`research/claude-code-alias-resolution.md`),
+so kiro ships the consolidator on `claude-sonnet-5.5`, the documenter on `claude-haiku-5.5` and the
+orchestrator on `claude-opus-5.5`, each listed by `--list-models` (kiro-probe §10) — kiro's spelling
+of each model, matched to Claude Code's resolved id by name, since the two lists spell one model
+differently and nothing but the name ties them. **No test can see what an alias resolves to**: when
+Claude Code moves an alias to a newer model, this section and the kiro ids are updated by hand, from
+a measured resolution. So each model *is* harness-varying data and
+has a table row — probe §7d's own closing inference that it was not is a probe-note conclusion the
+design deliberately did not adopt, for the reason below. **Experiments pin, on both harnesses.** `architecture.md` §"The consolidator's model
 is a shipped config field" requires the field to be **present explicitly** and to be **an id the harness
 accepts** — an alias satisfies both, so *no silent inheritance* holds (the field is written, not omitted) and
 *no silent fallback* holds (the harness serves exactly what was asked for). A third rule — *the value must be
@@ -405,13 +448,12 @@ id into the system prompt. It is the harness's own fact, read back by a model th
 be talked out of it, and putting it on a tool signature would reverse D27 to obtain a value the harness
 already holds.
 
-**The documenter's model is a field of its own**, `documenter_model`, with its own row in the table
-above, on the same terms: an alias under Claude Code, a pinned id under kiro, and set by
-`--documenter-model`, or by `--model` with every other agent (`design/code-knowledge.md` §5.1).
-**Claude Code's code orchestrator's is no `HarnessSpec` field**, since no other harness ships one:
-its default, the `opus` alias, sits beside its effort in its definition (§5.4 there), and
-`--orchestrator-model` sets it, or `--model`. The consolidator's is set by `--consolidator-model`,
-or by `--model` (§"The flags, and what each refuses").
+**The documenter's and the orchestrator's models are fields of their own**, `documenter_model` and
+`orchestrator_model`, each with its own row in the table above, on the same terms: an alias under
+Claude Code, the pinned id it resolves to under kiro, each checked against `--list-models` there, and
+set by `--documenter-model` and `--orchestrator-model`, or by `--model` with every other agent
+(`design/code-knowledge.md` §5.1). The consolidator's is set by `--consolidator-model`, or by `--model`
+(§"The flags, and what each refuses").
 
 ## Three approval gates, and the one that reads our own config back at the user
 
@@ -420,9 +462,11 @@ installer names was observable before, because a headless run approves everythin
 
 **A fourth interaction was added in M18 and is deliberately *not* pre-answered**: the consolidator's
 first `Read` of a spilled payload prompts, offering to allow that directory for the session. It is
-left live because a file-reading tool cannot be scoped to one path in subagent config, so the prompt
-is the only point at which that grant is put to the operator as a question — see the "Reading a
-spilled payload" row above and `research/m18-spill-end-to-end.md` §"The approval gate". So a default install **pre-answers two** and leaves
+left live because Claude Code cannot scope a file-reading tool to one path in subagent config, so the
+prompt is the only point at which that grant is put to the operator as a question — see the "Reading a
+spilled payload" row above and `research/m18-spill-end-to-end.md` §"The approval gate". kiro can scope
+one, by a deny rule in the subagent's own profile, which is how its consolidator's read is held to the
+spill directory ("Consolidator tool grant" above; kiro-probe §53, §55). So a default install **pre-answers two** and leaves
 two questions for a human: folder trust, once per directory, and the spill-`Read` prompt, once per
 consolidating session.
 
@@ -589,7 +633,11 @@ code units under both.
 
 **kiro's V3 engine cuts at 3,000 characters**, on `SessionStart` and `UserPromptSubmit` alike: 3,000
 arrived whole and 3,001 arrived ending in `...[truncated]`, and neither `maxOutputSize` nor
-`max_output_size` moved the cut (kiro-probe §21). It counts characters rather than bytes — 2,080
+`max_output_size` moved the cut (kiro-probe §21). **The cut is per hook, not per trigger**: two
+`SessionStart` entries of 2,902 and 2,904 characters both arrived whole (kiro-probe §49). So under
+`--components both` a kiro profile carries two start entries, the memory store's printing the write
+policy and the guards' printing the guard start text, each inside the cut, where one entry printing both
+would be cut (`design/guards.md` §5); a test asserts each entry's output against the budget. It counts characters rather than bytes — 2,080
 characters of `é`, 4,060 bytes, arrived whole. **Whether it counts code points or UTF-16 units is
 unmeasured**, since `é` lies in the Basic Multilingual Plane, where the two agree; the check counts units,
 the larger of the two, so it bounds either. **The cut is marked to the model and to no one else**: the
@@ -702,18 +750,26 @@ needs `--require-mcp-startup`, because kiro starts the first turn without waitin
 session wait, even one given its first prompt on the command line (kiro-probe §29), and a first turn without
 Zikaron's tools is expected there, as it is under Claude Code (operator, 2026-10-29).
 
-**Shipped outright:** `.kiro/agents/zikaron-consolidator.json` and `.kiro/agents/zikaron-documenter.json`,
-and the two skills. Neither agent carries a V2 trust field: `permissions.rules` allows what each needs — the
-consolidator one `mcp` rule over `zikaron/*`, the documenter `fs_read`, `fs_write` and the same `mcp` rule —
-whatever `--no-trust-tools` says, since headless V3 refuses every ask. Those rules are necessary and not
-sufficient: the profile spawning either agent must allow the same (§Subagents), which is why the primary's
-`mcp` rule matters to the consolidator and why the report names the documenter's file rules.
-The two are the profiles kiro-probe §17 ran headless, and `kiro-cli agent upgrade --dry-run` classifies them
-`v3-only` and `already universal`, neither "would upgrade" nor "out of sync" — the documenter's `tools`
-sorted, since in another order the upgrader calls it out of sync (kiro-probe §26), which
-`tests/test_install_kiro_live.py` checks against the real binary. Both skills name the
-subagent and the prompt and nothing else: V3 offers each subagent as a spawn tool of its own, with a prompt
-and an explanation as its parameters (kiro-probe §11).
+**Shipped outright, by a memory install:** `.kiro/agents/zikaron-consolidator.json`,
+`.kiro/agents/zikaron-documenter.json` and `.kiro/agents/zikaron-code-orchestrator.json`, and the two
+skills. No agent carries a V2 trust field: `permissions.rules` allows what each needs — the consolidator
+an `mcp` rule over `zikaron/*` and `fs_read` over `./.zikaron/spill/**`, with a deny excluding that
+directory; the documenter `fs_read`, `fs_write` and the same `mcp` rule; the orchestrator `fs_read`,
+`shell`, `subagent` and the `mcp` rule — whatever `--no-trust-tools` says, since headless V3 refuses every
+ask. Spawned, an agent's allow rules add nothing to the session's (§Subagents), so they decide only where
+it runs as a session of its own, which is why the primary's `mcp` rule matters to the consolidator and why
+the report names the rules the session needs. The documenter and the orchestrator carry `effortLevel`,
+`medium` and `high`, which kiro reads though it does not document it (kiro-probe §39), and their prompts
+end with the subagent write policy, since kiro has no subagent trigger to deliver it. `kiro-cli agent
+upgrade --dry-run` classifies the consolidator and the orchestrator `v3-only` and the documenter `already
+universal`, none "would upgrade" nor "out of sync" — `tools` sorted, since in another order the upgrader
+calls a profile holding `grep` or `glob` out of sync (kiro-probe §26) — which
+`tests/test_install_kiro_live.py` checks against the real binary. Both skills name the subagent and the
+prompt and nothing else: V3 offers each subagent as a spawn tool of its own, with a prompt and an
+explanation as its parameters (kiro-probe §11). The code documentation skill has the session spawn the
+orchestrator and wait for it, writing the arguments on the spawn prompt's second line itself, since kiro
+replaces `$ARGUMENTS` only for a skill invoked by its slash command (kiro-cli-v3-migration §5;
+`design/code-knowledge.md` §5.2).
 
 **Merged into the profile `--agent` names**, which the installer reads as one of three shapes, by predicates
 of its own rather than the upgrader's words (`zikaron/install/kiro_merge.py`):
@@ -724,15 +780,16 @@ of its own rather than the upgrader's words (`zikaron/install/kiro_merge.py`):
   `kiro-cli agent upgrade <dir>`: converting a user's trust settings is the harness's job.
 - **Universal** — `permissions` and `allowedTools` both, which is what `kiro-cli agent create` writes
   (kiro-probe §22). It gains `@zikaron` in `allowedTools` as well as the rules, and a non-empty
-  `availableAgents` gains both agents, so that a TUI rebuild of its V3 half from its V2 one — documented,
+  `availableAgents` gains Zikaron's three agents, so that a TUI rebuild of its V3 half from its V2 one — documented,
   and not triggered by a launch or a reselection in the one session measured (kiro-probe §30), so the
   install writes for it rather than relying on it — keeps Zikaron's grant.
 - **V3-only** — every other profile. It gains the rules alone, and its `toolsSettings` is neither read nor
   written.
 
-What every shape gains: the two hook entries in the array form, `exec '<hook>'` under `SessionStart` and
-`UserPromptSubmit`, with `timeout` in seconds and no size field; the `mcpServers` entry; `@zikaron` in
-`tools`, unless `tools` holds `*`; and, unless `--no-trust-tools`, the `mcp` rule and
+What every shape gains, from a memory install: the two hook entries in the array form, `exec '<hook>'`
+under `SessionStart` and `UserPromptSubmit`, with `timeout` in seconds and no size field; the
+`mcpServers` entry; `@zikaron` in `tools`, unless `tools` holds `*`; and, unless `--no-trust-tools`, the
+`mcp` rule and
 `{"capability": "skill", "effect": "allow"}` — the rule without which the tool that loads a skill asks and
 headless neither skill loads (kiro-probe §24), and the one the upgrader derives from a V2 profile. A rule
 already present is not added twice. An **object-format `hooks`** holding only Zikaron's entries is rewritten
@@ -742,11 +799,25 @@ meaning**, through a map from kiro's camelCase names to V3's, so a pre-V3 instal
 entries named `agentSpawn-0` and `userPromptSubmit-0` on camelCase triggers (kiro-probe §2) — is
 recognized and rewritten, not refused or doubled. A profile carrying a `kiroUpgrade` block, which
 `kiro-cli agent upgrade` and `kiro-cli agent create` both write, is out of sync after any such edit
-(kiro-probe §14), and the report says so. The grants of `subagent` and `shell`, which the skills
-need, and of `fs_read` and `fs_write`, which a spawned documenter needs from its parent, stay the user's
-decision (operator, 2026-10-29: *"We should have note, not grant permissions automatically"*), and the
-report names each rule they take — the write rule scoped to `./code-knowledge/**`, the planner's default
-documents directory (kiro-probe §28).
+(kiro-probe §14), and the report says so. The grants the session's rules must carry for Zikaron's
+spawned agents stay the user's decision (operator, 2026-10-29: *"We should have note, not grant
+permissions automatically"*), and the report names each rule they take: `subagent`, in `tools` and as
+a rule, for the skills to spawn the consolidator and the orchestrator and for the orchestrator's
+documenters; `shell` as a rule, for the orchestrator's planner, with no need for `shell` in `tools`;
+`fs_read`, for each documenter's sources and the consolidator's spilled groups; and `fs_write` scoped to
+`./code-knowledge/**`, the planner's default documents directory (kiro-probe §28, §54).
+
+**A guards install writes hook entries into the profile and nothing else** (`design/guards.md` §5):
+`zikaron-guards-SessionStart`, running `exec '<hook>' --components guards` to print the guard start
+text, and `zikaron-guards-PreToolUse`, running `exec '<guard>' --harness kiro` with the matcher
+`execute_bash` and the guard's own `timeout`. No agent, no skill, no `mcpServers` entry and no rule, and
+none of the memory install's notes; without `--agent` it is refused, unless `--print-only`, since it
+would write nothing and exit 0. **Ownership is per selection**: an entry is a selection's when its
+reserved `name` is one the selection writes, or when its command, read past `exec`, runs a program of
+the file name the selection writes on that trigger with the arguments it writes there — so the memory
+store's `zikaron-hook` and the guards' `zikaron-hook --components guards` on `SessionStart` are told
+apart — and an install replaces its own selection's entries, refuses one at another program path as
+another install's unless `--force`, and keeps the other selection's untouched.
 
 ### What a Claude Code install writes
 
@@ -793,8 +864,9 @@ and the search reminder.** `hook/main.py`'s dispatch falls through to `subagent_
 `SubagentStart`, routed to the `additionalContext` channel, as the reminder's `PostToolUse` is.
 Registering only the triggers kiro has would leave both paths dead with nothing anywhere failing: no
 error, no log line, just subagents that never receive the write policy and searches never reminded.
-kiro has no subagent trigger and fires no hook for a subagent (kiro-probe §12), so it has no analogue of
-the first, and its subagents get no policy — a row of `design/kiro-gaps.md`.
+kiro has no subagent trigger, and a subagent's own hooks never fire (kiro-probe §12, §38), so it has no
+analogue of the first: Zikaron's two code-knowledge agents carry the policy in their prompts, and a
+subagent of the user's own gets none — a row of `design/kiro-gaps.md`.
 
 **The timeout is stated in seconds, as both harnesses' entries now state it** (measured for Claude Code,
 `installer-probe` §2; documented for kiro, kiro-cli-v3-migration §2). A millisecond figure in that field
@@ -808,21 +880,19 @@ to start — is derived from the stated value, not from either default.
 
 ### The flags, and what each refuses
 
-- **`--components` is Claude Code's for the guards.** `memory` is the default and writes what an
-  install wrote before the flag existed. `guards` and `both` are **refused** under kiro, before
-  anything is written, and the refusal is read from the seam — `HarnessSpec.guards` is `None`
-  there — never from the harness's name. Every model flag under `guards` is refused too, since
-  that selection ships no agent; `--no-trust-tools` asks nothing of the guards and is a no-op.
+- **`--components` selects the memory store, the guards or both, on either harness.** `memory` is
+  the default and writes what an install wrote before the flag existed. A harness whose
+  `HarnessSpec.guards` is `None` would refuse `guards` and `both` before anything is written — the
+  refusal is read from the seam, never from the harness's name — and both harnesses offer them.
+  Under kiro a guards-only install needs `--agent`, unless `--print-only`. Every model flag under
+  `guards` is refused too, since that selection ships no agent and checks no model;
+  `--no-trust-tools` asks nothing of the guards and is a no-op.
 - **`--model` sets every agent, and an agent's own flag sets that agent alone, over `--model`** —
   `--consolidator-model`, `--documenter-model` and `--orchestrator-model`; with neither, each agent
-  takes its own default. **`--orchestrator-model` is refused under a target that ships no
-  orchestrator**, kiro's, where the session that invokes the documentation skill runs its loop
-  itself — refused rather than ignored, as `--agent` is under Claude Code, and read from the
-  target's `ships_orchestrator`, never from the harness's name. `--model` stays accepted there,
-  since it sets two agents. **A model id is the harness's own** — one `kiro-cli chat --list-models`
+  takes its own default. **A model id is the harness's own** — one `kiro-cli chat --list-models`
   lists, or a Claude Code alias or full id — so a project set up for both harnesses installs twice,
   each run with that harness's ids. Each distinct model an install writes is checked once against
-  its harness.
+  its harness, all three agents' under kiro.
 - **`--agent` is kiro-only.** It names the config to merge into, and Claude Code has no such thing — its two
   merge targets are fixed project paths. Passed under Claude Code it is **refused**, rather than ignored:
   ignoring it would silently discard the one instruction the user gave about where their config lives.

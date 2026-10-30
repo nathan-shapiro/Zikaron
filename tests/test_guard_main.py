@@ -1,8 +1,10 @@
-"""`zikaron-guard`'s dispatch, its override output, its tool filters and its fail-open rule.
+"""`zikaron-guard`'s dispatch, its override output, its tool filters and its fail-open rule, on
+both harnesses.
 
 `design/guards.md` §3.4 (the override withdraws the deny and grants nothing), §5 (the tool
 sets are the spec field's matchers), §6 (every failure is an allow, silently) and §9 (the
-platform the self-match rule reads is the process's own).
+platform the self-match rule reads is the process's own). Under kiro a deny is exit 2 with the
+reason on stderr, and nothing else reaches the model (`design/harness.md` §"The table").
 """
 
 import io
@@ -11,17 +13,26 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from zikaron.guard import decision, main, messages
 from zikaron.guard.forms import FormMatch
 from zikaron.guard.scratch import Location
-from zikaron.harness.spec import CLAUDE_CODE, GuardHook, Guards
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, GuardHook, Guards, HarnessSpec
 
-GUARDS = CLAUDE_CODE.guards
+
+def _guards(spec: HarnessSpec) -> Guards:
+    assert spec.guards is not None
+    return spec.guards
+
+
+GUARDS: Final = _guards(CLAUDE_CODE)
+KIRO_GUARDS: Final = _guards(KIRO)
 DENIED = "sed -i 's/a/b/' f"
 SELF_MATCHING = "pkill -f month_monitor.py"
+OVERRIDDEN = f"{DENIED} #ZIKARON-FORCE #Reason: regenerate golden file"
 
 
 def _pre_tool_use(command: object = DENIED, **overrides: object) -> dict[str, object]:
@@ -35,11 +46,29 @@ def _pre_tool_use(command: object = DENIED, **overrides: object) -> dict[str, ob
     return payload
 
 
-def _envelope(payload: object, guards: Guards | None = GUARDS) -> dict[str, object] | None:
-    output = main.respond(json.dumps(payload), tmpdir=None, platform="linux", guards=guards)
+def _kiro_pre_tool_use(command: object = DENIED) -> dict[str, object]:
+    """The shell tool's payload as kiro sends it (`research/kiro-v3-probe.md` §32)."""
+    return {
+        "hook_event_name": "PreToolUse",
+        "session_id": "sess_x",
+        "tool_name": "execute_bash",
+        "cwd": "/home/u/proj",
+        "tool_input": {
+            "command": command,
+            "description": "d",
+            "cwd": None,
+            "run_in_background": False,
+            "timeout": None,
+        },
+    }
+
+
+def _envelope(payload: object, spec: HarnessSpec = CLAUDE_CODE) -> dict[str, object] | None:
+    output = main.respond(json.dumps(payload), tmpdir=None, platform="linux", spec=spec)
     if output is None:
         return None
-    envelope = json.loads(output)["hookSpecificOutput"]
+    assert (output.stderr, output.exit_code) == ("", 0)
+    envelope = json.loads(output.stdout)["hookSpecificOutput"]
     assert isinstance(envelope, dict)
     return envelope
 
@@ -141,20 +170,77 @@ def test_post_tool_use_nudges_only_the_four_edit_tools(tool: object) -> None:
 
 
 def test_the_tool_sets_are_the_spec_fields_matchers() -> None:
-    assert GUARDS is not None
+    assert GUARDS.reread is not None
     assert GUARDS.command.tools == frozenset({"Bash", "Monitor"})
     assert GUARDS.reread.tools == frozenset({"Edit", "MultiEdit", "NotebookEdit", "Write"})
     widened = GUARDS._replace(command=GuardHook("PreToolUse", "Bash|Grep"))
-    assert _envelope(_pre_tool_use(tool_name="Grep"), guards=widened) is not None
+    spec = CLAUDE_CODE._replace(guards=widened)
+    assert _envelope(_pre_tool_use(tool_name="Grep"), spec=spec) is not None
 
 
-@pytest.mark.parametrize("hook", [GUARDS.command, GUARDS.reread] if GUARDS else [])
+@pytest.mark.parametrize(
+    "hook", [hook for hook in (GUARDS.command, GUARDS.reread) if hook is not None]
+)
 def test_each_matcher_is_a_bar_joined_list_of_bare_tool_names(hook: GuardHook) -> None:
     assert all(name.isalpha() and name[0].isupper() for name in hook.matcher.split("|"))
 
 
 def test_a_harness_without_guards_produces_nothing() -> None:
-    assert _envelope(_pre_tool_use(), guards=None) is None
+    assert _envelope(_pre_tool_use(), spec=CLAUDE_CODE._replace(guards=None)) is None
+
+
+class TestUnderKiro:
+    """A deny is exit 2 with its reason on stderr and nothing on stdout; nothing printed on exit 0
+    reaches the model, so an accepted override says nothing (`research/kiro-v3-probe.md` §33,
+    §34)."""
+
+    @staticmethod
+    def _respond(payload: object) -> main.HookOutput | None:
+        return main.respond(json.dumps(payload), tmpdir=None, platform="linux", spec=KIRO)
+
+    def test_a_real_shape_shell_payload_is_judged_and_denied_on_stderr(self) -> None:
+        output = self._respond(_kiro_pre_tool_use())
+        assert output is not None
+        assert (output.stdout, output.exit_code) == ("", 2)
+        assert output.stderr.startswith("Zikaron's find-replace guard refused this command:")
+        assert "edited with read_file then str_replace, or with fs_write" in output.stderr
+        assert output.stderr.endswith(messages.UNACKNOWLEDGED_CLAUSE)
+
+    def test_the_self_match_deny_names_kiro_and_goes_out_on_stderr(self) -> None:
+        output = self._respond(_kiro_pre_tool_use(SELF_MATCHING))
+        assert output is not None
+        assert output.exit_code == 2
+        assert "because kiro-cli runs each command inside a shell" in output.stderr
+
+    def test_an_accepted_override_prints_nothing(self) -> None:
+        assert self._respond(_kiro_pre_tool_use(OVERRIDDEN)) is None
+
+    def test_the_shell_tool_is_matched_by_its_id(self) -> None:
+        """The payload names the tool `execute_bash`; a matcher written as the selector `shell`
+        would match no payload, and the guard would judge nothing."""
+        assert KIRO_GUARDS.command.tools == frozenset({"execute_bash"})
+        assert self._respond({**_kiro_pre_tool_use(), "tool_name": "shell"}) is None
+        assert self._respond({**_kiro_pre_tool_use(), "tool_name": "Bash"}) is None
+
+    def test_a_post_tool_payload_produces_nothing_since_there_is_no_re_read_hook(self) -> None:
+        assert KIRO_GUARDS.reread is None
+        payload = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "str_replace",
+            "cwd": "/home/u/proj",
+            "tool_input": {"path": "/home/u/proj/a.md"},
+        }
+        assert self._respond(payload) is None
+
+    def test_tool_input_cwd_is_not_read(self) -> None:
+        """Judged against the payload's `cwd`, since `tool_input.cwd` was never seen set."""
+        payload = _kiro_pre_tool_use()
+        tool_input = payload["tool_input"]
+        assert isinstance(tool_input, dict)
+        tool_input["cwd"] = "/tmp"  # noqa: S108 — payload text, never opened
+        output = self._respond(payload)
+        assert output is not None
+        assert "it names `/home/u/proj/f`" in output.stderr
 
 
 @pytest.mark.parametrize(
@@ -177,30 +263,85 @@ def test_a_payload_missing_what_the_rule_needs_produces_nothing(payload: object)
 
 
 def _run_main(
-    stdin: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    stdin: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    *arguments: str,
+    status: int = 0,
 ) -> str:
+    """`main` with `arguments` on its command line; what it wrote to stdout, its exit status
+    asserted. Anything on stderr is asserted absent where the status is 0."""
     monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    monkeypatch.setattr("sys.argv", ["zikaron-guard", *arguments])
     with pytest.raises(SystemExit) as exit_info:
         main.main()
-    assert exit_info.value.code == 0
-    return capsys.readouterr().out
+    assert exit_info.value.code == status
+    captured = capsys.readouterr()
+    if status == 0:
+        assert captured.err == ""
+        return captured.out
+    assert captured.out == ""
+    return captured.err
 
 
 @pytest.mark.parametrize("stdin", ["", "{", "not json", "null", "[1, 2]"])
+@pytest.mark.parametrize("arguments", [(), ("--harness", "kiro")], ids=["claude-code", "kiro"])
 def test_malformed_stdin_exits_zero_with_no_output(
-    stdin: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    stdin: str,
+    arguments: tuple[str, ...],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert _run_main(stdin, capsys, monkeypatch) == ""
+    assert _run_main(stdin, capsys, monkeypatch, *arguments) == ""
 
 
+@pytest.mark.parametrize(
+    ("payload", "arguments"),
+    [(_pre_tool_use(), ()), (_kiro_pre_tool_use(), ("--harness", "kiro"))],
+    ids=["claude-code", "kiro"],
+)
 def test_an_exception_inside_a_rule_exits_zero_with_no_output(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    payload: dict[str, object],
+    arguments: tuple[str, ...],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Under kiro too: exit 2 on a defect would block a call for a reason not the agent's, and
+    exit 0 is what kiro gives a crashed hook anyway (`research/kiro-v3-probe.md` §34)."""
+
     def broken(*_: object) -> decision.Decision:
         raise RuntimeError("a defect in a rule")
 
     monkeypatch.setattr(main, "decide", broken)
-    assert _run_main(json.dumps(_pre_tool_use()), capsys, monkeypatch) == ""
+    assert _run_main(json.dumps(payload), capsys, monkeypatch, *arguments) == ""
+
+
+class TestTheHarnessIsTheCommandLines:
+    """The installer knows which harness's file it writes; the environment can lie, since a kiro
+    launched from Claude Code inherits `CLAUDECODE` (`design/harness.md` §"The nesting limit")."""
+
+    def test_harness_kiro_denies_on_stderr_whatever_the_environment_says(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert CLAUDE_CODE.marker_variable is not None
+        monkeypatch.setenv(CLAUDE_CODE.marker_variable, "1")
+        stdin = json.dumps(_kiro_pre_tool_use())
+        reason = _run_main(stdin, capsys, monkeypatch, "--harness", "kiro", status=2)
+        assert reason.startswith("Zikaron's find-replace guard refused this command:")
+
+    def test_no_argument_is_claude_code_whatever_the_environment_says(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert CLAUDE_CODE.marker_variable is not None
+        monkeypatch.delenv(CLAUDE_CODE.marker_variable, raising=False)
+        output = _run_main(json.dumps(_pre_tool_use()), capsys, monkeypatch)
+        assert json.loads(output)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_an_accepted_override_under_kiro_exits_zero_saying_nothing(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stdin = json.dumps(_kiro_pre_tool_use(OVERRIDDEN))
+        assert _run_main(stdin, capsys, monkeypatch, "--harness", "kiro") == ""
 
 
 def test_an_exception_inside_the_self_match_rule_exits_zero_with_no_output(
@@ -256,10 +397,11 @@ class TestTheRealProcess:
     exit 0."""
 
     @staticmethod
-    def _run(stdin: str) -> subprocess.CompletedProcess[str]:
+    def _run(stdin: str, *arguments: str) -> subprocess.CompletedProcess[str]:
         environment = {k: v for k, v in os.environ.items() if k != "CLAUDE_JOB_DIR"}
-        return subprocess.run(
-            [sys.executable, "-c", "from zikaron.guard.main import main; main()"],
+        script = "import sys; from zikaron.guard.main import main; main()"
+        return subprocess.run(  # noqa: S603 — this interpreter and a fixed script.
+            [sys.executable, "-c", script, *arguments],
             input=stdin,
             capture_output=True,
             text=True,
@@ -273,6 +415,11 @@ class TestTheRealProcess:
         assert result.returncode == 0
         assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert result.stderr == ""
+
+    def test_under_kiro_a_deny_exits_2_with_the_reason_on_stderr(self) -> None:
+        result = self._run(json.dumps(_kiro_pre_tool_use()), "--harness", "kiro")
+        assert (result.returncode, result.stdout) == (2, "")
+        assert result.stderr.startswith("Zikaron's find-replace guard refused this command:")
 
     def test_a_self_match_deny_reaches_stdout(self) -> None:
         """`-af` matches its shell on both supported platforms, so this holds on either."""

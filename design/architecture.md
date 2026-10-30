@@ -176,8 +176,9 @@ label by matching `/proc` ancestor chains against registrations the hook publish
 *the harness exports nothing to the MCP process*. ~~Measured 2026-08-01, the case did not arise: `KIRO_SESSION_ID`
 was in the environment of every child kiro spawned, live MCP server processes included, and inside a subagent's
 hooks the payload carried the subagent's own id while the variable carried the top-level one.~~ **Under kiro's V3
-engine the case arises** (`research/kiro-v3-probe.md` §4, §12): the variable reaches every hook, equal to its
-payload's `session_id`, and no MCP server — and no hook fires for a subagent at all. The answer is not the
+engine the case arises** (`research/kiro-v3-probe.md` §4, §12, §38): the variable reaches every hook, equal to its
+payload's `session_id`, and no MCP server — and a subagent's own hooks never fire, its tool calls firing the
+session's tool hooks under the session's id. The answer is not the
 derived rung back. The MCP server and the hook are both children of kiro's agent server, so the hook relays its
 label in a file named for that parent, and the MCP client reads the file named for its own
 (`design/harness.md` §"The session relay"). No derivation, no registry and no matching, only a parent pid.
@@ -651,7 +652,8 @@ draft of this document gave only to the socket.
 | `/tmp/zikaron-<uid>/` | 0700 | **validated before use**, not merely created |
 | `<h>.sock` | 0600 | |
 | `<h>.sock.lock`, `<h>.sock.service` | 0600 | the start-if-absent lock clients hold, and the one the serving service holds; the second names its holder's pid and nothing else (§"Start-if-absent, without a thundering herd") |
-| `<store-hash>-<method>-<pid>-<random>.json` | **0600** | a consolidator tool result too large for the harness to deliver, written beside the socket, led by the same hash that names this store's socket so one store's files are findable among every store's, and named in a pointer the model reads back. Removed when the next group is requested, and any left by a dead process are swept when the next consolidator starts — **not** on this process's exit, which a harness terminating its MCP server never reaches. **Record prose verbatim, outside the store and outside the log rules** — so the erasure procedure names this directory, and the file is created through `os.open` with the mode supplied rather than written and then `chmod`-ed, since the window between those two is one in which that prose sits at the process umask |
+| `spill/` | **0700**, its files **0600** | under kiro, where a consolidator tool result too large to deliver is written (§"A result too large to deliver"): created by `spill._write` at `0700`, under a `.zikaron/` the service keeps at 0700 (`ensure_store_dir`), and its files released and swept as the runtime directory's are (next row). `mkdir(exist_ok=True)` does not tighten a `spill/` found wider, which the 0700 parent makes harmless. Record prose verbatim, as `memory.db` already holds it, so deleting `.zikaron/` reaches it, and the erasure procedure names it |
+| `<store-hash>-<method>-<pid>-<random>.json` | **0600** | a consolidator tool result too large for the harness to deliver, written beside the socket under Claude Code, and under kiro in the store's `spill/` (previous row), led by the same hash that names this store's socket so one store's files are findable among every store's, and named in a pointer the model reads back. Removed when the next group is requested, and any left by a dead process are swept when the next consolidator starts — **not** on this process's exit, which a harness terminating its MCP server never reaches. **Record prose verbatim, outside the log rules and, under Claude Code, outside the store** — so the erasure procedure names both directories, and the file is created through `os.open` with the mode supplied rather than written and then `chmod`-ed, since the window between those two is one in which that prose sits at the process umask |
 
 Rules that go with the modes:
 
@@ -1150,10 +1152,11 @@ door D32 does not guard. The spawn hook is the same argument one step earlier.
 
 ~~**Hooks fire for subagent sessions.** Measured 2026-08-01 on kiro's V2 engine: a subagent's spawn and prompt
 hooks fired, each carrying the subagent's own `session_id` in the payload while `KIRO_SESSION_ID` held the
-top-level session's, so the hook suppressed itself whenever the two differed.~~ **Under kiro's V3 engine no hook
-fires for a subagent session at all** (`research/kiro-v3-probe.md` §12): a child agent got no `SessionStart` and
-no `UserPromptSubmit`, and its own tool call's `PreToolUse` carried the parent's session id in both the payload
-and the environment. Claude Code does not fire `UserPromptSubmit` for a subagent either, and reaches one only
+top-level session's, so the hook suppressed itself whenever the two differed.~~ **Under kiro's V3 engine a
+subagent's own hooks never fire, and its tool calls fire the root session's tool hooks, under the root's session
+id** (`research/kiro-v3-probe.md` §12, §38): a child agent got no `SessionStart` and no `UserPromptSubmit`, from
+its own profile or the session's, and its tool call's `PreToolUse` carried the parent's session id in both the
+payload and the environment. Claude Code does not fire `UserPromptSubmit` for a subagent either, and reaches one only
 through `SubagentStart`, whose payload names the agent.
 
 **The check.** The hook reads its harness's session variable and compares it to its payload's `session_id`.
@@ -1163,7 +1166,7 @@ entirely, it proceeds normally. Since payload and environment carry one session 
 fires, a divergence is a **misdetected harness**: a process tree under an enclosing session that inherited its
 variable (`design/harness.md` §"The nesting limit"). It is the first check either hook makes after writing the
 session relay, ahead of the RPC and the degraded chain, so a suppressed turn costs one `os.environ` read. Should a
-kiro build ever fire a hook for a subagent, the cost is one such line per turn, with the push still suppressed —
+kiro build ever fire a start or prompt hook for a subagent, the cost is one such line per turn, with the push still suppressed —
 noise, not a push into the consolidator.
 
 **What is *not* suppressed, and should not be.** An MCP client running inside a subagent takes the **parent**
@@ -1442,40 +1445,58 @@ fell to the same catch-all.
 A harness caps what one tool result may carry. Claude Code's cap is stated in **tokens**, is never named
 numerically, and an over-large result is replaced wholesale by an error notice — so the consolidator sees no
 group, cannot decide it, and is served the same group again on the next call. A run cannot advance past such
-a group, which was observed in production before it was understood.
+a group, which was observed in production before it was understood. kiro's is **30,000 characters**,
+counted on the text block alone, past which the model gets a notice, the first and last 500 characters and
+a path under `~/.kiro/sessions/` (`research/kiro-v3-probe.md` §40, §51) — a group with its middle missing.
 
-**The harness writes the result to a file itself, and that file cannot be read.** It holds the tool's JSON on
-one line, and `Read` states outright that such a file "cannot be paginated by line" — measured: 31,247 of
-104,179 characters returned, and `offset`/`limit` refused. So recovering the payload through the harness's
-own spill is unavailable however the tool grant is arranged, which an earlier attempt shipped prose asserting
-the opposite of.
+**The harness writes the result to a file itself, and that file cannot be read.** Claude Code's holds the
+tool's JSON on one line, and `Read` states outright that such a file "cannot be paginated by line" —
+measured: 31,247 of 104,179 characters returned, and `offset`/`limit` refused. So recovering the payload
+through the harness's own spill is unavailable however the tool grant is arranged, which an earlier attempt
+shipped prose asserting the opposite of. kiro's lies outside every read its consolidator's rules allow.
 
 **What works is writing the file ourselves.** `Read`'s cap applies per read, not per file: a 206,719-character,
-2,002-line file was read to its end in three calls. A payload is therefore fully recoverable if, and only if,
-whoever wrote it made it **line-paginable** — the one thing the harness does not do. `zikaron-mcp` serializes
-an over-threshold consolidator result pretty-printed, writes it to the runtime directory, and returns a small
-pointer naming the path.
+2,002-line file was read to its end in three calls; kiro's `read_file` pages a file by line offset, 30,000
+characters a read, a 202,020-character file in seven (`research/kiro-v3-probe.md` §41). A payload is therefore
+fully recoverable if, and only if, whoever wrote it made it **line-paginable** — the one thing neither harness
+does. `zikaron-mcp` serializes an over-threshold consolidator result pretty-printed, writes it to a file, and
+returns a small pointer naming the path. **Where the file goes is harness data**, `HarnessSpec.spill_location`:
+under Claude Code the runtime directory, as it always was; under kiro the store directory's `spill/`, because
+a consolidator may read only where the session's rules allow (§"The install contract"), `kiro-cli agent
+create`'s `./**` rule covers `.zikaron/` (`research/kiro-v3-probe.md` §22, §47), and no rule an install writes
+covers the runtime directory. The kiro consolidator's own rules allow `fs_read` under `./.zikaron/spill/**` and
+deny it elsewhere — the store is always `.zikaron/` under the scope directory, and under kiro that is the
+directory kiro was launched from, which is what a rule's `./` names (`research/kiro-v3-probe.md` §25).
 
 **Both bounds are proofs rather than margins**, which is what keeps them from needing revision as corpora grow
-or the harness moves a cap it has never published. A token spans at least one byte, so bytes bound tokens for
-any content — emoji, CJK, minified code — for any counter that does not expand its input before counting,
-which byte-level BPE cannot. `consolidation.spill_threshold` (27,000 bytes) is therefore at most 27,000 tokens,
-under the ≈29,923 the harness was observed to deliver; `SPILL_MAX_LINE_BYTES` (24,000, a fixed constant) is at
-most 24,000 tokens, under `Read`'s measured 25,000. No characters-per-token ratio appears in either argument.
-Indentation splits JSON *structure* and never *strings*, so a record's `content` stays one line however the
-document is formatted — which is why the line bound exists rather than being implied by pretty-printing, and
-why a record too long to serialize within it is **refused loudly** rather than written into a file whose tail
-nobody can reach.
+or the harness moves a cap it has never published, and each holds per harness. Under Claude Code, whose cap is
+in tokens: a token spans at least one byte, so bytes bound tokens for any content — emoji, CJK, minified code —
+for any counter that does not expand its input before counting, which byte-level BPE cannot.
+`consolidation.spill_threshold` (27,000 bytes) is therefore at most 27,000 tokens, under the ≈29,923 the
+harness was observed to deliver; `SPILL_MAX_LINE_BYTES` (24,000, a fixed constant) is at most 24,000 tokens,
+under `Read`'s measured 25,000. Under kiro, whose caps are in characters: a character spans at least one
+byte, so the 27,000-byte threshold is at most 27,000 characters, under its 30,000, which counts the text block
+alone — an object of 29,500 characters in `zikaron-mcp`'s two-copy shape arrived intact (§51) — and the
+24,000-byte line is under `read_file`'s 30,000 a read. No characters-per-token ratio appears in either
+argument. **A threshold set at 30,000 or above, inside the documented range, lets a result kiro cuts through
+unspilled** — a result at the threshold stays inline, and kiro replaces one of 30,000 characters or more — so
+kiro's preview arrives instead. That is said and not refused, since the service does not know the harness and
+no one has set such a value. Indentation splits JSON *structure* and never *strings*, so a record's `content`
+stays one line however the document is formatted — which is why the line bound exists rather than being
+implied by pretty-printing, and why a record too long to serialize within it is **refused loudly** rather than
+written into a file whose tail nobody can reach.
 
 **Consolidator mode only, and gated on harness data rather than on a branch.**
 `HarnessSpec.consolidator_can_read_files` decides both whether the agent config grants a
 file-reading tool and whether the
 client spills at all — one field, because the mismatches are what hurt: the tool without the file widens that
-agent's reach for nothing, and the file without the tool hands it a path it cannot open. Under kiro it is
-false, and what kiro does with an over-large result stays **unmeasured** rather than guessed at. The primary
-client has no spill path at all; `register_primary_tools` takes no policy, so the scoping is structural.
+agent's reach for nothing, and the file without the tool hands it a path it cannot open. It is true on both
+harnesses. The primary client has no spill path at all; `register_primary_tools` takes no policy, so the
+scoping is structural. **A kiro session launched from Claude Code misdetects in `zikaron-mcp` too**, so its
+consolidator's client spills to the runtime directory, where that consolidator's deny refuses its read, and
+the group stalls as it would with no spill — a stated limit (`design/harness.md` §"The nesting limit").
 
-Evidence: `research/claude-code-mcp-result-truncation.md`.
+Evidence: `research/claude-code-mcp-result-truncation.md`; `research/kiro-v3-probe.md` §40, §41, §47, §51.
 
 ## MCP tool surface (the five memory verbs)
 
@@ -2491,7 +2512,7 @@ harness reads the model from the agent config, so putting it in the store would 
 
 | Setting | Location | Type | v0 default | Rule |
 |---|---|---|---|---|
-| consolidator model | `.kiro/agents/zikaron-consolidator.json` → top-level **`model`** (the field agent configs in this repo already use) | string; a model id the installed harness accepts | `claude-sonnet-5` | **Must be present explicitly.** Packaging validates the id against the installed harness and fails loudly if it is unknown |
+| consolidator model | `.kiro/agents/zikaron-consolidator.json` → top-level **`model`** (the field agent configs in this repo already use) | string; a model id the installed harness accepts | `claude-sonnet-5.5` | **Must be present explicitly.** Packaging validates the id against the installed harness and fails loudly if it is unknown |
 
 Three rules go with it, and each closes a way the measurement could be lost:
 
@@ -2512,11 +2533,10 @@ Three rules go with it, and each closes a way the measurement could be lost:
   refuses to write a config whose `model` is not in that set. A machine with no `kiro-cli` on `PATH` cannot
   be validated at all and is refused rather than assumed good, since installing hook entries that name a
   harness binary which is absent produces a broken install either way.
-- **The v0 default is `claude-sonnet-5`** — an operator decision, 2026-08-03, superseding the earlier
-  `claude-sonnet-4.5`. Both carry the same `1.30x` rate multiplier on this harness, so the change is free in
-  credit terms; `claude-sonnet-5` reports a **1M-token** context window against `claude-sonnet-4.5`'s 200k.
-  That is headroom rather than a needed capability — a group payload's size is bounded by `group_max`
-  (default 12 members, sharded past it) and by the ≤4 candidates, not by the context window — and it
+- **The default is `claude-sonnet-5.5`**, the model Claude Code's `sonnet` alias was measured to resolve
+  to, since both harnesses run the same model for the same agent (operator, 2026-10-29;
+  `design/harness.md` §"The consolidator's model"). A group payload's size is bounded by `group_max`
+  (default 12 members, sharded past it) and by the ≤4 candidates, not by the context window, and the default
   remains a starting point for the A/B `consolidation.md` §"Consolidator identity and model" calls for, not
   a finding.
 - **The default leans capable, not cheap, and the reason is the error profile.** Consolidation is rare (D10),
@@ -2561,9 +2581,10 @@ writes what the table below lists and refuses rather than guesses when it cannot
 | consolidator agent config | `<project>/.kiro/agents/zikaron-consolidator.json` | kept and reported when its bytes already are what this install ships; otherwise backed up, rewritten, and reported |
 | consolidation skill | `<project>/.kiro/skills/zikaron-consolidate/SKILL.md` | the same rule — see the note below |
 | documenter agent config | `<project>/.kiro/agents/zikaron-documenter.json` | the same rule (`design/code-knowledge.md` §5.4) |
+| code orchestrator agent config | `<project>/.kiro/agents/zikaron-code-orchestrator.json` | the same rule |
 | code documentation skill | `<project>/.kiro/skills/zikaron-document-code/SKILL.md` | the same rule |
-| the two array-format `hooks` entries and the `mcpServers` entry; `@zikaron` in `tools` unless it holds `*`; the `mcp` and `skill` rules in `permissions.rules`; on a universal profile also `@zikaron` in `allowedTools` and both agents in a non-empty `toolsSettings.crew.availableAgents`; and both skills in `resources` (`design/harness.md` §"What a kiro install writes") | merged into the agent profile named by `--agent <path>` | **refuse** a V2-only profile, naming `kiro-cli agent upgrade`, and an object-format `hooks` holding an entry of the user's; otherwise back up to `<config>.bak`, then merge; **refuse** if an existing Zikaron hook or server entry is owned by another install, unless `--force`; any other difference is rewritten and reported; a config that already carries every entry, compared as parsed JSON, is kept and reported, neither backed up nor written |
-| nothing (the entries printed to stdout) | when `--agent` is omitted | n/a |
+| a memory install's two array-format `hooks` entries and the `mcpServers` entry; `@zikaron` in `tools` unless it holds `*`; the `mcp` and `skill` rules in `permissions.rules`; on a universal profile also `@zikaron` in `allowedTools` and the three agents in a non-empty `toolsSettings.crew.availableAgents`; and both skills in `resources` — or a guards install's two hook entries alone (`design/harness.md` §"What a kiro install writes") | merged into the agent profile named by `--agent <path>` | **refuse** a V2-only profile, naming `kiro-cli agent upgrade`, and an object-format `hooks` holding an entry of the user's; otherwise back up to `<config>.bak`, then merge; **refuse** if an existing hook entry of this selection's, or a server entry, is owned by another install, unless `--force`; the other selection's entries are neither compared nor touched; any other difference is rewritten and reported; a config that already carries every entry, compared as parsed JSON, is kept and reported, neither backed up nor written |
+| nothing (the entries printed to stdout) | when `--agent` is omitted from a memory install; a guards install without it is refused, unless `--print-only` | n/a |
 
 - **Staleness is a content comparison, and it replaced a narrower predicate in M15.** The rule above
   used to be "kept, unless this config names a *different* install's interpreter". That caught a
@@ -2650,21 +2671,34 @@ writes what the table below lists and refuses rather than guesses when it cannot
   reason. Fixed to treat *output* as the complaint; the non-zero branch is kept for an exit code the
   command does not currently produce.
 
-- **The consolidator config's tool surface is `@zikaron` and nothing else, with every tool allowed by a
-  permission rule.** Not a convenience: a tool that is available but not allowed asks, once per call, and
-  headless kiro's V3 engine refuses every ask, so the consolidator fails at the moment it needs the tool.
-  The rule is necessary and not sufficient: kiro gives a subagent only what its parent's rules allow as
-  well (`design/harness.md` §Subagents), so the primary's `mcp` rule, which `--no-trust-tools` withholds,
-  is what lets the consolidator's calls through. It carries no `read`, `write` or `shell` either — D7's
-  whole claim is that code picks the candidates, and a consolidator that can read the repository is a
-  consolidator that can wander outside the group it was handed.
-- **The consolidator config carries no `hooks` block.** No hook fires for a kiro subagent
-  (§"Subagent sessions"), and its policy is its own system prompt; the absence is the cheaper of two
-  defenses should a build ever fire one.
-- **The primary agent needs `subagent` in its `tools` and a `subagent` allow rule** for the skill to be
-  able to spawn the consolidator at all, and `fs_read` and `fs_write` rules for a spawned documenter to
-  read its source and write its document. The installer states this in its output rather than editing the
-  user's profile, because granting a tool is a permission decision that belongs to whoever owns the config.
+- **The consolidator config's tool surface is `@zikaron` and `read`, every server tool allowed by a
+  permission rule and the read confined to the spill directory.** Not a convenience: a tool that is
+  available but not allowed asks, once per call, and headless kiro's V3 engine refuses every ask, so the
+  consolidator fails at the moment it needs the tool. **Spawned, a subagent may do what the session's
+  rules allow, less what any rule in the chain denies, and its own allow rules add nothing**
+  (`design/harness.md` §Subagents), so the primary's `mcp` rule, which `--no-trust-tools` withholds, is
+  what lets the consolidator's calls through, and the consolidator's own rules decide only where it runs
+  as a session of its own — except a deny, which does confine it. So its `read`, for a spilled group
+  (§"A result too large to deliver"), carries an `fs_read` allow rule matching `./.zikaron/spill/**` and
+  `{"capability": "fs_read", "exclude": ["./.zikaron/spill/**"], "effect": "deny"}`: the deny refused
+  `read_file` outside the directory and the search and listing tools, which name no path the `exclude`
+  could match (`research/kiro-v3-probe.md` §53, §55). The `read` selector also grants `code` and
+  `introspect`, unmeasured against the deny, which the prompt's own bound covers, as it covers every tool
+  under Claude Code. It carries no `write` or `shell` — D7's whole claim is that code picks the
+  candidates, and a consolidator that can read the repository is a consolidator that can wander outside
+  the group it was handed.
+- **The consolidator config carries no `hooks` block.** A subagent's own hooks never fire under kiro,
+  its tool calls firing the session's instead (§"Subagent sessions"), and its policy is its own system
+  prompt; the absence is the cheaper of two defenses should a build ever fire one. The documenter's and
+  the orchestrator's carry none for the same reason, and end their prompts with the subagent write
+  policy, which kiro has no subagent trigger to deliver.
+- **The primary agent needs `subagent` in its `tools` and a `subagent` allow rule** for the skills to
+  spawn the consolidator and the orchestrator at all, and for the orchestrator's spawns of documenters;
+  a `shell` allow rule for the orchestrator's planner, `shell` in its `tools` not needed; and `fs_read`
+  and `fs_write` rules for a spawned documenter to read its source and write its document, and
+  `fs_read` for the consolidator to read a spilled group. The installer states this in its output rather
+  than editing the user's profile, because granting a tool is a permission decision that belongs to
+  whoever owns the config.
 - **A kiro-cli older than 2.35.1 is refused**, from `kiro-cli --version`, the oldest release whose V3
   engine Zikaron was run against; under `--print-only` that is a note (`design/harness.md` §"What a kiro
   install writes").

@@ -18,25 +18,37 @@ import sysconfig
 from pathlib import Path
 from typing import Final, NamedTuple
 
+from zikaron.guard.arguments import harness_arguments
 from zikaron.guard.limits import TIMEOUT_SECONDS as GUARD_TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec, SearchReminder
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, Harness, HarnessSpec, SearchReminder
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
-from zikaron.install.assets import consolidator_prompt, identity_vocabulary
+from zikaron.install.assets import (
+    CLAUDE_CODE_FILE_READING,
+    KIRO_FILE_READING,
+    consolidator_prompt,
+    identity_vocabulary,
+)
 from zikaron.install.code_knowledge import (
-    CLAUDE_CODE_ARGUMENTS_SOURCE,
+    CLAUDE_CODE_ORCHESTRATOR_PROMPT,
     CLAUDE_CODE_PLANNER_COMMAND,
     CLAUDE_CODE_SPAWN_INSTRUCTION,
     DOCUMENTER_AGENT_NAME,
     DOCUMENTER_DESCRIPTION,
     DOCUMENTER_EFFORT,
     DOCUMENTER_PROMPT,
+    KIRO_ORCHESTRATOR_DESCRIPTION,
+    KIRO_ORCHESTRATOR_PROMPT,
+    KIRO_PLANNER_COMMAND,
     ORCHESTRATOR_AGENT_NAME,
     ORCHESTRATOR_DESCRIPTION,
     ORCHESTRATOR_EFFORT,
     orchestrator_prompt,
+    with_write_policy,
 )
+from zikaron.install.code_knowledge import KIRO_SPAWN_INSTRUCTION as KIRO_DOCUMENTER_SPAWN
 from zikaron.mcp.tool_names import CONSOLIDATOR_TOOLS, PRIMARY_TOOLS
+from zikaron.service import paths
 
 #: The `mcpServers` key, and therefore the `@zikaron` selector. One declaration, because the name
 #: appears in places that must agree — the server map, `tools`, the `mcp` rule's `match`, and a
@@ -59,11 +71,11 @@ _HOOK_SCRIPT: Final = "zikaron-hook"
 _MCP_SCRIPT: Final = "zikaron-mcp"
 _GUARD_SCRIPT: Final = "zikaron-guard"
 
-#: Kiro's two trigger names, **read from the seam rather than spelled again**. A second copy here
-#: would drift: the harness-table drift guard covers spec↔design and nothing covers
-#: spec↔installer, so a trigger renamed in the spec would move the *hook* (whose tests read the
-#: spec) while the *installer* kept writing the old name — an installed config naming a trigger the
-#: hook does not recognize, which fails as no output and exit 0.
+#: The memory store's two kiro trigger names, **read from the seam rather than spelled again**. A
+#: second copy here would drift: the harness-table drift guard covers spec↔design and nothing
+#: covers spec↔installer, so a trigger renamed in the spec would move the *hook* (whose tests read
+#: the spec) while the *installer* kept writing the old name — an installed config naming a trigger
+#: the hook does not recognize, which fails as no output and exit 0.
 KIRO_TRIGGERS: Final = (KIRO.spawn_trigger, KIRO.prompt_trigger)
 
 #: The permission rule that lets an agent call this server's tools without asking. Under kiro's V3
@@ -84,6 +96,27 @@ _FILE_RULES: Final[tuple[dict[str, object], ...]] = (
     {"capability": "fs_write", "effect": "allow"},
 )
 
+#: The orchestrator's grant, as rules: it reads the consolidator's config, runs the planner and
+#: spawns documenters.
+_ORCHESTRATOR_RULES: Final[tuple[dict[str, object], ...]] = (
+    {"capability": "fs_read", "effect": "allow"},
+    {"capability": "shell", "effect": "allow"},
+    {"capability": "subagent", "effect": "allow"},
+)
+
+#: Where the consolidator's MCP client writes an over-large result under kiro, as a path rule names
+#: it: the store lies under the scope directory, which under kiro is the directory kiro was launched
+#: from, and that is what a rule's `./` names (`research/kiro-v3-probe.md` §25, §47).
+_SPILL_RULE_PATH: Final = f"./{paths.spill_dir(paths.store_dir(Path())).as_posix()}/**"
+
+#: The consolidator's read: allowed in the spill directory, and refused everywhere else. The deny is
+#: what confines it, since a subagent's own allow rule grants nothing beyond the session's
+#: (`research/kiro-v3-probe.md` §52, §53, §55).
+_SPILL_READ_RULES: Final[tuple[dict[str, object], ...]] = (
+    {"capability": "fs_read", "match": [_SPILL_RULE_PATH], "effect": "allow"},
+    {"capability": "fs_read", "exclude": [_SPILL_RULE_PATH], "effect": "deny"},
+)
+
 
 def mcp_rule() -> dict[str, object]:
     """A fresh copy of the rule allowing every Zikaron tool."""
@@ -97,14 +130,9 @@ def primary_rules() -> list[dict[str, object]]:
 
 #: Shared by both harnesses' consolidator definitions, which is why it is a constant rather than a
 #: literal inside either builder: it is the text a harness reads to decide the agent is relevant,
-#: and two copies would let one harness's install drift into describing a different agent.
-#: **"and nothing else" was false under Claude Code**, where `consolidator_agent_markdown` grants
-#: `Read` alongside the four verbs because `consolidator_can_read_files` is true there — the spill
-#: path needs it. The description is the only *prose* statement of this agent's surface and is what
-#: a parent model is shown when choosing a subagent, so it stated the opposite of a deliberate
-#: grant. Restated as the property that actually holds on both harnesses, and that is what D32 is
-#: about: no reach into search or fetch. The `Read` grant stays disclosed where it is actionable —
-#: the frontmatter's own `tools:` block, and the spill guidance that explains its bounds.
+#: and two copies would let one harness's install drift into describing a different agent. It
+#: states what D32 is about, no reach into search or fetch, and not the whole grant: the file read
+#: the spill needs is disclosed in the grant itself and in the spill guidance that bounds it.
 _CONSOLIDATOR_DESCRIPTION: Final = (
     "Consolidates Zikaron's memory journal into long-term records. Spawned by the "
     "zikaron-consolidate skill; carries the four consolidation verbs and no way to search or "
@@ -129,10 +157,22 @@ _CLAUDE_TRIGGERS: Final = tuple(
 #: The two start triggers, whose shared entry carries the `--components` selection.
 CLAUDE_START_TRIGGERS: Final = (_CLAUDE_TRIGGERS[0], _CLAUDE_TRIGGERS[2])
 
-#: The guards' two hook groups, read from the seam for the same reason. The filter is a type
-#: narrowing: Claude Code is the harness the guards are offered on.
+#: The guards' hook groups on each harness, read from the seam for the same reason: Claude Code's
+#: command hook and re-read nudge, and kiro's command hook. The filters are type narrowings, since
+#: both harnesses offer the guards.
 _CLAUDE_GUARD_HOOKS: Final = tuple(
-    hook for guards in (CLAUDE_CODE.guards,) if guards is not None for hook in guards
+    hook
+    for guards in (CLAUDE_CODE.guards,)
+    if guards is not None
+    for hook in (guards.command, guards.reread)
+    if hook is not None
+)
+_KIRO_GUARD_HOOKS: Final = tuple(
+    hook
+    for guards in (KIRO.guards,)
+    if guards is not None
+    for hook in (guards.command, guards.reread)
+    if hook is not None
 )
 
 #: The search reminder's hook, read from the seam the same way, with the same narrowing.
@@ -191,22 +231,51 @@ class Commands(NamedTuple):
         return tuple(path for path in needed if not (path.is_file() and os.access(path, os.X_OK)))
 
 
-def hooks_array(commands: Commands) -> list[dict[str, object]]:
-    """Kiro's `hooks` value: a flat list carrying its own `trigger` per entry, which is V3's form.
+def hooks_array(
+    commands: Commands, components: Components = Components.MEMORY
+) -> list[dict[str, object]]:
+    """Kiro's `hooks` entries for one selection, the memory store's before the guards': a flat
+    list carrying its own `trigger` per entry, which is V3's form.
 
-    Both triggers point at the same executable, which dispatches on `hook_event_name` from its own
-    stdin payload (`zikaron/hook/main.py`). No entry carries a size field: kiro cuts a hook's
-    output at its own limit whatever an entry says (`design/harness.md` §"Injection budgets").
+    The memory store's two point at `zikaron-hook`, which dispatches on `hook_event_name` from its
+    own stdin payload (`zikaron/hook/main.py`). The guards have a start entry of their own,
+    `zikaron-hook --components guards`, because kiro cuts each hook's output at its budget and the
+    policy and the guard start text together would not fit one (`design/guards.md` §5); and
+    `zikaron-guard`, told it is kiro's, on the shell tool. No entry carries a size field: kiro cuts
+    a hook's output at its own limit whatever an entry says (`design/harness.md` §"Injection
+    budgets").
     """
-    return [
-        {
-            "name": f"zikaron-{trigger}",
-            "trigger": trigger,
-            "action": {"type": "command", "command": hook_command_string(commands.hook, KIRO)},
-            "timeout": HOOK_TIMEOUT_SECONDS,
-        }
-        for trigger in KIRO_TRIGGERS
-    ]
+    hook = hook_command_string(commands.hook, KIRO)
+    entries: list[dict[str, object]] = []
+    if components.memory:
+        entries.extend(
+            _kiro_entry(f"zikaron-{trigger}", trigger, hook, HOOK_TIMEOUT_SECONDS)
+            for trigger in KIRO_TRIGGERS
+        )
+    if components.guards:
+        start = KIRO.spawn_trigger
+        guards_start = " ".join((hook, *Components.GUARDS.arguments))
+        entries.append(
+            _kiro_entry(f"zikaron-guards-{start}", start, guards_start, HOOK_TIMEOUT_SECONDS)
+        )
+        guard = " ".join(
+            (hook_command_string(commands.guard, KIRO), *harness_arguments(Harness.KIRO))
+        )
+        for group in _KIRO_GUARD_HOOKS:
+            entry = _kiro_entry(
+                f"zikaron-guards-{group.trigger}", group.trigger, guard, GUARD_TIMEOUT_SECONDS
+            )
+            entries.append({**entry, "matcher": group.matcher})
+    return entries
+
+
+def _kiro_entry(name: str, trigger: str, command: str, timeout: int) -> dict[str, object]:
+    return {
+        "name": name,
+        "trigger": trigger,
+        "action": {"type": "command", "command": command},
+        "timeout": timeout,
+    }
 
 
 def hook_command_string(hook_command: Path, spec: HarnessSpec) -> str:
@@ -377,17 +446,17 @@ def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
       registration is session-wide in `.mcp.json` or it does not happen.
     - **The model may be an alias**, because this harness refuses an unknown id loudly at spawn
       rather than substituting its default. `harness.md` §"The consolidator's model".
-    - **`Read` is granted here and withheld from kiro's config**, from the one seam field that also
-      decides whether the client writes an over-large result to a file at all. One field for both,
-      because the mismatches are what hurt: the tool without the file widens this agent's reach for
-      nothing, and the file without the tool hands it a path it cannot open. The prompt's two fills
-      follow the same field, so a config and a prompt can never disagree about which tools exist.
+    - **`Read` is granted from the one seam field that also decides whether the client writes an
+      over-large result to a file at all.** One field for both, because the mismatches are what
+      hurt: the tool without the file widens this agent's reach for nothing, and the file without
+      the tool hands it a path it cannot open. The prompt's two fills follow the same field, so a
+      config and a prompt can never disagree about which tools exist.
 
     It widens D32, which withholds retrieval so that "code picks the candidates" is enforced
-    mechanically rather than by prose, and the widening is bounded by prose alone: this harness has
-    no per-subagent path rule, so `Read` is grantable but not scopable. A `PreToolUse` hook in this
-    agent's own frontmatter is the mechanical version if that ever needs to be more than a
-    convention.
+    mechanically rather than by prose, and here the widening is bounded by prose alone: this
+    harness has no per-subagent path rule, so `Read` is grantable but not scopable. A `PreToolUse`
+    hook in this agent's own frontmatter is the mechanical version if that ever needs to be more
+    than a convention.
 
     `commands` is unused and stays in the signature deliberately: it keeps this builder's shape
     identical to `consolidator_agent_config`'s, so the two targets call one interface, and the fact
@@ -408,7 +477,10 @@ def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
         )
     )
     body = consolidator_prompt(
-        claude_tool_vocabulary(), can_read_files=CLAUDE_CODE.consolidator_can_read_files
+        claude_tool_vocabulary(),
+        file_reading=CLAUDE_CODE_FILE_READING.naming(CLAUDE_CODE.tool_ids.read)
+        if CLAUDE_CODE.consolidator_can_read_files
+        else None,
     )
     return f"{frontmatter}\n\n{body}\n"
 
@@ -416,28 +488,41 @@ def consolidator_agent_markdown(commands: Commands, *, model: str) -> str:
 def consolidator_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
     """The whole `zikaron-consolidator.json`.
 
-    Every field is a decision `architecture.md` §"The install contract" states, and three are worth
+    Every field is a decision `architecture.md` §"The install contract" states, and four are worth
     re-reading here because their absence would be invisible:
 
-    - `tools` is `@zikaron` alone — and it has to be there at all, since `mcpServers` configures a
-      server while `tools` is what selects its tools. No `read`, `write` or `shell`: the design's
-      claim is that *code* selects the candidates, and a consolidator that can read the repository
-      can wander outside the group it was handed.
-    - `permissions.rules` allows those tools, because an available-but-not-allowed tool asks, and
-      headless V3 refuses every ask. The rule is not enough alone: kiro gives a subagent only what
-      its parent's rules allow as well (`design/harness.md` §Subagents). It carries no V2 trust
-      field, so V3 reads it as a profile of its own engine.
-    - there is **no** `hooks` key: no hook fires for a kiro subagent, and its policy is this prompt.
+    - `tools` is `@zikaron` and `read` — and `@zikaron` has to be there at all, since `mcpServers`
+      configures a server while `tools` is what selects its tools. No `write` or `shell`: the
+      design's claim is that *code* selects the candidates.
+    - `read` is for a spilled result, and its rules confine it there: one allows reading the spill
+      directory, and a deny excluding that directory refuses every other read and the searches,
+      since a subagent's own allow rule grants nothing beyond the session's
+      (`research/kiro-v3-probe.md` §52, §53, §55). A consolidator that can read the repository can
+      wander outside the group it was handed.
+    - `permissions.rules` allows the server's tools, because an available-but-not-allowed tool
+      asks, and headless V3 refuses every ask. Under a session, a spawned agent may do what the
+      session's rules allow, less what any rule in the chain denies, so its own allow rules decide
+      only where it runs as a session of its own (`design/harness.md` §Subagents). It carries no V2
+      trust field, so V3 reads it as a profile of its own engine.
+    - there is **no** `hooks` key: a subagent's own hooks never fire, and its policy is this prompt.
     """
     return {
         "name": CONSOLIDATOR_AGENT_NAME,
         "description": _CONSOLIDATOR_DESCRIPTION,
         "model": model,
         "prompt": consolidator_prompt(
-            identity_vocabulary(), can_read_files=KIRO.consolidator_can_read_files
+            identity_vocabulary(),
+            file_reading=KIRO_FILE_READING.naming(KIRO.tool_ids.read)
+            if KIRO.consolidator_can_read_files
+            else None,
         ),
-        "tools": [TOOL_SELECTOR],
-        "permissions": {"rules": [mcp_rule()]},
+        "tools": sorted([TOOL_SELECTOR, *(["read"] if KIRO.consolidator_can_read_files else [])]),
+        "permissions": {
+            "rules": [
+                mcp_rule(),
+                *(copy.deepcopy(_SPILL_READ_RULES) if KIRO.consolidator_can_read_files else ()),
+            ]
+        },
         "mcpServers": mcp_servers_value(commands, mode="consolidator"),
     }
 
@@ -468,7 +553,7 @@ def orchestrator_agent_markdown(*, model: str) -> str:
     them. `Bash` could write a file, and the prompt is what says it does not.
     `Agent(zikaron-documenter)` would narrow nothing, since a subagent's definition ignores the type
     list. It runs in the background whatever its spawner asks, and its effort is fixed at
-    `ORCHESTRATOR_EFFORT`. Kiro has no counterpart, its subagents having no spawn tool.
+    `ORCHESTRATOR_EFFORT`.
     """
     definition = _ClaudeAgent(
         name=ORCHESTRATOR_AGENT_NAME,
@@ -477,9 +562,9 @@ def orchestrator_agent_markdown(*, model: str) -> str:
         tools=("Agent", "Bash", "Read", f"mcp__{MCP_SERVER_NAME}"),
         prompt=orchestrator_prompt(
             claude_tool_vocabulary(),
+            own_prompt=CLAUDE_CODE_ORCHESTRATOR_PROMPT,
             spawn_instruction=CLAUDE_CODE_SPAWN_INSTRUCTION,
             planner_command=CLAUDE_CODE_PLANNER_COMMAND,
-            arguments_source=CLAUDE_CODE_ARGUMENTS_SOURCE,
         ),
         background=True,
     )
@@ -518,10 +603,12 @@ def documenter_agent_config(commands: Commands, *, model: str) -> dict[str, obje
     """The whole `.kiro/agents/zikaron-documenter.json`.
 
     `tools` is the file tools and `@zikaron`, and `permissions.rules` allows reading, writing and
-    Zikaron's tools, as the consolidator's allows its own; the profile spawning it must allow them
-    too, which the install reports rather than grants (`design/harness.md` §Subagents). The primary
-    server is configured here, since a kiro agent config carries its own `mcpServers`. No `hooks`:
-    no hook fires for a kiro subagent.
+    Zikaron's tools, as the consolidator's allows its own. Spawned, it may do only what the
+    session's rules allow, which the install reports rather than grants (`design/harness.md`
+    §Subagents), so its own rules decide where it runs as a session of its own. The primary server
+    is configured here, since a kiro agent config carries its own `mcpServers`. No `hooks`: a
+    subagent's own hooks never fire. Its prompt ends with the write policy, and `effortLevel` sets
+    its effort (`research/kiro-v3-probe.md` §39).
 
     `tools` is sorted: with these selectors in any other order, `kiro-cli agent upgrade` calls the
     profile out of sync, the class kiro documents the TUI answering by a rebuild
@@ -531,8 +618,40 @@ def documenter_agent_config(commands: Commands, *, model: str) -> dict[str, obje
         "name": DOCUMENTER_AGENT_NAME,
         "description": DOCUMENTER_DESCRIPTION,
         "model": model,
-        "prompt": DOCUMENTER_PROMPT,
+        "effortLevel": DOCUMENTER_EFFORT,
+        "prompt": with_write_policy(DOCUMENTER_PROMPT),
         "tools": sorted([*KIRO.file_tools, TOOL_SELECTOR]),
         "permissions": {"rules": [*copy.deepcopy(_FILE_RULES), mcp_rule()]},
+        "mcpServers": mcp_servers_value(commands, mode="primary"),
+    }
+
+
+def orchestrator_agent_config(commands: Commands, *, model: str) -> dict[str, object]:
+    """The whole `.kiro/agents/zikaron-code-orchestrator.json`, the agent the code documentation
+    skill has the session spawn and wait for, its prompt followed by the loop and the write policy
+    (`design/code-knowledge.md` §5.2, §5.4).
+
+    Its `tools` read the consolidator's config, run the planner, spawn documenters and reach the
+    primary server, and select no `write`: the planner removes and moves documents and the
+    documenters write them. Its rules allow those tools and carry no `fs_write`, since a session
+    allowing `fs_write` over the documents directory reaches a documenter through it
+    (`research/kiro-v3-probe.md` §54). No `hooks`, for the documenter's reason; `tools` sorted,
+    for the same.
+    """
+    return {
+        "name": ORCHESTRATOR_AGENT_NAME,
+        "description": KIRO_ORCHESTRATOR_DESCRIPTION,
+        "model": model,
+        "effortLevel": ORCHESTRATOR_EFFORT,
+        "prompt": with_write_policy(
+            orchestrator_prompt(
+                identity_vocabulary(),
+                own_prompt=KIRO_ORCHESTRATOR_PROMPT,
+                spawn_instruction=KIRO_DOCUMENTER_SPAWN,
+                planner_command=KIRO_PLANNER_COMMAND,
+            )
+        ),
+        "tools": sorted([TOOL_SELECTOR, "read", "shell", "subagent"]),
+        "permissions": {"rules": [*copy.deepcopy(_ORCHESTRATOR_RULES), mcp_rule()]},
         "mcpServers": mcp_servers_value(commands, mode="primary"),
     }

@@ -23,6 +23,8 @@ from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
 from zikaron.hook import connect, failure, push, rpc, tripwire
 from zikaron.service import paths
 
+pytestmark = pytest.mark.usefixtures("generous_hook_deadlines")
+
 
 class _FakeSurfaceService:
     """A UDS server answering exactly one `surface` call with a fixed response, real enough to
@@ -615,8 +617,10 @@ def test_the_hook_sends_the_deadline_it_enforces_as_a_wall_clock_instant(
     fake_service: Callable[..., _FakeSurfaceService],
 ) -> None:
     """Computed beside the reading the hook's own timeout comes from, so the two cannot drift:
-    asserted as the value sent for a known clock, not as a claim that two readings agree."""
+    asserted as the value sent for a known clock, not as a claim that two readings agree. At a
+    deadline below the cap on how far ahead one is sent, so it is sent as it is enforced."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 2.0)
     service = fake_service({"result": {"text": ""}})
     try:
         monkeypatch.setattr(time, "time", lambda: 1_800_000_000.25)
@@ -871,6 +875,7 @@ def test_a_listener_that_never_answers_health_is_still_a_transport_failure(
     the socket accepts and nothing answers — and the push was never sent, so it is not
     `unanswered`. That word is scoped to the `surface` call alone."""
     monkeypatch.setenv("KIRO_SESSION_ID", "s1")
+    monkeypatch.setattr(connect, "_CONNECT_TIMEOUT_SECONDS", 0.3)
     service = fake_service({"result": {"text": ""}}, never_answers="health")
     try:
         output = push.run(scope_dir=tmp_path, payload_session_id="s1", prompt="p", pid=1)

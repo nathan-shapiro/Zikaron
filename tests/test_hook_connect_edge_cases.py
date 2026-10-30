@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.loop_lateness import thread_lateness
 from zikaron.hook import connect
 from zikaron.hook.connect import (
     Health,
@@ -22,6 +23,8 @@ from zikaron.hook.connect import (
     _poll_until_reachable,
 )
 from zikaron.service import paths
+
+pytestmark = pytest.mark.usefixtures("generous_hook_deadlines")
 
 
 def _connected_pair() -> tuple[socket.socket, socket.socket]:
@@ -67,10 +70,13 @@ class TestHealthRejectsAMalformedResponse:
             server.close()
 
 
-def test_a_health_answer_arriving_in_pieces_cannot_outrun_its_timeout() -> None:
+def test_a_health_answer_arriving_in_pieces_cannot_outrun_its_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The whole exchange gets `_CONNECT_TIMEOUT_SECONDS`, not each read, so how far a connect can
     run past a push's deadline is bounded. This peer sends a byte at a time for 1.5 s and then
     closes; a timeout set per read would wait for the close and raise something else."""
+    monkeypatch.setattr(connect, "_CONNECT_TIMEOUT_SECONDS", 0.3)
     client, server = _connected_pair()
     stop = threading.Event()
 
@@ -83,11 +89,14 @@ def test_a_health_answer_arriving_in_pieces_cannot_outrun_its_timeout() -> None:
 
     thread = threading.Thread(target=_dribble)
     thread.start()
-    started = time.monotonic()
     try:
-        with pytest.raises(TimeoutError):
-            _health(client)
-        assert time.monotonic() - started < 2 * connect._CONNECT_TIMEOUT_SECONDS
+        with thread_lateness() as lateness:
+            started = time.monotonic()
+            with pytest.raises(TimeoutError):
+                _health(client)
+            elapsed = time.monotonic() - started
+        bound = 2 * connect._CONNECT_TIMEOUT_SECONDS
+        assert elapsed - lateness.seconds < bound, (elapsed, lateness)
     finally:
         stop.set()
         thread.join(timeout=5.0)
@@ -238,7 +247,7 @@ class TestPollUntilReachableRetriesAfterAConnectThatFailsHealth:
         attempts = {"count": 0}
 
         def _serve() -> None:
-            server.settimeout(2.0)
+            server.settimeout(10.0)
             # First connection: accept, then answer nothing useful and close — simulates a
             # service accepting before it can answer health() correctly.
             first, _ = server.accept()

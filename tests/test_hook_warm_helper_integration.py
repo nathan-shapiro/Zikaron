@@ -67,7 +67,7 @@ def _reap(pid: int, *, deadline_seconds: float) -> None:
 def _pid_from_health(sock_path: Path) -> int | None:
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(2.0)
+        sock.settimeout(10.0)
         sock.connect(str(sock_path))
     except OSError:
         return None

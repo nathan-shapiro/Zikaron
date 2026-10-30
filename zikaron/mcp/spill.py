@@ -3,12 +3,14 @@
 A harness caps what a tool result may contain. Claude Code's cap is stated in tokens, is never
 named numerically, and an over-large result is replaced wholesale by an error notice — so the
 consolidator sees no group, cannot decide it, and is served the same group again on the next call.
-The run cannot advance past it.
+The run cannot advance past it. kiro's is 30,000 characters, over which the model gets a preview of
+the two ends and a path (`research/kiro-v3-probe.md` §40), which loses a group's middle.
 
-**The harness already writes the result to a file, and that file is unreadable.** It holds the
+**Claude Code already writes the result to a file, and that file is unreadable.** It holds the
 tool's JSON on one line, and `Read` says outright that such a file "cannot be paginated by line":
 measured, 31,247 of 104,179 characters returned and `offset`/`limit` refused. So recovering the
-payload through the harness's own spill is not available, however the grant is arranged.
+payload through the harness's own spill is not available, however the grant is arranged. kiro's
+lies under `~/.kiro/sessions/`, outside every read its consolidator is allowed.
 
 **What is available is writing the file ourselves.** `Read`'s cap applies per read, not per file —
 a 206,719-character, 2,002-line file was read to its end in three calls — so a payload is fully
@@ -32,9 +34,11 @@ from typing import Final
 
 #: The largest line this module will write, in UTF-8 bytes of the serialized line. At most this
 #: many tokens, therefore, and `Read`'s measured per-read cap is 25,000 — so any line under this is
-#: addressable, and a line is the smallest unit `Read` can address. Not a config key, because there
-#: is no operator remedy for a single over-long record: the answer is to amend or retire it, and
-#: raising a number would only move where the unreachable tail begins.
+#: addressable, and a line is the smallest unit `Read` can address. At most this many characters
+#: too, under the 30,000 kiro's `read_file` returns a read (`research/kiro-v3-probe.md` §41), which
+#: also pages by line. Not a config key, because there is no operator remedy for a single
+#: over-long record: the answer is to amend or retire it, and raising a number would only move
+#: where the unreachable tail begins.
 SPILL_MAX_LINE_BYTES: Final = 24_000
 
 #: `json.dumps` indent. Structure goes onto its own lines, which is what makes `offset`/`limit`
@@ -47,7 +51,8 @@ _INDENT: Final = 2
 #: name be read back for the pid without a regex, and what a shorter name is rejected against.
 _NAME_FIELDS: Final = 4
 
-#: `0600`. The file holds record prose verbatim, outside the store and outside the log rules.
+#: `0600`. The file holds record prose verbatim, outside the log rules and, under Claude Code,
+#: outside the store.
 _FILE_MODE: Final = 0o600
 
 
@@ -86,10 +91,13 @@ class SpillPolicy:
 
     enabled: bool
     threshold_bytes: int
+    #: The runtime directory under Claude Code, and the store's own `spill/` under kiro
+    #: (`HarnessSpec.spill_location`).
     directory: Path
-    #: Identifies this store in a filename. The runtime directory is shared by every store this
-    #: user has — sockets disambiguate by the same hash — so without it an operator erasing a
-    #: secret cannot tell one store's spill files from another's without reading them.
+    #: Identifies this store in a filename. Under Claude Code the runtime directory is shared by
+    #: every store this user has — sockets disambiguate by the same hash — so without it an operator
+    #: erasing a secret cannot tell one store's spill files from another's without reading them.
+    #: Under kiro the directory is the store's own, and the key changes nothing.
     store_key: str
 
 
@@ -187,13 +195,17 @@ def _write(document: str, *, directory: Path, tool: str, store_key: str) -> Path
     response spills through this same path, so "delete the last one" would remove the group's own
     payload while the consolidator is still dispositioning that group from it.
 
-    The name carries `store_key` because the runtime directory is shared by every store this user
-    has, and an operator erasing a secret needs to find one store's files without reading them.
+    The name carries `store_key` because under Claude Code the runtime directory is shared by every
+    store this user has, and an operator erasing a secret needs to find one store's files without
+    reading them.
 
-    Created at `0700` explicitly rather than at the process umask. The directory is the socket's
-    own home and so provably existed moments ago, vetted by whoever spawned the service; this
-    neither repeats that vetting nor silently relaxes it — the file itself is `0600`, `O_EXCL` and
-    unpredictably named, which is what the contents actually rest on.
+    Created at `0700` explicitly rather than at the process umask. Under Claude Code the directory
+    is the socket's own home and so provably existed moments ago, vetted by whoever spawned the
+    service; this neither repeats that vetting nor silently relaxes it. Under kiro it is the store's
+    `spill/`, inside a `.zikaron/` the service keeps at `0700`, and `exist_ok` does not tighten one
+    found wider, which that parent makes harmless (`design/architecture.md` §"Filesystem
+    security"). Either way the file itself is `0600`, `O_EXCL` and unpredictably named, which is
+    what the contents actually rest on.
     """
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = directory / f"{store_key}-{tool}-{os.getpid()}-{os.urandom(8).hex()}.json"

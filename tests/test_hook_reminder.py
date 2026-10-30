@@ -19,6 +19,8 @@ from zikaron.hook import connect, reminder, rpc
 from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
 from zikaron.service.params import PATHS_MAX
 
+pytestmark = pytest.mark.usefixtures("generous_hook_deadlines")
+
 _LINE = "Zikaron hook: a reminder."
 _SESSION = "the-session"
 

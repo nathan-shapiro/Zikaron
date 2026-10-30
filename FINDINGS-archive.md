@@ -3250,6 +3250,16 @@ Plan:
 
 
 ## References
+- **M41-2's probes and brief (2026-10-29)** — `research/kiro-v3-probe.md` round 2, from §32 (the
+  shell tool's payload and matcher; no post-tool output reaches the model on any exit code; a
+  subagent spawns one; a subagent's tool calls fire the root's hooks and a block reaches it; a
+  profile's `effortLevel`; the 30,000-character result cap and `read_file`'s paging; the
+  permission model, a subagent doing what the session allows less what any rule denies; the
+  per-hook cut; resume, compaction and a declined trust screen) and
+  `research/claude-code-alias-resolution.md` (`sonnet`, `haiku` and `opus` resolve to the 5.5
+  models). The brief's review trail: `reviews/m41-2-brief-review.md`; the build's, with kiro's
+  prompt texts: `reviews/m41-2-review.md`. The build's live results: `research/kiro-v3-probe.md`
+  §58–§61; the chunker defect it fixed: `research/hard-split-word-cut.md`.
 - **kiro-cli's V3 engine (2026-10-28)** — `research/kiro-cli-v3-migration.md` (memory-assistant,
   the docs: 3.0 makes V3 the default at the end of October 2026 by auto-update; a profile with
   `allowedTools` and no `permissions` is skipped; array hooks with PascalCase triggers and
@@ -7550,6 +7560,38 @@ brainstorm with the operator, 2026-10-14, and is specified in `design/code-knowl
 
    **Harness versions are recorded, never re-probed** (operator, 2026-10-16): a new Claude Code or
    kiro release is not a reason to re-test a measured behavior.
+
+## M41-1 as built (moved out of FINDINGS 2026-10-29, once it landed through PR #29)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`.
+
+**M41-1 stands at:** every done-when holds — `pytest -m integration_kiro` passes on 2.35.1
+`--v3`, the converted `zikaron-dogfood` profile ran headless on V3 with no `runError`, and the
+operator's interactive run passed every bullet of done-when 5, the command-line-prompt bullet
+by the operator's acceptance of what it showed (`research/kiro-v3-probe.md` §29–§31). The
+committed `.kiro/agents/zikaron-dogfood.json` names `/home/nathan/Zikaron/.venv`, the path that
+is right after the merge, so a re-install over it before then runs the worktree's code under
+that venv (`PYTHONPATH=/home/nathan/Zikaron-m41-1 /home/nathan/Zikaron/.venv/bin/python -P -m
+zikaron.install …`). A typed first prompt without Zikaron's tools is expected, so the
+import-time cut stays fenced out (operator, 2026-10-29; the brief's item 8).
+
+**The follow-up done-when 5 forced is part of M41-1:** kiro gives a subagent only what its own
+rules and its parent's both allow (probe §28), so the install names the `fs_read` and `fs_write`
+rules a spawned documenter needs from its parent — a note, not a grant (operator, 2026-10-29:
+*"We should have note, not grant permissions automatically"*) — the write rule scoped to
+`./code-knowledge/**`, measured enough. **Next:** the pull request when the operator asks for
+one, then M41-2's brief, brainstormed with the operator first. Live tests stay
+small: one module of a few files for code knowledge, never a large codebase (operator,
+2026-10-28).
+
+## The `bounds`-on-first-call re-run (closed 2026-10-29)
+
+Re-run on its date, read-only, over the four stores with the query below: **0 of 139** (session,
+verb) first calls refused `bounds`, across a month of `call` rows — 95 on `~/Trading/LeibaTrader`,
+40 on `~/PythonPlayground`, 3 on `~/Dividends` and 1 on `~/Memory` — against 0 of 18 on
+2026-09-29. Agents do not work from a guessed schema often enough to show, so nothing changes.
+
+`WITH c AS (SELECT session_id s, json_extract(detail,'$.method') m, json_extract(detail,'$.error_code') e, id FROM event WHERE kind='call' AND session_id IS NOT NULL) SELECT c.m, count(*), sum(coalesce(c.e,'')='bounds') FROM c JOIN (SELECT s, m, min(id) i FROM c GROUP BY s, m) f ON c.id=f.i GROUP BY c.m`
 
 ## FINDINGS as it stood before the 2026-10-22 trim (moved verbatim)
 

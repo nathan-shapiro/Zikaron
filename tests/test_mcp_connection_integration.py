@@ -20,7 +20,9 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
+from tests.loop_lateness import loop_lateness
 from zikaron.mcp.connection import ServiceConnection
+from zikaron.service import lifecycle
 
 pytestmark = pytest.mark.integration
 
@@ -158,11 +160,12 @@ async def test_recovery_preserves_the_store_across_the_respawn(
 
 
 async def test_a_request_waiting_out_real_store_contention_still_succeeds(
-    connection: ServiceConnection,
+    connection: ServiceConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`connect_start_if_absent` hands back a socket whose timeout is set for the *connect*
-    phase alone (`lifecycle._CONNECT_TIMEOUT_SECONDS`, 1 s) — `ServiceConnection` must reset it
-    before using the same socket for ordinary requests, since a genuinely contended write may
+    phase alone (`lifecycle._CONNECT_TIMEOUT_SECONDS`, 1 s — set here, since the suite's autouse
+    fixture lengthens it everywhere else) — `ServiceConnection` must reset it before using the
+    same socket for ordinary requests, since a genuinely contended write may
     legitimately take up to `ddl.BUSY_TIMEOUT_MS`'s full 5 s to resolve
     (`zikaron/core/store/ddl.py`), and a 1 s request timeout would cut that wait off first. This
     holds the store's own write lock for real, for longer than 1 s but less than 5 s, via a raw
@@ -170,6 +173,7 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
     success response is received rather than the transport socket timing out and reporting
     `AmbiguousMutationError`.
     """
+    monkeypatch.setattr(lifecycle, "_CONNECT_TIMEOUT_SECONDS", 1.0)
     # The very first request establishes the socket and creates the store — needed before a raw
     # connection to the same `memory.db` file can hold a lock on it.
     await _health_pid(connection)
@@ -196,13 +200,14 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
     # acquire the lock first would not be testing that at all.
     await asyncio.wait_for(lock_acquired.wait(), timeout=5.0)
 
-    started = time.monotonic()
-    response = await connection.request(
-        "memory_remember",
-        {"gist": "written while another connection held the lock", "content": "content"},
-        envelope=connection.envelope(kind="mcp"),
-    )
-    elapsed = time.monotonic() - started
+    async with loop_lateness() as lateness:
+        started = time.monotonic()
+        response = await connection.request(
+            "memory_remember",
+            {"gist": "written while another connection held the lock", "content": "content"},
+            envelope=connection.envelope(kind="mcp"),
+        )
+        elapsed = time.monotonic() - started
 
     await holder_task
 
@@ -211,8 +216,8 @@ async def test_a_request_waiting_out_real_store_contention_still_succeeds(
         "the request must have genuinely waited past the old 1 s connect-phase timeout, or this "
         "test cannot tell the fix apart from a lock the request happened not to contend on"
     )
-    assert elapsed < hold_seconds + 2.0, (
-        f"the request took {elapsed:.1f}s — suspiciously long for a lock held only "
-        f"{hold_seconds}s, suggesting it waited out the service's own wait budget instead of "
-        "the holder releasing when expected"
+    assert elapsed - lateness.seconds < hold_seconds + 2.0, (
+        f"the request took {elapsed:.1f}s, {lateness.seconds:.1f}s of it this loop's lateness — "
+        f"suspiciously long for a lock held only {hold_seconds}s, suggesting it waited out the "
+        "service's own wait budget instead of the holder releasing when expected"
     )

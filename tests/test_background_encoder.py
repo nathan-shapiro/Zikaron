@@ -296,7 +296,7 @@ def test_a_blocking_member_refuses_rather_than_hanging_when_nothing_was_declared
 
     caller = threading.Thread(target=_reach_for_a_blocking_member, daemon=True)
     caller.start()
-    caller.join(timeout=2.0)
+    caller.join(timeout=10.0)
 
     assert outcome, "the call hung waiting for a load that was waiting for the declaration"
     refusal = outcome[0]

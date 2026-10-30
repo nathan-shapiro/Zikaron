@@ -61,7 +61,7 @@ def _emit(
     )
     if output is None:
         return None
-    envelope = json.loads(output)["hookSpecificOutput"]
+    envelope = json.loads(output.stdout)["hookSpecificOutput"]
     assert isinstance(envelope, dict)
     return envelope
 

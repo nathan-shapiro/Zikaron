@@ -30,6 +30,7 @@ import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import stub_spawn
+from tests.loop_lateness import loop_lateness
 from tests.served_group_fixtures import (
     CONSOLIDATOR,
     write_anchored_pair,
@@ -538,14 +539,16 @@ async def test_the_writer_alone_drops_its_row_rather_than_waiting_for_the_lock(
     of a caller's latency behind a lock it has no stake in.
     """
     async with open_context(tmp_path) as ctx:
-        async with _write_lock_held(ctx):
+        async with _write_lock_held(ctx), loop_lateness() as lateness:
             started = time.perf_counter()
             await ctx.access_log.record(
                 origin=_origin(), method="memory_surface", refused=None, duration_ms=1.0
             )
             elapsed = time.perf_counter() - started
         assert await _call_rows(ctx) == []
-    assert elapsed < _NO_WAIT_BOUND_SECONDS, f"it waited {elapsed:.3f}s for the lock"
+    assert elapsed - lateness.seconds < _NO_WAIT_BOUND_SECONDS, (
+        f"it waited {elapsed:.3f}s for the lock, {lateness.seconds:.3f}s of it the loop's lateness"
+    )
 
 
 async def test_a_knowledge_list_under_a_held_lock_answers_exactly_as_an_unlogged_one_would(
@@ -566,13 +569,15 @@ async def test_a_knowledge_list_under_a_held_lock_answers_exactly_as_an_unlogged
     async with open_context(tmp_path) as ctx:
         control = await server._handle_line(ctx, _line("knowledge_list", {}))
         rows_before = len(await _call_rows(ctx))
-        async with _write_lock_held(ctx):
+        async with _write_lock_held(ctx), loop_lateness() as lateness:
             started = time.perf_counter()
             answered = await server._handle_line(ctx, _line("knowledge_list", {}))
             elapsed = time.perf_counter() - started
         assert answered == control, "the dropped row changed the line a caller reads"
         assert len(await _call_rows(ctx)) == rows_before, "a contended row must not land"
-    assert elapsed < _NO_WAIT_BOUND_SECONDS, f"it waited {elapsed:.3f}s for the lock"
+    assert elapsed - lateness.seconds < _NO_WAIT_BOUND_SECONDS, (
+        f"it waited {elapsed:.3f}s for the lock, {lateness.seconds:.3f}s of it the loop's lateness"
+    )
 
 
 @pytest.mark.parametrize("failure", ["closed connection", "raised OSError"])

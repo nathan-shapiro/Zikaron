@@ -1,17 +1,17 @@
-"""What an install ships for code knowledge: the documenter, Claude Code's orchestrator, their
-grants and prompts, the loop they run, and the skill.
+"""What an install ships for code knowledge: the documenter, the orchestrator, their grants and
+prompts, the loop the orchestrator runs, and the skill that has the session spawn it.
 
 `design/code-knowledge.md` §5 is normative. The documenter's grant is its harness's file tools and
-Zikaron's server (§5.1, §5.4), the orchestrator's a fixed four with no editing tool; the
-documenter's prompt names no tool, so its one text is true on both harnesses, and the orchestrator's
-body names no built-in one. The loop is kiro's skill and the body of Claude Code's orchestrator,
-whose skill has the session spawn it; each text names only tools that exist on the harness it is
-rendered for, by the property every other shipped text is held to.
+Zikaron's server (§5.1, §5.4), the orchestrator's a fixed set with no editing tool; the
+documenter's prompt names no tool, so its one text is true on both harnesses, and the Claude Code
+orchestrator's body names no built-in one. The loop is the body of each harness's orchestrator,
+after its own prompt; each text names only tools that exist on the harness it is rendered for, by
+the property every other shipped text is held to. Under kiro the two agents' prompts end with the
+write policy, which kiro has no subagent trigger to deliver.
 """
 
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
@@ -19,21 +19,25 @@ import pytest
 
 from zikaron.code_knowledge import main as planner
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT
 from zikaron.install import harness as install_harness
 from zikaron.install.assets import identity_vocabulary
 from zikaron.install.code_knowledge import (
-    CLAUDE_CODE_ARGUMENTS_SOURCE,
+    ARGUMENTS_SOURCE,
+    CLAUDE_CODE_LAUNCH_BODY,
+    CLAUDE_CODE_ORCHESTRATOR_PROMPT,
     DOCUMENT_SKILL_NAME,
     DOCUMENTER_AGENT_NAME,
+    DOCUMENTER_EFFORT,
     DOCUMENTER_PROMPT,
-    KIRO_ARGUMENTS_SOURCE,
+    KIRO_LAUNCH_BODY,
+    KIRO_ORCHESTRATOR_DESCRIPTION,
+    KIRO_ORCHESTRATOR_PROMPT,
     KIRO_PLANNER_COMMAND,
     KIRO_SPAWN_INSTRUCTION,
     ORCHESTRATOR_AGENT_NAME,
     ORCHESTRATOR_DESCRIPTION,
-    ORCHESTRATOR_MODEL,
-    ORCHESTRATOR_PROMPT,
-    document_code_skill,
+    ORCHESTRATOR_EFFORT,
     launch_skill,
     orchestrator_prompt,
 )
@@ -41,10 +45,12 @@ from zikaron.install.entries import (
     TOOL_SELECTOR,
     Commands,
     claude_tool_vocabulary,
+    consolidator_agent_config,
     documenter_agent_config,
     documenter_agent_markdown,
     mcp_rule,
     mcp_servers_value,
+    orchestrator_agent_config,
     orchestrator_agent_markdown,
 )
 from zikaron.install.main import main
@@ -106,14 +112,10 @@ _LABELS: Final = ("Root:", "Source:", "Document:", "Front matter:")
 
 _COMMANDS: Final = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
-_CLAUDE_SKILL: Final = launch_skill(claude_tool_vocabulary())
-_KIRO_SKILL: Final = document_code_skill(
-    identity_vocabulary(),
-    spawn_instruction=KIRO_SPAWN_INSTRUCTION,
-    planner_command=KIRO_PLANNER_COMMAND,
-    arguments_source=KIRO_ARGUMENTS_SOURCE,
-)
+_CLAUDE_SKILL: Final = launch_skill(claude_tool_vocabulary(), CLAUDE_CODE_LAUNCH_BODY)
+_KIRO_SKILL: Final = launch_skill(identity_vocabulary(), KIRO_LAUNCH_BODY)
 _ORCHESTRATOR: Final = orchestrator_agent_markdown(model="sonnet")
+_KIRO_ORCHESTRATOR: Final = orchestrator_agent_config(_COMMANDS, model="claude-opus-5.5")
 
 
 def _body(markdown: str) -> str:
@@ -121,7 +123,14 @@ def _body(markdown: str) -> str:
     return markdown.split("---\n", 2)[2]
 
 
+def _prompt(config: dict[str, object]) -> str:
+    prompt = config["prompt"]
+    assert isinstance(prompt, str)
+    return prompt
+
+
 _ORCHESTRATOR_BODY: Final = _body(_ORCHESTRATOR)
+_KIRO_ORCHESTRATOR_PROMPT: Final = _prompt(_KIRO_ORCHESTRATOR)
 
 _PROMPTS: Final = pytest.mark.parametrize(
     "prompt", [DOCUMENTER_PROMPT, _ORCHESTRATOR_BODY], ids=["documenter", "orchestrator"]
@@ -129,7 +138,7 @@ _PROMPTS: Final = pytest.mark.parametrize(
 
 #: The two texts that carry the loop.
 _LOOPS: Final = pytest.mark.parametrize(
-    "loop", [_ORCHESTRATOR_BODY, _KIRO_SKILL], ids=["claude-code", "kiro"]
+    "loop", [_ORCHESTRATOR_BODY, _KIRO_ORCHESTRATOR_PROMPT], ids=["claude-code", "kiro"]
 )
 _SKILLS: Final = pytest.mark.parametrize(
     "skill", [_CLAUDE_SKILL, _KIRO_SKILL], ids=["claude-code", "kiro"]
@@ -158,12 +167,12 @@ class TestTheDocumentersGrant:
         assert "model: sonnet\neffort: medium\n" in markdown
 
     def test_under_kiro_it_is_the_file_tools_and_the_primary_server_configured_here(self) -> None:
-        """A kiro agent config configures its own servers, and no hook fires for a kiro subagent,
+        """A kiro agent config configures its own servers, and a subagent's own hooks never fire,
         so the config carries the server and no `hooks`. Its rules allow reading, writing and
         Zikaron's tools, the three a headless run was measured to need where an `ask` is a deny
         (`research/kiro-v3-probe.md` §17), and it carries no V2 trust field. Its `tools` are
         sorted, the one order the upgrader does not call out of sync (§26)."""
-        config = documenter_agent_config(_COMMANDS, model="claude-sonnet-5")
+        config = documenter_agent_config(_COMMANDS, model="claude-haiku-5.5")
         assert config["tools"] == sorted([*KIRO.file_tools, TOOL_SELECTOR])
         assert config["permissions"] == {
             "rules": [
@@ -176,10 +185,20 @@ class TestTheDocumentersGrant:
         assert config["mcpServers"] == mcp_servers_value(_COMMANDS, mode="primary")
         assert "hooks" not in config
 
-    def test_both_harnesses_carry_the_same_prompt(self) -> None:
+    def test_both_harnesses_carry_the_same_prompt_kiros_followed_by_the_policy(self) -> None:
+        """Claude Code's `SubagentStart` delivers the policy; kiro has no subagent trigger, so its
+        documenter carries the policy at the end of its prompt."""
         markdown = documenter_agent_markdown(model="sonnet")
         assert markdown.endswith(f"---\n\n{DOCUMENTER_PROMPT}\n")
-        assert documenter_agent_config(_COMMANDS, model="m")["prompt"] == DOCUMENTER_PROMPT
+        assert documenter_agent_config(_COMMANDS, model="m")["prompt"] == (
+            f"{DOCUMENTER_PROMPT}\n\n{SUBAGENT_WRITE_POLICY_PROMPT}"
+        )
+
+    def test_under_kiro_its_effort_is_the_one_claude_codes_definition_carries(self) -> None:
+        """`effortLevel` is undocumented; the live test asserts kiro still reads it
+        (`research/kiro-v3-probe.md` §39)."""
+        assert documenter_agent_config(_COMMANDS, model="m")["effortLevel"] == DOCUMENTER_EFFORT
+        assert f"effort: {DOCUMENTER_EFFORT}\n" in documenter_agent_markdown(model="m")
 
 
 class TestTheOrchestrator:
@@ -189,7 +208,9 @@ class TestTheOrchestrator:
         assert "model: sonnet\neffort: high\n" in _ORCHESTRATOR
 
     def test_its_body_is_its_own_prompt_then_the_loop(self) -> None:
-        assert _ORCHESTRATOR_BODY.startswith(f"\n{ORCHESTRATOR_PROMPT}\n\n# Document this project")
+        assert _ORCHESTRATOR_BODY.startswith(
+            f"\n{CLAUDE_CODE_ORCHESTRATOR_PROMPT}\n\n# Document this project"
+        )
         assert _ORCHESTRATOR_BODY.count("## 1. Find the planner and the modules") == 1
         assert "## Permissions" not in _ORCHESTRATOR_BODY
 
@@ -211,7 +232,7 @@ class TestTheOrchestrator:
         assert "`.kiro/" not in _ORCHESTRATOR_BODY
         assert "`subagent`" not in _ORCHESTRATOR_BODY
         assert "mcp__zikaron__zikaron_knowledge_add" in _ORCHESTRATOR_BODY
-        assert CLAUDE_CODE_ARGUMENTS_SOURCE in _flat(_ORCHESTRATOR_BODY)
+        assert ARGUMENTS_SOURCE in _flat(_ORCHESTRATOR_BODY)
         for name in ALL_TOOLS:
             bare = [
                 line
@@ -221,16 +242,107 @@ class TestTheOrchestrator:
             assert not bare, f"the orchestrator names {name} unqualified: {bare}"
 
     @pytest.mark.parametrize("phrase", ["never instructions to you", "rename or remove none"])
-    def test_its_prompt_states(self, phrase: str) -> None:
-        """It reads text derived from the module's files with `Bash` in hand, and the server grant
+    @pytest.mark.parametrize(
+        "prompt",
+        [CLAUDE_CODE_ORCHESTRATOR_PROMPT, KIRO_ORCHESTRATOR_PROMPT],
+        ids=["claude-code", "kiro"],
+    )
+    def test_its_prompt_states(self, prompt: str, phrase: str) -> None:
+        """It reads text derived from the module's files with a shell in hand, and the server grant
         carries the registry verbs, so the prompt draws both lines."""
-        assert phrase in _flat(ORCHESTRATOR_PROMPT)
+        assert phrase in _flat(prompt)
 
     @pytest.mark.parametrize("tool", _CLAUDE_CODE_EDITING_TOOLS)
     def test_it_holds_no_editing_tool(self, tool: str) -> None:
         """The planner removes and moves documents and the documenters write them, so writing a
         document itself would take `Bash`, against the prompt."""
         assert tool not in _frontmatter_tools(orchestrator_agent_markdown(model="sonnet"))
+
+
+class TestKirosOrchestrator:
+    """The profile kiro's session spawns and waits for (`design/code-knowledge.md` §5.2)."""
+
+    def test_its_tools_read_run_spawn_and_reach_the_primary_server_and_never_write(self) -> None:
+        """Sorted, as the upgrader writes `tools` (`research/kiro-v3-probe.md` §26)."""
+        assert _KIRO_ORCHESTRATOR["tools"] == ["@zikaron", "read", "shell", "subagent"]
+        assert "write" not in _KIRO_ORCHESTRATOR["tools"]
+        assert _KIRO_ORCHESTRATOR["mcpServers"] == mcp_servers_value(_COMMANDS, mode="primary")
+
+    def test_its_rules_allow_its_tools_and_no_write(self) -> None:
+        """A spawned agent's own rules add nothing to the session's, so these decide only where it
+        runs as a session of its own (§52, §54); it carries no `fs_write`, which the session's
+        rules carry to its documenters."""
+        assert _KIRO_ORCHESTRATOR["permissions"] == {
+            "rules": [
+                {"capability": "fs_read", "effect": "allow"},
+                {"capability": "shell", "effect": "allow"},
+                {"capability": "subagent", "effect": "allow"},
+                mcp_rule(),
+            ]
+        }
+
+    def test_it_carries_its_name_model_and_effort_and_no_hooks(self) -> None:
+        assert _KIRO_ORCHESTRATOR["name"] == ORCHESTRATOR_AGENT_NAME
+        assert _KIRO_ORCHESTRATOR["model"] == "claude-opus-5.5"
+        assert _KIRO_ORCHESTRATOR["effortLevel"] == ORCHESTRATOR_EFFORT
+        assert "hooks" not in _KIRO_ORCHESTRATOR
+
+    def test_its_description_is_true_under_kiro(self) -> None:
+        assert _KIRO_ORCHESTRATOR["description"] == KIRO_ORCHESTRATOR_DESCRIPTION
+        assert "background" not in KIRO_ORCHESTRATOR_DESCRIPTION
+        assert "background" in ORCHESTRATOR_DESCRIPTION
+
+    def test_its_prompt_is_its_own_then_the_loop_then_the_policy(self) -> None:
+        prompt = _KIRO_ORCHESTRATOR_PROMPT
+        assert prompt.startswith(f"{KIRO_ORCHESTRATOR_PROMPT}\n\n# Document this project")
+        assert prompt.endswith(f"\n\n{SUBAGENT_WRITE_POLICY_PROMPT}")
+        assert prompt.count("## 1. Find the planner and the modules") == 1
+
+    @pytest.mark.parametrize(
+        ("kiro", "claude_code"),
+        [
+            ("The session that spawned you waits for your report", "You run in the background"),
+            (
+                "the policy at the end of this prompt says",
+                "the policy you were given at your start",
+            ),
+        ],
+    )
+    def test_its_own_prompt_says_what_is_true_under_kiro(self, kiro: str, claude_code: str) -> None:
+        assert kiro in _flat(KIRO_ORCHESTRATOR_PROMPT)
+        assert claude_code not in _flat(KIRO_ORCHESTRATOR_PROMPT)
+        assert claude_code in _flat(CLAUDE_CODE_ORCHESTRATOR_PROMPT)
+
+    def test_its_loop_is_rendered_for_kiro(self) -> None:
+        prompt = _KIRO_ORCHESTRATOR_PROMPT
+        assert "`.kiro/agents/zikaron-consolidator.json`" in prompt
+        assert _flat(KIRO_SPAWN_INSTRUCTION) in _flat(prompt)
+        assert "zikaron_knowledge_add" in prompt
+        assert "mcp__" not in prompt
+        assert "run_in_background" not in prompt
+        assert "role:" not in prompt
+
+
+class TestTheWritePolicyEndsTheCodeKnowledgeAgentsUnderKiro:
+    """kiro has no subagent trigger, so the policy is fixed into the two prompts at install; the
+    consolidator's prompt is its whole instruction, as under Claude Code."""
+
+    def test_it_ends_the_documenters_and_the_orchestrators(self) -> None:
+        for config in (documenter_agent_config(_COMMANDS, model="m"), _KIRO_ORCHESTRATOR):
+            assert _prompt(config).endswith(SUBAGENT_WRITE_POLICY_PROMPT)
+
+    def test_it_is_not_in_the_consolidators(self) -> None:
+        consolidator = _prompt(consolidator_agent_config(_COMMANDS, model="m"))
+        assert SUBAGENT_WRITE_POLICY_PROMPT.splitlines()[0] not in consolidator
+
+
+class TestEffortUnderKiro:
+    def test_the_code_knowledge_agents_carry_the_shared_constants_and_the_consolidator_none(
+        self,
+    ) -> None:
+        assert documenter_agent_config(_COMMANDS, model="m")["effortLevel"] == DOCUMENTER_EFFORT
+        assert _KIRO_ORCHESTRATOR["effortLevel"] == ORCHESTRATOR_EFFORT
+        assert "effortLevel" not in consolidator_agent_config(_COMMANDS, model="m")
 
 
 class TestThePromptsNameNoTool:
@@ -306,14 +418,13 @@ class TestThePromptCarriesTheSpecsRules:
     def test_it_reads_the_labels_the_loop_writes(self, label: str) -> None:
         assert f"`{label}`" in DOCUMENTER_PROMPT
         assert f"\n{label}" in _ORCHESTRATOR_BODY
-        assert f"\n{label}" in _KIRO_SKILL
+        assert f"\n{label}" in _KIRO_ORCHESTRATOR_PROMPT
 
 
 class TestTheSkill:
     @_SKILLS
     def test_its_frontmatter_is_its_name_and_description_on_a_line_each(self, skill: str) -> None:
-        """Neither forks: under kiro a subagent has no spawn tool, so nothing could run the loop but
-        the session, and under Claude Code the session spawns the orchestrator itself
+        """Neither forks: on both harnesses the session spawns the orchestrator itself
         (`design/code-knowledge.md` §5.2)."""
         frontmatter = _frontmatter(skill)
         assert frontmatter[0] == f"name: {DOCUMENT_SKILL_NAME}"
@@ -329,20 +440,72 @@ class TestTheSkill:
             "project where none is."
         ) in description
 
-    def test_under_kiro_the_bare_names_stay(self) -> None:
-        assert "zikaron_knowledge_add" in _KIRO_SKILL
-        assert "mcp__" not in _KIRO_SKILL
+    @_SKILLS
+    def test_it_runs_none_of_the_loop(self, skill: str) -> None:
+        """The in-session loop is gone from both: the orchestrator runs the planner and spawns the
+        documenters."""
+        body = _body(skill)
+        assert "code-knowledge plan" not in body
+        assert DOCUMENTER_AGENT_NAME not in body
+        assert "You run nothing of it yourself" in _flat(body)
+        assert f"**{ORCHESTRATOR_AGENT_NAME}**" in body
 
-    def test_under_kiro_it_names_no_orchestrator(self) -> None:
-        assert ORCHESTRATOR_AGENT_NAME not in _KIRO_SKILL
-        assert "This skill runs in the session that invoked it" in _flat(_KIRO_SKILL)
+    @_SKILLS
+    def test_it_spawns_with_the_one_first_line_the_loop_reads_the_next_after(
+        self, skill: str
+    ) -> None:
+        first = "Run one documentation run with exactly these arguments, as written, and no others:"
+        assert f"```\n{first}\n" in skill
+        assert "after your prompt's first" in ARGUMENTS_SOURCE
 
     def test_kiro_names_the_documenter_and_its_prompt(self) -> None:
         """V3 offers each subagent as a spawn tool of its own, whose parameters are the prompt and
         an explanation (`research/kiro-v3-probe.md` §11), so a `role:` field names nothing there."""
         assert f"**{DOCUMENTER_AGENT_NAME}** subagent" in KIRO_SPAWN_INSTRUCTION
         assert "giving it this prompt" in _flat(KIRO_SPAWN_INSTRUCTION)
-        assert "role:" not in _KIRO_SKILL
+
+
+class TestKirosLaunch:
+    """kiro's skill: the session spawns the orchestrator in the foreground and waits for it."""
+
+    def test_it_spawns_the_orchestrator_by_name_with_its_prompt(self) -> None:
+        assert f"Spawn the **{ORCHESTRATOR_AGENT_NAME}** subagent, giving it this prompt" in (
+            _flat(_KIRO_SKILL)
+        )
+        assert "subagent_type" not in _KIRO_SKILL
+        assert "run_in_background" not in _KIRO_SKILL
+
+    def test_it_writes_the_arguments_itself_since_kiro_replaces_none(self) -> None:
+        """kiro replaces `$ARGUMENTS` only for a skill invoked by its slash command, not one loaded
+        through `disclose_context` (`research/kiro-cli-v3-migration.md` §5)."""
+        flat = _flat(_KIRO_SKILL)
+        assert "$ARGUMENTS" not in _KIRO_SKILL
+        assert "**Write its second line yourself**" in flat
+        assert "as they were given" in flat
+        assert "or nothing when none were" in flat
+
+    def test_it_says_the_session_waits(self) -> None:
+        assert "this session is busy until the run ends" in _flat(_KIRO_SKILL)
+
+    @pytest.mark.parametrize("claude_codes", ["One run at a time", "20 subagents", "Do not retry"])
+    def test_it_carries_none_of_claude_codes_concurrency_rules(self, claude_codes: str) -> None:
+        assert claude_codes not in _flat(_KIRO_SKILL)
+        assert claude_codes in _flat(_CLAUDE_SKILL)
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "may do only what this session's agent's rules allow",
+            "needs the `subagent` tool, to spawn the orchestrator",
+            "allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over the documents "
+            "directory",
+            "Its `tools` need not hold `shell` or `write`",
+            "One request is one spawn, however many modules it names.",
+            "Relay each report when it arrives with its opening lines",
+        ],
+    )
+    def test_it_states(self, phrase: str) -> None:
+        assert phrase in _flat(_KIRO_SKILL)
 
 
 class TestTheLaunch:
@@ -362,12 +525,6 @@ class TestTheLaunch:
             "others:\n$ARGUMENTS\n```"
         )
         assert prompt in _CLAUDE_SKILL
-
-    def test_it_runs_none_of_the_loop(self) -> None:
-        body = _body(_CLAUDE_SKILL)
-        assert "code-knowledge plan" not in body
-        assert "zikaron-documenter" not in body
-        assert "You run nothing of it yourself" in _flat(body)
 
     @pytest.mark.parametrize(
         "phrase",
@@ -394,7 +551,7 @@ class TestTheLaunch:
 
 
 class TestTheLoop:
-    """What kiro's skill and Claude Code's orchestrator both carry."""
+    """What both harnesses' orchestrators carry."""
 
     @_LOOPS
     def test_the_readme_item_names_its_role_list_by_path(self, loop: str) -> None:
@@ -414,13 +571,13 @@ class TestTheLoop:
 
     def test_each_harness_reads_the_planner_from_the_file_its_install_writes(self) -> None:
         assert "`.mcp.json`" in _ORCHESTRATOR_BODY
-        assert "`.kiro/agents/zikaron-consolidator.json`" in _KIRO_SKILL
-        for loop in (_ORCHESTRATOR_BODY, _KIRO_SKILL):
+        assert "`.kiro/agents/zikaron-consolidator.json`" in _KIRO_ORCHESTRATOR_PROMPT
+        for loop in (_ORCHESTRATOR_BODY, _KIRO_ORCHESTRATOR_PROMPT):
             assert "mcpServers.zikaron.command" in loop
 
-    def test_each_harness_says_where_its_arguments_come_from(self) -> None:
-        assert CLAUDE_CODE_ARGUMENTS_SOURCE in _flat(_ORCHESTRATOR_BODY)
-        assert KIRO_ARGUMENTS_SOURCE in _flat(_KIRO_SKILL)
+    @_LOOPS
+    def test_both_take_the_arguments_from_the_spawn_prompts_second_line(self, loop: str) -> None:
+        assert ARGUMENTS_SOURCE in _flat(loop)
 
     @_LOOPS
     def test_the_planner_always_runs_bounded_and_with_the_project(self, loop: str) -> None:
@@ -496,7 +653,7 @@ class TestTheLoop:
         assert "if the tool offers `run_in_background`, pass `false`" in flat
         assert "if it offers no such parameter, every spawn runs in the background" in flat
         assert "subagent_type: zikaron-documenter" in flat
-        assert "run_in_background" not in _KIRO_SKILL
+        assert "run_in_background" not in _KIRO_ORCHESTRATOR_PROMPT
 
     def test_claude_codes_wait_for_a_background_spawn_can_be_followed(self) -> None:
         """Told to wait for a message, not to sleep or poll, and not to end its turn, an
@@ -521,7 +678,7 @@ class TestTheLoop:
     ) -> None:
         """The loop skips a module by this prefix and stops on any other failure, so the planner's
         wording and the loop's must not drift apart."""
-        prefix = re.search(r"standard error opening `([^`]+)`", _flat(_KIRO_SKILL))
+        prefix = re.search(r"standard error opening `([^`]+)`", _flat(_KIRO_ORCHESTRATOR_PROMPT))
         assert prefix is not None
         (tmp_path / ".zikaron").mkdir()
         (tmp_path / ".zikaron" / "memory.db").write_bytes(b"")
@@ -529,18 +686,13 @@ class TestTheLoop:
         assert status == 1
         assert capsys.readouterr().err.startswith(prefix.group(1))
 
-    @pytest.mark.parametrize(
-        "render",
-        [document_code_skill, orchestrator_prompt],
-        ids=["skill", "orchestrator"],
-    )
-    def test_a_placeholder_that_survives_is_refused(self, render: Callable[..., str]) -> None:
+    def test_a_placeholder_that_survives_is_refused(self) -> None:
         with pytest.raises(ValueError, match="survived substitution"):
-            render(
+            orchestrator_prompt(
                 identity_vocabulary(),
+                own_prompt=KIRO_ORCHESTRATOR_PROMPT,
                 spawn_instruction="@@SPAWN_INSTRUCTION@@",
                 planner_command=KIRO_PLANNER_COMMAND,
-                arguments_source=KIRO_ARGUMENTS_SOURCE,
             )
 
 
@@ -568,7 +720,7 @@ class TestAnInstall:
         documenter = (agents / f"{DOCUMENTER_AGENT_NAME}.md").read_text(encoding="utf-8")
         orchestrator = (agents / f"{ORCHESTRATOR_AGENT_NAME}.md").read_text(encoding="utf-8")
         assert documenter == documenter_agent_markdown(model=CLAUDE_CODE.documenter_model)
-        assert orchestrator == orchestrator_agent_markdown(model=ORCHESTRATOR_MODEL)
+        assert orchestrator == orchestrator_agent_markdown(model=CLAUDE_CODE.orchestrator_model)
 
     def test_the_documenters_default_is_checked_as_the_others_are(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -579,43 +731,68 @@ class TestAnInstall:
         assert "'a: b' cannot be written into YAML frontmatter" in capsys.readouterr().err
         assert not (tmp_path / ".claude" / "agents").exists()
 
-    def test_kiros_documenter_takes_its_own_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Kiro's two defaults coincide, so only a differing one shows the documenter's written."""
+    def test_under_kiro_each_agent_takes_its_own_default(self, tmp_path: Path) -> None:
         (tmp_path / ".kiro").mkdir()
-        monkeypatch.setattr(KiroTarget, "spec", KIRO._replace(documenter_model="other-id"))
-        offered = frozenset({KIRO.consolidator_model, "other-id"})
-        monkeypatch.setattr(install_harness, "available_model_ids", lambda: offered)
         assert main(["--project", str(tmp_path)]) == 0
         targets = Targets(project=tmp_path)
-        documenter = json.loads(targets.documenter_config.read_text(encoding="utf-8"))
-        consolidator = json.loads(targets.consolidator_config.read_text(encoding="utf-8"))
-        assert (documenter["model"], consolidator["model"]) == ("other-id", KIRO.consolidator_model)
+        models = [
+            json.loads(path.read_text(encoding="utf-8"))["model"]
+            for path in (
+                targets.consolidator_config,
+                targets.documenter_config,
+                targets.orchestrator_config,
+            )
+        ]
+        assert models == [KIRO.consolidator_model, KIRO.documenter_model, KIRO.orchestrator_model]
 
-    def test_kiros_documenter_default_is_checked_against_its_model_list(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize("agent", ["documenter", "orchestrator"])
+    def test_kiros_default_is_checked_against_its_model_list(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        agent: str,
     ) -> None:
         (tmp_path / ".kiro").mkdir()
-        monkeypatch.setattr(KiroTarget, "spec", KIRO._replace(documenter_model="other-id"))
-        offered = frozenset({KIRO.consolidator_model})
+        spec = (
+            KIRO._replace(documenter_model="other-id")
+            if agent == "documenter"
+            else KIRO._replace(orchestrator_model="other-id")
+        )
+        monkeypatch.setattr(KiroTarget, "spec", spec)
+        offered = frozenset(
+            {KIRO.consolidator_model, KIRO.documenter_model, KIRO.orchestrator_model}
+        )
         monkeypatch.setattr(install_harness, "available_model_ids", lambda: offered)
         assert main(["--project", str(tmp_path)]) == 1
         assert "'other-id' is not a model this harness offers" in capsys.readouterr().err
         assert not (tmp_path / ".kiro" / "agents").exists()
 
-    def test_kiro_writes_the_documenter_and_its_skill_and_no_orchestrator(
+    def test_kiro_writes_the_documenter_the_orchestrator_and_the_launch_skill(
         self, tmp_path: Path
     ) -> None:
         (tmp_path / ".kiro").mkdir()
         assert main(["--project", str(tmp_path)]) == 0
-        agents = tmp_path / ".kiro" / "agents"
+        targets = Targets(project=tmp_path)
+        documenter = json.loads(targets.documenter_config.read_text(encoding="utf-8"))
+        assert documenter["tools"] == sorted([*KIRO.file_tools, TOOL_SELECTOR])
+        assert list(documenter["mcpServers"]) == ["zikaron"]
+        orchestrator = json.loads(targets.orchestrator_config.read_text(encoding="utf-8"))
+        assert orchestrator == orchestrator_agent_config(
+            Commands.from_this_interpreter(), model=KIRO.orchestrator_model
+        )
         skill = tmp_path / ".kiro" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md"
-        config = json.loads((agents / f"{DOCUMENTER_AGENT_NAME}.json").read_text(encoding="utf-8"))
-        assert config["tools"] == sorted([*KIRO.file_tools, TOOL_SELECTOR])
-        assert list(config["mcpServers"]) == ["zikaron"]
-        assert not list(agents.glob(f"{ORCHESTRATOR_AGENT_NAME}.*"))
         assert skill.read_text(encoding="utf-8") == _KIRO_SKILL
+
+    def test_kiro_accepts_the_orchestrators_own_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".kiro").mkdir()
+        offered = frozenset({KIRO.consolidator_model, KIRO.documenter_model, "an-orchestrator"})
+        monkeypatch.setattr(install_harness, "available_model_ids", lambda: offered)
+        assert main(["--project", str(tmp_path), "--orchestrator-model", "an-orchestrator"]) == 0
+        config = Targets(project=tmp_path).orchestrator_config.read_text(encoding="utf-8")
+        assert json.loads(config)["model"] == "an-orchestrator"
 
     def test_the_guards_alone_ship_neither(self, tmp_path: Path) -> None:
         (tmp_path / ".claude").mkdir()

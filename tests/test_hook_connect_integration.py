@@ -17,7 +17,7 @@ import pytest
 from zikaron.hook import connect
 from zikaron.hook.connect import HookTransportError, ServiceStartingError, connect_once
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("generous_hook_deadlines")]
 
 #: A tiny script that binds the socket after a deliberate delay and answers exactly one
 #: `health()` — simulates a service that is genuinely starting rather than already dead, so

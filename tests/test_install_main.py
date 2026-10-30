@@ -20,7 +20,9 @@ from zikaron.install.entries import MCP_SERVER_NAME, TOOL_SELECTOR, Commands, ho
 from zikaron.install.main import main
 from zikaron.install.writer import Targets
 
-_MODELS = frozenset({KIRO.consolidator_model, "claude-haiku-4.5"})
+_MODELS = frozenset(
+    {KIRO.consolidator_model, KIRO.documenter_model, KIRO.orchestrator_model, "claude-haiku-4.5"}
+)
 
 #: A profile carrying both engines' fields, the one shape whose `toolsSettings` a merge reads.
 _UNIVERSAL: dict[str, object] = {"name": "m", "permissions": {"rules": []}, "allowedTools": []}
@@ -246,6 +248,7 @@ class TestASuccessfulInstall:
             "helper-a",
             "zikaron-consolidator",
             "zikaron-documenter",
+            "zikaron-code-orchestrator",
         ]
         assert "trustedAgents" not in crew, "spawn trust is a separate grant, left to the user"
         assert "availableAgents" in capsys.readouterr().out
@@ -268,7 +271,10 @@ class TestASuccessfulInstall:
         assert merged["permissions"] == {"rules": []}
         printed = " ".join(capsys.readouterr().out.split())
         assert "--no-trust-tools withheld the two rules" in printed
-        assert "kiro gives a subagent only what its parent's rules allow as well" in printed
+        assert (
+            "an agent this session spawns may do only what the session's rules allow, less what "
+            "any rule in the chain denies, and its own allow rules add nothing"
+        ) in printed
 
     def test_the_model_can_be_overridden_for_a_comparison_run(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
@@ -436,7 +442,7 @@ class TestRefusalsHappenBeforeAnythingIsWritten:
         printed = " ".join(capsys.readouterr().out.split())
         assert "V3 agent engine" in printed
         assert "`--v3` on 2.35" in printed
-        assert "first tool call asks for permission, with nobody to answer it" in printed
+        assert "asks for permission, with nobody to answer it" in printed
         assert "--require-mcp-startup" in printed
         assert "does not make an interactive session wait" in printed
 
@@ -766,4 +772,8 @@ class TestTheValidationReport:
         project.mkdir()
         _kiro_install(["--project", str(project)])
         targets = Targets(project=project)
-        assert asked == [targets.consolidator_config, targets.documenter_config]
+        assert asked == [
+            targets.consolidator_config,
+            targets.documenter_config,
+            targets.orchestrator_config,
+        ]

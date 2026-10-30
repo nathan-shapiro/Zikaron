@@ -17,6 +17,7 @@ import aiosqlite
 import pytest
 
 from tests.contention_fixtures import call, error_of, external_writer, patch_budget
+from tests.loop_lateness import loop_lateness
 from tests.service_fixtures import open_context
 from zikaron.core.retrieval import reads
 from zikaron.core.store import transactions
@@ -30,8 +31,11 @@ async def _seeded(ctx: object) -> None:
     await call(ctx, "memory_remember", {"gist": "the proto codegen drifts", "content": "pin it"})  # type: ignore[arg-type]
 
 
-def _count_attempts(monkeypatch: pytest.MonkeyPatch) -> list[bool | None]:
-    """Record each read transaction's requested mode — `None` deferred, `True` for the retry."""
+def _count_attempts(
+    monkeypatch: pytest.MonkeyPatch, *, on_retry: Callable[[], None] = lambda: None
+) -> list[bool | None]:
+    """Record each read transaction's requested mode — `None` deferred, `True` for the retry — and
+    call `on_retry` as the retry begins."""
     attempts: list[bool | None] = []
     real = transactions.in_one_transaction
 
@@ -41,6 +45,8 @@ def _count_attempts(monkeypatch: pytest.MonkeyPatch) -> list[bool | None]:
         **options: object,
     ) -> object:
         attempts.append(options.get("immediate"))  # type: ignore[arg-type]
+        if options.get("immediate"):
+            on_retry()
         return await real(db, work, **options)  # type: ignore[arg-type]
 
     monkeypatch.setattr(transactions, "in_one_transaction", counted)
@@ -66,23 +72,25 @@ async def test_a_reads_first_attempt_is_refused_at_a_held_lock_within_millisecon
         monkeypatch.setattr(reads, "_read_with_one_retry", first_attempt_only)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            started = time.monotonic()
-            refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
-            elapsed = time.monotonic() - started
+            async with loop_lateness() as lateness:
+                started = time.monotonic()
+                refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
+                elapsed = time.monotonic() - started
         assert refused is not None, refused
         assert refused[0] == _STORE_BUSY, refused
-        assert elapsed < 0.5, elapsed
+        assert elapsed - lateness.seconds < 0.5, (elapsed, lateness)
 
 
 async def test_a_read_retries_once_and_succeeds_when_the_hold_ends_inside_its_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The release is scheduled by the retry, so the first attempt meets the lock held whatever a
+    stall of the process does to a timer set beforehand."""
     async with open_context(tmp_path) as ctx:
         await _seeded(ctx)
-        attempts = _count_attempts(monkeypatch)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            writer.release_after(0.3)
+            attempts = _count_attempts(monkeypatch, on_retry=lambda: writer.release_after(0.1))
             answered = await call(ctx, "memory_search", {"query": "proto"})
         assert error_of(answered) is None, answered
         assert attempts == [None, True]
@@ -98,23 +106,26 @@ async def test_a_read_whose_hold_outlasts_its_budget_answers_store_busy_after_on
         attempts = _count_attempts(monkeypatch)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            started = time.monotonic()
-            refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
-            elapsed = time.monotonic() - started
+            async with loop_lateness() as lateness:
+                started = time.monotonic()
+                refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
+                elapsed = time.monotonic() - started
         assert refused is not None, refused
         assert refused[0] == _STORE_BUSY, refused
         assert attempts == [None, True]
-        assert 0.8 * budget_ms / 1000 <= elapsed <= 1.3 * budget_ms / 1000, elapsed
+        assert elapsed >= 0.8 * budget_ms / 1000, elapsed
+        assert elapsed - lateness.seconds <= 1.3 * budget_ms / 1000, (elapsed, lateness)
 
 
 async def test_a_reads_lease_wait_and_retry_share_one_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every lease is held until about half the budget, and another process's write lock outlasts
-    one and a half. The read gets a lease at half, is refused at its upgrade, and its retry waits
-    only what is left: it answers about one budget from its dispatch. With the retry waiting a whole
-    budget of its own instead, it answers at about one and a half. A pool that stayed
-    exhausted throughout would answer at one budget either way and test nothing."""
+    """Every lease is held until about half the budget, and another process's write lock for ten
+    budgets, far past either answer, so no stall can end after its release and let the retry take
+    it. The read gets a lease at half, is refused at its upgrade, and its retry waits only what is
+    left: it answers about one budget from its dispatch. With the retry waiting a whole budget of
+    its own instead, it answers at about one and a half. A pool that stayed exhausted throughout
+    would answer at one budget either way and test nothing."""
     budget_ms = 500
     patch_budget(monkeypatch, budget_ms)
     async with open_context(tmp_path) as ctx:
@@ -133,15 +144,17 @@ async def test_a_reads_lease_wait_and_retry_share_one_budget(
             await asyncio.sleep(0.01)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            writer.release_after(1.6 * budget_ms / 1000)
+            writer.release_after(10 * budget_ms / 1000)
             asyncio.get_running_loop().call_later(0.5 * budget_ms / 1000, release.set)
-            started = time.monotonic()
-            refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
-            elapsed = time.monotonic() - started
+            async with loop_lateness() as lateness:
+                started = time.monotonic()
+                refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
+                elapsed = time.monotonic() - started
             await asyncio.gather(*pinned)
         assert refused is not None, refused
         assert refused[0] == _STORE_BUSY, refused
-        assert 0.8 * budget_ms / 1000 <= elapsed <= 1.25 * budget_ms / 1000, elapsed
+        assert elapsed >= 0.8 * budget_ms / 1000, elapsed
+        assert elapsed - lateness.seconds <= 1.25 * budget_ms / 1000, (elapsed, lateness)
 
 
 async def test_a_read_at_an_exhausted_pool_answers_store_busy_at_its_budget(
@@ -162,10 +175,12 @@ async def test_a_read_at_an_exhausted_pool_answers_store_busy_at_its_budget(
         pinned = [asyncio.create_task(pin()) for _ in range(POOL_SIZE)]
         while leased < POOL_SIZE:
             await asyncio.sleep(0.01)
-        started = time.monotonic()
-        refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
-        elapsed = time.monotonic() - started
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            refused = error_of(await call(ctx, "memory_search", {"query": "proto"}))
+            elapsed = time.monotonic() - started
         release.set()
         await asyncio.gather(*pinned)
         assert refused == (_STORE_BUSY, {"verb": "memory_search"}), refused
-        assert 0.8 * budget_ms / 1000 <= elapsed <= 1.5 * budget_ms / 1000, elapsed
+        assert elapsed >= 0.8 * budget_ms / 1000, elapsed
+        assert elapsed - lateness.seconds <= 1.5 * budget_ms / 1000, (elapsed, lateness)

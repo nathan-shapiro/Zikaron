@@ -87,9 +87,8 @@ def _harness_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     refuse everything in a container — a suite whose result depends on what is on `PATH` is not
     testing the code. Tests that are *about* absence override this fixture explicitly.
     """
-    monkeypatch.setattr(
-        harness, "available_model_ids", lambda: frozenset({KIRO.consolidator_model})
-    )
+    shipped = frozenset({KIRO.consolidator_model, KIRO.documenter_model, KIRO.orchestrator_model})
+    monkeypatch.setattr(harness, "available_model_ids", lambda: shipped)
     monkeypatch.setattr(harness, "validate_agent_config", lambda _path: None)
     monkeypatch.setattr(harness, "binary_is_available", lambda _name: True)
     monkeypatch.setattr(harness, "installed_version", lambda: harness.MINIMUM_VERSION)

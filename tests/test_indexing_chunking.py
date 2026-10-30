@@ -169,6 +169,42 @@ def test_a_hard_split_paragraph_does_not_absorb_the_paragraph_after_it() -> None
     ]
 
 
+class _PieceEncoder(FakeEncoder):
+    """WordPiece's shape: a word's first token is two characters and each later one three, so a
+    slice opening inside a word reads the fragment as a word and can count one more — `abcde` is
+    `ab` `cde`, and `cde` alone is `cd` `e`."""
+
+    def token_char_spans(self, text: str) -> tuple[tuple[int, int], ...]:
+        spans: list[tuple[int, int]] = []
+        for word in re.finditer(r"\S+", text):
+            start, end = word.span()
+            cut = min(start + 2, end)
+            spans.append((start, cut))
+            while cut < end:
+                spans.append((cut, min(cut + 3, end)))
+                cut = min(cut + 3, end)
+        return tuple(spans)
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.token_char_spans(text))
+
+
+def test_a_hard_split_cuts_between_words_where_a_cut_at_the_budget_would_split_one() -> None:
+    """Three tokens a piece would cut the second `abcde` after `ab`, leaving a piece that opens on
+    `cde` and counts four, which the post-condition refuses (`research/hard-split-word-cut.md`)."""
+    plan = _plan(" ".join(["abcde"] * 5), encoder=_PieceEncoder(), chunk_max_tokens=3)
+    assert [chunk.text for chunk in plan.chunks] == ["abcde"] * 5
+    assert all(chunk.truncated for chunk in plan.chunks)
+
+
+def test_a_word_longer_than_the_budget_is_cut_inside_it_into_pieces_that_fit() -> None:
+    """No word starts inside the window, so the cut stays on a token boundary, and a piece that
+    counts over the budget on its own shrinks until it fits."""
+    plan = _plan("abcdefghijk", encoder=_PieceEncoder(), chunk_max_tokens=2)
+    assert [chunk.text for chunk in plan.chunks] == ["abcde", "fgh", "ijk"]
+    assert all(chunk.token_count <= plan.effective_budget for chunk in plan.chunks)
+
+
 def test_truncated_is_false_for_a_memory_the_budget_never_cut() -> None:
     plan = _plan("\n\n".join(["a1 a2", "b1 b2 b3"]), chunk_max_tokens=3)
     assert plan.n_chunks == 2
@@ -420,19 +456,17 @@ def test_spans_covering_only_part_of_a_paragraph_yield_no_plan_at_all() -> None:
 def test_a_recounted_chunk_over_its_budget_is_refused_even_when_it_fits_the_models_cap() -> None:
     """The post-condition recounts what was emitted rather than trusting the window that cut it.
 
-    A real WordPiece tokenizer can retokenize a slice differently from how it tokenized the
-    paragraph the slice came from — a cut that lands inside a word leaves a fragment the vocabulary
-    splits its own way — so a window of `budget` tokens can emit a piece that counts more than
-    `budget` on its own. Recounting the emitted text is what notices, and a large model cap is used
-    here so the assembled-sequence half of the check cannot be what fires.
+    The hard split shrinks a piece that counts over its budget, down to one token, so what reaches
+    the post-condition is a single token counting more than the budget on its own. A large model
+    cap is used here so the assembled-sequence half of the check cannot be what fires.
     """
 
     class DriftingEncoder(FakeEncoder):
-        """Counts one token per word, except for one slice it reports as one token longer."""
+        """Counts one token per word, except that a text opening on `w2` counts two more, as a
+        WordPiece fragment can when it opens a slice."""
 
         def count_tokens(self, text: str) -> int:
-            counted = super().count_tokens(text)
-            return counted + 1 if text == "w2 w3" else counted
+            return super().count_tokens(text) + (2 if text.startswith("w2") else 0)
 
     encoder = DriftingEncoder(max_sequence_tokens=100_000)
     with pytest.raises(ZikaronError) as raised:

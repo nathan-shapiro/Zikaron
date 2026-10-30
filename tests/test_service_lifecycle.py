@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.loop_lateness import thread_lateness
 from tests.service_fixtures import open_context
 from zikaron.service import lifecycle, ownership, server
 
@@ -195,11 +196,13 @@ def test_a_child_still_alive_at_the_deadline_ends_the_poll_as_a_plain_connection
     monkeypatch.setattr(lifecycle, "_HEALTH_POLL_DEADLINE_SECONDS", 0.3)
     alive = unittest.mock.create_autospec(subprocess.Popen, instance=True)
     alive.poll.return_value = None
-    started = time.monotonic()
-    with pytest.raises(ConnectionError) as raised:
-        lifecycle._poll_until_reachable(socket_dir / "test.sock", child=alive)
+    with thread_lateness() as lateness:
+        started = time.monotonic()
+        with pytest.raises(ConnectionError) as raised:
+            lifecycle._poll_until_reachable(socket_dir / "test.sock", child=alive)
+        elapsed = time.monotonic() - started
     assert not isinstance(raised.value, lifecycle.StartFailedError)
-    assert time.monotonic() - started < 2.0
+    assert elapsed - lateness.seconds < 2.0, (elapsed, lateness)
 
 
 class TestOnlyTheSocketThisProcessBoundIsRemoved:
@@ -233,9 +236,19 @@ async def test_every_poll_that_does_not_stop_shows_a_sign_of_life(
     tmp_path: Path, socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A push queued behind this service's hold on its store reads how long ago it last did, so a
-    service that is still polling must never read as one that has stalled."""
+    service that is still polling must never read as one that has stalled.
+
+    The test waits for the third sign rather than counting signs in a fixed sleep, which a stall of
+    the process would empty; a poll that stopped giving them is a watchdog's ten seconds."""
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", 0.02)
     signs: list[None] = []
+    third_sign = asyncio.Event()
+
+    def sign_of_life() -> None:
+        signs.append(None)
+        if len(signs) >= 3:
+            third_sign.set()
+
     async with open_context(tmp_path) as ctx:
         ctx.activity.begin_request("memory_search")  # never idle: nothing stops it.
         sock_path = socket_dir / "server.sock"
@@ -246,11 +259,11 @@ async def test_every_poll_that_does_not_stop_shows_a_sign_of_life(
                 running,
                 sock_path,
                 original_store_inode=ctx.store.path.stat().st_ino,
-                still_here=lambda: signs.append(None),
+                still_here=sign_of_life,
             )
         )
         try:
-            await asyncio.sleep(0.3)
+            await asyncio.wait_for(third_sign.wait(), timeout=10.0)
         finally:
             polling.cancel()
             await asyncio.gather(polling, return_exceptions=True)

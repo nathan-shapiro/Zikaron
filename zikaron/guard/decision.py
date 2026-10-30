@@ -1,4 +1,5 @@
-"""The command hook's decision on one `Bash` or `Monitor` command: `design/guards.md` §3 and §9.
+"""The command hook's decision on one shell command — `Bash` or `Monitor` under Claude Code,
+`execute_bash` under kiro: `design/guards.md` §3 and §9.
 
 Two rules judge every command. **The find-replace rule** (§3): does a form match (§3.2), and if
 so, is a target not scratch (§3.3). **The self-match rule** (§9): does a `pgrep -f`/`pkill -f`
@@ -64,8 +65,9 @@ class Deny:
 
 @dataclass(frozen=True, slots=True)
 class Acknowledge:
-    """A valid override: no decision, only its acknowledgement — which names what the command
-    changes, so the re-read the nudge cannot ask after a Bash call is asked here (§3.4)."""
+    """A valid override: no decision, only its acknowledgement where the harness delivers one —
+    which names what the command changes, so the re-read the nudge cannot ask after a shell call is
+    asked here (§3.4)."""
 
     reason: str
     #: Every target that is not exempt, of every form that matched, resolved, in command order.

@@ -18,12 +18,13 @@ from typing import Any
 import pytest
 
 from zikaron.guard.limits import TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, Guards, SearchReminder
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, GuardHook, Guards, SearchReminder
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install import harness
 from zikaron.install.entries import Commands, claude_hooks_value
 from zikaron.install.main import main
+from zikaron.install.targets import KiroTarget
 
 
 def _guards() -> Guards:
@@ -38,7 +39,14 @@ def _reminder() -> SearchReminder:
     return reminder
 
 
+def _reread(guards: Guards) -> GuardHook:
+    assert guards.reread is not None
+    return guards.reread
+
+
 GUARDS = _guards()
+REREAD = _reread(GUARDS)
+GUARD_HOOKS = (GUARDS.command, REREAD)
 REMINDER = _reminder()
 START_TRIGGERS = ("SessionStart", "SubagentStart")
 USER_PRE_TOOL_USE = {"matcher": "Bash", "hooks": [{"type": "command", "command": "/u/lint.sh"}]}
@@ -117,7 +125,7 @@ def test_the_result_is_the_union_of_what_was_there_and_what_is_installed(
     expected_triggers = {
         *START_TRIGGERS,
         *(["UserPromptSubmit", REMINDER.trigger] if installed.memory else []),
-        *([GUARDS.command.trigger, GUARDS.reread.trigger] if installed.guards else []),
+        *([GUARDS.command.trigger, REREAD.trigger] if installed.guards else []),
     }
     assert set(hooks) == expected_triggers
     start = " ".join((shlex.quote(str(commands.hook)), *installed.arguments))
@@ -180,7 +188,7 @@ def test_each_guard_entry_states_its_timeout_and_its_matcher(
 ) -> None:
     assert _install(project, "--components", "guards") == 0
     hooks = _hooks(project)
-    for hook in GUARDS:
+    for hook in GUARD_HOOKS:
         (group,) = hooks[hook.trigger]
         assert group["matcher"] == hook.matcher
         assert group["hooks"] == [
@@ -220,7 +228,7 @@ def test_memory_over_guards_leaves_the_guard_groups_byte_identical(project: Path
     before = _hooks(project)
     assert _install(project) == 0
     after = _hooks(project)
-    for hook in GUARDS:
+    for hook in GUARD_HOOKS:
         assert json.dumps(after[hook.trigger][0]) == json.dumps(before[hook.trigger][0])
 
 
@@ -355,9 +363,15 @@ def test_print_only_over_an_unreadable_settings_file_previews_this_runs_selectio
 
 
 @pytest.mark.parametrize("selection", ["guards", "both"])
-def test_kiro_refuses_the_guards_before_writing_anything(
-    tmp_path: Path, selection: str, capsys: pytest.CaptureFixture[str]
+def test_a_harness_offering_no_guards_refuses_them_before_writing_anything(
+    tmp_path: Path,
+    selection: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The refusal reads the seam, so a harness whose spec offers no guards is refused them,
+    whatever its name."""
+    monkeypatch.setattr(KiroTarget, "spec", KIRO._replace(guards=None))
     root = tmp_path / "kiro-project"
     (root / ".kiro").mkdir(parents=True)
     status = main(["--project", str(root), "--harness", "kiro", "--components", selection])
@@ -527,10 +541,10 @@ class TestTheSharedPostToolUseTrigger:
     ) -> None:
         """An install touches only its own selection, whoever installed the other."""
         nudge = {
-            "matcher": GUARDS.reread.matcher,
+            "matcher": REREAD.matcher,
             "hooks": [{"type": "command", "command": "/other/venv/bin/zikaron-guard"}],
         }
-        _write_settings(project, {"hooks": {GUARDS.reread.trigger: [nudge]}})
+        _write_settings(project, {"hooks": {REREAD.trigger: [nudge]}})
         assert _install(project) == 0
         assert self._shared(project)[0] == nudge
         assert _scripts_of(self._shared(project)) == ["zikaron-guard", "zikaron-hook"]

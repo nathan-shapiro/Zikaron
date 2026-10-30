@@ -38,16 +38,12 @@ from zikaron.install.assets import (
     skill_markdown,
 )
 from zikaron.install.code_knowledge import (
+    CLAUDE_CODE_LAUNCH_BODY,
     DOCUMENT_SKILL_NAME,
     DOCUMENTER_AGENT_NAME,
-    KIRO_ARGUMENTS_SOURCE,
-    KIRO_PLANNER_COMMAND,
+    KIRO_LAUNCH_BODY,
     ORCHESTRATOR_AGENT_NAME,
-    document_code_skill,
     launch_skill,
-)
-from zikaron.install.code_knowledge import (
-    KIRO_SPAWN_INSTRUCTION as KIRO_DOCUMENTER_SPAWN,
 )
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
@@ -62,6 +58,7 @@ from zikaron.install.entries import (
     documenter_agent_markdown,
     hooks_array,
     mcp_servers_value,
+    orchestrator_agent_config,
     orchestrator_agent_markdown,
     primary_rules,
 )
@@ -141,8 +138,8 @@ _SPILL_READ_NOTE: Final = (
     "is unset). That prompt is expected, **recurs in each new session** because the grant it "
     "offers is session-scoped, and is deliberately not answered by this install: choose the "
     "option allowing that directory for the session. A file-reading tool cannot be restricted to "
-    "one path in subagent config, so this prompt is the only point at which that grant is put to "
-    "you as a question."
+    "one path in Claude Code's subagent config, so this prompt is the only point at which that "
+    "grant is put to you as a question."
 )
 
 #: The exposure D32 cannot mechanically prevent here, reported rather than passed over in silence.
@@ -206,17 +203,6 @@ class HarnessTarget(ABC):
         paths. Passing `--agent` to a target that has no use for it is **refused** rather than
         ignored, because ignoring it would silently discard the one instruction the user gave about
         where their configuration lives.
-        """
-
-    @property
-    @abstractmethod
-    def ships_orchestrator(self) -> bool:
-        """Whether a memory install writes the code orchestrator the documentation skill has the
-        session spawn.
-
-        Where it does not, the session that invokes the skill runs its loop itself, so
-        `--orchestrator-model` is refused there rather than ignored, and no orchestrator's model is
-        checked.
         """
 
     @abstractmethod
@@ -311,48 +297,64 @@ class KiroTarget(HarnessTarget):
     def accepts_agent_flag(self) -> bool:
         return True
 
-    @property
-    def ships_orchestrator(self) -> bool:
-        return False
-
     def shipped_files(self, plan: Plan) -> tuple[ShippedFile, ...]:
+        """The consolidator, the documenter, the code orchestrator and the two skills, which only
+        the memory store ships."""
+        if not plan.components.memory:
+            return ()
         targets = Targets(project=plan.project)
-        config = consolidator_agent_config(plan.commands, model=plan.consolidator_model)
+        configs = (
+            (targets.consolidator_config, consolidator_agent_config, plan.consolidator_model),
+            (targets.documenter_config, documenter_agent_config, plan.documenter_model),
+            (targets.orchestrator_config, orchestrator_agent_config, plan.orchestrator_model),
+        )
         return (
-            ShippedFile(
-                targets.consolidator_config, json.dumps(config, indent=_JSON_INDENT) + "\n"
+            *(
+                ShippedFile(
+                    path,
+                    json.dumps(build(plan.commands, model=model), indent=_JSON_INDENT) + "\n",
+                )
+                for path, build, model in configs
             ),
             ShippedFile(
                 targets.skill_file,
                 skill_markdown(identity_vocabulary(), KIRO_SPAWN_INSTRUCTION),
             ),
             ShippedFile(
-                targets.documenter_config,
-                json.dumps(
-                    documenter_agent_config(plan.commands, model=plan.documenter_model),
-                    indent=_JSON_INDENT,
-                )
-                + "\n",
-            ),
-            ShippedFile(
-                targets.document_skill_file,
-                document_code_skill(
-                    identity_vocabulary(),
-                    spawn_instruction=KIRO_DOCUMENTER_SPAWN,
-                    planner_command=KIRO_PLANNER_COMMAND,
-                    arguments_source=KIRO_ARGUMENTS_SOURCE,
-                ),
+                targets.document_skill_file, launch_skill(identity_vocabulary(), KIRO_LAUNCH_BODY)
             ),
         )
 
     def plan_merges(self, plan: Plan, agent: Path | None) -> tuple[MergePlan, ...]:
+        """The merge into the profile `--agent` names, or none where it names none.
+
+        Raises:
+            InstallError: a guards-only install names no profile, so it would write nothing; or
+                any refusal of the merge.
+        """
         if agent is None:
+            if not plan.components.memory:
+                raise InstallError(
+                    f"--components {plan.components.value} under --harness {self.name} writes "
+                    "only hook entries, into the agent profile --agent names, and none was named, "
+                    "so nothing would be written. Pass --agent <profile>, or --print-only to see "
+                    "the entries."
+                )
             return ()
         return (plan_kiro_merge(agent, plan, Targets(project=plan.project)),)
 
     def fragment(self, plan: Plan) -> str:
+        """The selection's entries, and for the memory store the server, its rules and the
+        caveats; the guards add hook entries and nothing else."""
+        hooks = {"hooks": hooks_array(plan.commands, plan.components)}
+        if not plan.components.memory:
+            return (
+                "Add these to the `hooks` of the agent config you actually use (or re-run with "
+                "--agent <path> to have them merged in, with a backup):\n\n"
+                + json.dumps(hooks, indent=_JSON_INDENT)
+            )
         entries: dict[str, object] = {
-            "hooks": hooks_array(plan.commands),
+            **hooks,
             "mcpServers": mcp_servers_value(plan.commands, mode="primary"),
         }
         if plan.trust_tools:
@@ -368,8 +370,11 @@ class KiroTarget(HarnessTarget):
             "Zikaron tool call asks for approval and neither skill loads headless.",
             "The agent also needs `subagent` in its `tools` and a "
             '`{"capability": "subagent", "effect": "allow"}` rule for the '
-            f"{SKILL_NAME} and {DOCUMENT_SKILL_NAME} skills to spawn their agents, and `shell` "
-            f"with its rule for {DOCUMENT_SKILL_NAME} to run its planner.",
+            f"{SKILL_NAME} and {DOCUMENT_SKILL_NAME} skills to spawn their agents, and allow "
+            f"rules for `shell`, `fs_read`, and `fs_write` over `code-knowledge/`, for "
+            f"{ORCHESTRATOR_AGENT_NAME} to run the planner, its documenters to read and write, "
+            f"and {CONSOLIDATOR_AGENT_NAME} to read a group too large to deliver inline: an agent "
+            "the session spawns may do only what the session's rules allow.",
         ]
         return (
             "Add these to the agent config you actually use (or re-run with --agent <path> to have "
@@ -390,11 +395,13 @@ class KiroTarget(HarnessTarget):
         )
 
     def notes(self, plan: Plan) -> list[str]:
-        del plan
+        """The memory store's notes; the guards have none to give."""
+        if not plan.components.memory:
+            return []
         return [
             "Zikaron runs on kiro's V3 agent engine: the default from kiro-cli 3.0, and `--v3` on "
-            "2.35. Under V2 the consolidator's and the documenter's first tool call asks for "
-            "permission, with nobody to answer it.",
+            "2.35. Under V2 the first tool call of each agent Zikaron ships asks for permission, "
+            "with nobody to answer it.",
             "kiro starts a session's first turn without waiting for its MCP servers, and "
             "`zikaron-mcp` takes about two seconds to start, so a headless run "
             "(`kiro-cli chat --no-interactive`) needs `--require-mcp-startup` or its first turn "
@@ -446,10 +453,6 @@ class ClaudeCodeTarget(HarnessTarget):
     def accepts_agent_flag(self) -> bool:
         return False
 
-    @property
-    def ships_orchestrator(self) -> bool:
-        return True
-
     def _settings(self, project: Path) -> Path:
         """`.claude/settings.local.json`, never `settings.json`.
 
@@ -488,7 +491,7 @@ class ClaudeCodeTarget(HarnessTarget):
             ),
             ShippedFile(
                 project / ".claude" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md",
-                launch_skill(claude_tool_vocabulary()),
+                launch_skill(claude_tool_vocabulary(), CLAUDE_CODE_LAUNCH_BODY),
             ),
         )
 

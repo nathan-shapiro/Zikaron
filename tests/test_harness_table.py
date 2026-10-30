@@ -188,20 +188,47 @@ class TestTheCodeTableMatchesTheDesignTable:
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_guard_hooks(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
-        """The guards' triggers and matchers, or that the harness offers no guards at all — which is
-        what the installer's refusal of them reads."""
+        """The guards' triggers and matchers, the re-read hook's only where there is one, or that
+        the harness offers no guards at all — which is what the installer's refusal of them
+        reads."""
         cell = _cell(rows, "Guard hooks (`guards`)", spec)
         if spec.guards is None:
             assert _identifier(cell) is None
             return
-        named = tuple(_BACKTICKED.findall(cell))[:4]
         hooks = spec.guards
-        assert named == (
+        expected = (
             hooks.command.trigger,
             hooks.command.matcher,
-            hooks.reread.trigger,
-            hooks.reread.matcher,
+            *(() if hooks.reread is None else (hooks.reread.trigger, hooks.reread.matcher)),
         )
+        assert tuple(_BACKTICKED.findall(cell))[: len(expected)] == expected
+        if hooks.reread is None:
+            assert "no re-read hook" in cell
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_guard_deny(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """How a deny reaches the model: the exit status and channel the guard answers with."""
+        assert spec.guards is not None
+        cell = _cell(rows, "Guard deny (`guards.deny`)", spec)
+        assert _leading_bold(cell) == spec.guards.deny.value
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_spill_location(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """Where the consolidator's client writes an over-large result, which decides whether its
+        own path rules can name the file."""
+        cell = _cell(rows, "Spill file location (`spill_location`)", spec)
+        assert _leading_bold(cell) == spec.spill_location.value
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_tool_ids(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """The tools a shipped text names, as the model sees them, in the field's order."""
+        cell = _cell(rows, "Tool ids the model sees (`tool_ids`)", spec)
+        assert tuple(_BACKTICKED.findall(cell))[: len(spec.tool_ids)] == tuple(spec.tool_ids)
+
+    def test_each_harness_is_named_in_prose_as_its_column_is_headed(self) -> None:
+        """The name a shipped text gives the harness, such as the self-match deny's."""
+        assert f"**{KIRO.prose_name}**" == _COLUMNS[1]
+        assert f"**{CLAUDE_CODE.prose_name}**" == _COLUMNS[2]
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_search_reminder(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
@@ -250,6 +277,12 @@ class TestTheCodeTableMatchesTheDesignTable:
     def test_documenter_model(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         assert _identifier(_cell(rows, "Shipped documenter `model`", spec)) == (
             spec.documenter_model
+        )
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_orchestrator_model(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        assert _identifier(_cell(rows, "Shipped orchestrator `model`", spec)) == (
+            spec.orchestrator_model
         )
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)

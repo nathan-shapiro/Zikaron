@@ -18,26 +18,25 @@ leaves to the user. `--require-mcp-startup` is passed because kiro starts the fi
 waiting for MCP servers (`research/kiro-v3-probe.md` §8).
 """
 
+import asyncio
 import json
-import os
 import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Final, NamedTuple
 
 import pytest
+from fastmcp import Client
 
+from tests.kiro_live import TURN_TIMEOUT, Turn, chat, events, launch_log, require_kiro
 from zikaron.core.code_knowledge.document import front_matter
 from zikaron.harness.spec import KIRO
-from zikaron.install import harness
 from zikaron.install import main as install_main
 from zikaron.install.kiro_merge import DOCUMENTS_DIRECTORY
+from zikaron.mcp.server import build_server
 from zikaron.service import paths
 
 pytestmark = pytest.mark.integration_kiro
-
-#: A cold turn pays for a kiro start, a service start, a consolidator spawn and real model turns.
-_TURN_TIMEOUT: Final = 600.0
 
 #: The cheapest model `--list-models` offers, for every agent the test runs.
 _MODEL: Final = "claude-haiku-5.5"
@@ -62,34 +61,10 @@ _PRIMARY: Final[dict[str, object]] = {
 
 _GIST: Final = "zikaron live kiro check: the installed server is reachable from a real V3 turn"
 
-
-class Turn(NamedTuple):
-    """What one headless turn left behind."""
-
-    stream: list[dict[str, object]]
-    stderr: str
-    returncode: int
-
-    def of_type(self, kind: str) -> list[dict[str, object]]:
-        return [event for event in self.stream if event.get("type") == kind]
-
-    @property
-    def session_id(self) -> object:
-        (finished,) = self.of_type("runFinished")
-        data = finished.get("data")
-        return data.get("sessionId") if isinstance(data, dict) else None
-
-    def diagnosis(self) -> str:
-        return f"kiro-cli exited {self.returncode}; stderr: {self.stderr[-800:]!r}"
-
-
-def _require_kiro() -> None:
-    """Fail — never skip — when the binary is absent (`test_install_harness.py::_require_kiro`)."""
-    assert harness.binary_is_available(KIRO.harness_binary), (
-        f"{KIRO.harness_binary!r} is not on PATH: either this machine has no kiro, in which case "
-        "do not run `-m integration_kiro` here, or `HarnessSpec.harness_binary` names the wrong "
-        "binary."
-    )
+_CONSOLIDATE: Final = (
+    "Consolidate this project's memory: load the zikaron-consolidate skill and follow it. Then "
+    "reply with the single word: done."
+)
 
 
 def _install(project: Path, primary: dict[str, object] = _PRIMARY) -> None:
@@ -103,39 +78,7 @@ def _install(project: Path, primary: dict[str, object] = _PRIMARY) -> None:
 
 
 def _chat(project: Path, agent: str, prompt: str) -> Turn:
-    """One headless V3 turn in `project`, with this process's harness variables already removed."""
-    completed = subprocess.run(  # noqa: S603 — the argv is this file's own constants.
-        [
-            KIRO.harness_binary,
-            "chat",
-            "--v3",
-            "--no-interactive",
-            "--require-mcp-startup",
-            "--agent",
-            agent,
-            "--model",
-            _MODEL,
-            "--output-format",
-            "stream-json",
-            prompt,
-        ],
-        cwd=project,
-        env=os.environ.copy(),
-        capture_output=True,
-        text=True,
-        timeout=_TURN_TIMEOUT,
-        check=False,
-        stdin=subprocess.DEVNULL,
-    )
-    stream = []
-    for line in completed.stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict):
-            stream.append(event)
-    return Turn(stream=stream, stderr=completed.stderr, returncode=completed.returncode)
+    return chat(project, agent, prompt, model=_MODEL)
 
 
 def _events(project: Path) -> list[tuple[str, str, str]]:
@@ -164,7 +107,7 @@ class _Session(NamedTuple):
 @pytest.fixture(scope="class")
 def session(tmp_path_factory: pytest.TempPathFactory) -> _Session:
     """One installed project, driven through one turn that writes a memory and consolidates it."""
-    _require_kiro()
+    require_kiro()
     project = tmp_path_factory.mktemp("kiro-live")
     _install(project)
     turn = _chat(
@@ -226,10 +169,12 @@ class TestAnInstalledV3Session:
 
 
 def test_the_upgrader_classifies_the_shipped_profiles_as_v3_ones(tmp_path: Path) -> None:
-    """Neither shipped profile "would upgrade" or is "out of sync", the class the TUI answers by
-    rebuilding a profile: the consolidator is `v3-only` and the documenter `already universal`, as
-    they were measured to run (`research/kiro-v3-probe.md` §17, §26). No model is called."""
-    _require_kiro()
+    """No shipped profile "would upgrade" or is "out of sync", the class the TUI answers by
+    rebuilding a profile: the consolidator and the orchestrator are `v3-only` — their `tools` hold
+    no `grep` or `glob`, and the consolidator's deny carries `exclude` — and the documenter `already
+    universal`, as they were measured to run (`research/kiro-v3-probe.md` §17, §26, §53). No model
+    is called."""
+    require_kiro()
     project = tmp_path / "project"
     project.mkdir()
     _install(project)
@@ -237,7 +182,7 @@ def test_the_upgrader_classifies_the_shipped_profiles_as_v3_ones(tmp_path: Path)
         [KIRO.harness_binary, "agent", "upgrade", "--dry-run", str(project / ".kiro" / "agents")],
         capture_output=True,
         text=True,
-        timeout=_TURN_TIMEOUT,
+        timeout=TURN_TIMEOUT,
         check=False,
     )
     # The upgrader writes its table to stderr.
@@ -246,6 +191,7 @@ def test_the_upgrader_classifies_the_shipped_profiles_as_v3_ones(tmp_path: Path)
     for profile, classification in (
         ("zikaron-consolidator.json", "v3-only"),
         ("zikaron-documenter.json", "already universal"),
+        ("zikaron-code-orchestrator.json", "v3-only"),
     ):
         (line,) = [line for line in lines if profile in line]
         assert line.rstrip().endswith(classification), report
@@ -276,7 +222,7 @@ def _documenter_prompt(project: Path, source: Path, blob: str, document: Path) -
 def test_the_documenter_reads_one_file_and_writes_another_unasked(tmp_path: Path) -> None:
     """Run directly as its own agent, headless, where any question is refused: so a document on
     disk is the documenter's rules measured, not a prompt answered."""
-    _require_kiro()
+    require_kiro()
     project = tmp_path / "project"
     source, blob = _one_source(project)
     _install(project)
@@ -287,11 +233,12 @@ def test_the_documenter_reads_one_file_and_writes_another_unasked(tmp_path: Path
     assert document.read_text(encoding="utf-8").startswith(front_matter("calc.py", blob))
 
 
-def test_a_spawned_documenter_writes_under_its_parents_scoped_write_rule(tmp_path: Path) -> None:
-    """kiro gives a subagent only what its own rules and its parent's both allow: under a parent
-    with no write rule the documenter's write asks, and headless that refuses it
-    (`research/kiro-v3-probe.md` §28). The rule the install's note names is what lets it write."""
-    _require_kiro()
+def test_a_spawned_documenter_writes_under_the_sessions_scoped_write_rule(tmp_path: Path) -> None:
+    """A spawned agent may do what the session's rules allow, its own allow rules adding nothing:
+    under a session with no write rule the documenter's write asks, and headless that refuses it
+    (`research/kiro-v3-probe.md` §28, §54). The rule the install's note names is what lets it
+    write."""
+    require_kiro()
     project = tmp_path / "project"
     source, blob = _one_source(project)
     write: dict[str, object] = {
@@ -313,3 +260,56 @@ def test_a_spawned_documenter_writes_under_its_parents_scoped_write_rule(tmp_pat
     assert turn.of_type("runError") == [], turn.diagnosis()
     assert document.is_file(), f"no document was written. {turn.diagnosis()}"
     assert document.read_text(encoding="utf-8").startswith(front_matter("calc.py", blob))
+
+
+#: The smallest threshold the configuration admits, so a group of a few short records spills.
+_SPILL_THRESHOLD: Final = 4096
+
+
+async def _remember(project: Path, records: list[tuple[str, str]]) -> None:
+    """Write `records` through the primary MCP server in-process, which starts the project's
+    service as an agent's would."""
+    async with Client(build_server("primary", scope_dir=project)) as client:
+        for gist, content in records:
+            await client.call_tool("zikaron_memory_remember", {"gist": gist, "content": content})
+
+
+def test_a_spilled_group_is_read_from_the_stores_spill_directory(tmp_path: Path) -> None:
+    """A group over the threshold is written to `.zikaron/spill/`, which the consolidator's rules
+    let it read and nothing else, and the consolidator reads it and decides the group
+    (`design/architecture.md` §"A result too large to deliver — the client spills it to a file").
+    The read is asserted from `kiro.log`'s `acp.policy-eval.complete` line for it, so a read asked
+    and refused is told apart from one never tried."""
+    require_kiro()
+    project = tmp_path / "project"
+    project.mkdir()
+    _install(project)
+    store = paths.store_dir(project)
+    store.mkdir(mode=0o700)
+    paths.project_config_path(store).write_text(
+        f"[consolidation]\nspill_threshold = {_SPILL_THRESHOLD}\n", encoding="utf-8"
+    )
+    # Each record alone is over the threshold, so a group spills however the records are grouped.
+    detail = "The flaky integration test reconnects to the broker after a dropped socket. " * 80
+    asyncio.run(
+        _remember(
+            project,
+            [
+                (f"integration test {n} reconnects to the broker after a dropped socket", detail)
+                for n in range(3)
+            ],
+        )
+    )
+    turn = _chat(project, _PRIMARY_NAME, _CONSOLIDATE)
+    assert turn.of_type("runError") == [], turn.diagnosis()
+    assert paths.spill_dir(store).is_dir(), f"no group was spilled. {turn.diagnosis()}"
+    reads = [
+        evaluation
+        for evaluation in events(launch_log(turn.session_id), "acp.policy-eval.complete")
+        if evaluation.get("toolId") == "read_file"
+    ]
+    assert {"toolId": "read_file", "effect": "allow", "capability": "fs_read"} in reads, reads
+    consolidator = {kind for _, client, kind in _events(project) if client == "consolidator"}
+    assert consolidator & {"promote", "merge", "discard"}, (
+        f"the consolidator decided nothing; it logged {sorted(consolidator)}. {turn.diagnosis()}"
+    )

@@ -44,7 +44,7 @@ def _emit(case: SelfMatchCase) -> dict[str, object] | None:
     output = respond(json.dumps(payload), tmpdir=None, platform=case.platform, read=None)
     if output is None:
         return None
-    envelope = json.loads(output)["hookSpecificOutput"]
+    envelope = json.loads(output.stdout)["hookSpecificOutput"]
     assert isinstance(envelope, dict)
     return envelope
 

@@ -22,8 +22,13 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Final, NamedTuple
 
+from zikaron.hook.components import Components
 from zikaron.install.assets import SKILL_NAME
-from zikaron.install.code_knowledge import DOCUMENT_SKILL_NAME, DOCUMENTER_AGENT_NAME
+from zikaron.install.code_knowledge import (
+    DOCUMENT_SKILL_NAME,
+    DOCUMENTER_AGENT_NAME,
+    ORCHESTRATOR_AGENT_NAME,
+)
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     TOOL_SELECTOR,
@@ -50,27 +55,37 @@ _SYNCED_FIELDS: Final = ("tools", "permissions", "allowedTools")
 DOCUMENTS_DIRECTORY: Final = "code-knowledge"
 
 
-class _ParentGrant(NamedTuple):
-    """A capability the documenter uses that kiro also requires of the profile spawning it."""
+class _SessionGrant(NamedTuple):
+    """A file capability Zikaron's spawned agents use, which only the session's rules can allow."""
 
     capability: str
     act: str
     rule: str
 
 
-#: The read rule is the one `kiro-cli agent create` writes; the write rule, scoped to the documents
-#: directory, was measured to let a spawned documenter write (`research/kiro-v3-probe.md` §28).
-_DOCUMENTER_PARENT_GRANTS: Final = (
-    _ParentGrant(
+#: The read rule is the one `kiro-cli agent create` writes, which covers the store's spill directory
+#: (`research/kiro-v3-probe.md` §47); the write rule, scoped to the documents directory, was
+#: measured to let a documenter write two levels down (§28, §54).
+_SESSION_FILE_GRANTS: Final = (
+    _SessionGrant(
         "fs_read",
-        "reading each source",
+        f"`{ORCHESTRATOR_AGENT_NAME}` reads the consolidator's config to find the planner, before "
+        f"`{DOCUMENTER_AGENT_NAME}` reads each source, and before `{CONSOLIDATOR_AGENT_NAME}` "
+        "reads a group too large to deliver inline",
         '{"capability": "fs_read", "match": ["./**"], "effect": "allow"}',
     ),
-    _ParentGrant(
+    _SessionGrant(
         "fs_write",
-        "writing each document",
+        f"`{DOCUMENTER_AGENT_NAME}` writes each document",
         f'{{"capability": "fs_write", "match": ["./{DOCUMENTS_DIRECTORY}/**"], "effect": "allow"}}',
     ),
+)
+
+#: Why a rule a spawned agent needs is the session's to carry (`research/kiro-v3-probe.md` §52 to
+#: §56).
+_SESSION_RULES_DECIDE: Final = (
+    "an agent this session spawns may do only what the session's rules allow, less what any rule "
+    "in the chain denies, and its own allow rules add nothing"
 )
 
 #: kiro's camelCase trigger names, by the V3 name each means. `kiro-cli agent upgrade` keeps the
@@ -134,14 +149,20 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
             f"Convert it with `kiro-cli agent upgrade {path.parent}`, then re-run this install. "
             "Converting your trust settings is the harness's job, so this does not do it."
         )
-    if shape is ProfileShape.UNIVERSAL:
+    if shape is ProfileShape.UNIVERSAL and plan.components.memory:
         _guard_crew_shape(document, path=path)
     _guard_object_hooks(document, plan.commands, path=path)
-    _guard_existing_entries(document, plan.commands, path=path, force=plan.force)
+    _guard_existing_entries(document, plan, path=path)
     guard_backup_path(path)
 
     merged = dict(document)
-    merged["hooks"] = _merged_hooks(document, plan.commands)
+    merged["hooks"] = _merged_hooks(document, plan.commands, plan.components)
+    notes = _hook_notes(document, plan.commands, plan.components)
+    if not plan.components.memory:
+        # The guards add hook entries and nothing else, so nothing else is compared or reported.
+        return MergePlan(
+            path=path, document=merged, notes=tuple(notes), unchanged=merged == document
+        )
     merged["mcpServers"], server_notes = _merged_servers(document, plan.commands, force=plan.force)
     if _EVERY_TOOL not in _string_list(document.get("tools")):
         merged["tools"] = _selecting(document, "tools")
@@ -158,7 +179,6 @@ def plan_kiro_merge(path: Path, plan: Plan, targets: Targets) -> MergePlan:
     if resources is not None:
         merged["resources"] = resources
 
-    notes = _hook_notes(document, plan.commands)
     notes.extend(server_notes)
     notes.extend(crew_notes)
     notes.extend(resource_notes)
@@ -277,23 +297,20 @@ def _guard_crew_shape(document: dict[str, object], *, path: Path) -> None:
 
 
 def _guard_object_hooks(document: dict[str, object], commands: Commands, *, path: Path) -> None:
-    """Refuse object-format `hooks` holding an entry this install did not write.
+    """Refuse object-format `hooks` holding an entry no Zikaron selection writes.
 
     V3 reads that form only as compatibility input, and a key is either an object or an array, so
     Zikaron's array entries cannot sit beside an entry of the user's. The refusal shows the user's
     entries in the array form, and names the upgrader only for a profile it would convert: one with
     no `permissions`, since it leaves a profile that has them untouched.
     """
-    hooks = document.get("hooks")
-    if not isinstance(hooks, dict):
+    if not isinstance(document.get("hooks"), dict):
         return
-    ours = {id(hook.entry) for hook in _recognised_hooks(document, commands)}
-    theirs = [
-        _as_array_entry(str(trigger), index, entry)
-        for trigger, entries in hooks.items()
-        for index, entry in enumerate(_as_list(entries))
-        if id(entry) not in ours
-    ]
+    existing = _array_form(document)
+    ours = {
+        id(hook.entry) for hook in _recognised(existing, hooks_array(commands, Components.BOTH))
+    }
+    theirs = [entry for entry in existing if id(entry) not in ours]
     if not theirs:
         return
     remedy = (
@@ -309,8 +326,21 @@ def _guard_object_hooks(document: dict[str, object], commands: Commands, *, path
     )
 
 
+def _array_form(document: dict[str, object]) -> list[object]:
+    """The profile's `hooks` entries in the array form: as they are, or converted from the object
+    form, each object entry under its own trigger."""
+    hooks = document.get("hooks")
+    if not isinstance(hooks, dict):
+        return _as_list(hooks)
+    return [
+        _as_array_entry(str(trigger), index, entry)
+        for trigger, entries in hooks.items()
+        for index, entry in enumerate(_as_list(entries))
+    ]
+
+
 def _as_array_entry(trigger: str, index: int, entry: object) -> object:
-    """An object-format entry as the array form states it, for a refusal to show."""
+    """An object-format entry as the array form states it."""
     if not isinstance(entry, dict):
         return entry
     converted: dict[str, object] = {"name": f"{trigger}-{index}", "trigger": _v3(trigger)}
@@ -323,34 +353,35 @@ def _as_array_entry(trigger: str, index: int, entry: object) -> object:
     return converted
 
 
-def _guard_existing_entries(
-    document: dict[str, object], commands: Commands, *, path: Path, force: bool
-) -> None:
-    """Refuse a config carrying a Zikaron entry that another install owns, unless forced.
+def _guard_existing_entries(document: dict[str, object], plan: Plan, *, path: Path) -> None:
+    """Refuse a config carrying an entry of this selection's that another install owns, unless
+    forced.
 
-    Both halves are checked, because they are installed together: a config carrying another
-    install's hook command and no server entry is as much a second install as one carrying both.
+    A memory install checks both halves, because they are installed together: a config carrying
+    another install's hook command and no server entry is as much a second install as one carrying
+    both. The other selection's entries are neither compared nor touched.
     """
-    servers = document.get("mcpServers")
-    if not _is_unset(document, "mcpServers") and not isinstance(servers, dict):
-        raise InstallError(
-            f"{path} has an `mcpServers` value that is not an object "
-            f"({type(servers).__name__}). Fix or remove it before installing."
+    if plan.components.memory:
+        servers = document.get("mcpServers")
+        if not _is_unset(document, "mcpServers") and not isinstance(servers, dict):
+            raise InstallError(
+                f"{path} has an `mcpServers` value that is not an object "
+                f"({type(servers).__name__}). Fix or remove it before installing."
+            )
+        refuse_conflicting(
+            servers,
+            mcp_servers_value(plan.commands, mode="primary"),
+            path=path,
+            key="mcpServers",
+            force=plan.force,
         )
-    refuse_conflicting(
-        servers,
-        mcp_servers_value(commands, mode="primary"),
-        path=path,
-        key="mcpServers",
-        force=force,
-    )
-    if force:
+    if plan.force:
         return
     conflicts = [
-        f"{hook.where}: command is {_entry_command(hook.entry)!r}, "
-        f"this install writes {str(commands.hook)!r}"
-        for hook in _recognised_hooks(document, commands)
-        if not _is_owned(hook.entry, commands)
+        f"{hook.where}: command is {_command_string(hook.entry)!r}, "
+        f"this install writes {_command_string(hook.expected)!r}"
+        for hook in _recognised_hooks(document, plan.commands, plan.components)
+        if not _is_owned(hook)
     ]
     if conflicts:
         raise InstallError(
@@ -363,44 +394,55 @@ class _RecognisedHook(NamedTuple):
     """An existing entry the merge will replace, beside the entry it replaces it with."""
 
     where: str
-    entry: object
+    entry: dict[str, object]
     expected: dict[str, object]
 
 
-def _recognised_hooks(document: dict[str, object], commands: Commands) -> list[_RecognisedHook]:
-    """Every existing entry the merge replaces — the one list the guards and the merge read.
+def _recognised_hooks(
+    document: dict[str, object], commands: Commands, components: Components
+) -> list[_RecognisedHook]:
+    """Every existing entry of the selection's own, which the merge replaces."""
+    return _recognised(_array_form(document), hooks_array(commands, components))
 
-    Recognized by the command's file name read past a leading `exec`, on a trigger matched by
-    meaning, and in the array form also by the reserved `name`, so another install's entry is found
-    and not left beside this one. **Only on the triggers this install writes**: an entry elsewhere
-    has nothing here to replace it with, so it is neither compared nor touched.
+
+def _recognised(entries: list[object], ours: list[dict[str, object]]) -> list[_RecognisedHook]:
+    """Each of `entries` that is one of `ours`, beside the one it is — the one rule the guards
+    and the merge read.
+
+    An entry is one of ours when its reserved `name` is, or when its command, read past a leading
+    `exec`, runs a program of the same **file name** with the same arguments on the same trigger,
+    matched by meaning. The file name and not the path, so a previous install from another venv is
+    replaced rather than left beside this one — two `zikaron-hook` entries on one trigger would
+    inject two blocks per message, and the stale one would point at an interpreter that may no
+    longer have Zikaron installed. The arguments too, since the memory store and the guards both run
+    `zikaron-hook` on the start trigger and an install replaces only its own selection's entries.
     """
-    ours = hooks_array(commands)
-    by_name: dict[object, dict[str, object]] = {entry["name"]: entry for entry in ours}
-    by_trigger: dict[object, dict[str, object]] = {entry["trigger"]: entry for entry in ours}
-    hooks = document.get("hooks")
-    if isinstance(hooks, dict):
-        return [
-            _RecognisedHook(str(trigger), entry, by_trigger[_v3(trigger)])
-            for trigger, entries in hooks.items()
-            if _v3(trigger) in by_trigger
-            for entry in _as_list(entries)
-            if _is_our_command(entry, commands)
-        ]
+    by_name = {entry["name"]: entry for entry in ours}
+    by_key = {_key(entry): entry for entry in ours}
     recognised: list[_RecognisedHook] = []
-    for entry in _as_list(hooks):
+    for entry in entries:
         if not isinstance(entry, dict):
             continue
-        name, trigger = entry.get("name"), entry.get("trigger")
+        name = entry.get("name")
         if isinstance(name, str) and name in by_name:
             recognised.append(_RecognisedHook(name, entry, by_name[name]))
-        elif (
-            isinstance(trigger, str)
-            and _v3(trigger) in by_trigger
-            and _is_our_command(entry, commands)
-        ):
-            recognised.append(_RecognisedHook(trigger, entry, by_trigger[_v3(trigger)]))
+            continue
+        key = _key(entry)
+        expected = None if key is None else by_key.get(key)
+        if expected is not None:
+            recognised.append(_RecognisedHook(str(entry.get("trigger")), entry, expected))
     return recognised
+
+
+def _key(entry: Mapping[str, object]) -> tuple[object, str, tuple[str, ...]] | None:
+    """What makes an entry one selection's: its trigger by meaning, its program's file name and its
+    arguments, or `None` where it names no trigger or its command is not a program and
+    arguments."""
+    trigger = entry.get("trigger")
+    words = _command_words(entry)
+    if not isinstance(trigger, str) or not words:
+        return None
+    return _v3(trigger), Path(words[0]).name, tuple(words[1:])
 
 
 def _v3(trigger: object) -> object:
@@ -411,70 +453,58 @@ def _as_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
 
 
-def _is_owned(entry: object, commands: Commands) -> bool:
-    """Whether a recognized hook entry is this install's own: its command, unquoted, is ours."""
-    return _entry_command(entry) == str(commands.hook)
+def _is_owned(hook: _RecognisedHook) -> bool:
+    """Whether a recognized entry is this install's own: it runs the program at the path this
+    install's runs at."""
+    words = _command_words(hook.entry)
+    return bool(words) and words[:1] == _command_words(hook.expected)[:1]
 
 
-def _is_our_command(entry: object, commands: Commands) -> bool:
-    """Whether an existing entry is a Zikaron hook, in either form's spelling.
+def _command_string(entry: Mapping[str, object]) -> str | None:
+    """The shell command an array-form entry runs, as stored."""
+    action = entry.get("action")
+    command = action.get("command") if isinstance(action, dict) else None
+    return command if isinstance(command, str) else None
 
-    Matches on the command's **file name**, not the whole path, so a previous install from another
-    venv is replaced rather than left beside this one — two `zikaron-hook` entries on one trigger
-    would inject two blocks per message, and the stale one would point at an interpreter that may no
-    longer have Zikaron installed.
+
+def _command_words(entry: Mapping[str, object]) -> list[str]:
+    """The words of an entry's command, **unquoted** and read past a leading `exec`, or none where
+    it has no command or its quotes do not balance.
+
+    Unquoted because the stored string is shell source: what we write is `shlex.quote`'d, so the
+    raw value of a Zikaron entry is `exec '/path/to/zikaron-hook'`.
     """
-    command = _entry_command(entry)
-    return command is not None and Path(command).name == commands.hook.name
-
-
-def _entry_command(entry: object) -> str | None:
-    """The executable an entry runs, in either form's spelling, **unquoted** and read past `exec`.
-
-    Unquoted because the stored string is shell source: what we write is `shlex.quote`'d, so the raw
-    value of a Zikaron entry is `exec '/path/to/zikaron-hook'`. A single-token command, once a
-    leading `exec` is set aside, is reported as that token; anything else — a pipeline, several
-    words, unbalanced quotes — is reported verbatim, since it is not a bare executable path and no
-    caller should treat it as one.
-    """
-    if not isinstance(entry, dict):
-        return None
-    direct = entry.get("command")
-    if not isinstance(direct, str):
-        action = entry.get("action")
-        nested = action.get("command") if isinstance(action, dict) else None
-        direct = nested if isinstance(nested, str) else None
-    if direct is None:
-        return None
+    command = _command_string(entry)
+    if command is None:
+        return []
     try:
-        words = shlex.split(direct)
+        words = shlex.split(command)
     except ValueError:
-        # Unbalanced quotes: not something to reinterpret, and the caller compares it as-is.
-        return direct
-    if words[:1] == ["exec"]:
-        words = words[1:]
-    return words[0] if len(words) == 1 else direct
+        return []
+    return words[1:] if words[:1] == ["exec"] else words
 
 
-def _merged_hooks(document: dict[str, object], commands: Commands) -> list[object]:
-    """This install's hook entries, in the array form, folded into whatever the profile had.
+def _merged_hooks(
+    document: dict[str, object], commands: Commands, components: Components
+) -> list[object]:
+    """This selection's hook entries, in the array form, folded into whatever the profile had.
 
-    Replacement is keyed on identity rather than appended blindly — the entries
-    `_recognised_hooks` finds. Appending instead would give a twice-installed project two hooks per
-    trigger, and therefore two injected blocks per user message. An object-format `hooks` reaching
-    here holds only Zikaron's entries, `_guard_object_hooks` having refused any other, so none of
-    it is kept.
+    Replacement is keyed on identity rather than appended blindly — the entries `_recognised`
+    finds. Appending instead would give a twice-installed project two hooks per trigger, and
+    therefore two injected blocks per user message. Every other entry is kept, the other
+    selection's among them. An object-format `hooks` reaching here holds only Zikaron's entries,
+    `_guard_object_hooks` having refused any other, and is rewritten in the array form.
     """
-    hooks = document.get("hooks")
-    if isinstance(hooks, dict):
-        return list(hooks_array(commands))
-    replaced = {id(hook.entry) for hook in _recognised_hooks(document, commands)}
-    kept = [entry for entry in _as_list(hooks) if id(entry) not in replaced]
-    return [*kept, *hooks_array(commands)]
+    existing = _array_form(document)
+    ours = hooks_array(commands, components)
+    replaced = {id(hook.entry) for hook in _recognised(existing, ours)}
+    return [*(entry for entry in existing if id(entry) not in replaced), *ours]
 
 
-def _hook_notes(document: dict[str, object], commands: Commands) -> list[str]:
-    """What replacing this install's own hook entries cost, where they were not what it writes.
+def _hook_notes(
+    document: dict[str, object], commands: Commands, components: Components
+) -> list[str]:
+    """What replacing this selection's own hook entries cost, where they were not what it writes.
 
     The two readings are indistinguishable from the file — a new default upgrading itself, or a
     hand-edited timeout being reverted — so the entry is rewritten, which serves the first, and the
@@ -482,21 +512,20 @@ def _hook_notes(document: dict[str, object], commands: Commands) -> list[str]:
     not reported: taking it over is what the flag is for.
     """
     if isinstance(document.get("hooks"), dict):
-        if not _recognised_hooks(document, commands):
+        if not _array_form(document):
             return []
         return [
             "Zikaron's hook entries were rewritten from the object form into the array form that "
             "kiro's V3 engine reads."
         ]
     notes = []
-    for hook in _recognised_hooks(document, commands):
-        if not _is_owned(hook.entry, commands) or hook.entry == hook.expected:
+    for hook in _recognised_hooks(document, commands, components):
+        if not _is_owned(hook) or hook.entry == hook.expected:
             continue
-        entry = hook.entry if isinstance(hook.entry, dict) else {}
         fields = ", ".join(
             f"`{key}`"
-            for key in sorted(set(entry) | set(hook.expected))
-            if entry.get(key) != hook.expected.get(key)
+            for key in sorted(set(hook.entry) | set(hook.expected))
+            if hook.entry.get(key) != hook.expected.get(key)
         )
         notes.append(
             f"Zikaron's own hook on {hook.where} differed in {fields} and was replaced — if you "
@@ -567,23 +596,24 @@ def _grant_notes(
             f"--no-trust-tools withheld the two rules this install writes into {path.name}'s "
             "`permissions.rules`: `mcp` over `zikaron/*`, so every Zikaron tool call asks your "
             "permission, and `skill`, so either skill asks before it loads. A headless run "
-            "refuses every such question, so there neither skill loads at all. The consolidator's "
-            "and the documenter's own `mcp` rules do not make up for it: kiro gives a subagent "
-            "only what its parent's rules allow as well."
+            "refuses every such question, so there neither skill loads at all. The `mcp` rules of "
+            f"Zikaron's own agents do not make up for it: {_SESSION_RULES_DECIDE}."
         )
     unspawnable = [
         agent
-        for agent, _skill in _CREW_AGENTS
+        for agent, _spawner in _CREW_AGENTS
         if not any(_covers(rule, agent) for rule in _allow_rules(merged, "subagent"))
     ]
     if not _selects(merged, "subagent") or len(unspawnable) == len(_CREW_AGENTS):
         notes.append(
-            f"{path.name} does not grant the `subagent` tool. The {SKILL_NAME} and "
-            f"{DOCUMENT_SKILL_NAME} skills spawn their agents through it, which takes `subagent` "
-            'in `tools` and a `{"capability": "subagent", "effect": "allow"}` rule in '
-            "`permissions.rules`: without the rule kiro asks before each spawn, and a headless run "
-            "is refused. Granting a built-in tool is your decision, so this install does not do it "
-            "for you."
+            f"{path.name} does not grant the `subagent` tool. The {SKILL_NAME} skill spawns "
+            f"`{CONSOLIDATOR_AGENT_NAME}` through it, and the {DOCUMENT_SKILL_NAME} skill "
+            f"`{ORCHESTRATOR_AGENT_NAME}`, which spawns `{DOCUMENTER_AGENT_NAME}`. That takes "
+            '`subagent` in `tools` and a `{"capability": "subagent", "effect": "allow"}` rule in '
+            "`permissions.rules`, which decides the orchestrator's spawns too, since "
+            f"{_SESSION_RULES_DECIDE}. Without the rule kiro asks before each spawn, and a "
+            "headless run is refused. Granting a built-in tool is your decision, so this install "
+            "does not do it for you."
         )
     elif unspawnable:
         names = " or ".join(f"`{agent}`" for agent in unspawnable)
@@ -591,26 +621,25 @@ def _grant_notes(
             f"{path.name}'s `subagent` rules do not match {names}, so kiro asks before each such "
             "spawn, and a headless run is refused. Widening a rule's `match` is your decision."
         )
-    if not (_selects(merged, "shell") and _allow_rules(merged, "shell")):
+    if not _allow_rules(merged, "shell"):
         notes.append(
-            f"{path.name} does not grant the `shell` tool. The {DOCUMENT_SKILL_NAME} skill runs "
-            "its planner as a shell command, which takes `shell` in `tools` and, as kiro documents "
-            'it, a `{"capability": "shell", "effect": "allow"}` rule — a rule not measured here, '
-            "unlike the `subagent` one. Granting it is your decision."
+            f"{path.name} has no `shell` allow rule. `{ORCHESTRATOR_AGENT_NAME}` runs the "
+            f"{DOCUMENT_SKILL_NAME} skill's planner as a shell command, and {_SESSION_RULES_DECIDE}"
+            ", so kiro asks before each run of it, and a headless run is refused. A "
+            '`{"capability": "shell", "effect": "allow"}` rule allows it, and `shell` need not be '
+            "in `tools`. Granting it is your decision."
         )
     ungranted = [
-        grant for grant in _DOCUMENTER_PARENT_GRANTS if not _allow_rules(merged, grant.capability)
+        grant for grant in _SESSION_FILE_GRANTS if not _allow_rules(merged, grant.capability)
     ]
     if ungranted:
         capabilities = " or ".join(f"`{grant.capability}`" for grant in ungranted)
-        acts = " and ".join(grant.act for grant in ungranted)
+        acts = ", and before ".join(grant.act for grant in ungranted)
         rules = " and ".join(f"`{grant.rule}`" for grant in ungranted)
         notes.append(
-            f"{path.name} has no {capabilities} allow rule, and kiro gives a subagent only what "
-            f"its own rules and its parent's both allow. So `{DOCUMENTER_AGENT_NAME}` asks before "
-            f"{acts}, and a headless run refuses, leaving the {DOCUMENT_SKILL_NAME} skill without "
-            f"its documents. {rules} would allow it, the planner writing under "
-            f"`{DOCUMENTS_DIRECTORY}` by default. Granting it is your decision."
+            f"{path.name} has no {capabilities} allow rule, and {_SESSION_RULES_DECIDE}. So kiro "
+            f"asks before {acts}, and a headless run refuses. {rules} would allow it, the planner "
+            f"writing under `{DOCUMENTS_DIRECTORY}` by default. Granting it is your decision."
         )
     return notes
 
@@ -730,19 +759,20 @@ def _merged_resources(
 #: given a second block whose relationship to the first is undefined.
 _CREW_KEYS: Final = ("crew", "agent_crew")
 
-#: The agents Zikaron's skills spawn, each with the skill that spawns it, in the order they are
-#: added to a crew.
+#: The agents Zikaron ships to be spawned, each with what spawns it, in the order they are added to
+#: a crew.
 _CREW_AGENTS: Final = (
-    (CONSOLIDATOR_AGENT_NAME, SKILL_NAME),
-    (DOCUMENTER_AGENT_NAME, DOCUMENT_SKILL_NAME),
+    (CONSOLIDATOR_AGENT_NAME, f"the {SKILL_NAME} skill"),
+    (DOCUMENTER_AGENT_NAME, f"`{ORCHESTRATOR_AGENT_NAME}`"),
+    (ORCHESTRATOR_AGENT_NAME, f"the {DOCUMENT_SKILL_NAME} skill"),
 )
 
 
 def _merged_tools_settings(
     document: dict[str, object],
 ) -> tuple[dict[str, object] | None, list[str]]:
-    """A universal profile's `toolsSettings` with the consolidator and the documenter added to its
-    crew, and what to report.
+    """A universal profile's `toolsSettings` with Zikaron's spawned agents added to its crew, and
+    what to report.
 
     Fed for the reason `allowedTools` is: the upgrader converts `toolsSettings` into rules, so a
     rebuild of the V3 half reads it. Whether V3 still reads it directly is a conflict in kiro's own
@@ -767,17 +797,17 @@ def _merged_tools_settings(
     if not isinstance(available, list) or not available:
         return None, []
     missing = [
-        (agent, skill) for agent, skill in _CREW_AGENTS if agent not in _string_list(available)
+        (agent, spawner) for agent, spawner in _CREW_AGENTS if agent not in _string_list(available)
     ]
     if not missing:
         return None, []
-    crew_dict["availableAgents"] = [*available, *(agent for agent, _skill in missing)]
+    crew_dict["availableAgents"] = [*available, *(agent for agent, _spawner in missing)]
     merged_settings = dict(settings)
     merged_settings[crew_key] = crew_dict
     return merged_settings, [
-        f"Added `{agent}` to `toolsSettings.{crew_key}.availableAgents` — the {skill} skill spawns "
-        "it, and that list gates which agents may be spawned."
-        for agent, skill in missing
+        f"Added `{agent}` to `toolsSettings.{crew_key}.availableAgents` — {spawner} spawns it, "
+        "and that list gates which agents may be spawned."
+        for agent, spawner in missing
     ]
 
 

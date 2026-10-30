@@ -1,12 +1,13 @@
 # Guards
 
-**Normative for D38.** Two deterministic Claude Code hooks that hold an agent to three rules this
-project's own `CLAUDE.md` states and an agent routinely breaks: *edit authored files with the editing
-tools, never with a find-replace script*; *re-read what you edited, with its surroundings, once
-you are done editing it*; and *never aim `pgrep -f` or `pkill -f` at a pattern its own command
-contains* (§9), which the first hook judges beside the first rule. Neither hook is part of the
-memory store or the knowledge index: a project may install the guards, Zikaron's memory, or both
-(§5).
+**Normative for D38.** Deterministic hooks that hold an agent to three rules this project's own
+`CLAUDE.md` states and an agent routinely breaks: *edit authored files with the editing tools,
+never with a find-replace script*; *re-read what you edited, with its surroundings, once you are
+done editing it*; and *never aim `pgrep -f` or `pkill -f` at a pattern its own command contains*
+(§9), which the first hook judges beside the first rule. Claude Code gets two hooks, the command
+hook and the re-read nudge; kiro gets the command hook on its shell tool, and no nudge, since no
+post-tool output reaches its model (§2). Neither hook is part of the memory store or the knowledge
+index: a project may install the guards, Zikaron's memory, or both (§5).
 
 ## 1. Why a hook, and why no model
 
@@ -35,19 +36,23 @@ behaviour is §7's count.
 - **It is not a component in D31's sense.** D31's components share a store over a Unix socket; the
   guard opens no socket and touches no store, so it is a harness hook that happens to ship in the
   same wheel, and D31 is not amended.
-- **It reads Claude Code's payload directly, and that is the seam's one exception.** The field names
-  it reads — such as `hook_event_name`, `tool_name`, `cwd`, `scratchpad_dir`, `tool_input.command`,
+- **It reads the payload's field names directly, and that is the seam's one exception.** The names it
+  reads — such as `hook_event_name`, `tool_name`, `cwd`, `scratchpad_dir`, `tool_input.command`,
   `tool_input.file_path`, `tool_input.notebook_path`, `tool_response` and `tool_output` — are not
-  routed through `HarnessSpec`, because there is no second harness to carry a difference for.
-  `HarnessSpec` carries only the triggers and matchers the installer writes (§5). A kiro port is
-  therefore a seam change, not a new value.
+  routed through `HarnessSpec`, because the two harnesses do not differ in them: kiro's shell payload
+  carries `hook_event_name`, `tool_name`, `cwd` and `tool_input.command` under the names Claude Code's
+  does, `tool_input` a JSON object in both (`research/kiro-v3-probe.md` §32), and lacks
+  `scratchpad_dir`, which the guard already treats as optional. What differs is `HarnessSpec.guards` —
+  the triggers and matchers the installer writes, whether there is a re-read hook, and how a deny is
+  delivered — and the tool ids and the harness's name the texts carry (§5). The guard takes its
+  harness from its command line, `--harness kiro`, never from the environment (§5).
 
 The asynchronous watcher class stays unscoped.
 
-## 2. What Claude Code lets a hook do — measured
+## 2. What each harness lets a hook do — measured
 
-`research/claude-code-tool-hook-probe.md` (Claude Code 2.1.285) is the evidence; every row here was
-observed, not read from documentation.
+`research/claude-code-tool-hook-probe.md` (Claude Code 2.1.285) is Claude Code's evidence; every row
+of the first table was observed, not read from documentation. kiro's is the second table, below.
 
 | Path | Behaviour |
 |---|---|
@@ -70,18 +75,32 @@ behaviour by the harness's own rule; and project settings hooks fire inside suba
 without a fix, while the deny reaches it as the tool result itself. That is why the brief requires
 a live test of both.
 
-**Kiro is out (operator decision 2026-10-06).** Its `preToolUse` can block (exit 2, stderr to the
+~~**Kiro is out (operator decision 2026-10-06).** Its `preToolUse` can block (exit 2, stderr to the
 model), but its `postToolUse` has no documented path to the model, and the guards are not offered
-there at all for now. The installer refuses them for kiro (§5).
+there at all for now. The installer refuses them for kiro (§5).~~ **Amended 2026-10-29 (operator; D38):
+the find-replace guard and the self-match rule are offered under kiro, on its shell tool, and the
+re-read nudge is not.** The ground of the 2026-10-06 decision is now measured, and it still keeps the
+nudge out: no post-tool output reaches kiro's model, on any exit code. kiro-cli 2.35.1 under `--v3`
+(`research/kiro-v3-probe.md` §32 to §38, §48, §50, §57):
 
-## 3. The find-replace guard — `PreToolUse`, matcher `Bash|Monitor`
+| Path | Behavior |
+|---|---|
+| `PreToolUse` matcher `execute_bash` | Selects the shell tool and nothing else; the matcher is the tool id the payload carries, and a `\|`-joined list of ids selects as one does (§48) |
+| `PreToolUse`, exit 2, reason on stderr | The tool does not run, and the stderr reaches the model inside kiro's framing — the tool was not executed, address each hook instruction, then proceed, modify the approach or do something else; a non-zero exit means the hook failed and the call should not proceed. A 5,000-character stderr arrived whole (§33) |
+| `PreToolUse`, exit 0 stdout, or exit 1 stderr | Reaches nobody, and the call runs: a crashed hook fails open (§34) |
+| `PostToolUse` on any exit code, `PostFileCreate`, `PostFileSave` | Reaches nobody (§35, §36) |
+| A subagent's shell call | Fires the session's `PreToolUse` under the session's id, and the session's exit 2 blocks it, the stderr reaching the subagent as its tool result (§38, §57) |
+| The shell | `/bin/bash -c <command>`, so the shell's command line carries the command's text (§50), measured on Linux |
+
+## 3. The find-replace guard — `PreToolUse`, matcher `Bash|Monitor` (`execute_bash` under kiro)
 
 In every table of this document, `\|` is Markdown's escape for a `|` in a command or a pattern;
 copy it as `|`.
 
 A payload whose `tool_name` is neither `Bash` nor `Monitor` is allowed silently (§9.1 says why
-`Monitor` is judged). Otherwise the guard reads
-`tool_input.command` and decides in this order: does a form in §3.2 match; if so, are all its
+`Monitor` is judged); under kiro, one whose `tool_name` is not `execute_bash`, its shell tool, since
+kiro has no `Monitor`. Otherwise the guard reads `tool_input.command` and decides in this order:
+does a form in §3.2 match; if so, are all its
 targets exempt (§3.3); if not, does the command carry a valid override (§3.4). It denies only when
 a form matches, a target is not exempt and there is no valid override.
 
@@ -477,6 +496,11 @@ quoted string precedes no unquoted `#`, so it is never in a comment.
   (§2, measured). **The override withdraws the deny and grants nothing**; returning `allow` would
   skip the approval the user's own policy asks for, on exactly the commands the guard exists to
   watch.
+- **Under kiro an accepted override prints nothing and exits 0**, since nothing printed on exit 0
+  reaches the model there (§2): the command runs, and is not acknowledged. So the find-replace
+  guard's two deny messages carry the re-read ask instead (§3.5), and the self-match deny, whose
+  commands edit nothing, does not. That the acknowledgement does not reach a kiro model is a harness
+  limit, a row of `design/kiro-gaps.md`.
 - A marker that is present but invalid — `#ZIKARON-FORCE` appears on a line that is not a heredoc
   body, outside a quoted string — one-line or multi-line — and no comment carries a
   match: bare, a one-word reason, or glued to a preceding word (`f#ZIKARON-FORCE` is in no
@@ -490,21 +514,25 @@ quoted string precedes no unquoted `#`, so it is never in a comment.
 
 ### 3.5 The deny message
 
-`permissionDecisionReason`, in this order: which form matched, **the targets the rules found that
-are not scratch — as resolved, so a misread shows (`<cwd>/~/f`) — or that none was found**, and why
-the rule exists (an edit made to text you have not read in its current state); the alternative
-(`Read` then `Edit`, or `Write` for a new file); and the override's exact syntax, shown with a
-concrete reason (`#ZIKARON-FORCE #Reason: regenerate golden file`) rather than a placeholder. One
-short paragraph — it is shown on every deny. §8's "naming `X`", "naming the authored target" and
-"naming no literal" cells assert the target part. **When the command carried a marker only inside a heredoc body or a
-quoted string**, the message adds that the override is a shell comment outside them — on the
-heredoc opener's line, a line after the delimiter, or after a multi-line string's closing quote —
-since a marker on the delimiter line stops the heredoc terminating and the shell writes it into
-the file.
+`permissionDecisionReason` under Claude Code, and stderr on exit 2 under kiro, in this order: which
+form matched, **the targets the rules found that are not scratch — as resolved, so a misread shows
+(`<cwd>/~/f`) — or that none was found**, and why the rule exists (an edit made to text you have not
+read in its current state); the alternative, in the harness's tool ids (`Read` then `Edit`, or `Write`
+for a new file; under kiro `read_file` then `str_replace`, or `fs_write`); and the override's exact
+syntax, shown with a concrete reason (`#ZIKARON-FORCE #Reason: regenerate golden file`) rather than a
+placeholder. One short paragraph — it is shown on every deny. **Where the harness acknowledges no
+override, kiro's, the message and the invalid-marker message end by saying that an accepted override
+is not acknowledged and asking for the re-read of what the command changes once it has run** (§3.4).
+§8's "naming `X`", "naming the authored target" and "naming no literal" cells assert the target part.
+**When the command carried a marker only inside a heredoc body or a quoted string**, the message adds
+that the override is a shell comment outside them — on the heredoc opener's line, a line after the
+delimiter, or after a multi-line string's closing quote — since a marker on the delimiter line stops
+the heredoc terminating and the shell writes it into the file.
 
 ## 4. The re-read nudge — `PostToolUse`, matcher `Edit|MultiEdit|NotebookEdit|Write`
 
-A payload whose `tool_name` is not one of those four gets nothing — so a file changed by a `Bash`
+**Claude Code's alone**: no post-tool output reaches kiro's model on any exit code (§2), so kiro has
+no re-read hook. A payload whose `tool_name` is not one of those four gets nothing — so a file changed by a `Bash`
 command is never nudged, and where the guard let such a command through on an override, its
 acknowledgement asks for the re-read instead (§3.4). After each successful edit, the hook adds
 `additionalContext` (content draft; final wording per §5's prompt-text rule):
@@ -543,12 +571,21 @@ about the harness's view of file state, not consistency, and the nudge says what
 ## 5. Installation
 
 The installer offers **three** selections: the memory store (what an install writes today), the
-guards, or both. **Guards are installed only on request**; the default is unchanged. Guards are
-Claude Code only, and selecting them with `--harness kiro` is refused before anything is written.
+guards, or both, on both harnesses. **Guards are installed only on request**; the default is
+unchanged. A harness whose `HarnessSpec.guards` is `None` would refuse them before anything is
+written, and neither supported harness's is.
 
 - **One console script, `zikaron-guard`**, reading `hook_event_name` from stdin to choose the rule.
-  Its hook groups sit in `.claude/settings.local.json` beside the memory hooks, for the same reason —
-  the command is an absolute path into one virtualenv.
+  Under Claude Code its hook groups sit in `.claude/settings.local.json` beside the memory hooks, for
+  the same reason — the command is an absolute path into one virtualenv. Under kiro its entry sits in
+  the profile `--agent` names, beside the memory store's (below).
+- **The guard takes its harness from its command line, not from the environment.** The kiro target
+  writes `zikaron-guard --harness kiro`, and no argument means Claude Code, so every command installed
+  before the flag existed keeps its meaning. A kiro launched from Claude Code inherits `CLAUDECODE`
+  (`design/harness.md` §"The nesting limit"), and a guard detecting from it would answer in the
+  envelope kiro ignores and fail open with nothing said; the installer knows which harness's file it
+  writes. **How a deny is delivered is `HarnessSpec.guards.deny`**: Claude Code's envelope with exit
+  0, or kiro's exit 2 with the reason on stderr and nothing on stdout (§2).
 - **The start text goes through the existing `zikaron-hook`, not a new hook.** `zikaron-hook`
   already owns `SessionStart` and `SubagentStart`, where it injects the write policy (D18). The
   installer writes the selection into that entry's command, as `zikaron-hook --components
@@ -564,21 +601,39 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
   The consolidator gets no start text under any selection: its system prompt is its whole
   instruction, which is why the write policy already skips it, and it holds no editing tool.
 
-  The guard start text must say: authored files are edited with `Read` then `Edit`, or `Write`
-  for a new file, never with `sed -i`, an inline interpreter script, a script staged in scratch
-  and run, or a heredoc redirect; scratch paths are exempt as targets; and after each edit a
-  reminder from this project's hooks will ask for one re-read once that file's editing is done.
-  That last part also tells the agent where the
-  nudge comes from, which guards against the injection-defence risk §4 records. **It does not
-  mention the override** (operator decision 2026-10-07): the deny message teaches the override
-  when it is needed, and announcing it at start invites the reflexive use §7's count (c) watches
-  for.
+  The guard start text must say: authored files are edited with the harness's read then edit
+  tools, or its write tool for a new file, never with `sed -i`, an inline interpreter script, a
+  script staged in scratch and run, or a heredoc redirect; scratch paths are exempt as targets; and,
+  where the re-read hook exists, that after each edit a reminder from this project's hooks will ask
+  for one re-read once that file's editing is done. That last part also tells the agent where the
+  nudge comes from, which guards against the injection-defence risk §4 records; under kiro, which has
+  no nudge, a sentence promising one would teach the agent to wait for it. **It does not mention the
+  override** (operator decision 2026-10-07): the deny message teaches the override when it is needed,
+  and announcing it at start invites the reflexive use §7's count (c) watches for.
+  `zikaron-hook --components guards` prints the start text of the harness it detects, the way it
+  detects one for everything else.
+- **Under kiro the guard start text has a `SessionStart` entry of its own.** kiro cuts each hook's
+  output at its budget, per hook (`design/harness.md` §"Injection budgets"), and the write policy
+  alone nearly fills it, so one entry printing both would be cut and two entries each fit; a test
+  asserts each entry's output against the budget. Claude Code's shared start entry and its union rule
+  (below) are Claude Code's shape. The kiro shape is one set of entries per selection: the memory
+  store's `zikaron-SessionStart` and `zikaron-UserPromptSubmit`, running `zikaron-hook`; the guards'
+  `zikaron-guards-SessionStart`, running `zikaron-hook --components guards`, and
+  `zikaron-guards-PreToolUse`, running `zikaron-guard --harness kiro` with the matcher `execute_bash`,
+  each guard entry with its own `timeout`. kiro has no subagent trigger, so a subagent never sees the
+  start text and meets the rule first as a deny, which reaches it (§2) and teaches the override — a
+  harness limit, a row of `design/kiro-gaps.md`. One guard entry in the session's profile judges every
+  subagent's shell call too, the code orchestrator's planner calls included, so no subagent profile
+  carries one.
 - **Every prompt text's final wording is written by memory-reviewer at build time** (operator
   decision 2026-10-07). That covers the guard start text, the deny message (§3.5), the
   invalid-marker message, the override acknowledgement (§3.4), the nudge (§4) and the self-match
-  rule's deny (§9.3). This document
-  states what each text must contain; any wording quoted here is a content draft. The builder
-  copies the reviewer's wording verbatim, and the tests assert it.
+  rule's deny (§9.3), on each harness: Claude Code's in `reviews/m37-edit-guards-review.md` and
+  `reviews/m38-selfmatch-guard-review.md`, kiro's in `reviews/m41-2-review.md` §"Prompt texts —
+  kiro". This document states what each text must contain; any wording quoted here is a content
+  draft. The builder copies the reviewer's wording verbatim, and the tests assert it. **A text names
+  the tools and the harness from `HarnessSpec.tool_ids` and its prose name**, so no kiro id is written
+  as a literal in `zikaron/guard/`.
 - **Each guard entry states its `timeout`: 10 s**, a constant in `zikaron/guard/` the installer
   reads, and the worst stall a wedged guard can cost one tool call. It is independent of the memory
   hook's `HOOK_TIMEOUT_SECONDS`, which is sized to that hook's internal deadlines; the guard has
@@ -587,7 +642,19 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
 - **The tool names live once**, in the spec field's matchers (§1). The guard reads its `tool_name`
   checks from that field by splitting each matcher on `|`, so widening a matcher widens what the
   guard judges. A matcher is therefore a `|`-joined list of bare tool names, never a regex, and a
-  test holds that.
+  test holds that. kiro's matcher is the tool id `execute_bash`, not the profile selector `shell`,
+  since the guard compares it with the payload's `tool_name`.
+- **Under kiro an install likewise touches only its own selection, and ownership is per
+  selection.** An entry is a selection's when its reserved `name` is one the selection writes, or
+  when its command, read past `exec`, runs a program of the file name the selection writes on that
+  trigger with the arguments it writes there — so the two `SessionStart` entries, `zikaron-hook` and
+  `zikaron-hook --components guards`, are told apart, and another venv's entry is still found. An
+  install replaces its own selection's entries, refuses one at another program path as another
+  install's unless `--force`, and neither compares nor touches the other selection's
+  (`zikaron/install/kiro_merge.py`). **A guards-only kiro install writes its two entries into the
+  `--agent` profile and nothing else** — no agent, no skill, no `mcpServers` entry, no rule, and none
+  of the memory install's notes — and without `--agent` it is refused, unless `--print-only`, since it
+  would write nothing and exit 0.
 - **An install touches only the selection it was given.** It replaces or adds that selection's own
   hook groups, and never removes another's: installing the guards over a memory install keeps the
   memory hooks, and re-running a memory install keeps the guards. Removal is out of scope. **The
@@ -611,11 +678,15 @@ Claude Code only, and selecting them with `--harness kiro` is refused before any
 
 ## 6. Failure behaviour
 
-**Every failure is an allow, silently.** Malformed stdin, an unknown `hook_event_name`, a missing
-field, an exception: the hook exits 0 with no output, and the tool call proceeds as if no guard were
-installed. A guard that blocks on its own defect stops work for a reason that is not the agent's,
-which is worse than a guard that misses one edit. **A hang allows only when the harness's timeout
-expires**, which §5 bounds by stating it in every entry. **Row 6's read is the one place the guard
+**Every failure is an allow, silently, on both harnesses.** Malformed stdin, an unknown
+`hook_event_name`, a missing field, an exception: the hook exits 0 with no output, and the tool call
+proceeds as if no guard were installed — under kiro too, where exit 0 is what kiro gives a crashed
+hook anyway (§2). A guard that blocks on its own defect stops work for a reason that is not the
+agent's, which is worse than a guard that misses one edit. **A hang allows only when the harness's
+timeout expires**, which §5 bounds by stating it in every entry — under Claude Code. **What kiro does
+with a guard past its timeout is unmeasured**: its framing tells the model a non-zero exit means it
+should not proceed, so a timeout could block as easily as allow. Reaching the timeout takes §9.4's
+slow pattern or a script near row 6's 256 KiB read bound. **Row 6's read is the one place the guard
 touches the filesystem, and it fails the same way**: a script it cannot read, or will not, is a
 row that does not match — and it opens without blocking, so a FIFO at the operand's path cannot
 hang it.
@@ -776,7 +847,18 @@ defect.
   pre-install replay or a transcript, a reflexive override or a route-around under count (c) or
   (e) — **never on a conceived edge.** A conceived edge becomes a §8 or §9.5 row with the value
   the rules already give it, and nothing else moves.
-- That the guards fire inside subagent sessions is documented, not measured.
+- That the guards fire inside subagent sessions is documented, not measured, under Claude Code.
+  Under kiro it is measured: a subagent's shell call fires the session's `PreToolUse`, whose exit 2
+  blocks it (§2).
+- **Under kiro**: an accepted override is not acknowledged (§3.4), and a subagent never sees the start
+  text (§5) — harness limits, rows of `design/kiro-gaps.md`. A kiro call that sets
+  `tool_input.cwd` is judged against the payload's `cwd`: `tool_input.cwd` was `null` in every call
+  observed, and the rules move only on an observed command, so it is not read. A kiro session
+  launched from Claude Code detects Claude Code in `zikaron-hook` (`design/harness.md` §"The nesting
+  limit"), so its guard start text names Claude Code's tools; the guard itself takes its harness from
+  its command line and is not misled. kiro's counts read the session's `messages.jsonl` under
+  `~/.kiro/sessions/`, which holds no hook's stderr and so no deny, except where the model quoted it
+  (`research/kiro-v3-probe.md` §33).
 
 **The counts, without a bar** — they say whether any of the above needs acting on, and nothing is
 gated on them. After some sessions with the guards installed, from the session transcripts under
@@ -1098,7 +1180,9 @@ the command's own text matches that shell: `pkill` kills it, and the call ends `
 `pgrep` always finds it, so a liveness check reports a dead process alive, a loop waiting for a
 death never ends, and a count is one high. The rule was written down — in two projects'
 `CLAUDE.md`, and in a Zikaron memory record — and broken anyway, which is §1's case for a guard.
-It is a second rule in §3's hook, under §6's failure behaviour.
+It is a second rule in §3's hook, under §6's failure behaviour. **kiro runs each `execute_bash`
+command as `/bin/bash -c <command>`**, so the premise holds there too, measured on Linux
+(`research/kiro-v3-probe.md` §50), and the rule judges kiro's shell tool as it judges `Bash`.
 
 **The test is the match itself.** `pgrep -f` searches each process's command line for the
 pattern; the rule searches the command's text for it — the same search, over the string the shell
@@ -1201,12 +1285,14 @@ of ancestors unless `-a` is given, and has no `-A`. The guard takes the platform
 
 ### 9.3 The deny message
 
-`permissionDecisionReason`, in this order: that the `pgrep`/`pkill` pattern also matches the shell
-running this command, because Claude Code runs a command inside a shell whose command line contains
-the command's text; **the matched text with a little context**, so a match outside the pattern's
-own spelling shows; what follows — `pkill` kills that shell, and `pgrep` always finds it, so a
-liveness check never reports a death and a count is one high; the fix; and the override's syntax,
-as §3.5 shows it. One short paragraph; its final wording is memory-reviewer's (§5).
+`permissionDecisionReason` under Claude Code, and stderr on exit 2 under kiro, in this order: that
+the `pgrep`/`pkill` pattern also matches the shell running this command, because the harness —
+named, Claude Code or kiro-cli — runs a command inside a shell whose command line contains the
+command's text; **the matched text with a little context**, so a match outside the pattern's own
+spelling shows; what follows — `pkill` kills that shell, and `pgrep` always finds it, so a liveness
+check never reports a death and a count is one high; the fix; and the override's syntax, as §3.5
+shows it. One short paragraph; its final wording is memory-reviewer's (§5). It carries no re-read
+ask under kiro, since `pgrep` and `pkill` edit nothing.
 
 **The fix is per platform.** On `linux`: `-A` (`--ignore-ancestors`), which removes every such
 match, where `pgrep` has it — procps-ng 4.0.1 and later, not 3.3.17 (Ubuntu 22.04, RHEL 9) nor
@@ -1224,6 +1310,8 @@ shell". Like we should not evaluate variables which are output of other sub shel
 variable bound by a literal assignment is as far as §9.1 reads, and a value produced by a
 substitution, another shell, control flow or a builtin stays unread.
 
+- **Under kiro on macOS the rule applies its `darwin` branch, unmeasured there**: §9's premise is
+  measured for kiro on Linux alone (`research/kiro-v3-probe.md` §50).
 - **A quoted script** — `bash -c '…'`, `sh -c '…'`, `ssh host '…'` — is one token (§3.1) and is
   not judged. The replay's two signalled calls this rule does not deny are of this shape, and
   neither was a self-match. Nor is a data body (§3.2) that the same command then runs

@@ -163,6 +163,22 @@ def test_an_oversized_paragraph_trips_the_truncated_canary(encoder: FastEmbedEnc
     assert all(chunk.token_count <= plan.effective_budget for chunk in plan.chunks)
 
 
+def test_a_paragraph_of_words_wordpiece_splits_is_cut_between_words(
+    encoder: FastEmbedEncoder,
+) -> None:
+    """`reconnects` is several WordPiece tokens, so a cut at the budget can fall inside it, and the
+    piece after such a cut counts more than its window held (`research/hard-split-word-cut.md`).
+    Every piece starts a word instead, so the write goes through."""
+    content = "The flaky integration test reconnects to the broker after a dropped socket. " * 80
+    plan = plan_chunks(
+        gist=_GIST, content=content, encoder=encoder, chunk_max_tokens=450, gist_max_tokens=64
+    )
+    assert plan.n_chunks > 1
+    assert all(chunk.token_count <= plan.effective_budget for chunk in plan.chunks)
+    words = set(content.split())
+    assert all(chunk.text.split()[0] in words for chunk in plan.chunks), plan.chunks
+
+
 def test_a_real_short_memory_is_one_chunk_and_the_canary_stays_down(
     encoder: FastEmbedEncoder,
 ) -> None:

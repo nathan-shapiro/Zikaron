@@ -19,7 +19,7 @@ import pytest
 
 from zikaron.code_knowledge.main import DEFAULT_DOCUMENTS
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
-from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
     MCP_SERVER_NAME,
@@ -61,7 +61,7 @@ def write_kiro_files(plan: Plan, report: Report) -> None:
 _COMMANDS = Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp"))
 
 #: The agents the install adds to a populated crew, and the skills it declares, in its order.
-_OURS = (CONSOLIDATOR_AGENT_NAME, DOCUMENTER_AGENT_NAME)
+_OURS = (CONSOLIDATOR_AGENT_NAME, DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME)
 _SKILLS = (
     "skill://.kiro/skills/zikaron-consolidate/SKILL.md",
     "skill://.kiro/skills/zikaron-document-code/SKILL.md",
@@ -133,6 +133,7 @@ class TestWritingTheShippedFiles:
             targets.consolidator_config,
             targets.skill_file,
             targets.documenter_config,
+            targets.orchestrator_config,
             targets.document_skill_file,
         }
         assert all(path.is_file() for path in shipped)
@@ -152,8 +153,9 @@ class TestWritingTheShippedFiles:
         write_kiro_files(_plan(tmp_path), report)
         assert report.skipped == [
             targets.consolidator_config,
-            targets.skill_file,
             targets.documenter_config,
+            targets.orchestrator_config,
+            targets.skill_file,
             targets.document_skill_file,
         ]
         assert report.replaced == []
@@ -764,7 +766,8 @@ class TestTheCrewOfAUniversalProfile:
         merged = json.loads(config.read_text())["toolsSettings"]["crew"]
         assert merged["availableAgents"] == ["helper-a", *_OURS]
         added = [note for note in report.notes if note.startswith("Added `zikaron-")]
-        assert added == [next(note for note in added if DOCUMENTER_AGENT_NAME in note)]
+        assert len(added) == len(_OURS) - 1
+        assert not any(note.startswith(f"Added `{CONSOLIDATOR_AGENT_NAME}`") for note in added)
 
     def test_an_existing_trusted_agents_list_is_never_touched(self, tmp_path: Path) -> None:
         """Spawn trust is a wider grant than Zikaron's tools — its own model invocation and four
@@ -1687,67 +1690,73 @@ class TestTheBuiltInGrantNotes:
     mention too.
     """
 
-    @pytest.mark.parametrize("tool", ["subagent", "shell"])
+    _SUBAGENT: Final = "does not grant the `subagent` tool"
+    _SHELL: Final = "has no `shell` allow rule"
+
+    def _notes(self, tmp_path: Path, tools: list[str], rules: list[dict[str, object]]) -> list[str]:
+        config = tmp_path / "mine.json"
+        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": rules}})
+        report = Report()
+        merge_agent_config(config, _plan(tmp_path), report)
+        return report.notes
+
     @pytest.mark.parametrize(
         ("tools", "rules"),
         [
             pytest.param(["read"], [], id="neither"),
-            pytest.param(["read", "subagent", "shell"], [], id="listed without its rule"),
+            pytest.param(["read", "subagent"], [], id="listed without its rule"),
             pytest.param(
-                ["read"],
-                [
-                    {"capability": "subagent", "effect": "allow"},
-                    {"capability": "shell", "effect": "allow"},
-                ],
-                id="a rule but not listed",
+                ["read"], [{"capability": "subagent", "effect": "allow"}], id="a rule, not listed"
             ),
         ],
     )
-    def test_it_says_so_unless_the_tool_is_both_listed_and_allowed(
-        self, tmp_path: Path, tool: str, tools: list[str], rules: list[dict[str, object]]
+    def test_the_session_is_told_the_subagent_tool_unless_listed_and_allowed(
+        self, tmp_path: Path, tools: list[str], rules: list[dict[str, object]]
     ) -> None:
-        config = tmp_path / "mine.json"
-        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": rules}})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
-        assert any(f"does not grant the `{tool}` tool" in note for note in report.notes)
+        """The session spawns the consolidator and the orchestrator itself, so it needs the tool
+        as well as the rule."""
+        notes = self._notes(tmp_path, tools, rules)
+        (note,) = [note for note in notes if self._SUBAGENT in note]
+        assert f"`{ORCHESTRATOR_AGENT_NAME}`" in note
+        assert f"`{DOCUMENTER_AGENT_NAME}`" in note
 
-    @pytest.mark.parametrize("tool", ["subagent", "shell"])
-    @pytest.mark.parametrize(
-        "tools",
-        [
-            pytest.param(["read", "subagent", "shell"], id="listed"),
-            pytest.param(["*"], id="every tool"),
-        ],
-    )
-    def test_it_stays_quiet_when_the_tool_is_listed_and_allowed(
-        self, tmp_path: Path, tool: str, tools: list[str]
+    @pytest.mark.parametrize("tools", [["read", "subagent"], ["*"]], ids=["listed", "every tool"])
+    def test_the_subagent_note_is_quiet_when_listed_and_allowed(
+        self, tmp_path: Path, tools: list[str]
     ) -> None:
-        config = tmp_path / "mine.json"
-        rules = [
-            {"capability": "subagent", "effect": "allow"},
-            {"capability": "shell", "effect": "allow"},
-        ]
-        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": rules}})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
-        assert not any(f"does not grant the `{tool}` tool" in note for note in report.notes)
+        rules: list[dict[str, object]] = [{"capability": "subagent", "effect": "allow"}]
+        assert not any(self._SUBAGENT in note for note in self._notes(tmp_path, tools, rules))
 
-    def test_a_subagent_rule_matching_only_the_consolidator_names_the_documenter(
+    @pytest.mark.parametrize("tools", [["read"], ["read", "shell"]], ids=["unlisted", "listed"])
+    def test_the_session_is_told_the_shell_rule_whatever_its_tools(
+        self, tmp_path: Path, tools: list[str]
+    ) -> None:
+        """The orchestrator runs the planner, and a spawned agent's call is decided by the session's
+        rules and not its tools (`research/kiro-v3-probe.md` §28)."""
+        (note,) = [note for note in self._notes(tmp_path, tools, []) if self._SHELL in note]
+        assert f"`{ORCHESTRATOR_AGENT_NAME}`" in note
+        assert "`shell` need not be in `tools`" in note
+
+    def test_a_shell_rule_without_the_tool_is_quiet(self, tmp_path: Path) -> None:
+        rules: list[dict[str, object]] = [{"capability": "shell", "effect": "allow"}]
+        assert not any(self._SHELL in note for note in self._notes(tmp_path, ["read"], rules))
+
+    def test_a_subagent_rule_matching_only_the_consolidator_names_the_other_two(
         self, tmp_path: Path
     ) -> None:
         """The rule `kiro-cli agent upgrade` derives from a V2 profile that trusted the
         consolidator, as this repository's own converted dogfood profile carries."""
-        config = tmp_path / "mine.json"
-        rule = {"capability": "subagent", "match": ["zikaron-consolidator"], "effect": "allow"}
-        tools = ["read", "subagent"]
-        _write_agent(config, {"name": "mine", "tools": tools, "permissions": {"rules": [rule]}})
-        report = Report()
-        merge_agent_config(config, _plan(tmp_path), report)
-        (note,) = [note for note in report.notes if "`subagent` rules do not match" in note]
-        assert "`zikaron-documenter`" in note
+        rule: dict[str, object] = {
+            "capability": "subagent",
+            "match": ["zikaron-consolidator"],
+            "effect": "allow",
+        }
+        notes = self._notes(tmp_path, ["read", "subagent"], [rule])
+        (note,) = [note for note in notes if "`subagent` rules do not match" in note]
+        assert f"`{DOCUMENTER_AGENT_NAME}`" in note
+        assert f"`{ORCHESTRATOR_AGENT_NAME}`" in note
         assert "`zikaron-consolidator`" not in note
-        assert not any("does not grant the `subagent` tool" in note for note in report.notes)
+        assert not any(self._SUBAGENT in note for note in notes)
 
     def test_a_subagent_rule_matching_both_agents_by_pattern_is_quiet(self, tmp_path: Path) -> None:
         config = tmp_path / "mine.json"
@@ -1760,13 +1769,14 @@ class TestTheBuiltInGrantNotes:
         assert not any(clause in note for note in report.notes for clause in clauses)
 
 
-class TestTheDocumenterParentGrantNote:
-    """kiro gives a subagent only what its own rules and its parent's both allow, so the
-    documenter's file rules are not enough by themselves: a primary profile without a write rule
-    left a spawned documenter asking, and headless writing nothing (`research/kiro-v3-probe.md`
-    §28). The install names the missing rules and grants neither."""
+class TestTheSessionFileGrantNote:
+    """A spawned agent may do only what the session's rules allow, its own allow rules adding
+    nothing, so the documenter's file rules are not enough by themselves: a primary profile without
+    a write rule left a spawned documenter asking, and headless writing nothing
+    (`research/kiro-v3-probe.md` §28, §52, §54). The consolidator's read of a spilled group needs
+    the session's `fs_read` too. The install names the missing rules and grants neither."""
 
-    _CLAUSE: Final = "allow rule, and kiro gives a subagent"
+    _CLAUSE: Final = "allow rule, and an agent this session spawns may do only what"
 
     def _notes(self, tmp_path: Path, rules: list[dict[str, object]]) -> list[str]:
         config = tmp_path / "mine.json"
@@ -1780,15 +1790,18 @@ class TestTheDocumenterParentGrantNote:
         assert "no `fs_read` or `fs_write` allow rule" in note
         assert '"match": ["./**"]' in note
         assert f'"match": ["./{DOCUMENTS_DIRECTORY}/**"]' in note
+        assert "reads a group too large to deliver inline" in note
+        assert "reads the consolidator's config to find the planner" in note
 
     def test_a_profile_that_reads_is_told_only_the_write_rule(self, tmp_path: Path) -> None:
-        """The read rule is the one `kiro-cli agent create` writes."""
+        """The read rule is the one `kiro-cli agent create` writes, which covers the store's
+        spill directory (`research/kiro-v3-probe.md` §47)."""
         read: dict[str, object] = {"capability": "fs_read", "match": ["./**"], "effect": "allow"}
         (note,) = self._notes(tmp_path, [read])
         assert "no `fs_write` allow rule" in note
         assert "`fs_read`" not in note
-        assert "writing each document" in note
-        assert "reading each source" not in note
+        assert "writes each document" in note
+        assert "reads each source" not in note
 
     def test_a_profile_allowing_both_is_quiet(self, tmp_path: Path) -> None:
         rules: list[dict[str, object]] = [

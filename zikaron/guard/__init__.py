@@ -1,1 +1,2 @@
-"""The guards: two deterministic Claude Code hooks. `design/guards.md` is normative."""
+"""The guards: deterministic hooks — two under Claude Code, one under kiro. `design/guards.md` is
+normative."""

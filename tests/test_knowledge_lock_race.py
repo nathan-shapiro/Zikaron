@@ -20,6 +20,7 @@ import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import Corpus, add_request, build_settings, open_corpus
+from tests.loop_lateness import loop_lateness
 from zikaron.core.knowledge import disposal, lock, scan
 from zikaron.core.knowledge.database import KnowledgeDatabase
 from zikaron.core.knowledge.errors import IndexerBusyError
@@ -104,10 +105,11 @@ async def test_a_build_arriving_during_the_winners_index_phase_is_refused_at_onc
         monkeypatch.setattr(disposal, "run", held_index_phase)
         winner = asyncio.create_task(_scan(corpus))
         await indexing.wait()
-        started = time.monotonic()
-        with pytest.raises(IndexerBusyError):
-            await _scan(corpus)
-        elapsed = time.monotonic() - started
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            with pytest.raises(IndexerBusyError):
+                await _scan(corpus)
+            elapsed = time.monotonic() - started
         release.set()
         await winner
-        assert elapsed < 0.5, elapsed
+        assert elapsed - lateness.seconds < 0.5, (elapsed, lateness)
