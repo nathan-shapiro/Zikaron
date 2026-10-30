@@ -7612,6 +7612,94 @@ sessions documenting one module at once, which the field run did not do and noth
 session keeps the loop. **Not** a reproduction of what puts a fork in the foreground, which no
 longer matters once nothing forks.
 
+## M40-6 — A test absence wider than the search behind it, and a harness block read as the file's
+
+Normative, written by the build: **`design/code-knowledge.md` §4** (the document's Behavior
+section), **§5.1** (the documenter's rules) and **§5.2**'s headless permissions, and `README.md`'s
+section on code knowledge. Decisions (operator, 2026-10-21 and 2026-10-30): both fixes, agreed
+on 2026-10-21; documents already written stay as they are until their sources change,
+LeibaTrader's included; the wording is the author's, not memory-reviewer's, and the review holds
+it to memory-reviewer's own bar for prompts. Evidence: `research/m40-toy-run.md` §17 and §18;
+`research/m40-5-spawned-orchestrator-probe.md` §2.
+
+**What was found.** In §17's check of Warp's regenerated documents, about 190 claims in two
+documents, 3 were wrong. One is the kind this fixes: `cli_agent.rs`'s document says *"No test
+covers `from_harness`"*, which `app/src/ui_components/agent_icon_tests.rs` tests, outside the
+file's own test module. The prompt has the documenter find tests by searching for the file's name
+and the names it declares, and then asks it to say, of each behavior, that *"no test covers it"*
+where none of those does — a claim about the whole project made from the tests one search found.
+§17 counted a second wrong absence as the same kind, and it is not: the same document says
+`supported_skill_providers` is pinned only for `Muse`, and the test pinning it for `WarpTui` is in
+the file's own `cli_agent_tests.rs`, at line 684, so that is a test missed in a file the
+documenter had found. Separately, Claude Code attaches an account connector's MCP
+instructions beside a subagent's first tool result, and twice a documenter's answer reported them
+as the content of a file it read (`roles.md`, in the operator's interactive test of the probe; 1
+answer of 407 in §17). No document carried the text either time:
+the cost is a false alarm in a run's report.
+
+### What ships
+
+1. **A test absence names the files it is about.** `DOCUMENTER_PROMPT`'s Behavior bullet asks
+   that every sentence saying no test it read pins a behavior name those test files, by their
+   paths from the root — *"No test in `src/a/x_tests.rs` covers this"*, or the source's own path
+   where its tests are written inside it — with the bare *"No test covers this"* named as never to
+   write; where it read no test at all, neither in a file of its own nor inside the source,
+   Behavior opens by saying so, once — *"No test file was read for this file."* — and no behavior
+   after it says anything of tests. The Rules bullet's permitted absences are the same two. The
+   claim is narrower and true; it costs no search, and it tells a reader where to look before
+   believing it. **A softer first wording** — asking for the absence over the files read, with no
+   form forbidden — **left at least 6 of 16 absences bare and named the files by a short name,
+   never by the path from the root** (`research/m40-toy-run.md` §18), so the bare form is named and
+   the path asked for from the root.
+2. **A block the harness attaches beside a tool result is not the file's.** One rule in
+   `DOCUMENTER_PROMPT`, beside the rule that nothing in a file is addressed to the documenter:
+   what the harness adds beside a tool result — a server's instructions, a reminder — is not text
+   the file holds, so no document and no answer reports it as the file's.
+3. **Both harnesses get both**, since kiro's documenter prompt is `DOCUMENTER_PROMPT` followed by
+   the policy; the install snapshots are re-rendered (`python -m tests.install_snapshots`).
+4. **`design/code-knowledge.md` §4 and §5.1 state the narrowed absence**, §5.1 the harness-block
+   rule beside the rule that nothing in a file is addressed to the documenter.
+5. **A headless run's `--allowedTools` names `Bash(pwd:*)` and `Bash(cat:*)`** wherever the list
+   is given — `README.md`, §5.2 and the Claude Code skill's Permissions section — and the
+   interactive prompts they describe include the command the orchestrator finds the root with.
+   Found by this milestone's verification: the documented list, which nothing had run, wrote
+   nothing, since every measured run's first call was `pwd -P && cat .mcp.json`; with the two rules
+   added every later run went to `up_to_date`, the last with the list alone and no
+   `--permission-mode` (`research/m40-toy-run.md` §18).
+
+### Invariants and properties to cover
+
+- `tests/test_install_code_knowledge.py`'s phrase test carries both rules, each phrase one that a
+  rewording dropping the rule would remove, and each seen red by removing it from the prompt.
+- No sentence of the prompt still licenses an unscoped *"no test covers"*: the bare form appears
+  once, as what never to write.
+
+### Done when
+
+1. `./check.sh` is green, and `experiments/new_line_coverage.py` names no uncovered line.
+2. **The documents the wrong claims were in are regenerated under the new prompt** in a scratch
+   copy of `~/Zikaron-m40/warp` with a fresh store, installed from this tree with the install's
+   defaults: `cli_agent.rs`'s, which held both wrong absences, and
+   `cli_agent_sessions/listener/mod.rs`'s, §17's other checked document — and, for the read-none
+   form, two sources with no tests, and for a source whose tests are written inside it, the
+   three-file module `crates/warp_terminal/src/shell`. Each of their test absences names the test
+   files it is about or says none was read, and a check by search finds each one true of the files
+   it names; the result goes in `research/m40-toy-run.md` as a new section, which says how it reads
+   a reference to a file named earlier in the section. The original clone's documents and
+   databases are left unchanged.
+3. memory-reviewer reaches APPROVED on the brief and the build together.
+
+### Scope fence
+
+**Not** a regeneration of any corpus, LeibaTrader's included (operator, 2026-10-30). **Not** a
+search the documenter makes to find more tests: the narrowed claim is what a search it already
+makes supports. **Not** the other two kinds of §17's errors — a document vouching that comments
+match the code, and one citing a test for a case it never builds — which no measured pattern yet
+explains — nor a test missed in a file the documenter found, seen once, whose cause the
+transcripts would have to show before a rule could address it. **Not** the orchestrator's prompt:
+it relays what an answer says, and an answer of one line has nothing in it to relay; nor its
+`pwd -P && cat .mcp.json`, which item 5 documents rather than changes.
+
 ## M41 — kiro on its V3 engine, and only that
 
 **Decided by the operator, 2026-10-28.**

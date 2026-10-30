@@ -52,12 +52,15 @@ it was refused and why — and whatever else in it the user must act on.
 
 ## Permissions
 
-The planner's command and each documenter's write go through this session's permission mode, and
-their prompts surface here, naming the agent asking: an interactive session is asked to approve the
-planner's command when it first runs — and at later batches unless the user allows it for the
-session — and the first document a documenter writes; under auto mode neither is put to the user,
-the classifier deciding the command and an edit inside the project approved outright. A headless
-run is asked nothing and is refused: it needs `--permission-mode bypassPermissions`, or
-`--allowedTools` naming the planner command, the subagent tool, the file tools and Zikaron's own
-server, and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a run that waits ten idle
-minutes is stopped.
+The orchestrator's shell commands and each documenter's write go through this session's permission
+mode, and their prompts surface here, naming the agent asking: an interactive session is asked to
+approve the command the orchestrator finds the project root with, then the planner's when it first
+runs — and at later batches unless the user allows it for the session — and each document a
+documenter writes, unless the user allows edits for the session; under auto mode none is put to
+the user, the classifier deciding the commands and an edit inside the project approved outright.
+A headless run is asked nothing and is refused:
+it needs `--permission-mode bypassPermissions`, or `--allowedTools` naming the planner command,
+`Bash(pwd:*)` and `Bash(cat:*)` — the orchestrator has found the project root with
+`pwd -P && cat .mcp.json` in every measured run — the subagent and skill tools, the file tools
+and Zikaron's own server, and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a run that
+waits ten idle minutes is stopped.

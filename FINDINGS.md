@@ -56,93 +56,45 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M40 and M41-1 are built, reviewed and landed**, the last through PR #29. Each milestone's
-record is in `FINDINGS-archive.md` (M41-1's in §"M41-1 as built"), its brief in
-`design/build-plan.md`. M40 is code knowledge: the planner, documenter, orchestrator and skill
-(D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-5, and the Warp
+**M0–M40, M41-1 and M41-2 are built, reviewed and landed**, the last through PR #31 as
+`9455d52`. Each milestone's record is in `FINDINGS-archive.md` (M41-2's in §"M41-2 as built"), its
+brief in `design/build-plan.md`. M40 is code knowledge: the planner, documenter, orchestrator and
+skill (D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-5, and the Warp
 evaluation — results in `research/m40-evaluation.md` §4–§6, written up for readers outside the
 project in `research/knowledge-index-issue-triage.md`. M41-1 put the kiro install on kiro's V3
 engine only: V3's profile shape, the session relay, and the install reporting the parent rules a
-spawned subagent needs (`design/harness.md`; `research/kiro-v3-probe.md`).
+spawned subagent needs (`design/harness.md`; `research/kiro-v3-probe.md`). M41-2 closed the
+`design/kiro-gaps.md` rows V3 can carry — the guards on kiro's shell tool, the orchestrator as a
+subagent the session waits for, one model per agent on both harnesses, per-agent effort, the
+write policy in the code-knowledge prompts, and the spill — and that file states what stays open.
 
 **Release.** `0.4.0` is released (tag `v0.4.0`, 2026-10-22), the minor M39's schema move forced;
-its note links the research write-up. The working tree carries `0.4.1.dev0` for the next pull
-request. A minor bump means a `meta.schema_version` bump and nothing else (D36,
-`design/distribution.md` §3).
+its note links the research write-up. A minor bump means a `meta.schema_version` bump and nothing
+else (D36, `design/distribution.md` §3).
 
-**M41-2, the closable kiro gaps — built, reviewed, through the operator's interactive run, and
-sent as a pull request on 2026-10-30 for the operator to merge. Next: the plan after the merge,
-below.**
-Operator, 2026-10-28: kiro V2 is dropped and kiro-cli ≥ 2.35.1 is required; the work is cut into
-sub-milestones, each its own commit and review — **M41-1 "make it work"** (D34 amended), then
-**M41-2 "the closable gaps"** (the probes, then the `design/kiro-gaps.md` rows they close);
-kiro's own Memory is ignored, as Claude Code's is. kiro-cli 3.0 ships at the end of October 2026
-by auto-update and makes the V3 engine the default; 2.35.1, installed here, reaches V3 by
-`--v3`. Docs: `research/kiro-cli-v3-migration.md`; the binary: `research/kiro-v3-probe.md`.
-**Briefs:** M41, M41-1 and M41-2 in `design/build-plan.md` (what ships, invariants, done-when,
-fence).
+**Next (operator, 2026-10-30): M40-6's pull request sets `0.4.1`, and the operator tags its merge
+commit `v0.4.1` and publishes the release; the next pull request moves the tree to
+`0.4.2.dev0`.** A patch, since no schema moved (D36), carrying M41 and M40-6. Its note tells kiro
+users that kiro-cli ≥ 2.35.1 is required, and every user to re-run the installer after upgrading,
+since M41 changes kiro's install and M40-6 the documenter's prompt and the code-documentation
+skill, which an install writes into the project. Releasing before the fixes was proposed and
+declined: kiro-cli 3.0's auto-update refuses `0.4.0`'s kiro install, but the four stores here run
+this checkout, not PyPI.
 
-M41-2 takes the `design/kiro-gaps.md` rows the probes make closable. **Every probe is done**
-(`research/kiro-v3-probe.md`, round 2, from §32), and what they found is the brief's *What was
-found*. The nudge and the search reminder stay harness limits, since no post-tool output reaches
-the model. "No hook fires for a kiro subagent" is false for tool hooks (§38); M41-2 corrected it
-where it was stated.
-
-**M41-2's decisions (operator, 2026-10-29)** are in its brief, `design/build-plan.md` §M41-2:
-D38 amended (the guards on kiro's shell tool, no nudge), D39 amended (the session spawns the
-orchestrator under kiro and waits for it), one model per agent on both harnesses, one milestone.
-The operator approved the probes' results and every decision before the brief was written.
-Auto-update stays on, and each result records its kiro version.
-
-Plan: (1)–(4) M41-1, landed through PR #29 (`reviews/m41-1-review.md`); (5) M41-2's
-brainstorm — done; (6) the probes — done; (7) the results and decisions — approved by the
-operator; (8) the brief — APPROVED (`reviews/m41-2-brief-review.md`); (9) **the build — done**
-(operator, 2026-10-29: *"Let's build M41-2"*) in the worktree **`/home/nathan/Zikaron-m41-2`,
-branch `m41-2-kiro-gaps`, whose `FINDINGS.md` is the live one**; the main tree's uncommitted
-changes were carried into it byte for byte on 2026-10-29 and are frozen there. The build's steps:
-(a) items 1–2, models and effort; (b) items 3–5, the kiro orchestrator, launch skill and policy;
-(c) item 6, the spill; (d) item 7, the guards; (e) items 8, 10–12 and done-when 2's sweep,
-`README.md` included; (f) item 9's live tests, every `integration_kiro` and done-when 5's
-`integration_claude` tests green (results in `research/kiro-v3-probe.md` §58–§61); (g) mutations
-seen red, every invariant's, applied in memory by a scratch pytest plugin; `./check.sh`,
-`new_line_coverage.py`, and memory-reviewer APPROVED (`reviews/m41-2-review.md`) — (a)–(g) done.
-A memory-store chunker defect is fixed in this tree and lands with M41-2: a hard split now ends
-each piece at a word start (`design/indexing.md` step 5; `research/hard-split-word-cut.md`).
-So does a fix for a CI flake (operator, 2026-10-30): `test_service_writer.py`'s two-writer budget
-test bounds the gap between the two answers, not each answer's time, which a stall of the whole
-process moved past its ceiling on `main`'s linux 3.13 job (run 40891600850: both answers at 0.82 s,
-0.5 ms apart, against a 0.75 s ceiling — about 0.3 s past an unstalled run's 0.52).
-(h) Done-when 7, the operator's interactive run, passed on 2026-10-30
-(`research/kiro-v3-probe.md` §62).
-
-**Also in this PR (operator, 2026-10-30: *"Whatever can fail, will fail one day"*): every test whose
-verdict a stall of the process could flip.** The rule is now `design/coding-standards.md` §4's: a
-wall-clock ceiling subtracts the lateness `tests/loop_lateness.py` measures where the wait runs off
-the loop, bounds a difference, or is a watchdog far below a wait made long; and no verdict rests
-on two timers' order. Done for every such bound found in `tests/` — clock-read ceilings, counts of
-polls in a fixed sleep, locks a timer set beforehand releases, socket timeouts on an expected
-reply, and deadlines a test's request carries; re-derive with `experiments/stall_plugin.py`, whose
-docstring has the command and the result (the files as they stood at `8617308` red under its
-stalls, these green). Tests that reach a live peer inherited the code's own timeouts on the
-exchange, a few milliseconds' exposure each — the hook's 0.3 s health timeout, 2 s push deadline
-and 1 s reminder deadline, and `lifecycle`'s 1 s connect timeout; all at ten seconds in the suite
-now (operator, 2026-10-30: *"Yes please raise them"*), the push's capped at 4.5 s on its exchange
-with the service. The hook's go through `conftest.generous_hook_deadlines`, opted into by every
-test whose hook connects to a live peer in this process, since `tests/test_install_limits.py`
-asserts their real relations; `lifecycle`'s through an autouse fixture beside it. A test whose
-premise is a real value sets it, and a test that runs the hook as a child process keeps the real
-values.
-Reviewed to APPROVED (`reviews/m41-2-review.md`); sent as a pull request on 2026-10-30.
-Live tests stay small: one module of a few files for code knowledge, never a large codebase
-(operator, 2026-10-28).
-
-**The plan after the merge (operator, 2026-10-30): (1) the operator merges M41-2's pull request;
-(2) the two documenter fixes in §"Owed work", brainstormed, briefed and built as one follow-up,
-in a pull request of their own; (3) then the release, `0.4.1`, carrying both.** A patch, since no
-schema moved (D36). Its note tells kiro users to re-run the installer and that kiro-cli ≥ 2.35.1
-is required, and Claude Code users that upgrading is enough, since nothing they install has
-changed since `0.4.0`. Releasing before the fixes was proposed and declined: kiro-cli 3.0's
-auto-update refuses `0.4.0`'s kiro install, but the four stores here run this checkout, not PyPI.
+**M40-6 — built, verified and reviewed to APPROVED; the pull request next.** The two documenter
+fixes, both in `DOCUMENTER_PROMPT`, which both harnesses install: a test absence names the test
+files the documenter read, by their paths from the root, or says it read none; and a block the
+harness attaches beside a tool result is not the file's content. A third rides along, found by the
+verification: a headless run's `--allowedTools` needs `Bash(pwd:*)` and `Bash(cat:*)`, missing
+from the README, `design/code-knowledge.md` §5.2 and the skill. Decisions (operator, 2026-10-30):
+documents already written stay as they are until their sources change, LeibaTrader's included;
+the author drafts the wording, and memory-reviewer is asked to hold the prompt to its own bar; one
+short brief, and one review covering the brief and the build. Plan: (1) the brief in
+`design/build-plan.md` §M40-6 — done; (2) the build — done; (3) the regeneration of seven Warp
+documents in a scratch copy — done, 1 bare absence in 53 under the scoped wording
+(`research/m40-toy-run.md` §18); (4) `./check.sh`, the sweep and the review — APPROVED
+(`reviews/m40-6-review.md`); (5) the pull request when the operator asks, carrying the 2026-10-30
+archival pass of this file and the `0.4.1` version (operator, 2026-10-30).
 
 The rest of §"Owed work" waits on that. **Each milestone is brainstormed with the operator before
 its brief is written** (operator, 2026-10-13).
@@ -174,7 +126,12 @@ re-derives it here).
   2026-09-22); `design/build-plan.md` and `design/evaluation.md` are in.
 - **Use `Explore`, not `general-purpose`, for a read-only sweep**; `general-purpose` fans out.
 - **The task tracker does not survive compaction** (operator, 2026-09-28): a plan lives here.
-- **Harness versions are recorded, never re-probed** (operator, 2026-10-16).
+- **Harness versions are recorded, never re-probed** (operator, 2026-10-16). kiro-cli's
+  auto-update stays on, and each result records its kiro version (operator, 2026-10-29); kiro-cli
+  3.0, due at the end of October 2026, makes V3 the default, and 2.35.1, installed here, reaches
+  it by `--v3` (`research/kiro-v3-probe.md`).
+- **Live tests stay small**: one module of a few files for code knowledge, never a large codebase
+  (operator, 2026-10-28).
 - **The host is busy** (operator, 2026-09-29 and 2026-10-11): no latency figure measured on it is
   comparable with an idle-host budget.
 - **CI runs four jobs on `main`** — linux 3.12/3.13/3.14 and macOS 3.12, the last required; the
@@ -185,7 +142,8 @@ re-derives it here).
 `<project>/.zikaron/`, one per directory, no global tier. **`~/Trading/LeibaTrader`,
 `~/Dividends`, `~/Memory` and `~/PythonPlayground` run this repository's `.venv`**, an editable
 install, deliberately (operator, 2026-09-30): an uncommitted edit here is live there at their next
-service or MCP start. LeibaTrader is the primary real-work store and documents its code with code
+service or MCP start. Ask a venv which code it runs from outside any checkout, or with `-P`: run
+inside one, `python -c` imports that checkout's `zikaron` from the current directory instead. LeibaTrader is the primary real-work store and documents its code with code
 knowledge; its memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` has been false since M40-1, and
 retiring it is the operator's. `~/Memory` is a sibling project's store, read-only for this agent
 without the operator's per-task say-so; the consolidation A/B there has no pre-run baseline.
@@ -208,11 +166,6 @@ An owed item goes here the moment it is identified. The detail behind each is in
 - **The corpus repair pass**: re-seed live long-term records as journal entries (a `--tier
   long_term` option on `m34_gist_replay.py`) and consolidate them in a replay store, judged on
   M34's four bars, before any live store.
-- **The two documenter fixes — agreed** (operator, 2026-10-21), ready to brief as one follow-up:
-  a block the harness attaches beside a tool result is not the file's content (wording
-  memory-reviewer's; it recurred once in Warp's 407); and *"no test covers"* scoped to the tests
-  it read — *"no test in `<file>` covers"* (`research/m40-toy-run.md` §17). Verify by
-  regenerating only the documents the defects were seen in, in a scratch `cp -a` of Warp's clone.
 - **A prompt-only arm for the Warp evaluation's medium issues** — proposed, not approved: the
   treatment's prompt with no documents, about $65–90, to separate the prompt's checking paragraph
   from the documents as the cause of the extra cost (`research/m40-evaluation.md` §6). It needs
