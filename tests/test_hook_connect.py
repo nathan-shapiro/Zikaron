@@ -31,6 +31,8 @@ from zikaron.hook.connect import (
 )
 from zikaron.service import paths
 
+pytestmark = pytest.mark.usefixtures("generous_hook_deadlines")
+
 #: A spawn command that exits at once and binds nothing.
 _EXITS_AT_ONCE = [sys.executable, "-c", "pass"]
 
@@ -224,8 +226,8 @@ def test_a_lock_held_past_the_deadline_is_a_start_still_running(
 ) -> None:
     """Another client holds the start-if-absent lock only while it starts the service, through a
     poll that can outlast this caller's whole budget. Waiting on it past the deadline would leave
-    the harness to kill the hook, which records nothing. The holder here lets go after 3 s, so a
-    wait that ignores the deadline ends in a spawn rather than a hang."""
+    the harness to kill the hook, which records nothing. The holder here lets go after ten
+    seconds, so a wait that ignores the deadline ends in a spawn rather than a hang."""
 
     def _must_not_spawn(_server_command: object) -> object:
         raise AssertionError(
@@ -235,7 +237,7 @@ def test_a_lock_held_past_the_deadline_is_a_start_still_running(
     monkeypatch.setattr(connect, "_spawn_detached", _must_not_spawn)
     holder = os.open(str(paths.lock_path(sock_path)), os.O_CREAT | os.O_RDWR, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
-    letting_go = threading.Timer(3.0, fcntl.flock, args=(holder, fcntl.LOCK_UN))
+    letting_go = threading.Timer(10.0, fcntl.flock, args=(holder, fcntl.LOCK_UN))
     letting_go.start()
     try:
         with pytest.raises(ServiceStartingError):
@@ -301,7 +303,7 @@ def test_a_health_failure_on_an_already_listening_socket_closes_it_and_propagate
     server.listen(1)
 
     def _accept_and_answer_garbage() -> None:
-        server.settimeout(2.0)
+        server.settimeout(10.0)
         connection, _ = server.accept()
         connection.recv(4096)  # drain the request
         connection.sendall(b"not json at all\n")

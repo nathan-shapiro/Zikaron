@@ -50,10 +50,10 @@ def test_begin_and_end_both_refresh_last_activity() -> None:
     stale = time.monotonic() - 1000
     tracker = ActivityTracker(last_activity=stale)
     request = tracker.begin_request("memory_search")
-    assert tracker.idle_for() < 1.0
+    assert tracker.idle_for() < 100.0
     tracker.last_activity = stale
     tracker.end_request(request)
-    assert tracker.idle_for() < 1.0
+    assert tracker.idle_for() < 100.0
 
 
 def test_may_stop_is_false_while_a_request_is_in_flight_even_past_the_timeout() -> None:

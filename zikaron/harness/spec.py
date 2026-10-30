@@ -75,12 +75,48 @@ class GuardHook(NamedTuple):
         return frozenset(self.matcher.split("|"))
 
 
+class DenyChannel(enum.Enum):
+    """How a guard's deny reaches the model.
+
+    `ENVELOPE`: exit 0 with `hookSpecificOutput.permissionDecision`, whose reason becomes the tool
+    result, and `additionalContext` beside an allowed call. `STDERR`: exit 2 with the reason on
+    stderr and nothing on stdout, the one route a pre-tool hook has to the model; nothing printed on
+    exit 0 reaches it, so an accepted override is said nowhere.
+    """
+
+    ENVELOPE = "envelope"
+    STDERR = "stderr"
+
+
 class Guards(NamedTuple):
-    """The two guard hook groups: the command hook, which carries the find-replace guard and the
-    self-match rule, and the re-read nudge."""
+    """The guard hook groups: the command hook, which carries the find-replace guard and the
+    self-match rule, and the re-read nudge, `None` where no post-tool output reaches the model;
+    and how a deny is delivered."""
 
     command: GuardHook
-    reread: GuardHook
+    reread: GuardHook | None
+    deny: DenyChannel
+
+
+class ToolIds(NamedTuple):
+    """The ids the model sees for the tools a shipped text names: reading, editing in place and
+    writing a file, and the shell. Not the profile selectors `file_tools` holds, which under kiro
+    are other words."""
+
+    read: str
+    edit: str
+    write: str
+    shell: str
+
+
+class SpillLocation(enum.Enum):
+    """Where the consolidator's MCP client writes an over-large result (`design/architecture.md`
+    §"A result too large to deliver — the client spills it to a file"): the runtime directory
+    beside the socket, or the store directory's `spill/`, which a path rule in the project can
+    name."""
+
+    RUNTIME = "runtime"
+    STORE = "store"
 
 
 class SearchArm(NamedTuple):
@@ -119,6 +155,8 @@ class HarnessSpec(NamedTuple):
     """
 
     harness: Harness
+    #: The harness's name in shipped prose, as `design/harness.md` §"The table" heads its column.
+    prose_name: str
     marker_variable: str | None
     session_variable: str
     #: Whether the session variable reaches hooks and the agent's shell but no MCP server, so that
@@ -136,6 +174,8 @@ class HarnessSpec(NamedTuple):
     consolidator_model: str
     #: The code documenter's default model.
     documenter_model: str
+    #: The code orchestrator's default model.
+    orchestrator_model: str
     harness_binary: str
     #: The variable naming the directory this harness considers "the project", or `None` where the
     #: harness exports none. Read by `store_scope_dir` below; see its docstring for why.
@@ -149,6 +189,8 @@ class HarnessSpec(NamedTuple):
     #: stall this was built to end. Where this is false the client returns every payload inline,
     #: the consolidator config gains no tool, and its prompt gains no text about files.
     consolidator_can_read_files: bool
+    #: Where an over-large result is written, where `consolidator_can_read_files` lets one be.
+    spill_location: SpillLocation
     #: The guards' triggers and matchers, or `None` where the guards are not offered — which is
     #: what the installer's refusal of them reads.
     guards: Guards | None
@@ -160,6 +202,8 @@ class HarnessSpec(NamedTuple):
     #: documenter's prompt can say *read* and *write* and stay true on both
     #: (`design/code-knowledge.md` §5.4).
     file_tools: tuple[str, ...]
+    #: The tool ids a shipped text names, as the model sees them.
+    tool_ids: ToolIds
 
     def exceeds_injection_budget(self, text: str) -> bool:
         """Whether `text` is larger than this harness will actually inject.
@@ -253,39 +297,54 @@ class HarnessSpec(NamedTuple):
 #: kiro-cli's V3 engine, as `research/kiro-v3-probe.md` measured it on 2.35.1.
 KIRO: Final = HarnessSpec(
     harness=Harness.KIRO,
+    prose_name="kiro-cli",
     marker_variable=None,
     session_variable="KIRO_SESSION_ID",
     session_variable_misses_mcp_server=True,
     spawn_trigger="SessionStart",
     prompt_trigger="UserPromptSubmit",
-    # No hook fires for a subagent session at all, so a subagent has no trigger of its own here.
+    # A subagent's own hooks never fire, and its tool calls fire the root session's tool hooks
+    # under the root's session id, so nothing marks a subagent's start.
     subagent_start_trigger=None,
     # The cut is the harness's own; neither spelling of an entry's size field moves it.
     injection_budget=3_000,
     # `exec` makes the agent server the hook's parent, as it is the MCP server's, which is what the
     # session relay is keyed on.
     hook_command_prefix="exec ",
-    # Pinned to a concrete id: an id this harness does not recognize is documented to be replaced
-    # by its default with no more than a warning, so the installer validates membership against
-    # `chat --list-models` — a check an alias would fail, since that command lists ids.
-    consolidator_model="claude-sonnet-5",
-    documenter_model="claude-sonnet-5",
+    # Concrete ids, the models Claude Code's aliases resolve to: an id this harness does not
+    # recognize is documented to be replaced by its default, so the installer checks membership
+    # against `chat --list-models`, which lists ids and no alias. Moved by hand when an alias moves
+    # (`design/harness.md` §"The consolidator's model").
+    consolidator_model="claude-sonnet-5.5",
+    documenter_model="claude-haiku-5.5",
+    orchestrator_model="claude-opus-5.5",
     harness_binary="kiro-cli",
     # Measured, not assumed: of the six `KIRO_*` variables across 270 hook and MCP server records,
     # none names a workspace or project directory.
     project_dir_variable=None,
-    # What this harness does with an over-large MCP result is **unmeasured**. Rather than invent a
-    # remedy for behaviour nobody has observed, every payload is returned inline here exactly as
-    # before, and the consolidator keeps the four verbs and nothing else.
-    consolidator_can_read_files=False,
-    # Not offered: a `PostToolUse` hook's output was measured not to reach the model.
-    guards=None,
+    # A result of 30,000 characters or more is replaced by a preview, and `read_file` pages a file
+    # by line offset under the same limit.
+    consolidator_can_read_files=True,
+    # Under the project, where the consolidator's own rules can allow that directory and refuse
+    # every other read: the session's rules decide a subagent's reads, and no rule the install
+    # writes covers the runtime directory.
+    spill_location=SpillLocation.STORE,
+    # No re-read nudge: no post-tool output reaches the model, on any exit code.
+    guards=Guards(
+        command=GuardHook(trigger="PreToolUse", matcher="execute_bash"),
+        reread=None,
+        deny=DenyChannel.STDERR,
+    ),
     search_reminder=None,
     file_tools=("read", "grep", "glob", "write"),
+    # Read, edit, write, shell: positional, since a `shell=` string reads to the linter as a
+    # subprocess flag.
+    tool_ids=ToolIds("read_file", "str_replace", "fs_write", "execute_bash"),
 )
 
 CLAUDE_CODE: Final = HarnessSpec(
     harness=Harness.CLAUDE_CODE,
+    prose_name="Claude Code",
     marker_variable="CLAUDECODE",
     session_variable="CLAUDE_CODE_SESSION_ID",
     session_variable_misses_mcp_server=False,
@@ -301,15 +360,20 @@ CLAUDE_CODE: Final = HarnessSpec(
     # consolidator fails at spawn. Experiments pin; the shipped default does not have to.
     consolidator_model="sonnet",
     documenter_model="haiku",
+    # For following the documentation skill's spawn rules: its premium over `sonnet` is small
+    # beside what `haiku` documenters save, though at these defaults it is most of a run's cost.
+    orchestrator_model="opus",
     harness_binary="claude",
     project_dir_variable="CLAUDE_PROJECT_DIR",
     # Measured: an over-large result is replaced wholesale by an error notice, and the harness's
     # own spill file is one line of JSON that `Read` cannot paginate. A file this project writes
     # can be paginated, so the capability is real — `research/claude-code-mcp-result-truncation.md`.
     consolidator_can_read_files=True,
+    spill_location=SpillLocation.RUNTIME,
     guards=Guards(
         command=GuardHook(trigger="PreToolUse", matcher="Bash|Monitor"),
         reread=GuardHook(trigger="PostToolUse", matcher="Edit|MultiEdit|NotebookEdit|Write"),
+        deny=DenyChannel.ENVELOPE,
     ),
     # As measured: an `if` is a string, one per handler — a list is never matched — and a leading
     # wildcard reaches `egrep`, `fgrep` and both spellings of `git grep`
@@ -320,6 +384,7 @@ CLAUDE_CODE: Final = HarnessSpec(
         shell=SearchArm(matcher="Bash", filters=("Bash(*grep *)", "Bash(rg *)")),
     ),
     file_tools=("Read", "Grep", "Glob", "Write", "Edit"),
+    tool_ids=ToolIds("Read", "Edit", "Write", "Bash"),
 )
 
 SPECS: Final[dict[Harness, HarnessSpec]] = {

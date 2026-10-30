@@ -41,7 +41,7 @@ import pytest
 
 from zikaron.hook.connect import Connection, connect_once
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("generous_hook_deadlines")]
 
 #: Generous: these tests are about the lock, not about how fast a spawn answers.
 _POLL_SECONDS: Final = 10.0

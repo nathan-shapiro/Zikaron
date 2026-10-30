@@ -15,7 +15,6 @@ skill of its own. The commands and the project are fixed, so nothing machine-spe
 from pathlib import Path
 from typing import Final
 
-from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
 from zikaron.install.entries import Commands
 from zikaron.install.targets import ClaudeCodeTarget, HarnessTarget, KiroTarget
 from zikaron.install.writer import Plan
@@ -37,7 +36,7 @@ def rendered() -> dict[str, str]:
             commands=_COMMANDS,
             consolidator_model=target.spec.consolidator_model,
             documenter_model=target.spec.documenter_model,
-            orchestrator_model=ORCHESTRATOR_MODEL,
+            orchestrator_model=target.spec.orchestrator_model,
             force=False,
             trust_tools=True,
         )

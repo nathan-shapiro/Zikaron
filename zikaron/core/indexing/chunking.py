@@ -184,11 +184,20 @@ def paragraphs(content: str) -> tuple[str, ...]:
 
 
 def _hard_split(paragraph: str, *, budget: int, encoder: Encoder) -> tuple[str, ...]:
-    """Cut one over-budget paragraph into `budget`-token pieces, on token boundaries.
+    """Cut one over-budget paragraph into pieces of at most `budget` tokens, each ending where a
+    word does.
 
-    `indexing.md` step 5 is the only place text is cut inside a paragraph, and it cuts on token
-    boundaries so no piece ends mid-token — a mid-token cut would hand the model a fragment of a
-    word whose embedding means something else entirely.
+    `indexing.md` step 5 is the only place text is cut inside a paragraph. **It cuts before a word,
+    not merely between two tokens**, because a piece is counted again on its own, and a piece that
+    opens on a word's continuation token does not count the same: BGE's WordPiece reads the
+    fragment as a word of its own, so `reconne|cts` gives the second piece one token more than its
+    window held, and the post-condition then refuses the whole write
+    (`research/hard-split-word-cut.md`). A piece made of whole words tokenizes to exactly its
+    window, since the pre-tokenizer splits at whitespace and each word is tokenized alone. A word
+    starts where whitespace precedes a token, read from the spans; where a window holds no such
+    start — a single run longer than the budget — the cut stays on a token boundary. A piece whose
+    own count still exceeds the budget — such a run, or the piece opening on the fragment its cut
+    left — shrinks a token at a time until it fits.
 
     Slicing by the tokenizer's own character offsets is what makes the pieces cover the paragraph:
     each piece runs from its first token's start offset to its last token's end offset, so the only
@@ -215,10 +224,28 @@ def _hard_split(paragraph: str, *, budget: int, encoder: Encoder) -> tuple[str, 
     if len(spans) != encoder.count_tokens(paragraph):
         raise ZikaronError(ErrorCode.INDEX_FAILED, stage=IndexStage.ASSEMBLY)
     pieces: list[str] = []
-    for start in range(0, len(spans), budget):
-        window = spans[start : start + budget]
-        pieces.append(paragraph[window[0][0] : window[-1][1]])
+    start = 0
+    while start < len(spans):
+        end = _word_cut(spans, start=start, budget=budget)
+        piece = paragraph[spans[start][0] : spans[end - 1][1]]
+        while end - start > 1 and encoder.count_tokens(piece) > budget:
+            end -= 1
+            piece = paragraph[spans[start][0] : spans[end - 1][1]]
+        pieces.append(piece)
+        start = end
     return tuple(pieces)
+
+
+def _word_cut(spans: tuple[tuple[int, int], ...], *, start: int, budget: int) -> int:
+    """The end, exclusive, of the piece starting at token `start`: the last word start within
+    `budget` tokens, or `start + budget` where none is."""
+    end = min(start + budget, len(spans))
+    if end == len(spans):
+        return end
+    for cut in range(end, start, -1):
+        if spans[cut - 1][1] < spans[cut][0]:
+            return cut
+    return end
 
 
 def _pack(paragraph_texts: tuple[str, ...], *, budget: int, encoder: Encoder) -> tuple[Chunk, ...]:

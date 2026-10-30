@@ -8,17 +8,12 @@ from typing import Final
 import pytest
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO, Harness
-from zikaron.hook.components import Components
 from zikaron.install import harness as install_harness
-from zikaron.install.code_knowledge import (
-    DOCUMENTER_AGENT_NAME,
-    ORCHESTRATOR_AGENT_NAME,
-    ORCHESTRATOR_MODEL,
-)
-from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME, Commands
+from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
+from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME
 from zikaron.install.main import main
-from zikaron.install.targets import ClaudeCodeTarget, KiroTarget, target_for
-from zikaron.install.writer import Plan, Targets
+from zikaron.install.targets import ClaudeCodeTarget, KiroTarget
+from zikaron.install.writer import Targets
 
 pytestmark = pytest.mark.usefixtures("stub_harness_binaries")
 
@@ -37,12 +32,13 @@ _AGENT_FILE_OF: Final = {
 _CLAUDE_DEFAULTS: Final = {
     "consolidator": CLAUDE_CODE.consolidator_model,
     "documenter": CLAUDE_CODE.documenter_model,
-    "orchestrator": ORCHESTRATOR_MODEL,
+    "orchestrator": CLAUDE_CODE.orchestrator_model,
 }
 
 _KIRO_DEFAULTS: Final = {
     "consolidator": KIRO.consolidator_model,
     "documenter": KIRO.documenter_model,
+    "orchestrator": KIRO.orchestrator_model,
 }
 
 
@@ -80,6 +76,7 @@ def _kiro_models(project: Path) -> dict[str, str]:
     configs = {
         "consolidator": targets.consolidator_config,
         "documenter": targets.documenter_config,
+        "orchestrator": targets.orchestrator_config,
     }
     return {
         agent: json.loads(path.read_text(encoding="utf-8"))["model"]
@@ -88,8 +85,8 @@ def _kiro_models(project: Path) -> dict[str, str]:
 
 
 def _offer(monkeypatch: pytest.MonkeyPatch, *models: str) -> None:
-    """Have kiro's model list offer `models` beside its default."""
-    offered = frozenset({KIRO.consolidator_model, *models})
+    """Have kiro's model list offer `models` beside its defaults."""
+    offered = frozenset({*_KIRO_DEFAULTS.values(), *models})
     monkeypatch.setattr(install_harness, "available_model_ids", lambda: offered)
 
 
@@ -149,35 +146,14 @@ class TestRefusals:
         assert _claude(project, "--components", "guards", *flags) == 1
         assert "nothing would use --model, --documenter-model." in capsys.readouterr().err
 
-    @pytest.mark.parametrize("preview", [False, True], ids=["install", "print-only"])
-    def test_orchestrator_model_is_refused_where_no_orchestrator_ships(
-        self, project: Path, preview: bool, capsys: pytest.CaptureFixture[str]
+    def test_kiros_orchestrator_model_is_checked_against_its_model_list(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        extra = ["--print-only"] if preview else []
-        assert _kiro(project, "--orchestrator-model", KIRO.consolidator_model, *extra) == 1
-        refusal = capsys.readouterr().err
-        assert "--orchestrator-model has no meaning under --harness kiro" in refusal
-        assert "--documenter-model sets the documenter" in refusal
+        """kiro ships the orchestrator, so its flag is accepted and its id checked, as the other
+        two are: an id kiro does not offer is replaced by its default."""
+        assert _kiro(project, "--orchestrator-model", "not-offered") == 1
+        assert "'not-offered' is not a model this harness offers" in capsys.readouterr().err
         assert _tree(project) == {}
-
-
-@pytest.mark.parametrize("harness", list(Harness), ids=[harness.value for harness in Harness])
-def test_ships_orchestrator_agrees_with_what_a_memory_install_writes(
-    tmp_path: Path, harness: Harness
-) -> None:
-    target = target_for(harness)
-    plan = Plan(
-        project=tmp_path,
-        commands=Commands(hook=Path("/venv/bin/zikaron-hook"), mcp=Path("/venv/bin/zikaron-mcp")),
-        consolidator_model="a-model",
-        documenter_model="a-model",
-        orchestrator_model="a-model",
-        force=False,
-        trust_tools=True,
-        components=Components.MEMORY,
-    )
-    written = {shipped.path.stem for shipped in target.shipped_files(plan)}
-    assert (ORCHESTRATOR_AGENT_NAME in written) is target.ships_orchestrator
 
 
 class TestTheModelCheck:
@@ -211,8 +187,7 @@ class TestTheModelCheck:
         assert _claude(project, "--model", "every") == 0
         assert checked == ["every"]
 
-    def test_kiro_checks_its_agents_and_no_orchestrator(
-        self, project: Path, checked: list[str]
-    ) -> None:
+    def test_kiro_checks_each_of_its_three_agents(self, project: Path, checked: list[str]) -> None:
         assert _kiro(project) == 0
         assert sorted(checked) == sorted(set(_KIRO_DEFAULTS.values()))
+        assert len(set(_KIRO_DEFAULTS.values())) == len(_KIRO_DEFAULTS)

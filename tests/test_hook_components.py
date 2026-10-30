@@ -2,21 +2,27 @@
 
 No flag is the memory hook exactly as it was. `guards` emits only the guard start text and makes
 no service connection; `both` emits the write policy, then the guard start text. The consolidator,
-whose system prompt is its whole instruction, gets nothing under any selection.
+whose system prompt is its whole instruction, gets nothing under any selection. The start text is
+the detected harness's: Claude Code's here, unless a test says otherwise, since `SubagentStart` is
+that harness's trigger.
 """
 
 import io
 import json
 import sys
+from typing import Final
 
 import pytest
 
-from zikaron.guard.start_text import GUARD_START_TEXT
+from zikaron.guard.start_text import guard_start_text
+from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import main as main_module
 from zikaron.hook import push, spawn_warm, subagent_policy
 from zikaron.hook.components import Components
 from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
 from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
+
+GUARD_START_TEXT: Final = guard_start_text(CLAUDE_CODE)
 
 SPAWN: dict[str, object] = {
     "hook_event_name": "SessionStart",
@@ -37,6 +43,12 @@ PROMPT: dict[str, object] = {
     "cwd": "/home/u/proj",
     "prompt": "hello",
 }
+
+
+@pytest.fixture(autouse=True)
+def under_claude_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert CLAUDE_CODE.marker_variable is not None
+    monkeypatch.setenv(CLAUDE_CODE.marker_variable, "1")
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +108,19 @@ def test_guards_emit_only_the_guard_start_text_and_reach_no_service(
     assert _emit(SPAWN, flag, capsys, monkeypatch) == GUARD_START_TEXT
     assert _subagent_context(_emit(SUBAGENT, flag, capsys, monkeypatch)) == GUARD_START_TEXT
     assert _emit(PROMPT, flag, capsys, monkeypatch) == ""
+    assert service_calls == []
+
+
+def test_under_kiro_the_guards_start_entry_prints_kiros_start_text_alone(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, service_calls: list[str]
+) -> None:
+    """kiro's install gives the guards a start entry of their own, and the memory store keeps its
+    own (`design/guards.md` §5), so each prints one text and each fits kiro's per-hook cut."""
+    assert CLAUDE_CODE.marker_variable is not None
+    monkeypatch.delenv(CLAUDE_CODE.marker_variable)
+    guards = _emit(SPAWN, ["--components", "guards"], capsys, monkeypatch)
+    assert guards == guard_start_text(KIRO)
+    assert not KIRO.exceeds_injection_budget(guards)
     assert service_calls == []
 
 

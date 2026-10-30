@@ -185,6 +185,7 @@ class TestTheOtherClientsDoNotRefuse:
         assert "result" in response
         assert service.sent == ["knowledge_list"]
 
+    @pytest.mark.usefixtures("generous_hook_deadlines")
     def test_the_hook_connects_to_another_version(self, socket_dir: Path, tmp_path: Path) -> None:
         sock_path = socket_dir / "version.sock"
         store_db_path = tmp_path / "memory.db"

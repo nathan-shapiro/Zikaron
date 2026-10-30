@@ -8151,6 +8151,629 @@ against.
 - **Not** cloud sessions, the sandbox, or workflows.
 - **Not** `zikaron-mcp`'s import time, except as item 8 says.
 
+## M41-2 — Guards, an orchestrator and a spill that kiro can carry, and two reminders it cannot
+
+**Normative, written by the build:**
+- `design/harness.md`: the kiro column of §"The table"; §"Subagents"; §"The consolidator's model",
+  which comes to cover all three agents (item 1); §"Injection budgets" for item 7's start
+  entries; §"The installer's two targets" and §"The flags, and what each refuses" for kiro;
+  §"The nesting limit, stated rather than engineered around" for items 6 and 7; and §"Three
+  approval gates, and the one that reads our own config back at the user" (item 6).
+- `design/guards.md` §1, §2, §3.4, §3.5, §4, §5, §6, §7 and §9, which become true of two
+  harnesses (item 7).
+- `design/code-knowledge.md` §5.1, §5.2 and §5.4, and its table of installed files (items 2–5).
+- `design/architecture.md` §"A result too large to deliver — the client spills it to a file",
+  §"The install contract" and §"Filesystem security", whose table of `.zikaron/`'s contents gains
+  `spill/` (item 6); and `design/schema.md`'s `spill_threshold` row, whose proof names Claude
+  Code's cap alone.
+- `design/write-policy.md`'s operator erasure procedure, for where a kiro spill file lies (item 6).
+- `design/overview.md`'s D38 and D39 rows, and `FINDINGS.md`'s index lines for the two.
+- `design/kiro-gaps.md` (item 10).
+- `README.md`'s kiro install section, and `CLAUDE.md` §Harness on restoring the `.kiro/` fallback,
+  whose install now writes the orchestrator too.
+
+**Decisions, all the operator's, 2026-10-29:**
+- **D38 is amended**: the find-replace guard and the self-match rule are offered under kiro as
+  well, on its shell tool. The re-read nudge is not, since no post-tool output reaches the model
+  there (item 7).
+- **D39 is amended**: under kiro the session spawns the orchestrator too, as a subagent it waits
+  for (operator: *"we should build orchestrator running as subagent"*). Only Workflows would run it
+  in the background, and they stay out (item 3).
+- **Both harnesses run the same model for the same agent** (operator: *"We should make sure that
+  both claude code and kiro use the same models for the same tasks, with only difference is that in
+  claude code we use alises while in kiro we have to use a specific version because there are no
+  aliases in kiro"*). So no evaluation bar decides the documenter's kiro model (item 1).
+- One milestone, after the probes, which are done.
+
+**What was found.** Every result is in `research/kiro-v3-probe.md`, round 2 (from §32), cited below
+as *probe §N*. All ran on kiro-cli 2.35.1 with `--v3`.
+- **The shell tool can be guarded.** Its `PreToolUse` payload carries `hook_event_name`,
+  `tool_name: "execute_bash"`, `cwd` and `tool_input` as a JSON object holding `command`, the
+  fields the guard reads under the names it reads them by (probe §32). Probe §3's claim that
+  `tool_input` is a Python `repr` string was a misreading, corrected there. The matcher
+  `execute_bash`, the tool id itself, selects the shell tool and nothing else (probe §48). Exit 2
+  blocks the call, and its stderr reaches the model inside a fixed framing, 5,000 characters of it
+  whole (probe §33). Exit 0 stdout and exit 1 stderr reach nobody, and exit 1 lets the call run
+  (probe §34). kiro runs a command as `/bin/bash -c <command>`, so the self-match rule's premise
+  holds on Linux (probe §50).
+- **Nothing after a tool reaches the model.** No `PostToolUse` output does, on exit 1 or exit 2,
+  after a shell, write, search or MCP call (probe §35). Neither does `PostFileCreate` or
+  `PostFileSave` output (probe §36). With probe §6's exit-0 stdout, that is every documented route.
+- **A subagent spawns a subagent** (probe §37), so V2's stripped `subagent` tool
+  (`research/nested-subagent-probe.md`) does not hold under V3.
+- **A subagent's tool calls fire the root session's tool hooks, under the root's session id, and
+  none of its own** (probe §38), and the session's exit 2 blocks the subagent's call (probe §57).
+  "No hook fires for a kiro subagent", stated in about seven places, is false of tool hooks.
+- **A profile's undocumented `effortLevel` sets a subagent's effort**, which kiro logs as
+  `effortOverride: true` (probe §39).
+- **kiro cuts a tool result at 30,000 characters.** It keeps 500 at each end and saves the rest
+  under `~/.kiro/sessions/` (probe §40). It counts the text block alone: an object of 29,500
+  characters, sent as text and again as structured content, as `zikaron-mcp` sends one, arrived
+  intact (probe §51). `read_file` pages a file by line offset under the same limit (probe §41),
+  and an `fs_read` rule matching `./**` covers a dot directory (probe §47).
+- **A subagent's own allow rules grant it nothing beyond the session's.** What it may do is what
+  the session's rules allow, less what any rule in the chain denies. A child allowed to read one
+  directory read outside it (probe §52). The same child with a deny rule carrying `exclude` was
+  refused (probe §53). A session's `fs_write` rule decided a leaf's write two levels down, through
+  a middle agent with no rule of its own (probe §54). `design/harness.md` §"Subagents" and the
+  install's notes say instead that a subagent gets *"only what its own rules and its parent's both
+  allow"*, which probe §28 fits and probe §52 refutes.
+- **kiro's 3,000-character hook cut is per hook, not per trigger**: two `SessionStart` entries of
+  2,902 and 2,904 characters arrived whole (probe §49).
+- **The session holds together.** `--resume`, compaction and an interactive resume of the
+  compacted session kept one label across the hook and the MCP client. The write policy was still
+  in context after both, though no hook sent it again and the compaction summary does not carry
+  it, so kiro keeps the session-start hook's stored output across compaction (probe §42, §45,
+  §46). Compaction did drop the loaded MCP tools, which the agent loaded again.
+- **Trust needs nothing.** A headless run loads a workspace with no trust record (probe §43), and a
+  declined trust screen exits kiro with no session (probe §44).
+- **Claude Code's aliases resolve to the 5.5 models**: `sonnet` to `claude-sonnet-5-5`, `haiku`
+  to `claude-haiku-5-5` and `opus` to `claude-opus-5-5`, on 2.1.306 and 2.1.308
+  (`research/claude-code-alias-resolution.md`). kiro's consolidator is pinned to
+  `claude-sonnet-5`, and its documenter to that same id.
+
+**Built in a git worktree, not this tree**, for M41-1's reason. `~/Trading/LeibaTrader`,
+`~/Dividends`, `~/Memory` and `~/PythonPlayground` run this tree's editable install, and this
+changes the guard's entry point, the hook's start text and the MCP server's spill, all of which
+those projects run. The worktree gets `CLAUDE.md`'s setup step 3, and done-when 4, 5 and 7 run
+from its `.venv`.
+
+### What ships
+
+1. **One model per agent on both harnesses.**
+   - `HarnessSpec` gains `orchestrator_model`, and `code_knowledge.ORCHESTRATOR_MODEL` goes into
+     it. `CLAUDE_CODE` keeps `sonnet`, `haiku` and `opus`. `KIRO` becomes `claude-sonnet-5.5`,
+     `claude-haiku-5.5` and `claude-opus-5.5`, all three listed by `--list-models` (probe §10).
+   - `design/harness.md` §"The table" gains a "Shipped orchestrator `model`" row beside the
+     consolidator's and the documenter's, and `tests/test_harness_table.py` covers it as it covers
+     them. §"The consolidator's model" covers all three agents and keeps its heading, which other
+     documents cite. It states the operator's rule, and for each agent the id its Claude Code
+     alias was measured to resolve to, citing `research/claude-code-alias-resolution.md`.
+   - **No test can see what an alias resolves to.** When Claude Code's alias moves to a newer
+     model, that section and the kiro ids are updated by hand, from a measured resolution.
+   - `refuse_unknown_models` checks all three kiro ids against `--list-models`, since kiro now
+     ships the orchestrator (item 3).
+2. **Each code-knowledge agent's effort is set under kiro too** (probe §39). The documenter's and
+   the orchestrator's kiro profiles carry `"effortLevel"` set to `DOCUMENTER_EFFORT` (`medium`)
+   and `ORCHESTRATOR_EFFORT` (`high`), the constants Claude Code's definitions read. The
+   consolidator's carries none, as Claude Code's does not.
+   - The field is undocumented, so item 9's live test asserts each subagent's
+     `invoke_subagent.starting` line logs its level and `effortOverride: true`. That test is the one
+     check that would see kiro stop reading it, after which the agent would run at the session's
+     effort with no error.
+   - `design/code-knowledge.md` §5.1 states *"Kiro sets effort only globally per model, never per
+     agent (operator, 2026-10-16)"*, and the kiro documenter shipped with no effort because of it.
+     So that sentence is struck beside the measured one. `code_knowledge.py`'s comment saying the
+     same is replaced.
+   - The upgrader test, `test_the_upgrader_classifies_the_shipped_profiles_as_v3_ones`, covers
+     every shipped profile, the new field included. The orchestrator's class is `v3-only`, since
+     its `tools` hold no `grep` or `glob` (probe §26). The consolidator stays `v3-only` with item 6's
+     `read` and deny rule, as `["read", "@zikaron"]` was (probe §26) and a deny rule with `exclude`
+     was (probe §53). The test confirms each class against the binary.
+3. **Under kiro the session spawns `zikaron-code-orchestrator`, and waits for it** (probe §37).
+   - **`.kiro/agents/zikaron-code-orchestrator.json`**, written by every memory install:
+     - its `name`, and a `description` true under kiro: `ORCHESTRATOR_DESCRIPTION` says it runs in
+       the background, which is Claude Code's;
+     - item 1's model, which `--orchestrator-model` sets, and item 2's effort;
+     - a `prompt` that is the orchestrator's own prompt in a wording true under kiro, then the
+       loop, then item 4's policy. Two of Claude Code's sentences are false there: *"You run in
+       the background, apart from the session that spawned you"*, and *"record what it teaches you
+       as the policy you were given at your start says"*, since under kiro the policy is the one
+       ending this prompt. The loop is rendered with `code_knowledge.KIRO_SPAWN_INSTRUCTION` (not
+       `assets.py`'s, the consolidator's), `KIRO_PLANNER_COMMAND`, and an arguments source naming
+       the prompt's second line. That is
+       `CLAUDE_CODE_ARGUMENTS_SOURCE`'s text, so `KIRO_ARGUMENTS_SOURCE` goes and the two harnesses
+       share one constant, as a value that differs nowhere is not harness data;
+     - `tools` of `@zikaron`, `read`, `shell` and `subagent`, sorted, since probe §26 measured the
+       upgrader keying a classification on order;
+     - rules allowing `fs_read`, `shell`, `subagent` and the `mcp` rule, the tools it holds, as the
+       other two profiles allow theirs;
+     - the primary server in `mcpServers`;
+     - and no `hooks`, since a subagent's own hooks never fire (probe §38).
+   - **The session's rules decide what the orchestrator and its documenters may do.** A spawned
+     agent's own allow rules grant it nothing beyond the session's (probe §52, §54, §56), so the
+     orchestrator's rules matter only where it runs as a session of its own. It carries no
+     `fs_write` rule. A session allowing `fs_write` over the documents directory reaches a
+     documenter two levels down through it (probe §54).
+   - **The kiro skill becomes a launch skill.** It spawns the orchestrator through the subagent
+     tool, with the prompt `Run one documentation run with exactly these arguments, as written, and
+     no others:` and the arguments on the next line. It waits for the report and relays it.
+     - **It carries no `$ARGUMENTS`.** kiro substitutes that only on a `/zikaron-document-code
+       [args]` invocation, not on a skill loaded through `disclose_context`
+       (`research/kiro-cli-v3-migration.md` §5), and that is how every measured kiro run loaded one
+       (probe §24). So the body tells the session in prose to write the modules, globs and slice it
+       was asked for on that second line, as given, and to leave the line empty when none were.
+     - kiro runs a subagent in the foreground and the parent waits (`research/kiro-cli-v3-migration.md`
+       §4), so the body says the session is busy until the run ends.
+     - Claude Code's *"one run at a time"* and its 20-subagent arithmetic are that harness's limit.
+       kiro documents no concurrency cap, so they are not in kiro's body.
+     - `_IN_SESSION_PERMISSIONS` becomes the launch skill's permissions section. It says that the
+       orchestrator and each documenter may do only what this session's agent's rules allow (probe
+       §28, §54, §56). So the session needs the `subagent` tool, to spawn the orchestrator, and
+       allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over the documents
+       directory. Its `tools` need not hold `shell` or `write`, since a subagent's call is decided
+       by the session's rules and not its tools (probe §28).
+     - `document_code_skill`, the in-session loop, loses its last caller and goes.
+   - **The batch is not measured under kiro.** Each kiro subagent starts a pair of `zikaron-mcp`
+     processes of its own (probe §18, §37), at about 2 s each (probe §16), where Claude Code's share
+     the session's. So a batch of `_BATCH_SIZE` 18 is 36 server starts. `design/code-knowledge.md`
+     §5.2's batch paragraph says 18 is derived from Claude Code's 20-subagent limit and unmeasured
+     under kiro, and done-when 7 records one batch's cost.
+   - **`ships_orchestrator` would then be true of both targets, so it goes**, for M41-1 item 6's
+     reason: a value that differs nowhere is not harness data. `--orchestrator-model` is accepted
+     under kiro, `models.py`'s refusal goes with the property, and so does `writer.py`'s *"kiro
+     shipping no orchestrator"*.
+   - **On a universal profile, `toolsSettings.crew.availableAgents` gains the orchestrator**, as it
+     gains the other two (M41-1 item 3; `kiro_merge._CREW_KEYS`). `_CREW_AGENTS` pairs each agent
+     with the skill that spawns it. The documenter is now spawned by the orchestrator, so the
+     pairing and the note it renders change, not only the tuple's length.
+   - **Merging into the user's profile changes its notes.** The `subagent`, `shell` and file-rule
+     notes now name the orchestrator and its documenters as what needs them, and give item 8's
+     reason. The `shell` note asks for an allow rule and no longer for `shell` in `tools`, since the
+     orchestrator, not the session, runs the planner. The same holds for `targets.py`'s
+     `--print-only` caveat (*"and `shell` with its rule for zikaron-document-code to run its
+     planner"*) and `design/code-knowledge.md` §5.4's *"also needs the shell tool, to run the
+     planner"*.
+   - **`code_knowledge.py`'s docstring** stops saying that who runs the loop is the harness's
+     difference. What differs is background or foreground, the spawn instruction, the file the
+     planner's command is read from, and where the arguments come from.
+4. **The write policy reaches kiro's documenter and orchestrator.** Both kiro prompts end with
+   `SUBAGENT_WRITE_POLICY_PROMPT` (2,860 characters), the text Claude Code's `SubagentStart`
+   delivers to every subagent but the consolidator (`design/harness.md` §"Subagents"). kiro has no
+   subagent trigger, so the text is fixed at install. The consolidator's prompt is unchanged.
+   - **A project's own policy override does not reach them.** Under Claude Code,
+     `write_policy.resolved_policy_text` reads the project's override at each `SubagentStart`.
+     Under kiro the install writes the shipped constant, so `design/kiro-gaps.md` gains a row
+     (item 10).
+   - `tests/test_install_code_knowledge.py::test_both_harnesses_carry_the_same_prompt` asserts
+     that kiro's documenter prompt equals `DOCUMENTER_PROMPT`. It becomes *the same prompt, kiro's
+     followed by the policy*. The tests that the prompt names no tool read the constant, so they
+     are unaffected, though the policy names `zikaron_memory_remember` bare.
+5. **Under kiro a documenter corrects its own draft in place.** That is what the
+   `design/kiro-gaps.md` row means. It is not a stale document being edited: the planner removes
+   a document listed for rewriting before any documenter runs (`design/code-knowledge.md` §3.4),
+   so each documenter writes a new file. Its prompt then asks it to correct that file *"by a
+   change in place where a tool can make one"* (§5.1), which needs no prompt change. kiro's
+   `write` grants `str_replace`, and the documenter's profile was measured using it headless with
+   no prompt (probe §7, §17, §32).
+   - `design/code-knowledge.md` §5.1's *"whose `write` is not measured to edit"* is rewritten
+     against probe §17.
+   - Item 9's second run records whether a documenter called `str_replace`. A draft needing no
+     correction is no failure, so it is evidence when it occurs and not an assertion.
+6. **The spill works under kiro** (probe §40, §41, §47).
+   - `KIRO.consolidator_can_read_files` becomes true.
+   - **`HarnessSpec` gains a field naming where a spill file goes.** For `CLAUDE_CODE` it is the
+     runtime directory, as today. For `KIRO` it is the store directory's `spill/`, created `0700`
+     as `spill._write` creates every spill directory. `_spill_policy` reads the field, which gets
+     a row in §"The table" that `tests/test_harness_table.py` covers. The reason is the session's
+     rules: a consolidator may read only where they allow (probe §28, §52, §54). The profile
+     `kiro-cli agent create` writes allows `fs_read` over `./**` (probe §22), which covers
+     `.zikaron/` (probe §47). Neither it nor any rule the install writes covers the runtime
+     directory.
+   - **The kiro consolidator's profile gains `read` in `tools`, an `fs_read` allow rule matching
+     `./.zikaron/spill/**`, and `{"capability": "fs_read", "exclude": ["./.zikaron/spill/**"],
+     "effect": "deny"}`.** `entries.consolidator_agent_config` gives the reason it holds no read
+     tool today: a consolidator that can read the repository can wander outside the group it was
+     handed. A scoped allow alone would not stop that, since the session's broader allow governs
+     (probe §52). The deny does stop it, for `read_file` outside the directory (probe §53) and for
+     the three search and listing tools measured, which name no path the `exclude` could match
+     (probe §55). The `read` selector also grants `code` and `introspect`
+     (`research/kiro-cli-v3-migration.md` §3), unmeasured against the deny, so the prompt's own
+     bound still covers them, as it covers every tool under Claude Code. Under kiro, then, the
+     scope is enforced for every measured read tool, where Claude Code's unscoped `Read` relies on
+     prose alone. The rules' path holds because the store is always `.zikaron/` under the scope
+     directory (`paths.store_dir`), and under kiro that is the directory kiro was launched from
+     (probe §25), which is what kiro's `./` names.
+   - **Both bounds hold, measured from both sides.** The 27,000-byte `spill_threshold` is at most
+     27,000 characters, under kiro's 30,000. kiro counts the text block alone, and an object of
+     29,500 characters in `zikaron-mcp`'s two-copy shape arrived intact (probe §51).
+     `SPILL_MAX_LINE_BYTES`, 24,000, is under `read_file`'s 30,000 per read. That is the same
+     bytes-bound-characters argument `design/architecture.md` makes for Claude Code's token cap, and
+     the section states it per harness. `design/schema.md`'s `spill_threshold` row and
+     `README.md`'s say that under kiro a threshold of 30,000 or above, within the documented
+     range, lets a result kiro cuts through unspilled, and kiro's preview arrives instead. A result
+     at the threshold stays inline (`spill.apply` keeps one `<=` it), and kiro replaces one of
+     30,000 characters or more (probe §40). That is said and not refused, since the
+     service does not know the harness and no one has set such a value.
+   - **`HarnessSpec` gains the tool ids the model sees**: the read, edit, write and shell tools, as
+     `Read`, `Edit`, `Write` and `Bash` under Claude Code, and `read_file`, `str_replace`,
+     `fs_write` and `execute_bash` under kiro (probe §7, §32). They are not `file_tools`, which
+     holds the profile selectors (`read`, `write`), and under kiro the two differ. The field gets a
+     row in §"The table" saying so, and `tests/test_harness_table.py` covers it. Item 7's texts read
+     it too.
+   - **The consolidator's spill texts become true under kiro.** `assets.py`'s `READ_TOOL_NOTE` and
+     `SPILL_GUIDANCE`, which `can_read_files` renders, name `Read`. `SPILL_GUIDANCE` also says the
+     read *"is not scoped to it — this harness has no per-subagent path rule"*, and that a capped
+     read *"will say so and name the file's length"*, where kiro's `read_file` names the next
+     offset instead (probe §41). `CONSOLIDATOR_PROMPT`'s *"you have four tools and no search"* is
+     false of the list kiro shows once `read` is selected, whose search tools are listed and
+     refused by rule (probe §55), not absent. Under kiro the two texts name the read tool from the
+     new field, and the other three sentences are kiro's own. The scoping one says that its rules
+     allow that directory and refuse the reads and searches measured outside it (probe §53, §55),
+     and that the consolidator is asked not to read anything else. That wording is
+     memory-reviewer's, recorded and asserted as item 7's texts are. The pointer `spill.apply`
+     returns names no tool, and is unchanged.
+   - **Three rows of §"The table" change with it.** "Consolidator reads files" becomes **yes** under
+     kiro, the word `test_harness_table.py::test_consolidator_reads_files` reads. "Reading a
+     spilled payload" says there is no prompt where the session's rules allow `fs_read` over the
+     store, as `agent create`'s `./**` does, and an ask otherwise. "Consolidator tool grant" gains
+     `read` and the two `fs_read` rules.
+   - **A file-reading tool can be scoped to one path in a kiro subagent's config**, by the deny.
+     `design/harness.md` §"Three approval gates, and the one that reads our own config back at the
+     user" states the opposite as a general fact, and so does `README.md`'s Claude Code spill
+     paragraph (*"cannot be restricted to one path in subagent config"*). Both become Claude Code's
+     alone.
+   - **`.zikaron/` gains a directory of verbatim record prose**, so `design/architecture.md`
+     §"Filesystem security"'s table, which names every path under the store, gains a `spill/` row:
+     **0700**, its files **0600** as today, created by `spill._write` under a `.zikaron/` the
+     service keeps at 0700 (`ensure_store_dir`), and released and swept as the runtime
+     directory's files are. `mkdir(exist_ok=True)` does not tighten a `spill/` found wider, which
+     the 0700 parent makes harmless, and the row says so.
+     `spill._write`'s docstring and `SpillPolicy.store_key`'s comment rest on two reasons, that
+     the directory is the socket's own and was vetted by whoever spawned the service, and that it
+     is shared by every store of this user. Both become Claude Code's case and say so.
+   - The erasure procedure names the kiro location. Under kiro, deleting `.zikaron/` reaches the
+     spill files too, and `README.md`'s erasure and uninstall text says so.
+   - The file-rule note (M41-1 item 3) also names the session's `fs_read` as what the consolidator's
+     spill read needs.
+   - **The spill has a nesting limit.** A kiro session launched from Claude Code misdetects in
+     `zikaron-mcp` as well, so `_spill_policy` writes to the runtime directory, and the kiro
+     consolidator's deny refuses the read. That group then stalls as it would with no spill.
+     `design/harness.md` §"The nesting limit" says so as a known limit, with no mechanism.
+   - Item 9 measures one real spill read.
+7. **The guards under kiro** (D38 amended).
+   - **`KIRO.guards` names a command hook and no re-read hook**:
+     `GuardHook(trigger="PreToolUse", matcher="execute_bash")`, with `Guards.reread` becoming
+     optional and `None` for `KIRO`. The matcher is the tool id (probe §48), so the guard still reads
+     the tools it judges by splitting it (`design/guards.md` §5). kiro has no `Monitor`.
+   - **How a deny is delivered is spec data on `Guards`.** Under kiro it is exit 2 with the reason
+     on stderr and nothing on stdout (probe §33). Under Claude Code it is the `permissionDecision`
+     envelope with exit 0, unchanged. §"The table"'s guard rows state it, and
+     `tests/test_harness_table.py`'s guard test covers it.
+     - Under kiro an accepted override prints nothing and exits 0, since exit-0 output reaches
+       nobody (probe §34). The override's command runs and is not acknowledged, which is a new
+       harness-limit row (item 10).
+     - Every failure is still a silent allow, exit 0 with no output. That is the behavior kiro
+       gives a crashed hook anyway (probe §34).
+     - What kiro does with a guard past `GUARD_TIMEOUT_SECONDS` is unmeasured. Probe §33's framing
+       tells the model a non-zero exit code means it should not proceed, so a timeout could block
+       as easily as allow, and `design/guards.md` §6 says so. Reaching the timeout takes
+       `design/guards.md` §9.4's slow pattern or a script near the 256 KiB read bound, so no probe
+       is owed.
+   - **The guard takes its harness from its command line, not from the environment.** The kiro
+     target writes `zikaron-guard --harness kiro`, and no argument means Claude Code, so every
+     installed command keeps its meaning. A kiro launched from Claude Code inherits `CLAUDECODE`
+     (`design/harness.md` §"The nesting limit"). A guard detecting from the environment would then
+     answer in the envelope kiro ignores, and fail open with nothing said. The installer knows
+     which harness's file it writes.
+   - **What is scratch is unchanged** (`design/guards.md` §3.3): under kiro it is §3.3's targets,
+     less `scratchpad_dir`, which kiro's payload lacks. `tool_input.cwd` is not read: it was
+     `null` in every call (probe §32), and the guard's rules move only on an observed command. A
+     kiro call that sets it is judged against the payload's `cwd`, which `design/guards.md` §7
+     states as a known gap.
+   - **The texts that name a tool or a harness take it from the spec.**
+     - The start text and the deny messages name the read, edit, write and shell tools from item
+       6's tool-id field, so no kiro id is written as a literal in `zikaron/guard/`.
+     - The self-match deny names the harness whose shell runs the command (probe §50).
+     - The start text's re-read sentence is there only where `Guards.reread` is not `None`.
+     - Claude Code's rendered texts stay byte for byte what `tests/test_guard_texts.py` asserts.
+     - **kiro's wording is memory-reviewer's**, written at build time from `design/guards.md`, as
+       M37's was (`design/guards.md` §5), recorded in this milestone's review file, and asserted
+       by the same test.
+   - **Under kiro the guard start text has a `SessionStart` entry of its own.** Under
+     `--components both`, kiro's profile carries the memory store's `SessionStart` entry unchanged,
+     and a second one running `zikaron-hook --components guards`.
+     - The write policy is 2,929 characters and Claude Code's guard start text 796. kiro cuts each
+       hook at 3,000 characters (probe §21), and does so per hook (probe §49). So one entry
+       printing both would be cut, and two entries each fit.
+     - Claude Code's shared entry and its union rule (`design/guards.md` §5) are Claude Code's
+       shape. The kiro shape is one set of entries per selection:
+       - the memory store's `zikaron-SessionStart` and `zikaron-UserPromptSubmit`, running
+         `zikaron-hook`, as today;
+       - the guards' `zikaron-guards-SessionStart`, running `zikaron-hook --components guards`, and
+         `zikaron-guards-PreToolUse`, running `zikaron-guard --harness kiro` with the matcher
+         `execute_bash`.
+     - **Ownership is per selection, and today's code cannot see a selection.**
+       `kiro_merge._recognised_hooks` recognizes an entry by its reserved `name`, or else by its
+       trigger and its program's file name. `_is_owned` compares `_entry_command`'s value with
+       the hook's bare path, and `_entry_command` returns a command with arguments verbatim. So
+       nothing tells the two `SessionStart` entries apart, and a second install would refuse its
+       own `exec '…/zikaron-hook' --components guards` as another install's. Whatever shape the
+       change takes in those functions, the merge must hold to the following:
+       - **An entry is this selection's** when, read past `exec`, its program's file name and its
+         arguments are the ones this selection writes on that trigger, or its `name` is one this
+         selection reserves. It is replaced. It is refused as another install's only where its
+         program's path differs and `--force` is not given, as today.
+       - **An entry that is the other selection's** by the same test is neither compared nor
+         touched.
+       - **Recognition keys on the program's file name, not its path**, so an entry another venv
+         wrote for this selection is still found, as today.
+
+       So an install replaces its own selection's entries and keeps the other's, as under Claude
+       Code. `entries.hooks_array` and `KiroTarget.fragment` take the selection, since both build
+       only the memory store's two entries today.
+     - The guard entries carry `GUARD_TIMEOUT_SECONDS` and the spec's `exec ` prefix.
+     - `zikaron-hook --components guards` prints the start text of the harness it detects, the way
+       it detects one for everything else. Under the nesting limit a kiro session would get Claude
+       Code's tool names, and `design/guards.md` §7 says so.
+     - A test asserts each kiro start text fits `KIRO`'s budget, as M41-1 did for each policy.
+   - **The installer offers the guards to kiro.** `_refuse_unoffered_guards` reads the seam, so it
+     passes once `KIRO.guards` is set.
+     - A guards-only kiro install writes those two entries into the `--agent` profile and nothing
+       else: no agent, no skill, no `mcpServers` entry and no rule. It also compares and reports
+       only its own hook entries, so nothing of `mcpServers`, `tools`, `permissions` or
+       `toolsSettings` is checked, and none of the memory install's notes is printed. That mirrors
+       what a guards-only Claude Code install does (`design/guards.md` §5: it *"reports none of
+       the memory install's notes"*).
+     - **Without `--agent` it is refused**, unless `--print-only` is given, and the refusal names
+       both. `KiroTarget.plan_merges` plans nothing when no profile is named. A memory install still
+       has its own files to write, but a guards-only one would write nothing and exit 0, the inert
+       success `refuse_absent_harness` exists to refuse.
+     - `--print-only` prints them.
+     - One guard entry in the session's profile judges every subagent's shell call as well, the
+       orchestrator's planner calls included, so no subagent profile carries one. The hook fires on
+       a subagent's call (probe §38), and its exit 2 blocks that call, the stderr reaching the
+       subagent as its tool result (probe §57).
+   - **The self-match rule under kiro.** Its premise is measured on Linux (probe §50). Under kiro on
+     macOS the rule applies its `darwin` branch, unmeasured there, and `design/guards.md` §9.4 says
+     so.
+   - `design/guards.md` §2's *"Kiro is out (operator decision 2026-10-06)"* is struck beside the
+     amendment. It was decided on the ground that `postToolUse` has no route to the model. That
+     ground is now measured, and it still keeps the nudge out. §1's *"there is no second harness
+     to carry a difference for"* is rewritten.
+8. **Two statements about kiro subagents are corrected everywhere they are made.**
+   - **"No hook fires for a kiro subagent"** becomes: *a subagent's own hooks never fire, and its
+     tool calls fire the root session's tool hooks, under the root's session id* (probe §38). The
+     sites are `design/harness.md` §"The table"'s "Subagent triggers" row and §"Subagents",
+     `design/architecture.md`, `design/code-knowledge.md`, `design/write-policy.md`,
+     `design/kiro-gaps.md`, `zikaron/harness/spec.py`, `zikaron/install/entries.py` and
+     `tests/test_install_code_knowledge.py`. `design/overview.md`'s D31 and D32 rows carry the
+     claim in M41-1's correction of them. There the qualifier is a refinement, not a reversal, and
+     the tripwire they describe still holds, since a subagent's tool hooks carry the root's id.
+     So it is written in, with no strike. What followed from the old claim is checked by meaning:
+     - the subagent profiles still carry no `hooks`, for the corrected reason;
+     - a session's guard judges its subagents' shell calls (item 7);
+     - no session-start or prompt hook fires for a subagent, so the push and the policy never
+       reach one by a hook. That was true before, and §"Subagents" keeps it.
+   - **"A subagent gets only what its own rules and its parent's both allow"** becomes: *a
+     subagent may do what the session's rules allow, less what any rule in the chain denies; its
+     own allow rules add nothing* (probe §28, §52–§56). The sites are `design/harness.md`
+     §"Subagents" and §"The table"'s "Approval gates" row (*"a subagent's call needing a rule of
+     its own and one of its parent's"*), `design/architecture.md` §"The install contract",
+     `README.md`'s kiro section, the notes `kiro_merge.py` prints, `entries.py`'s docstrings,
+     `code_knowledge.py`'s permissions text, and the tests that assert or describe them:
+     `test_install_main.py`, `test_install_writer.py` and `test_install_kiro_live.py`. What
+     followed from it is checked by meaning:
+     - **the shipped profiles keep their allow rules.** A subagent with no rules did what the
+       session allowed (probe §56), so the rules decide nothing for a spawned agent. They decide
+       for one run as a session of its own, as M41-1's live test runs the documenter;
+     - a notice that the session must allow something stays true, and only its reason changes.
+9. **Three live kiro tests**, each marked `integration_kiro`, each on a project of a few files
+   (operator, 2026-10-28), headless with `--require-mcp-startup`. Each writes a V3-only primary
+   profile granting what the install leaves to the user. **Each finds its launch's log** as the
+   `~/.kiro/logs/<timestamp>/kiro.log` carrying the `sessionId` its `runFinished` event names
+   (probe §31).
+   - **`tests/test_code_knowledge_kiro_live.py`**, the twin of `test_code_knowledge_claude_live.py`,
+     runs the installed skill over a module of two or three sources to `up_to_date`. It installs
+     with the shipped model defaults, not `test_install_kiro_live.py`'s `--model
+     claude-haiku-5.5`, since it asserts each agent's own model. The session runs on
+     `claude-haiku-5.5`, as the Claude Code twin's runs on `haiku`. An Opus orchestrator at `high`
+     is the test's cost, which the small module bounds. Its primary's `tools` are `["read",
+     "subagent"]` beside the install's `@zikaron`, as every measured skill load's were (probe
+     §24), with allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over
+     `./code-knowledge/**`, beside the `mcp` and `skill` rules the install writes.
+     `shell` is the one selector left out, which measures for it what probe §28 measured for
+     `fs_write`: a subagent's call needs the session's rule, not the session's tool. It asserts,
+     from the launch's `kiro.log`:
+     - that the session spawned `zikaron-code-orchestrator`, and that it spawned a
+       `zikaron-documenter` per source;
+     - each subagent's model, `claude-opus-5.5` and `claude-haiku-5.5`;
+     - and each one's effort, `high` and `medium`, with `effortOverride: true`.
+
+     And from the project: a document per source and a README, and the module's knowledge base,
+     registered and answering a search.
+
+     It then changes one source and runs again. It asserts from the planner that the module comes
+     back `up_to_date`, and that the changed source's document is a new file carrying the new
+     blob (`design/code-knowledge.md` §3.4). From `kiro.log`'s `acp.policy-eval.complete` lines it
+     records the `toolId`s each documenter called, so a `str_replace` is seen when one occurs
+     (item 5).
+   - **`tests/test_guard_kiro_live.py`**, the twin of `test_guard_claude_live.py`, installs
+     `--components both` into a project under `~/.cache/zikaron-live-tests/`, as that test does,
+     since a project under `/tmp` or `$TMPDIR` would make every target scratch. Its primary carries
+     `shell` in `tools` and a `shell` allow rule: without the rule, headless kiro refuses every shell
+     call itself, the file stays unchanged for a reason that is not the guard's, and the override
+     leg cannot run. A subagent's call the hook blocked got no `acp.policy-eval.complete` line
+     (probe §57), so the rule is likely to matter only to the calls the guard lets through, though
+     the session's own calls are unmeasured there. It asserts, each from the
+     evidence named:
+     - that both start texts arrived whole, from the session's `messages.jsonl`, whose
+       `session_start_<id>_<agent>` record holds the hooks' output (probe §45, §49);
+     - that `sed -i` on an authored file is denied, from the file's bytes, unchanged;
+     - that the deny's text reached the model, from the model's own report of its opening clause,
+       verbatim. Neither the session record nor `kiro.log` keeps a hook's stderr (probe §33), so
+       nothing else can show it;
+     - that the same command carrying `#ZIKARON-FORCE #Reason: …` runs, and that a scratch target
+       runs, from the files each writes;
+     - and that a `pgrep -f` matching its own shell is denied, from the absence of the file the
+       command writes if it runs, and from the model's report of the deny's opening clause.
+   - **`tests/test_install_kiro_live.py` gains a spill leg**: a consolidation in a project whose
+     `.zikaron/config.toml` sets `consolidation.spill_threshold` to its 4,096-byte minimum, over a
+     group written large enough to cross it, so a real group spills. The consolidator reads the
+     file and decides the group. The leg asserts the read from `kiro.log`, an
+     `acp.policy-eval.complete` line with `capability: fs_read` and `effect: allow` for that
+     `read_file`, so a read that was asked and refused is told apart from one never tried.
+10. **`design/kiro-gaps.md` loses the rows this closes and states what stays.**
+    - **Removed:** the find-replace guard and self-match rule, per-agent effort, the documenter on
+      Haiku 5.5, a document corrected in place, the over-large consolidator result, and the live
+      code-knowledge test.
+    - **Reworded, staying harness limits:** the re-read nudge and the search reminder, every
+      post-tool route now measured shut (probe §6, §35, §36), re-checked when a kiro release names
+      post-tool output. Also the session-free code-knowledge row: the orchestrator is built, and
+      only Workflows would free the session. Also the write policy reaching a subagent, narrowed
+      to a subagent of the user's own: Zikaron's two carry it in their prompts (item 4), but a user's
+      agent that declares the `zikaron` server holds the memory verbs (`design/code-knowledge.md`
+      §5.4) and meets no policy, since kiro has no subagent trigger (probe §12, §38). It is
+      re-checked when kiro gains one.
+    - **Added:** the override's acknowledgement, a harness limit (probe §34). Also a project's
+      subagent-policy override, not built (item 4), closed by the install rendering the override
+      into both prompts and re-running when it changes. And the guard start text reaching a
+      subagent, a harness limit. Under Claude Code the start text's group sits on `SessionStart`
+      and `SubagentStart` (`design/guards.md` §5), while kiro has no subagent trigger (probe §12,
+      §38). So a kiro subagent meets the rule first as a deny, which reaches it (probe §57) and
+      teaches the override. It is re-checked when kiro gains a subagent trigger.
+11. **`design/harness.md` gains the round's other facts**:
+    - the shell tool's payload and matcher;
+    - the per-hook cut;
+    - the 30,000-character result cap;
+    - the approval-gates row's declined screen, which exits kiro, and headless runs, which skip
+      trust;
+    - and compaction and resume, which keep the label and the policy and drop the loaded tools.
+
+    Each is sourced to its probe result.
+12. **The install snapshots are re-rendered** (`python -m tests.install_snapshots`). The kiro side
+    gains `zikaron-code-orchestrator.json`, and its consolidator, documenter and skill change.
+    **The Claude Code side is byte-identical**, since nothing here changes what Claude Code ships.
+
+### Invariants and properties to cover
+
+Each with the mutation, applied in memory by a pytest plugin, that its test must be seen red
+against.
+
+- **Each spec's three model fields equal their rows of `design/harness.md` §"The table"** (a kiro
+  id changed; a cell changed).
+- **The kiro documenter and orchestrator carry `effortLevel` from the shared constants, and the
+  consolidator none** (the field dropped from either; added to the consolidator).
+- **Under kiro, every memory install ships the orchestrator, and `--orchestrator-model` is accepted
+  and checked against `--list-models`** (the refusal restored; the check skipped for it).
+- **The kiro orchestrator's `tools` hold no `write` selector** (`write` added).
+- **The kiro skill spawns the orchestrator and runs no planner itself** (the in-session loop put
+  back).
+- **The subagent policy ends the kiro documenter's and orchestrator's prompts, and not the
+  consolidator's** (dropped from either; added to the consolidator).
+- **Under kiro a spill is written to the store's `spill/`, and under Claude Code to the runtime
+  directory** (the two swapped). **The kiro consolidator holds `read`, an `fs_read` allow rule
+  matching that directory, and a deny rule excluding it** (the deny dropped, leaving an allow that
+  probe §52 shows confines nothing; `read` dropped).
+- **Every text that names a tool takes its id from the spec's tool-id field** (a kiro id written
+  as a literal in `zikaron/guard/` or `assets.py`: a test rendering under a spec with altered ids
+  then finds the literal).
+- **Under kiro a deny exits 2 with the reason on stderr and nothing on stdout. Under Claude Code it
+  is the envelope with exit 0** (the channels swapped). **An exception exits 0 silently under
+  both** (exit 2 on an exception). **An accepted override prints nothing under kiro** (the envelope
+  printed).
+- **The guard's harness is its `--harness` argument, Claude Code without one, whatever the
+  environment says** (the harness detected from the environment: `CLAUDECODE` set beside
+  `--harness kiro` is then read as Claude Code).
+- **A real-shape kiro payload, `tool_name: "execute_bash"`, is judged** (the matcher written as the
+  tag `shell`: the payload's tool name is then never matched).
+- **Claude Code's rendered guard texts equal M37's reviewed wording byte for byte, and kiro's equal
+  this milestone's** (one harness's names rendered into the other's). **kiro's start text carries
+  no re-read sentence** (the sentence kept). **Each kiro start entry's output fits `KIRO`'s
+  budget** (policy and guard text printed by one entry).
+- **A guards-only kiro install with no `--agent` is refused, unless `--print-only`** (the refusal
+  dropped: it then exits 0 having written nothing).
+- **A kiro guards install writes exactly `zikaron-guards-SessionStart` and
+  `zikaron-guards-PreToolUse`** (a `PostToolUse` entry rendered for the absent re-read hook).
+- **Re-running a selection over its own kiro install reports the profile current and writes
+  nothing**, for `memory`, `guards` and `both` (the whole command string compared with the hook
+  path, as today: the second `both` install then refuses its own guard entries as another
+  install's).
+- **Installing one selection over the other's kiro entries keeps them untouched and is not
+  refused**: `memory` over `both` and over `guards`, and `guards` over `both` and over `memory`
+  (either selection removing the other's entries; both merged into one start entry; recognition by
+  trigger and program file name alone, without the arguments: `memory` over `both` then claims the
+  guards' start entry and refuses it as another install's).
+
+### Done when
+
+1. Items 1–12 are in, and every new test was **seen red** against the mutation it names.
+2. Every passage in `design/`, `README.md`, `CLAUDE.md`, `FINDINGS.md`, `zikaron/` and `tests/`
+   that states a kiro fact this round contradicts is rewritten, judged by meaning, not by match.
+   The briefs above, which record what each milestone shipped, are excepted. The facts below seed
+   that sweep and do not bound it:
+   - no hook firing for a kiro subagent (item 8);
+   - the guards being Claude Code only;
+   - kiro setting effort only globally;
+   - kiro shipping no orchestrator, and its session running the loop;
+   - what kiro does with an over-large result being unmeasured;
+   - kiro's consolidator and documenter on `claude-sonnet-5`, in `design/harness.md` §"The
+     consolidator's model" and its table rows, `design/architecture.md` §"The consolidator's model
+     is a shipped config field, not a `meta` key" (its consolidator-model row and its *"v0 default
+     is `claude-sonnet-5`"* paragraph), `README.md`'s `--model` row and `spec.py`'s comments;
+   - a subagent getting only what its own rules and its parent's both allow (item 8);
+   - the kiro consolidator holding `@zikaron` and one `mcp` rule, in `design/harness.md`'s
+     "Consolidator tool grant" row;
+   - a file-reading tool that cannot be scoped to one path in subagent config, true of Claude Code
+     alone (item 6);
+   - kiro's `SessionStart` on resume or after compaction being unmeasured, in `design/harness.md`
+     §"Subagents" (probe §42, §45, §46 measured both);
+   - the write policy reaching no kiro subagent, which item 4 contradicts for Zikaron's two, in
+     `design/harness.md` §"Subagents" and `design/code-knowledge.md` §5.4 (*"a kiro documenter is
+     never handed the write policy"*);
+   - the spill file lying beside the socket, outside the project, and nothing spilling under kiro,
+     in `spill.py` and in `README.md`'s `spill_threshold` row, socket paragraph, and Secrets and
+     uninstall sections;
+   - `research/nested-subagent-probe.md`'s V2 result cited as kiro's current one;
+   - `tool_input` arriving as a string.
+3. `./check.sh` is green, and `.venv/bin/python experiments/new_line_coverage.py` names no line
+   added under `zikaron/` that no test executes.
+4. `.venv/bin/pytest -m integration_kiro` passes against kiro-cli 2.35.1 with `--v3`, item 9's
+   tests included, and against 3.0 as well if it has shipped by then. The live tests pass `--v3`
+   only where `install.harness.installed_version` reads the binary below 3.0, since V3 is 3.0's
+   default, and what 3.0 does with the flag goes in the probe note when it is run there.
+5. `.venv/bin/pytest -m integration_claude tests/test_guard_claude_live.py
+   tests/test_code_knowledge_claude_live.py` passes. Both the guard's entry point and the
+   code-knowledge prose module change under both harnesses, and item 12's byte-identical snapshot
+   shows only that Claude Code ships the same files.
+6. `git diff --stat <base> -- tests/fixtures/installed/claude-code/` is empty, `<base>` being the
+   commit the worktree branched from.
+7. **The operator drives an interactive test** in a project installed from the worktree. It passes
+   when:
+   - a module of two or three sources, named in the request, is documented through the
+     orchestrator to `up_to_date`. What kiro asked along the way is recorded, and so is the spawn
+     prompt's second line, read from the session's `messages.jsonl`, which must name the module;
+   - the same run records one batch's cost from `kiro.log`: the `zikaron-mcp` processes it
+     started, and the time from the orchestrator's spawn to its first documenter's first tool call
+     (item 3);
+   - a `sed -i` on an authored file is denied, and its override accepted;
+   - and the model quotes the first sentence of both start texts.
+
+   What it shows goes in the probe note.
+
+### Scope fence
+
+- **Not** Workflows, so not a code-knowledge run that leaves a kiro session free.
+- **Not** the re-read nudge or the search reminder, which have no route to the model under kiro.
+- **Not** reading `tool_input.cwd`, never observed set.
+- **Not** a project's subagent-policy override reaching kiro's subagents (item 4).
+- **Not** any change to what Claude Code ships: its texts, its deny channel, its spill and its
+  models stay as they are.
+- **Not** an install with no custom agent, the push block's fit within the 3,000-character cut, or
+  kiro's Memory. The first two are in `FINDINGS.md` §"Owed work", and the operator set the third
+  aside (M41).
+- **Not** kiro's dropping of loaded tools at compaction, which is kiro's behavior.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.loop_lateness import loop_lateness
 from zikaron.core.knowledge import source_hash
 from zikaron.core.knowledge.source_hash import (
     HashBudget,
@@ -318,14 +319,20 @@ class TestTheBudget:
                 await asyncio.sleep(0.01)
 
         ticker = asyncio.create_task(_tick())
-        started = time.monotonic()
-        try:
-            hashed = await _hash(repository, "a.txt", budget=HashBudget(0.2))
-        finally:
-            ticker.cancel()
-            released.set()
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            try:
+                # The ticker's count cannot be corrected for lateness — a check that blocked the
+                # loop would be counted as lateness too, and the ceiling below no longer sees one —
+                # so the margin is the defence: a hundred turns against five, which a stall must
+                # eat nineteen-twentieths of the budget to cross.
+                hashed = await _hash(repository, "a.txt", budget=HashBudget(1.0))
+            finally:
+                ticker.cancel()
+                released.set()
+            elapsed = time.monotonic() - started
         assert hashed["a.txt"] is SourceState.UNVERIFIABLE
-        assert time.monotonic() - started < 2
+        assert elapsed - lateness.seconds < 2, (elapsed, lateness)
         assert ticks > 5, "the event loop went on serving while the check was blocked"
 
     async def test_a_spent_budget_runs_no_git(
@@ -393,12 +400,16 @@ class TestTheBudget:
         (repository / "a.txt").write_bytes(b"a\n")
         sleep = shutil.which("sleep")
         assert sleep is not None
-        _fake_git(monkeypatch, tmp_path, f"exec {sleep} 5", executable=True)
+        # Not corrected for lateness: a git waited for on the loop rather than on its own thread
+        # would be lateness, and a subtraction would hide that wait. So git hangs for twenty
+        # seconds against a ceiling of five, and a search that gives it up at the budget answers
+        # in about a third of one.
+        _fake_git(monkeypatch, tmp_path, f"exec {sleep} 20", executable=True)
         started = time.monotonic()
         hashed = await _hash(repository, "a.txt", budget=HashBudget(0.3))
         elapsed = time.monotonic() - started
         assert hashed["a.txt"] is SourceState.UNVERIFIABLE
-        assert 0.25 < elapsed < 2, "it waited for git until the budget, and no longer"
+        assert 0.25 < elapsed < 5, "it waited for git until the budget, and no longer"
 
     async def test_a_step_that_finishes_after_it_was_given_up_on_hands_nothing_back(
         self,
@@ -426,9 +437,13 @@ class TestAGitThatMisbehaves:
     ) -> None:
         (repository / "a.txt").write_bytes(b"a\n")
         _fake_git(monkeypatch, tmp_path, "exit 0", executable=True)
-        started = time.monotonic()
-        assert (await _hash(repository, "a.txt"))["a.txt"] is SourceState.UNVERIFIABLE
-        assert time.monotonic() - started < 1, "git was run again over a batch it had answered"
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            assert (await _hash(repository, "a.txt"))["a.txt"] is SourceState.UNVERIFIABLE
+            elapsed = time.monotonic() - started
+        assert elapsed - lateness.seconds < 1, (
+            f"git was run again over a batch it had answered: {elapsed:.3f}s, {lateness}"
+        )
 
 
 class TestTheInProcessRead:

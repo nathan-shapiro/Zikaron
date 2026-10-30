@@ -53,9 +53,11 @@ import aiosqlite
 import pytest
 from aiosqlite.core import _connection_worker_thread
 
-from zikaron.harness.spec import KIRO, SPECS
+from tests.harness_variables import HARNESS_VARIABLES
+from zikaron.harness.spec import KIRO
+from zikaron.hook import connect, push, reminder
 from zikaron.install import harness as install_harness
-from zikaron.service import paths
+from zikaron.service import lifecycle, paths
 
 
 @pytest.fixture(scope="session")
@@ -141,19 +143,43 @@ def _no_inherited_harness_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     otherwise pass or fail according to which terminal the suite was started from.
 
     Deleting rather than pinning a value: a test that needs a harness present sets exactly the
-    variables it means, and starting from nothing is what makes that set complete.
+    variables it means, and starting from nothing is what makes that set complete. The set is
+    `harness_variables.HARNESS_VARIABLES`, which says why the project variable is in it.
     """
-    for spec in SPECS.values():
-        if spec.marker_variable is not None:
-            monkeypatch.delenv(spec.marker_variable, raising=False)
-        monkeypatch.delenv(spec.session_variable, raising=False)
-        # D17's store scope. This one repoints the **store**, so a test that sets a marker and then
-        # reaches resolution would otherwise adopt whichever project launched pytest — this
-        # repository — and read and write its real memories. Measured since: the agent's own shell
-        # exports no such value (`research/claude-project-dir-reaches-hooks-not-shells.md`), so the
-        # launching process has to be one that does. A hook is, and a future version might be.
-        if spec.project_dir_variable is not None:
-            monkeypatch.delenv(spec.project_dir_variable, raising=False)
+    for name in HARNESS_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def generous_hook_deadlines(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook's health timeout and its two request deadlines at ten seconds rather than 0.3, 2
+    and 1.
+
+    A hook test that reaches a live fake inherits all three as ceilings on an exchange of
+    milliseconds, which a stall of the process can cross (`design/coding-standards.md` §4). The
+    push's ten is still capped at `push._MAX_DEADLINE_AHEAD_SECONDS`, 4.5 s, on its exchange with
+    the service. Opted into by every test whose hook connects to a live peer in this process — a
+    `connect_once`, `push.run`, `reminder.run` or `_health` against a socket something answers — by
+    `pytestmark` where a whole file does, and not autouse, since `tests/test_install_limits.py`
+    asserts the real values' relations; a test whose premise is one of the real values sets it. A
+    test that runs the hook as a child process keeps the real values, which no patch here reaches.
+    """
+    monkeypatch.setattr(connect, "_CONNECT_TIMEOUT_SECONDS", 10.0)
+    monkeypatch.setattr(push, "_DEADLINE_SECONDS", 10.0)
+    monkeypatch.setattr(reminder, "DEADLINE_SECONDS", 10.0)
+
+
+@pytest.fixture(autouse=True)
+def _generous_service_connect_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`lifecycle`'s connect timeout, the ceiling on the `health()` exchange of every caller of
+    `connect_start_if_absent`, at ten seconds rather than one, for the reason
+    `generous_hook_deadlines` gives.
+
+    Autouse, unlike that one, since no test asserts the real value. A test whose premise is the
+    real value sets it, as `tests/test_mcp_connection_integration.py`'s contention test does, and a
+    test that connects from a child process keeps the real one.
+    """
+    monkeypatch.setattr(lifecycle, "_CONNECT_TIMEOUT_SECONDS", 10.0)
 
 
 #: Bound at import: this fixture's teardown runs while a test's own patch of `shutil.rmtree`, which
@@ -241,9 +267,8 @@ def stub_harness_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         install_harness, "installed_version", lambda: install_harness.MINIMUM_VERSION
     )
-    monkeypatch.setattr(
-        install_harness, "available_model_ids", lambda: frozenset({KIRO.consolidator_model})
-    )
+    shipped = frozenset({KIRO.consolidator_model, KIRO.documenter_model, KIRO.orchestrator_model})
+    monkeypatch.setattr(install_harness, "available_model_ids", lambda: shipped)
     monkeypatch.setattr(install_harness, "validate_agent_config", lambda _path: None)
 
 

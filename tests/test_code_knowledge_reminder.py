@@ -13,7 +13,11 @@ from zikaron.core.code_knowledge.reminder import (
     reminder_text,
 )
 from zikaron.install.assets import identity_vocabulary
-from zikaron.install.code_knowledge import CLAUDE_CODE_PLANNER_COMMAND, document_code_skill
+from zikaron.install.code_knowledge import (
+    CLAUDE_CODE_ORCHESTRATOR_PROMPT,
+    CLAUDE_CODE_PLANNER_COMMAND,
+    orchestrator_prompt,
+)
 
 PROJECT = "/work/project"
 
@@ -145,16 +149,16 @@ class TestTheLine:
         assert "code-knowledge/b second line." in line
 
 
-def test_the_skill_names_corpora_as_the_reminder_reads_them() -> None:
-    """The skill registers each module's corpus; the reminder recognizes a module by the name it
-    was registered under, so the two must spell it alike."""
-    skill = document_code_skill(
+def test_the_loop_names_corpora_as_the_reminder_reads_them() -> None:
+    """The orchestrator's loop registers each module's corpus; the reminder recognizes a module by
+    the name it was registered under, so the two must spell it alike."""
+    loop = orchestrator_prompt(
         identity_vocabulary(),
+        own_prompt=CLAUDE_CODE_ORCHESTRATOR_PROMPT,
         spawn_instruction="",
         planner_command=CLAUDE_CODE_PLANNER_COMMAND,
-        arguments_source="",
     )
     assert (
         f"`{CORPUS_NAME}/<module>`, or `{CORPUS_NAME}` when `<module>` is `{ROOT_MODULE}`"
-        in " ".join(skill.split())
+        in " ".join(loop.split())
     )

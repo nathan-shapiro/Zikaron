@@ -67,8 +67,8 @@ def _parser(prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
         description=(
-            "Install Zikaron's agents — the consolidator, the documenter and, under Claude Code, "
-            "the code orchestrator — their two skills, and its hook and MCP entries."
+            "Install Zikaron's agents — the consolidator, the documenter and the code "
+            "orchestrator — their two skills, and its hook and MCP entries."
         ),
     )
     parser.add_argument(
@@ -120,7 +120,7 @@ def _parser(prog: str) -> argparse.ArgumentParser:
         default=Components.MEMORY.value,
         help="what to install: the memory store (the default), the guards — deterministic hooks "
         "that refuse a find-replace edit to an authored file or a pgrep/pkill -f that matches its "
-        "own shell, and ask for a re-read after each edit, Claude Code only — or both",
+        "own shell, and under Claude Code ask for a re-read after each edit — or both",
     )
     return parser
 
@@ -167,7 +167,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
     components = Components(options.components)
     _refuse_unoffered_guards(components, target)
     model_flags = ModelFlags.from_options(options)
-    refuse_unusable_model_flags(model_flags, components=components, target=target)
+    refuse_unusable_model_flags(model_flags, components=components)
     commands = Commands.from_this_interpreter()
     _refuse_missing_commands(commands, components)
     _refuse_unusable_agent_flag(agent, target)
@@ -190,7 +190,7 @@ def _install(*, agent: Path | None, options: argparse.Namespace) -> Report:
         commands=commands,
         consolidator_model=model_flags.consolidator_model(target),
         documenter_model=model_flags.documenter_model(target),
-        orchestrator_model=model_flags.orchestrator_model(),
+        orchestrator_model=model_flags.orchestrator_model(target),
         force=options.force,
         trust_tools=options.trust_tools,
         components=components,
@@ -356,8 +356,7 @@ def _refuse_unoffered_guards(components: Components, target: HarnessTarget) -> N
         return
     raise InstallError(
         f"--components {components.value} asks for the guards, which --harness {target.name} "
-        "does not offer: its post-edit hook has no documented path to the model "
-        "(design/guards.md §2). Install --components memory there."
+        "does not offer (design/guards.md §2). Install --components memory there."
     )
 
 

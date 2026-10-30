@@ -32,12 +32,12 @@ yes, it is out of scope. That store is for what cost somebody time to discover, 
 be discovered again by the next agent, at full price. A knowledge base has no such test — it is
 whatever corpus you point it at.
 
-**And, on request, guards for Claude Code** — two deterministic hooks, independent of both stores.
-One refuses two kinds of command: a find-replace edit to an authored file (`sed -i`, an inline
-script, a heredoc into the file), pointing the agent at `Read` and `Edit`, and a `pgrep -f` or
-`pkill -f` whose pattern matches the shell running it. The other reminds the agent, after each
-edit, to re-read what it changed. See [Guards](#guards-claude-code-on-request); a project may install the memory store, the
-guards, or both.
+**And, on request, guards** — deterministic hooks, independent of both stores. One refuses two
+kinds of command: a find-replace edit to an authored file (`sed -i`, an inline script, a heredoc
+into the file), pointing the agent at the harness's read and edit tools, and a `pgrep -f` or
+`pkill -f` whose pattern matches the shell running it. Under Claude Code a second reminds the
+agent, after each edit, to re-read what it changed; kiro offers no route for such a reminder. See
+[Guards](#guards-on-request); a project may install the memory store, the guards, or both.
 
 It runs entirely on your machine: SQLite databases under `.zikaron/`, a local embedding model, and a
 small background service on a Unix socket. **Zikaron reaches the network for exactly one thing** —
@@ -78,10 +78,10 @@ nothing is ever hard-deleted — a retired record stops surfacing but stays audi
 consolidation verbs and no way to search or fetch is handed groups of related entries that code
 selected for it, and decides for each whether to merge, promote or discard. Keeping it separate
 means a fresh context, and it cannot write outside the group it was handed — every verb refuses a
-uuid that was not served to it. Under kiro those four verbs are its whole surface. Under Claude Code
-it is also granted a file-reading tool, because a group too large to return is handed to it as a
-file instead; that grant cannot be restricted to one path there, so what keeps it off everything
-else is its prompt.
+uuid that was not served to it. It is also granted a file-reading tool, because a group too large
+to return is handed to it as a file instead. Under kiro its own rules hold that read to the directory
+the file is written to and refuse every other read and search; under Claude Code the grant cannot be
+restricted to one path in subagent config, so what keeps it off everything else is its prompt.
 
 **No agent can put its own words into the text a knowledge base searches.** The searchable content
 comes only from the files on disk: an indexer walks the tree you pointed it at, chunks them, and
@@ -102,7 +102,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **service** | A long-running process per project. Holds the embedding model in memory and the databases open, and answers requests over a Unix socket. Starts itself when needed and stops itself when idle. |
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
 | **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
-| **guard** | Claude Code only, installed on request: a single-shot executable the harness runs before each `Bash` or `Monitor` call and after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
+| **guard** | Installed on request: a single-shot executable the harness runs before each shell call — `Bash` or `Monitor` under Claude Code, `execute_bash` under kiro — and, under Claude Code, after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
 | **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running it by hand. One the service started writes what it prints to the build log `zikaron knowledge status` names. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
 The service exists for one measured reason: loading the embedding model costs about **780 ms**, and
@@ -217,8 +217,8 @@ cd /path/to/your/project
 zikaron install --project . --harness claude-code    # or: --harness kiro
 ```
 
-Under Claude Code, `--components` adds the [guards](#guards-claude-code-on-request), or
-installs them alone; without it you get the memory store only, exactly as before:
+`--components` adds the [guards](#guards-on-request), or installs them alone — under kiro
+with `--agent` too; without it you get the memory store only, exactly as before:
 
 ```bash
 zikaron install --project . --harness claude-code --components both     # memory and guards
@@ -361,11 +361,20 @@ What it writes under **kiro**, relative to the project:
 
 | Path | What |
 |---|---|
-| `.kiro/agents/zikaron-consolidator.json` | the consolidation subagent: its model, its four tools and the permission rule allowing them, its prompt |
+| `.kiro/agents/zikaron-consolidator.json` | the consolidation subagent: its model, its four tools and a file read held by its rules to the directory a too-large group is written to, the rules allowing them, its prompt |
 | `.kiro/skills/zikaron-consolidate/SKILL.md` | how to run a consolidation, and how to recover a stuck one |
-| `.kiro/agents/zikaron-documenter.json` | the documentation subagent: its model, its four file tools and `@zikaron` with its own `mcpServers` entry, the rules allowing reading, writing and Zikaron's tools, its prompt |
+| `.kiro/agents/zikaron-documenter.json` | the documentation subagent: its model and effort, its four file tools and `@zikaron` with its own `mcpServers` entry, the rules allowing reading, writing and Zikaron's tools, its prompt ending with the write policy |
+| `.kiro/agents/zikaron-code-orchestrator.json` | the subagent your session spawns, and waits for, to run a code-documentation run: its model and effort, its tools, the rules allowing them, its prompt ending with the write policy |
 | `.kiro/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
-| the agent config you named | hooks for session start and each message, an `mcpServers` entry, `@zikaron` in `tools`, two rules in `permissions.rules` — Zikaron's tools, and loading a skill — and both skills in `resources`; on a config that also carries `allowedTools`, as one `kiro-cli agent create` writes does, `@zikaron` there too and the consolidator and the documenter in a `toolsSettings.crew.availableAgents` that already lists agents |
+| the agent config you named | hooks for session start and each message, an `mcpServers` entry, `@zikaron` in `tools`, two rules in `permissions.rules` — Zikaron's tools, and loading a skill — and both skills in `resources`; on a config that also carries `allowedTools`, as one `kiro-cli agent create` writes does, `@zikaron` there too and Zikaron's three agents in a `toolsSettings.crew.availableAgents` that already lists agents |
+
+With `--components guards` a kiro install writes into the agent config you named alone, and in it
+only two hooks: a session-start hook carrying a short note about the guards, and the guard itself,
+before each `execute_bash` call. No agent, no skill, no server and no rule, and `--agent` is
+required unless you pass `--print-only`, since without it nothing would be written. With
+`--components both` you get all of the
+above together, the note in a session-start hook of its own beside the write policy's, since kiro
+cuts each hook's output at 3,000 characters.
 
 and under **Claude Code**:
 
@@ -388,7 +397,8 @@ the start hooks carry the write policy and the guards' note.
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
 The third hook is the one with no kiro counterpart — it hands the write policy to each subagent you
-spawn. kiro fires no hook for a subagent, so there its subagents do not get the policy.
+spawn. kiro has no hook for a subagent's start, so there Zikaron's documenter and orchestrator carry
+the policy at the end of their prompts, and a subagent of your own does not get it.
 
 It backs up any file it merges into (`<file>.bak`, and the first backup wins), leaving one that
 already carries every entry untouched, backup included, and **refreshes a shipped file whose
@@ -415,11 +425,12 @@ key, a Zikaron hook entry whose command is this install's is rewritten and its t
 only an entry naming a different install's command, or another `--mode`, refuses. That includes an
 entry `kiro-cli agent upgrade` converted from an older Zikaron install, under the upgrader's own
 names and triggers: it is recognized and rewritten, not doubled. A hook of Zikaron's on a trigger
-this install does not write is left alone. Hooks are written in the array form V3 reads; a config
+this install does not write is left alone, and so are the other selection's hooks: a memory install
+leaves the guards' alone and the reverse, telling the memory store's session-start hook from the
+guards' by the arguments each runs with. Hooks are written in the array form V3 reads; a config
 whose `hooks` are in the older object form is rewritten if they are all Zikaron's, and refused,
-showing your entries in the array form, if any is yours. Kiro's install also validates the
-consolidator's model id, because an unknown model would otherwise be replaced by the harness's
-default.
+showing your entries in the array form, if any is yours. Kiro's install also validates each shipped
+agent's model id, because an unknown model would otherwise be replaced by the harness's default.
 
 `@zikaron` has to be in `tools` or Zikaron's tools are simply absent: the `mcpServers` entry
 *configures* the server and `tools` is what *selects* from it — unless `tools` is `["*"]`, which
@@ -442,23 +453,27 @@ either skill asks before it loads, and a headless run loads neither. Pass `--no-
 would rather approve each one: it withholds both rules.
 
 **That trust stops at the primary agent's tools.** Spawning the consolidator is a separate grant — a
-subagent with its own model invocation, four mutation verbs and, under Claude Code, a file read —
-and the installer does not make it for you. **Under kiro** both skills spawn their agents through the
-`subagent` tool, which takes `subagent` in `tools` and a `{"capability": "subagent", "effect":
-"allow"}` rule; without the rule kiro asks before each spawn, and the documentation skill spawns
-`zikaron-documenter` once per file. Its planner runs through `shell`, which takes `shell` and, as kiro
-documents it, a `shell` rule. And kiro gives a subagent only what its own rules and your agent's both
-allow, so a documenter writes its document only if your agent allows that write too —
+subagent with its own model invocation, four mutation verbs and a file read — and the installer
+does not make it for you. **Under kiro an agent your session spawns may do only what your agent's
+rules allow** — its own allow rules add nothing to them, and only a deny in its own config narrows
+them — so the rules your agent carries decide what Zikaron's agents may do. The consolidation skill
+spawns the consolidator, and the documentation skill the code orchestrator, through the `subagent`
+tool, which takes `subagent` in `tools` and a `{"capability": "subagent", "effect": "allow"}` rule;
+the same rule decides the orchestrator's spawns of `zikaron-documenter`, one per file, and without it
+kiro asks before each spawn. The orchestrator runs the planner as a shell command, which takes a
+`{"capability": "shell", "effect": "allow"}` rule, and `shell` need not be in your `tools`. A
+documenter writes its document only if your agent allows that write —
 `{"capability": "fs_write", "match": ["./code-knowledge/**"], "effect": "allow"}` was measured to be
-enough — and reads its source only if your agent allows reads. Their reach is much wider than
-Zikaron's own tools, so those grants stay yours, and the installer says which is missing. Claude
-Code has no such grant to make: the shipped skills are ordinary project files, and their agents are
-spawned through whatever subagent tool the harness already gives your agent.
+enough — and reads its source, and the consolidator a group too large to deliver inline, only if
+your agent allows reads; the `./**` read rule `kiro-cli agent create` writes covers both. Their reach
+is much wider than Zikaron's own tools, so those grants stay yours, and the installer says which is
+missing. Claude Code has no such grant to make: the shipped skills are ordinary project files, and
+their agents are spawned through whatever subagent tool the harness already gives your agent.
 
 **Keys under kiro only.** If your config also carries kiro's older `allowedTools`, as one
 `kiro-cli agent create` writes does, `@zikaron` goes there as well, and if it restricts which agents
-may be spawned (`toolsSettings.crew.availableAgents`), the installer adds `zikaron-consolidator` and
-`zikaron-documenter` to that list — kiro documents rebuilding a converted config's permission rules
+may be spawned (`toolsSettings.crew.availableAgents`), the installer adds `zikaron-consolidator`,
+`zikaron-documenter` and `zikaron-code-orchestrator` to that list — kiro documents rebuilding a converted config's permission rules
 from those fields, so they carry Zikaron's grant too. If the list is empty it is left alone — an empty
 list means *every* agent is available, and writing entries into it would restrict you to just these.
 Both skills are also declared in the agent's `resources` unless something there already covers them.
@@ -486,8 +501,8 @@ they are present but every write interrupts you, it is `permissions.allow` that 
 large for the harness to deliver, the group is written to a file and Claude Code asks whether the
 consolidator may read from the runtime directory. Allow it for the session — and expect it again in
 the next one, because session scope is the only scope that grant has. It is not pre-answered on
-purpose: a file-reading tool cannot be restricted to one path in subagent config, so this prompt is
-the only point at which that grant is put to you as a question.
+purpose: Claude Code cannot restrict a file-reading tool to one path in subagent config, so this
+prompt is the only point at which that grant is put to you as a question.
 
 `--no-trust-tools` withholds both written keys for *your* tools. It withholds them from the
 code-documentation run as well, whose orchestrator and documenters call the same server, so under
@@ -512,31 +527,39 @@ guard, the receipts and the lease are untouched — but an unauthorized consolid
 tokens and could write a poorly-judged long-term record. `permissions.deny` is **not** the fix: it is
 global and unregisters the tool, after which the consolidator itself refuses to start.
 
-### Guards (Claude Code, on request)
+### Guards (on request)
 
-`--components guards` (or `both`) installs two deterministic hooks that hold an agent to three
-rules, with no model and no store behind them (`design/guards.md`):
+`--components guards` (or `both`) installs deterministic hooks that hold an agent to three rules,
+with no model and no store behind them (`design/guards.md`) — two hooks under Claude Code, and under
+kiro one, carrying the two refusals alone:
 
 - **A find-replace edit to an authored file is refused** — `sed -i`, `perl -pi`, an inline Python
   or node script that writes a file, a heredoc or `echo` redirected into one, and a script in
   scratch that the command runs and that does any of these. The refusal reaches the
-  agent as the tool's result and tells it to use `Read` and `Edit`, or `Write` for a new file.
-  Paths under `/tmp`, `/var/tmp`, `$TMPDIR` and a background job's `$CLAUDE_JOB_DIR/tmp` are
-  exempt, and so is a command carrying the override the refusal itself describes, for the files
-  whose bytes a program owns.
+  agent as the tool's result and tells it to use the harness's read and edit tools — `Read` and
+  `Edit`, or `Write` for a new file, under Claude Code; `read_file` and `str_replace`, or
+  `fs_write`, under kiro. Paths under `/tmp`, `/var/tmp`, `$TMPDIR` and a Claude Code background
+  job's `$CLAUDE_JOB_DIR/tmp` are exempt, and so is a command carrying the override the refusal
+  itself describes, for the files whose bytes a program owns.
 - **After each edit, the agent is reminded** that the file has not been re-read, and asked for one
   re-read of the edited material once that file's editing is done. A Bash command gets no such
   reminder, so when the agent overrides a refusal, the guard's acknowledgement names what the
-  command changes and asks for that re-read instead.
-- **A `pgrep -f` or `pkill -f` whose pattern matches its own command is refused.** Claude Code
-  runs each command inside a shell whose command line carries the command's text, so on Linux such
+  command changes and asks for that re-read instead. **Claude Code only**: no output a kiro hook
+  gives after a tool runs reaches the model, so under kiro there is no reminder and no
+  acknowledgement, and the refusal itself says that an accepted override is not acknowledged and
+  asks for the re-read once the command has run.
+- **A `pgrep -f` or `pkill -f` whose pattern matches its own command is refused.** Each harness
+  runs a command inside a shell whose command line carries the command's text, so on Linux such
   a pattern matches that shell: `pkill` kills it, and `pgrep` always finds it, so a check for a
   process that has exited never sees it gone. The refusal shows where the pattern matched and gives
   the fix: `-A`, where `pgrep` has it, or a bracketed character (`[m]onth_monitor.py`). On macOS,
   whose `pgrep` already leaves out the shell, only `-a` brings it back.
 
-Both refusals judge `Bash` and `Monitor` commands alike. An install made by an earlier version
-judges `Bash` alone; re-running it with the same `--components` adds `Monitor`.
+Under Claude Code both refusals judge `Bash` and `Monitor` commands alike. An install made by an
+earlier version judges `Bash` alone; re-running it with the same `--components` adds `Monitor`.
+Under kiro they judge `execute_bash`, its shell tool, and the subagents your session spawns are
+judged by your session's hook, so they meet a refusal too, though no subagent sees the session-start
+note that comes first in a session.
 
 They are not a security boundary: a script the guard reads is one run from a scratch directory,
 and a script anywhere else — one of the project's own programs — is never read, by design. A guard
@@ -551,7 +574,9 @@ from a scratch directory such as `/tmp`, the same command is exempt and prints n
 printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$PWD"'","tool_input":{"command":"sed -i s/a/b/ README.md"}}' | zikaron-guard
 ```
 
-It prints the deny the agent would read as the command's result. Asking an agent to run `sed -i`
+It prints the deny the agent would read as the command's result. Kiro's install runs the guard as
+`zikaron-guard --harness kiro`, which takes `"tool_name":"execute_bash"`, prints the deny to stderr
+and exits 2, the one way a kiro hook refuses a call. Asking an agent to run `sed -i`
 usually shows something else: told the rule when its session starts, it reaches for `Read` and
 `Edit` without trying.
 
@@ -561,14 +586,14 @@ usually shows something else: told the rule when its session starts, it reaches 
 |---|---|
 | `--project <dir>` | the project to install into. Also where the store lives (default: the current directory) |
 | `--harness {auto,kiro,claude-code}` | which harness to install for. `auto` reads the project, then the `CLAUDECODE` marker; it refuses when the project has **both** dotdirs, and when neither source says |
-| `--agent <path>` | **kiro only.** Merge the hook and MCP entries into that config, after backing it up |
+| `--agent <path>` | **kiro only.** Merge the hook and MCP entries into that config, after backing it up; required by a guards-only install, unless `--print-only` |
 | `--print-only` | print what would be written and write nothing at all |
-| `--model <id>` | the model of every agent Zikaron ships whose own flag below is not given — the consolidator, the documenter and, under Claude Code, the code orchestrator (default: `claude-sonnet-5` under kiro; under Claude Code `haiku` for the documenter, `opus` for the orchestrator and `sonnet` for the consolidator) |
+| `--model <id>` | the model of every agent Zikaron ships whose own flag below is not given — the consolidator, the documenter and the code orchestrator. Each defaults to the same model on both harnesses, as Claude Code names it by alias and kiro by id: `sonnet` / `claude-sonnet-5.5` for the consolidator, `haiku` / `claude-haiku-5.5` for the documenter, `opus` / `claude-opus-5.5` for the orchestrator |
 | `--consolidator-model <id>` | the consolidator's model, over `--model` |
 | `--documenter-model <id>` | the code documenter's model, over `--model` |
-| `--orchestrator-model <id>` | **Claude Code only.** The code orchestrator's model, over `--model`. Refused under kiro, which ships no orchestrator |
+| `--orchestrator-model <id>` | the code orchestrator's model, over `--model` |
 | `--no-trust-tools` | do not pre-approve Zikaron's own tools, so every Zikaron tool call asks permission |
-| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards below, or both. **Claude Code only** for `guards` and `both`; every model flag is refused with `guards`, which ships no agent |
+| `--components {memory,guards,both}` | what to install: the memory store (the default), the guards above, or both; every model flag is refused with `guards`, which ships no agent |
 | `--force` | replace a symlink at a shipped path, and overwrite entries wired to a different Zikaron install that would otherwise be refused. It also stops merging: a server entry — `.mcp.json`'s, or kiro's `mcpServers` — is replaced **whole**, so a key you added to Zikaron's own entry goes, and under Claude Code a Zikaron hook group is replaced whole, so a hook of your own inside it goes too. Both are named in the output |
 
 A model id is the harness's own: under kiro, one `kiro-cli chat --list-models` lists, which the
@@ -739,9 +764,10 @@ installed skill, naming directories of your code, or none:
 
 With no directory named it updates every module you have documented, or, where you have documented
 none, documents the whole project, into one knowledge base of its own; globs and `--slice` need
-one module. **Under Claude Code the skill runs in the background**: your session spawns the
-`zikaron-code-orchestrator` subagent to run it, so your session stays free while it works and
-receives its report when it ends; under kiro it runs in your session. Either way it runs a **planner**, `zikaron code-knowledge plan`,
+one module. Your session spawns the `zikaron-code-orchestrator` subagent to run it. **Under Claude
+Code it runs in the background**, so your session stays free while it works and receives its report
+when it ends; under kiro your session waits for it, busy until the run ends. Either way it runs a
+**planner**, `zikaron code-knowledge plan`,
 which decides from hashes which documents are missing, out of date or malformed, removes the ones a
 deleted or renamed source left behind — moving a renamed file's document instead of rewriting it —
 and lists the rest. It then spawns a `zikaron-documenter` subagent per listed file, and runs the
@@ -786,13 +812,15 @@ project, or
 `--allowedTools` naming the planner command, the subagent tool, the file tools and `mcp__zikaron`,
 since a headless run in a folder you never trusted interactively does not read the install's own
 allow rule — and `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, without which a headless run that waits
-ten idle minutes on background work is stopped. Under kiro the agent you run needs `subagent` and
-`shell` among its tools — the installer says so if they are missing — and, unless the agent's
-`subagent` allow rule covers `zikaron-documenter` — one with no `match`, or a `match` naming it — you
-are asked before each documenter is spawned; the installer says so when it does not. The
-documenter's own config allows its tools, but kiro allows a subagent only what the agent spawning it
-allows as well: without an `fs_write` rule covering `./code-knowledge/**` in your agent, each document
-write asks, and a headless run writes none. The installer says so.
+ten idle minutes on background work is stopped. **Under kiro your agent's rules decide what the
+orchestrator and its documenters may do**, since an agent your session spawns may do only what your
+session's rules allow, whatever its own say. So the agent you run needs `subagent` among its tools,
+to spawn the orchestrator, and allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over
+`./code-knowledge/**`; it need not hold `shell` or `write` as tools. Unless the `subagent` rule
+covers `zikaron-code-orchestrator` and `zikaron-documenter` — one with no `match`, or a `match` naming
+them — you are asked before each spawn; without the `shell` rule, before each planner run; without
+the `fs_write` rule, before each document write, and a headless run writes none. The installer says
+which is missing.
 
 **Using it.** Ask for it in your prompt, naming the module's knowledge base to keep to one module:
 
@@ -804,7 +832,8 @@ Under Claude Code, a search of a documented module — `grep`, `rg` or `git grep
 the first such search after each prompt you send, and then at most once every five minutes for
 each agent by default (`retrieval.knowledge_reminder_interval`). It reminds an agent that is already
 searching; it does not make one use the documents, so the instruction in your prompt stays the way
-to have it do that. Kiro has no reminder.
+to have it do that. Kiro has no reminder: no output a kiro hook gives after a tool runs reaches the
+model.
 
 **Read every result as a lead, not as a fact.** Each one carries `source.state`: `fresh` means the
 file has not changed since its document was written — not that the document is right, since a
@@ -869,7 +898,7 @@ idle_timeout = 1800        # seconds of inactivity before the service stops itse
 | `consolidation` | `group_max` | `12` | 2–64 | members per group before it is split into shards |
 | `consolidation` | `max_group_serves` | `3` | 1–16 | how many times one group may be re-served before it is abandoned |
 | `consolidation` | `run_lease` | `1800` | 60–86400 | seconds a consolidation run holds the store |
-| `consolidation` | `spill_threshold` | `27000` | 4096–1048576 | **Claude Code only:** bytes past which a consolidator tool result is written beside the socket instead of returned inline. Nothing spills under kiro, where the key has no effect |
+| `consolidation` | `spill_threshold` | `27000` | 4096–1048576 | bytes past which a consolidator tool result is written to a file instead of returned inline — beside the socket under Claude Code, in `.zikaron/spill/` under kiro. Under kiro a value of 30,000 or above lets a result kiro cuts through unspilled, and the consolidator gets kiro's preview of its two ends instead |
 | `service` | `idle_timeout` | `1800` | 60–86400 | seconds of inactivity before the service stops itself |
 | `signals` | `signal_horizon_days` | `30` | 1–3650 | the window the write-policy instrumentation reports over |
 
@@ -927,6 +956,8 @@ it is `0600` or `0700`. The **installer** also writes harness config — the fil
   code-knowledge/    the list of role lines the planner hands a module README's writer, one
                      directory per module. Present only while that README is owed
   config.toml        your per-project overrides, if you wrote any
+  spill/             under kiro, a consolidation group too large to deliver, while the
+                     consolidator reads it
   service.log        the background service: startup, resolved config, errors, why it stopped,
                      any request running longer than 30 s, and the stack dumps below
   hook.log           one line per hook failure, missed cold start, write-policy-override note, or
@@ -955,7 +986,8 @@ result also spills to a file beside them, carrying that group's record prose ver
 the same store hash; it is deleted when the consolidator asks for its next group — or, if that
 process is killed first, by the next one that starts. It is the one copy of memory text that lives
 outside `.zikaron/`, which is why the erasure procedure under [Secrets](#secrets) removes it by hand.
-Nothing spills under kiro.
+**Under kiro** the same file goes to `.zikaron/spill/` instead, the one directory the consolidator's
+rules let it read, and is released and swept the same way; deleting `.zikaron/` reaches it.
 
 **What `service.log` tells you about a service that stopped, or stopped answering.** A clean stop
 writes one `stopping: reason=…` line: `idle`, `store_replaced`, `socket_lost` (its socket file was
@@ -1021,7 +1053,7 @@ symptoms it cannot see.
 | a knowledge search returns nothing, or too little | `zikaron_knowledge_status` (or `zikaron knowledge status <name>`) — a corpus **refreshing** answers from what is already indexed, but one building for the first time answers nothing until it finishes. `reindex_required` means it has no usable index **right now**: never built, or a rebuild emptied it and was interrupted before it finished, or its database is gone, or the configured embedding model changed since it was built. `refresh` rebuilds it — and if it does not, the `log` line of `zikaron knowledge status <name>` names where that build wrote why |
 | knowledge results look wrong for the file on disk | the index has drifted; nothing refreshes it on a schedule. A result whose file changed since indexing is marked `stale` — run `refresh` |
 | `zikaron init` or `zikaron knowledge` refuses: "this project's service … runs …", or "… is older than this command … and names no version" | the running service is another version than the command — usually one started before an upgrade. Do what the message says: stop that process if the command is the newer install, or run the command from the install the project's hook and `.mcp.json` name |
-| "Agents not available for crew stages: zikaron-consolidator" | a profile that still carries kiro's `toolsSettings.crew.availableAgents` restricts which agents spawn: add `zikaron-consolidator` and `zikaron-documenter` there yourself. The installer adds them only on a profile that also carries `allowedTools` beside `permissions`, the shape `kiro-cli agent create` writes, and leaves `toolsSettings` alone on any other |
+| "Agents not available for crew stages: zikaron-consolidator" | a profile that still carries kiro's `toolsSettings.crew.availableAgents` restricts which agents spawn: add `zikaron-consolidator`, `zikaron-documenter` and `zikaron-code-orchestrator` there yourself. The installer adds them only on a profile that also carries `allowedTools` beside `permissions`, the shape `kiro-cli agent create` writes, and leaves `toolsSettings` alone on any other |
 | consolidation seems stuck | ask to consolidate again — that takes the run over |
 | the service will not start | `.zikaron/service.log`; a change to a **hard** store-coupled key (`embed_model`, `embed_dim`) is the usual cause. A soft one never refuses **over what is already stored** — but any key set outside its range refuses at startup, whatever its coupling |
 | the service is running but stops answering | `.zikaron/service.log`'s last `long request:` lines name the request it is stuck in; `kill -USR2 <pid>` adds the requests in flight and every task's stack, and `kill -USR1 <pid>` every thread's stack if the loop itself is blocked (`pgrep -af '[z]ikaron.service.main'` gives the pid). A `memory_plan_groups` or `memory_next_group` under five minutes is a plan, not a wedge. `hook.log` says which kind it is: **`transport`** on every push, though the socket connects, is a blocked loop; **`deadline_passed`** — or `unanswered`, when the answer lost the race to the hook's deadline — on every push with **no `call` rows** behind them in the event table is a request holding the store's writer, and the same run **with** `call` rows is every read connection taken; **`unanswered`** alone is a push whose own request hangs. One kind looks healthy in `hook.log`: pushes succeed while every write answers `store_busy` after about five seconds — the writer's lock held with nothing running — and the `long request:` line names that one too |
@@ -1067,13 +1099,13 @@ can corrupt the database. Two safe options, in order of preference:
    `service.idle_timeout`, so it is usually *not* running, and `pkill` exits 1 when nothing
    matched — which with `&&` skips the deletion silently, leaving the store you believe you
    just erased.
-   **The third command is the one that is easy to miss.** A consolidator group too large to return
-   is written to the runtime directory rather than into your project, with the record prose in it
-   verbatim, so `rm -rf .zikaron` does not reach it and a record erased from the store can survive
-   there until the next reboot. That glob takes every store's spill files rather than only this
-   one's, which is recoverable rather than free: a consolidation still in flight fails its next
-   read loudly and is re-served the group with a fresh copy. It is a Claude Code path — nothing
-   spills under kiro.
+   **The third command is the one that is easy to miss.** Under Claude Code a consolidator group
+   too large to return is written to the runtime directory rather than into your project, with the
+   record prose in it verbatim, so `rm -rf .zikaron` does not reach it and a record erased from the
+   store can survive there until the next reboot. That glob takes every store's spill files rather
+   than only this one's, which is recoverable rather than free: a consolidation still in flight
+   fails its next read loudly and is re-served the group with a fresh copy. Under kiro the group is
+   written to `.zikaron/spill/`, which `rm -rf .zikaron` already reaches.
 2. Follow the ordered procedure in `design/write-policy.md` §"The emergency erasure procedure,
    exactly", which removes the index terms and vectors before the content row.
 
@@ -1086,18 +1118,19 @@ From the project directory, first the part that is the same on both harnesses:
 
 ```bash
 pkill -f '[z]ikaron.service.main'   # or just let it idle out
-rm -rf .zikaron                     # the memory store, every knowledge base, and the logs
+rm -rf .zikaron                     # the memory store, every knowledge base, the logs, kiro's spill
 rm -f "${XDG_RUNTIME_DIR:-/tmp}"/zikaron*/*.json   # Claude Code only: spilled consolidator groups
 ```
 
-The third line is there for the reason [Secrets](#secrets) gives: spill files sit outside the
-project, so `rm -rf .zikaron` does not reach them.
+The third line is there for the reason [Secrets](#secrets) gives: under Claude Code spill files sit
+outside the project, so `rm -rf .zikaron` does not reach them; under kiro it does.
 
 Then the harness's own artefacts. Under **kiro**:
 
 ```bash
 rm -rf .kiro/skills/zikaron-consolidate .kiro/skills/zikaron-document-code
 rm .kiro/agents/zikaron-consolidator.json .kiro/agents/zikaron-documenter.json
+rm .kiro/agents/zikaron-code-orchestrator.json
 mv .kiro/agents/<your-agent>.json.bak .kiro/agents/<your-agent>.json
 ```
 
@@ -1118,11 +1151,14 @@ than deleted, because both hold settings that are not Zikaron's. **All three set
 the install writes three** — leaving `enabledMcpjsonServers` behind names two servers that no longer
 exist, which loads nothing and breaks nothing but is not an uninstall.
 
-**The guards** live only in `.claude/settings.local.json`: remove the `PreToolUse` and
-`PostToolUse` hook groups whose command is `zikaron-guard`, and the `SessionStart` and
+**The guards**, under Claude Code, live in `.claude/settings.local.json`: remove the `PreToolUse`
+and `PostToolUse` hook groups whose command is `zikaron-guard`, and the `SessionStart` and
 `SubagentStart` groups whose command is `zikaron-hook`. To keep the memory store and drop only the
 guards, re-running the installer will not do it — an install never removes a selection — so delete
-the two guard groups and the `--components …` arguments from the two start groups' command.
+the two guard groups and the `--components …` arguments from the two start groups' command. Under
+kiro they are the two `hooks` entries named `zikaron-guards-SessionStart` and
+`zikaron-guards-PreToolUse` in the agent profile you passed as `--agent`; delete those two, and the
+memory store's two stay.
 
 Note that `rm -rf .zikaron` takes the knowledge bases with it. They are rebuildable — an index is a
 view onto files you still have — but rebuilding one takes minutes per corpus.

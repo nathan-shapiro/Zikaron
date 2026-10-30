@@ -51,69 +51,100 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
 | D36 | Obtained by `uv tool install --managed-python zikaron` from PyPI (the flag is load-bearing), host Python still supported; MIT; model fetched never redistributed; semver `0.x`, ~~with an artefact-shape rule~~ — **amended 2026-10-11**: a minor bump means a schema bump, nothing else |
 | D37 | `meta.schema_version` is a supported range; only the service migrates a store forward, in one transaction; nothing migrates back — **amended 2026-10-13 (M39)**: a corpus database is brought forward by whichever process opens it with `memory.db` at version 4 or later, and a corpus schema move moves `memory.db`'s too; a corpus schema version is the `memory.db` version that introduced its shape (corpora go 1 → 4), so a corpus is never ahead of its store |
-| D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; not on kiro — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform |
-| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code a background orchestrator subagent runs the loop — the session spawns it since **2026-10-21 (M40-5)**, where the skill had forked to it; one corpus per module; the documenter and orchestrator hold Zikaron's tools — **amended 2026-10-20 (M40-4)**: under Claude Code a search of a documented module is followed by one line naming its knowledge bases, at most once per agent each `retrieval.knowledge_reminder_interval` |
+| D38 | Guards: deterministic regex-only Claude Code hooks deny find-replace edits (override `#ZIKARON-FORCE #Reason: …`) and nudge a re-read after edits; installed only on request, memory/guards/both; ~~not on kiro~~ — **amended 2026-10-07**: a script run from scratch is judged too, the guard's one file read — **amended 2026-10-11 (M38)**: a `pgrep -f`/`pkill -f` matching its own command is denied too, on `Bash` and `Monitor`, per platform — **amended 2026-10-29 (M41-2)**: both guards on kiro's shell tool, a deny on stderr with exit 2, no re-read nudge there; the guard's harness is its `--harness` argument |
+| D39 | Code knowledge: primitives, no workflow — a command classifies a module's per-source-file documents and removes or moves what that implies, a skill has the agent spawn documenters for the rest until the command reports it up to date; K14 front matter on every document; forward `Depends on:` lines only; on demand; corpus `git_mode: off` (operator, 2026-10-14; `design/code-knowledge.md`) — **amended 2026-10-16**: under Claude Code a background orchestrator subagent runs the loop — the session spawns it since **2026-10-21 (M40-5)**, where the skill had forked to it; one corpus per module; the documenter and orchestrator hold Zikaron's tools — **amended 2026-10-20 (M40-4)**: under Claude Code a search of a documented module is followed by one line naming its knowledge bases, at most once per agent each `retrieval.knowledge_reminder_interval` — **amended 2026-10-29 (M41-2)**: under kiro too the session spawns the orchestrator, and waits for it |
 
 ## Current state — resume here
 
-**M0–M40 are built, reviewed and landed**, the last through PR #28. Each milestone's record is in
-`FINDINGS-archive.md` (M40's in §"M40 as built"), its brief in `design/build-plan.md`. M40 is code
-knowledge: the planner, documenter, orchestrator and skill (D39, `design/code-knowledge.md`), K14
-links, the follow-ups M40-1 to M40-5, and the Warp evaluation — results in
-`research/m40-evaluation.md` §4–§6, written up for readers outside the project in
-`research/knowledge-index-issue-triage.md`.
+**M0–M40 and M41-1 are built, reviewed and landed**, the last through PR #29. Each milestone's
+record is in `FINDINGS-archive.md` (M41-1's in §"M41-1 as built"), its brief in
+`design/build-plan.md`. M40 is code knowledge: the planner, documenter, orchestrator and skill
+(D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-5, and the Warp
+evaluation — results in `research/m40-evaluation.md` §4–§6, written up for readers outside the
+project in `research/knowledge-index-issue-triage.md`. M41-1 put the kiro install on kiro's V3
+engine only: V3's profile shape, the session relay, and the install reporting the parent rules a
+spawned subagent needs (`design/harness.md`; `research/kiro-v3-probe.md`).
 
 **Release.** `0.4.0` is released (tag `v0.4.0`, 2026-10-22), the minor M39's schema move forced;
 its note links the research write-up. The working tree carries `0.4.1.dev0` for the next pull
 request. A minor bump means a `meta.schema_version` bump and nothing else (D36,
 `design/distribution.md` §3).
 
-**Next: M41, kiro parity against the V3 engine only — M41-1 is built, reviewed and passed the
-operator's interactive test; it waits on the operator's request for a pull request.**
+**M41-2, the closable kiro gaps — built, reviewed, through the operator's interactive run, and
+sent as a pull request on 2026-10-30 for the operator to merge. Next: the plan after the merge,
+below.**
 Operator, 2026-10-28: kiro V2 is dropped and kiro-cli ≥ 2.35.1 is required; the work is cut into
 sub-milestones, each its own commit and review — **M41-1 "make it work"** (D34 amended), then
 **M41-2 "the closable gaps"** (the probes, then the `design/kiro-gaps.md` rows they close);
 kiro's own Memory is ignored, as Claude Code's is. kiro-cli 3.0 ships at the end of October 2026
 by auto-update and makes the V3 engine the default; 2.35.1, installed here, reaches V3 by
 `--v3`. Docs: `research/kiro-cli-v3-migration.md`; the binary: `research/kiro-v3-probe.md`.
-**Under V3 a kiro install is broken three ways**: its agents are refused, which leaves it dead;
-the MCP client's session label splits from the hook's, which splits its instruments; and a first
-turn can start before Zikaron's tools exist.
-**Briefs:** M41 and M41-1 in `design/build-plan.md` (what ships, invariants, done-when, fence).
+**Briefs:** M41, M41-1 and M41-2 in `design/build-plan.md` (what ships, invariants, done-when,
+fence).
 
-M41-2 takes the closable rows — D38's command guard (`PreToolUse` exit 2 measured to block),
-in-place documenter edits (`str_replace` measured granted by `write`), the documenter on
-`claude-haiku-5.5`, the live code-knowledge test — and the probes still owed: nested subagents,
-trust, resume, over-large results, `PostToolUse` stderr, and the `effortOverride` kiro logs for
-a subagent (probe §11), which may close the per-agent-effort row.
+M41-2 takes the `design/kiro-gaps.md` rows the probes make closable. **Every probe is done**
+(`research/kiro-v3-probe.md`, round 2, from §32), and what they found is the brief's *What was
+found*. The nudge and the search reminder stay harness limits, since no post-tool output reaches
+the model. "No hook fires for a kiro subagent" is false for tool hooks (§38); M41-2 corrected it
+where it was stated.
 
-Plan: (1) done — the docs and the probes; (2) done — the operator's decisions above; (3) M41-1's
-brief — done, APPROVED (`reviews/m41-1-brief-review.md`); (4) **build M41-1 — done: built,
-done-when 5 passed, APPROVED** (`reviews/m41-1-review.md`; operator, 2026-10-28: *"Let's build
-it"*) in the worktree **`/home/nathan/Zikaron-m41-1`, branch
-`m41-1-kiro-v3`, whose `FINDINGS.md` is the live one**; the main tree's uncommitted changes were
-carried in byte for byte on 2026-10-28 and are frozen there; (5) M41-2's brief.
+**M41-2's decisions (operator, 2026-10-29)** are in its brief, `design/build-plan.md` §M41-2:
+D38 amended (the guards on kiro's shell tool, no nudge), D39 amended (the session spawns the
+orchestrator under kiro and waits for it), one model per agent on both harnesses, one milestone.
+The operator approved the probes' results and every decision before the brief was written.
+Auto-update stays on, and each result records its kiro version.
 
-**M41-1 stands at:** every done-when holds — `pytest -m integration_kiro` passes on 2.35.1
-`--v3`, the converted `zikaron-dogfood` profile ran headless on V3 with no `runError`, and the
-operator's interactive run passed every bullet of done-when 5, the command-line-prompt bullet
-by the operator's acceptance of what it showed (`research/kiro-v3-probe.md` §29–§31). The
-committed `.kiro/agents/zikaron-dogfood.json` names `/home/nathan/Zikaron/.venv`, the path that
-is right after the merge, so a re-install over it before then runs the worktree's code under
-that venv (`PYTHONPATH=/home/nathan/Zikaron-m41-1 /home/nathan/Zikaron/.venv/bin/python -P -m
-zikaron.install …`). A typed first prompt without Zikaron's tools is expected, so the
-import-time cut stays fenced out (operator, 2026-10-29; the brief's item 8).
+Plan: (1)–(4) M41-1, landed through PR #29 (`reviews/m41-1-review.md`); (5) M41-2's
+brainstorm — done; (6) the probes — done; (7) the results and decisions — approved by the
+operator; (8) the brief — APPROVED (`reviews/m41-2-brief-review.md`); (9) **the build — done**
+(operator, 2026-10-29: *"Let's build M41-2"*) in the worktree **`/home/nathan/Zikaron-m41-2`,
+branch `m41-2-kiro-gaps`, whose `FINDINGS.md` is the live one**; the main tree's uncommitted
+changes were carried into it byte for byte on 2026-10-29 and are frozen there. The build's steps:
+(a) items 1–2, models and effort; (b) items 3–5, the kiro orchestrator, launch skill and policy;
+(c) item 6, the spill; (d) item 7, the guards; (e) items 8, 10–12 and done-when 2's sweep,
+`README.md` included; (f) item 9's live tests, every `integration_kiro` and done-when 5's
+`integration_claude` tests green (results in `research/kiro-v3-probe.md` §58–§61); (g) mutations
+seen red, every invariant's, applied in memory by a scratch pytest plugin; `./check.sh`,
+`new_line_coverage.py`, and memory-reviewer APPROVED (`reviews/m41-2-review.md`) — (a)–(g) done.
+A memory-store chunker defect is fixed in this tree and lands with M41-2: a hard split now ends
+each piece at a word start (`design/indexing.md` step 5; `research/hard-split-word-cut.md`).
+So does a fix for a CI flake (operator, 2026-10-30): `test_service_writer.py`'s two-writer budget
+test bounds the gap between the two answers, not each answer's time, which a stall of the whole
+process moved past its ceiling on `main`'s linux 3.13 job (run 40891600850: both answers at 0.82 s,
+0.5 ms apart, against a 0.75 s ceiling — about 0.3 s past an unstalled run's 0.52).
+(h) Done-when 7, the operator's interactive run, passed on 2026-10-30
+(`research/kiro-v3-probe.md` §62).
 
-**The follow-up done-when 5 forced is part of M41-1:** kiro gives a subagent only what its own
-rules and its parent's both allow (probe §28), so the install names the `fs_read` and `fs_write`
-rules a spawned documenter needs from its parent — a note, not a grant (operator, 2026-10-29:
-*"We should have note, not grant permissions automatically"*) — the write rule scoped to
-`./code-knowledge/**`, measured enough. **Next:** the pull request when the operator asks for
-one, then M41-2's brief, brainstormed with the operator first. Live tests stay
-small: one module of a few files for code knowledge, never a large codebase (operator,
-2026-10-28).
+**Also in this PR (operator, 2026-10-30: *"Whatever can fail, will fail one day"*): every test whose
+verdict a stall of the process could flip.** The rule is now `design/coding-standards.md` §4's: a
+wall-clock ceiling subtracts the lateness `tests/loop_lateness.py` measures where the wait runs off
+the loop, bounds a difference, or is a watchdog far below a wait made long; and no verdict rests
+on two timers' order. Done for every such bound found in `tests/` — clock-read ceilings, counts of
+polls in a fixed sleep, locks a timer set beforehand releases, socket timeouts on an expected
+reply, and deadlines a test's request carries; re-derive with `experiments/stall_plugin.py`, whose
+docstring has the command and the result (the files as they stood at `8617308` red under its
+stalls, these green). Tests that reach a live peer inherited the code's own timeouts on the
+exchange, a few milliseconds' exposure each — the hook's 0.3 s health timeout, 2 s push deadline
+and 1 s reminder deadline, and `lifecycle`'s 1 s connect timeout; all at ten seconds in the suite
+now (operator, 2026-10-30: *"Yes please raise them"*), the push's capped at 4.5 s on its exchange
+with the service. The hook's go through `conftest.generous_hook_deadlines`, opted into by every
+test whose hook connects to a live peer in this process, since `tests/test_install_limits.py`
+asserts their real relations; `lifecycle`'s through an autouse fixture beside it. A test whose
+premise is a real value sets it, and a test that runs the hook as a child process keeps the real
+values.
+Reviewed to APPROVED (`reviews/m41-2-review.md`); sent as a pull request on 2026-10-30.
+Live tests stay small: one module of a few files for code knowledge, never a large codebase
+(operator, 2026-10-28).
 
-The rest of §"Owed work" waits on M41. **Each milestone is brainstormed with the operator before
+**The plan after the merge (operator, 2026-10-30): (1) the operator merges M41-2's pull request;
+(2) the two documenter fixes in §"Owed work", brainstormed, briefed and built as one follow-up,
+in a pull request of their own; (3) then the release, `0.4.1`, carrying both.** A patch, since no
+schema moved (D36). Its note tells kiro users to re-run the installer and that kiro-cli ≥ 2.35.1
+is required, and Claude Code users that upgrading is enough, since nothing they install has
+changed since `0.4.0`. Releasing before the fixes was proposed and declined: kiro-cli 3.0's
+auto-update refuses `0.4.0`'s kiro install, but the four stores here run this checkout, not PyPI.
+
+The rest of §"Owed work" waits on that. **Each milestone is brainstormed with the operator before
 its brief is written** (operator, 2026-10-13).
 
 **Guards (D38, `design/guards.md`).** Installed with the memory store (`--components both`) in
@@ -125,8 +156,8 @@ or §8 edit run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`. T
 verbatim deny list stays out of the repository (`experiments/m37_guard_replay.py --dump`
 re-derives it here).
 
-**Dated re-runs**, on their dates regardless (§"Owed work"): the `bounds`-on-first-call query on
-2026-10-29 and Q22's post-release measurement on 2026-10-30.
+**Dated re-run**, on its date regardless (§"Owed work"): Q22's post-release measurement on
+2026-10-30.
 
 ### Facts that constrain how you work in this repository
 
@@ -170,8 +201,6 @@ Nothing here is scoped; each entry says what it is, the fix proposed and what to
 An owed item goes here the moment it is identified. The detail behind each is in
 `FINDINGS-archive.md` §"FINDINGS as it stood before the 2026-10-22 trim" and the notes named.
 
-- **`bounds` on first call — re-run 2026-10-29**, per store, read-only: 0 of 18 first calls
-  refused on 2026-09-29, a day of data. `WITH c AS (SELECT session_id s, json_extract(detail,'$.method') m, json_extract(detail,'$.error_code') e, id FROM event WHERE kind='call' AND session_id IS NOT NULL) SELECT c.m, count(*), sum(coalesce(c.e,'')='bounds') FROM c JOIN (SELECT s, m, min(id) i FROM c GROUP BY s, m) f ON c.id=f.i GROUP BY c.m`
 - **Q22's post-release measurement — re-run 2026-10-30**: `VERDICT_MARKER` from
   `experiments/m34_gist_replay.py` over each store's gists written since 2026-09-30, against
   Q22's 169-record baseline (archive §"Closed with `0.3.0`"). Near the baseline, the write-side

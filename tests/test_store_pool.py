@@ -72,7 +72,9 @@ async def test_a_wait_that_begins_as_the_lock_is_released_still_ends_at_its_dead
         await asyncio.sleep(0)
         holder.release()
         with pytest.raises(LockWaitExpired):
-            await asyncio.wait_for(holder.acquire(_spent(set_by_caller=False)), timeout=1.0)
+            # A watchdog, not a bound: a wait the spent deadline did not cut lasts until `queued`
+            # is released, which is after this.
+            await asyncio.wait_for(holder.acquire(_spent(set_by_caller=False)), timeout=10.0)
         await queued
         holder.release()
 
@@ -90,8 +92,11 @@ async def test_a_notification_a_cancelled_waiter_consumed_still_reaches_the_next
 ) -> None:
     """A lease returns to a waiter that is cancelled in the same loop iteration — its deadline's
     expiry is a cancel. The next waiter must still get the idle connection rather than sleep out its
-    budget beside it. Red on Python 3.12 with a single-waiter wake; later versions re-notify."""
-    patch_budget(monkeypatch, 300)
+    budget beside it. Red on Python 3.12 with a single-waiter wake; later versions re-notify.
+
+    The budget is long and the wait for `second` a watchdog far inside it, so a waiter that sleeps
+    its budget out is told from one woken at once by tens of seconds, not by a stall's worth."""
+    patch_budget(monkeypatch, 30_000)
     async with open_context(tmp_path) as ctx:
         pool = ctx.store.pool
         held = [pool.lease(Deadline.budget()) for _ in range(POOL_SIZE)]
@@ -104,7 +109,7 @@ async def test_a_notification_a_cancelled_waiter_consumed_still_reaches_the_next
         first.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             _ = await first
-        db = await asyncio.wait_for(second, timeout=0.15)
+        db = await asyncio.wait_for(second, timeout=10.0)
         await pool._give_back(db)
         for lease in held[1:]:
             await lease.__aexit__(None, None, None)

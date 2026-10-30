@@ -83,7 +83,11 @@ async def test_a_plan_holds_no_write_lock_while_it_computes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """During the snapshot phase a write on the writer succeeds at once — before this, the plan held
-    the writer for its whole computation and every write in that window waited out its budget."""
+    the writer for its whole computation and every write in that window waited out its budget.
+
+    The budget is long and the wait for the write a watchdog far inside it, so a write that waits
+    the budget out is told from one that does not by tens of seconds, not by a stall's worth."""
+    patch_budget(monkeypatch, 30_000)
     async with consolidator(tmp_path) as c:
         await c.write(gist=_A[0], content=_A[1], minute=1, degrees=0.0)
         async with _first_plan_held(monkeypatch) as plan_held:
@@ -91,7 +95,7 @@ async def test_a_plan_holds_no_write_lock_while_it_computes(
             await plan_held.started.wait()
             assert not plan.done()
             written = await asyncio.wait_for(
-                c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0), timeout=1.0
+                c.write(gist=_B[0], content=_B[1], minute=2, degrees=10.0), timeout=10.0
             )
             plan_held.release.set()
             run = await plan

@@ -16,8 +16,8 @@ documentation written by subagents, indexed as an ordinary knowledge base per mo
 agents to find where to look before they read the code. Two halves:
 
 - **The producer** — a command that decides deterministically what needs writing, a skill whose
-  loop spawns documenters for it — run by an orchestrator subagent in the background under Claude
-  Code, by the invoking session under kiro (§5.2) — and the documenter agent. Invoked for a module
+  loop spawns documenters for it — run by an orchestrator subagent the session spawns, in the
+  background under Claude Code and waited for under kiro (§5.2) — and the documenter agent. Invoked for a module
   (a directory of the repository), it writes one document per source file and a module README, and
   on later runs regenerates only what the source has moved under.
 - **The consumer** — the agent reading the corpus, and what it is told. Every search result from a
@@ -395,14 +395,16 @@ a dollar a run of saved searches. **Claude Code's carries `Edit`** (operator,
 2026-10-20): Haiku 5.5 documenters wrote their document more than once in 47 of 96 cases and
 called an `Edit` they did not have 59 times, where Sonnet 5.5's rewrote 14 of 441
 (`research/m40-toy-run.md` §13), and a whole rewrite can drop what an edit in place keeps; the
-prompt asks for an edit in place where a tool can make one, so it stays true under kiro, whose
-`write` is not measured to edit. **Zikaron's tools are in it because memory can help a documenter
+prompt asks for an edit in place where a tool can make one, which kiro's `write` selector grants
+as `str_replace`, measured in use by the documenter's profile headless with no prompt asking for it
+(`research/kiro-v3-probe.md` §7, §17, §32). **Zikaron's tools are in it because memory can help a documenter
 write, and a documenter may seed it** (operator, 2026-10-16) — what agents learned working on a
 file is what its code does not say. **The grant is the only place a tool is named**: the file tools read from
 `HarnessSpec.file_tools`, Zikaron's by the server grant every agent definition uses (§5.4). The
 prompt says *read the source*, *write the document* and that the project's memory is there to
 search, never a tool's name, so it is true on both harnesses without a vocabulary to substitute;
-what to record, and when, is the write policy's, delivered as §5.4 says. Its prompt carries §4's
+what to record, and when, is the write policy's, delivered as §5.4 says — by `SubagentStart` under
+Claude Code, and under kiro at the end of the prompt. Its prompt carries §4's
 format and these rules:
 - write only the one document it was given, at the path it was given — always a new file, since the
   planner removed any old one (§3.4) — opening with the block it was given, and titled with the
@@ -451,8 +453,9 @@ connect only as their documents state it** (operator, 2026-10-20): a role line s
 for, not what uses it, and a Haiku 5.5 README placed an unused deduplication flow in LeibaTrader's
 tick pipeline from its role line alone (`research/m40-toy-run.md` §14). **Its model has a
 default of its own** (`design/harness.md` §"The consolidator's model" and its table row): the
-`haiku` alias under Claude Code (operator, 2026-10-20), the consolidator's `claude-sonnet-5` under
-kiro; `--documenter-model` sets it, or `--model` with every other agent. **A cheaper model at
+`haiku` alias under Claude Code (operator, 2026-10-20), and under kiro `claude-haiku-5.5`, the
+model that alias resolves to, since both harnesses run the same model for the same agent (operator,
+2026-10-29); `--documenter-model` sets it, or `--model` with every other agent. **A cheaper model at
 medium reasoning effort is deliberate** (operator, 2026-10-16): documentation written at a higher
 tier costs too much to generate, and the documents' accuracy is bought instead by the reader
 verifying each claim against the code (§2, §6) — the documents narrow the search to the files that
@@ -461,9 +464,13 @@ stale and then the code. **Claude
 Code's definition sets `effort: medium`** (operator, 2026-10-16), rather than leaving it to the
 harness's default for a subagent — medium in the playground, where the session ran at `xhigh`
 (`research/forked-skill-probe.md` §Interactive) — so a change of default cannot move the cost.
-Kiro sets effort only globally per model, never per agent (operator, 2026-10-16), so its
-documenter runs at whatever the user's kiro sets for its model. **Its prompt's final wording is
-memory-reviewer's**, written at build time from this section, as D38's prompt texts were.
+~~Kiro sets effort only globally per model, never per agent (operator, 2026-10-16), so its
+documenter runs at whatever the user's kiro sets for its model.~~ **kiro sets a subagent's effort
+from its profile's `effortLevel`**, undocumented and measured (`research/kiro-v3-probe.md` §39), so
+its documenter's profile carries `medium` too, and the orchestrator's `high`; the live test asserts
+kiro still reads it, since a kiro that stopped would run the agent at the session's effort with no
+error. **Its prompt's final wording is memory-reviewer's**, written at build time from this section,
+as D38's prompt texts were.
 
 ### 5.2 The skill
 
@@ -475,8 +482,9 @@ memory-reviewer's**, written at build time from this section, as D38's prompt te
 
 — any number of modules, none included; `--slice` the skill's own word for step 4, never passed
 to the planner — the one form the skill's text, `README.md` and the toy run's prompt use. **The
-loop is one text, and who runs it is the harness's difference:**
-- **Under Claude Code, a subagent the session spawns, in the background** (operator, 2026-10-16:
+loop is one text, run on both harnesses by `zikaron-code-orchestrator`, a subagent the session
+spawns; how it runs beside the session is the harness's difference:**
+- **Under Claude Code, in the background** (operator, 2026-10-16:
   a run must not hold the session that invoked it; operator, 2026-10-21: spawned as the
   consolidation skill spawns its consolidator, so as not to depend on how the harness runs a
   forked skill). The skill's text tells the session to run nothing of the loop and to spawn
@@ -496,9 +504,20 @@ loop is one text, and who runs it is the harness's difference:**
   while an earlier invocation of the same skill still runs (§Q8(c) there), and a foreground fork
   ends at its first turn's end, which the orchestrator reaches by waiting — in a field run, a
   second module's fork ended after one document (the probe note §1).
-- **Under kiro, the session that invoked it**: a kiro-cli subagent has its `subagent` tool
-  stripped (`research/nested-subagent-probe.md`), so an orchestrator there could not spawn a
-  documenter. Its skill is the loop.
+- **Under kiro, in the foreground, the session waiting for it** (operator, 2026-10-29: *"we should
+  build orchestrator running as subagent"*). A V3 subagent spawns a subagent (`research/kiro-v3-probe.md`
+  §37; V2's stripped `subagent` tool, `research/nested-subagent-probe.md`, does not hold), and kiro
+  runs a subagent in the foreground while its parent waits (`research/kiro-cli-v3-migration.md`
+  §4), so the session is busy until the run ends and the skill says so. Only Workflows would run it
+  in the background, and they stay out. The skill spawns the orchestrator through its subagent tool
+  with the same first line as Claude Code's, and **writes the second line itself** — the modules,
+  globs and slice it was asked for, as given, or nothing — since kiro replaces `$ARGUMENTS` only for a
+  skill invoked by its slash command, not one loaded through `disclose_context`
+  (`research/kiro-cli-v3-migration.md` §5), which is how every measured kiro run loaded one
+  (kiro-probe §24). Claude Code's *"one run at a time"* and its 20-subagent arithmetic are that
+  harness's limit and are not in kiro's skill, kiro documenting no concurrency cap. The orchestrator's
+  profile carries the loop after its own prompt, in a wording true under kiro — the session waits for
+  it, and the write policy it records by ends its prompt — and the policy itself (§5.4).
 
 **The modules of a run** (operator, 2026-10-21): the ones named, documented in turn; with none
 named, every knowledge base whose name begins `code-knowledge/` — its module its `root_path` with
@@ -538,8 +557,8 @@ The loop tells whoever runs it:
    A whole module's `work` overflows what a harness shows of a command's output: Claude Code
    middle-truncates past `BASH_MAX_OUTPUT_LENGTH`, whose documented default is 30,000 characters,
    an item runs about 360, so the toy's 123 would be about 44,000, and a truncated object cannot be
-   parsed. A batch of 18 is about 6,500; kiro's cap is unmeasured, and the toy run confirms Claude
-   Code's in passing. **The batch is 18** (operator, 2026-10-16 and 2026-10-20): every batch waits
+   parsed. A batch of 18 is about 6,500; kiro's cap on a shell command's output is unmeasured,
+   and the toy run confirms Claude Code's in passing. **The batch is 18** (operator, 2026-10-16 and 2026-10-20): every batch waits
    for its slowest documenter, so fewer,
    larger batches spend less time waiting on stragglers — for the toy's 123 files seven batches
    where ten a batch would take thirteen — and Claude Code refuses a spawn past 20 concurrent
@@ -550,9 +569,12 @@ The loop tells whoever runs it:
    one spawn refused (`research/m40-toy-run.md` §13) — and the orchestrator the session spawns
    holds one of the 20 itself, where a fork held none: beside a spawned orchestrator a first batch
    of 20 had one spawn refused (`research/m40-5-spawned-orchestrator-probe.md` §2a), beside a fork
-   a first batch of 20 all started (§13 of the toy run's note). Kiro has no fixed limit: a
-   spawn past its capacity is throttled and fails after three retries (operator, 2026-10-16), so
-   18 serves it too. A spawn refused, or failed to start, for capacity is not one of an item's
+   a first batch of 20 all started (§13 of the toy run's note). **18 is derived from Claude Code's
+   limit and unmeasured under kiro**, which has no fixed limit: a spawn past its capacity is
+   throttled and fails after three retries (operator, 2026-10-16). There each subagent starts a pair
+   of `zikaron-mcp` processes of its own, about 2 s each, where Claude Code's share the session's
+   (`research/kiro-v3-probe.md` §16, §18, §37), so a batch of 18 is 36 server starts; the operator's
+   interactive run records one batch's cost (`design/build-plan.md` §M41-2 done-when 7). A spawn refused, or failed to start, for capacity is not one of an item's
    three attempts (step 3), since no documenter ran, and the next run lists the item again.
    **Nor is it a reason to stop** (operator, 2026-10-21: *"it shouldn't give up - it should keep
    trying with smaller batches"*): any other agent the session runs may hold the slots. The
@@ -577,9 +599,9 @@ The loop tells whoever runs it:
    (`research/claude-code-background-subagents.md` §Q3, §Q4), without sleeping, which the harness
    blocked once in the playground, or polling, which spends turns on nothing. **The loop's text
    differs per harness** where it says how a documenter is spawned, as the consolidation skill's
-   does — kiro's naming `subagent`, Claude Code's naming none (`zikaron/install/assets.py`); which
-   file step 1 reads the planner's command from; and where the arguments come from, the skill's
-   invocation under kiro and the spawn prompt's second line under Claude Code.
+   does — kiro's naming the subagent and its prompt, Claude Code's naming no tool
+   (`zikaron/install/assets.py`) — and which file step 1 reads the planner's command from. On both it
+   takes the arguments from the spawn prompt's second line.
    **A batch's spawns are issued together, in one message** (operator, 2026-10-16). Under Claude
    Code the harness starts a subagent only once the message carrying its call is complete, and the
    orchestrator writes a call in about 2 s, so in LeibaTrader a batch's documenters started together
@@ -592,8 +614,8 @@ The loop tells whoever runs it:
    4,400 characters — the spawn call's 630, the launch confirmation's 1,060, the hand-back
    message's 1,450 with its safety framing, and a second completion notice's 1,270 — so a shorter
    answer or spawn prompt would save a few percent; the lever, were it needed, is more files per
-   spawn. Kiro's subagent results carry no such framing (operator, 2026-10-16). Under kiro the
-   `subagent` tool runs a batch's spawns in parallel — unmeasured.
+   spawn. Kiro's subagent results carry no such framing (operator, 2026-10-16). Whether kiro's
+   subagent tool runs a batch's spawns in parallel is unmeasured.
 3. **Repeat until the planner reports `up_to_date`** — every document the module needs there and
    current (operator, 2026-10-14: this goal is mandatory). An item whose documenter failed comes
    before every item not yet offered, in path order, so the next batch lists it first. **An item
@@ -660,10 +682,10 @@ the orchestrator and the documenters too, so each of their Zikaron calls then as
 comes while a run is out is spawned when that run reports, since a second run would share the
 session's 20 subagents with the first, which holds 19 of them while a batch is out, and could
 document a module the first is documenting; one request is one spawn, however many modules it
-names. A run of several modules spends one context on all of them — the orchestrator's under
-Claude Code, about 2,000 tokens a document as step 2 prices it, and the session's own under kiro,
-where the cost per document is unmeasured — cheap where little moved, as in an update, while
-several modules that are all stale are cheaper asked for one by one. **A headless run is asked
+names. A run of several modules spends one context on all of them — the orchestrator's, about
+2,000 tokens a document under Claude Code as step 2 prices it, unmeasured under kiro — cheap where
+little moved, as in an update, while several modules that are all stale are cheaper asked for one
+by one. **A headless run is asked
 nothing and so is refused**: the orchestrator's planner
 call and spawns need permission too, which `acceptEdits` does not give, so a headless run passes
 `--permission-mode bypassPermissions` — every headless experiment in this corpus's precedent, and
@@ -672,10 +694,15 @@ safe in a copy — or `--allowedTools` naming the planner command, the spawn too
 interactively does not read (§Q2a there). A headless run also sets
 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`: `-p` stops waiting for background work after ten idle
 minutes by default and drops its result (§Q4 there), and the spawned orchestrator is such work;
-`tests/test_code_knowledge_claude_live.py` runs the shape end to end. Under kiro the documenter's
-config carries permission rules allowing its grant, as the consolidator's does, so the install has
-already answered it; a headless kiro run is refused every question no rule answers
-(`research/kiro-v3-probe.md` §17, §24). The skill's body and `README.md` say so.
+`tests/test_code_knowledge_claude_live.py` runs the shape end to end. **Under kiro the session's
+rules decide what the orchestrator and its documenters may do**: a spawned agent may do what the
+session's rules allow, less what any rule in the chain denies, and its own allow rules add nothing
+(`research/kiro-v3-probe.md` §28, §52 to §56). So the session needs the `subagent` tool, to spawn
+the orchestrator, and allow rules for `subagent`, `shell`, `fs_read`, and `fs_write` over the
+documents directory; its `tools` need not hold `shell` or `write`, since a subagent's call is decided
+by the session's rules and not its tools (§28). A headless kiro run is refused every question no rule
+answers (§17, §24), and an interactive one puts it to the user. The skill's body, the install's notes
+and `README.md` say so; `tests/test_code_knowledge_kiro_live.py` runs the shape end to end.
 
 ### 5.3 One corpus per module, each registered with `git_mode: off`
 
@@ -709,7 +736,7 @@ none of them. Each is a file the install owns outright, written through each `Ha
 | | Claude Code | kiro |
 |---|---|---|
 | documenter | `.claude/agents/zikaron-documenter.md` | `.kiro/agents/zikaron-documenter.json` |
-| orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | none: the session orchestrates (§5.2) |
+| orchestrator | `.claude/agents/zikaron-code-orchestrator.md` | `.kiro/agents/zikaron-code-orchestrator.json` |
 | skill | `.claude/skills/zikaron-document-code/SKILL.md` | `.kiro/skills/zikaron-document-code/SKILL.md` |
 
 Every one is snapshotted with the consolidator's under `tests/fixtures/installed/`, re-rendered
@@ -740,17 +767,32 @@ it removes or renames no knowledge base, and that its last answer is the report,
 harness hands one back. Its body names no built-in tool, the grant being the one place one is
 named, and names Zikaron's verbs in Claude Code's form, as the skill's text did.
 
-**Under kiro two files are not the whole install, since the merge into the user's agent config
-reaches both.** On a universal profile — `allowedTools` beside `permissions`, the shape `kiro-cli agent
-create` writes (`design/harness.md` §"What a kiro install writes") — `zikaron-documenter` joins
-`zikaron-consolidator` in `toolsSettings.crew.availableAgents` on the same condition — only where
-that list is already set, since an absent one admits every agent — and the second skill joins the
-first in `resources`, so it loads under `chat.disableInheritingDefaultResources`
-(`zikaron/install/kiro_merge.py` `_merged_tools_settings`, `_merged_resources`). Spawning either
-agent takes `subagent` in the primary's `tools` and a `subagent` allow rule, which stay the user's
-to grant: without the rule kiro asks before each spawn, and for this skill that is once per
-documenter, so a kiro user documenting a module of any size grants it (`design/harness.md` §"What a
-kiro install writes").
+**kiro's orchestrator profile is the same agent in kiro's shape** (`entries.orchestrator_agent_config`):
+its `description` says the session waits for it, which is true under kiro; its model is `--orchestrator-model`'s,
+by default `claude-opus-5.5`, the model `opus` resolves to; `effortLevel` `high`; its prompt is its own
+prompt in kiro's wording, then the loop rendered for kiro — the documenter spawned by name with its
+prompt, the planner's command read from the consolidator's config — then the subagent write policy;
+`tools` `@zikaron`, `read`, `shell` and `subagent`, sorted, and no `write`, the prompt being what says
+the planner removes and the documenters write; rules allowing `fs_read`, `shell`, `subagent` and
+Zikaron's server, and none for `fs_write`, since a session allowing `fs_write` over the documents
+directory reaches a documenter two levels down through an agent with no such rule
+(`research/kiro-v3-probe.md` §54); the primary server in `mcpServers`; and no `hooks`. **Its rules
+decide only where it runs as a session of its own**: spawned, it may do what the session's rules
+allow, less what any rule in the chain denies, so the session's rules decide what it and its
+documenters may do (§5.2).
+
+**Under kiro the shipped files are not the whole install, since the merge into the user's agent
+config reaches them.** On a universal profile — `allowedTools` beside `permissions`, the shape `kiro-cli agent
+create` writes (`design/harness.md` §"What a kiro install writes") — `zikaron-documenter` and
+`zikaron-code-orchestrator` join `zikaron-consolidator` in `toolsSettings.crew.availableAgents` on
+the same condition — only where that list is already set, since an absent one admits every agent —
+and the second skill joins the first in `resources`, so it loads under
+`chat.disableInheritingDefaultResources` (`zikaron/install/kiro_merge.py` `_merged_tools_settings`,
+`_merged_resources`). Spawning an agent takes `subagent` in the primary's `tools` and a `subagent`
+allow rule, which decides the orchestrator's spawns of documenters too and stays the user's to
+grant: without the rule kiro asks before each spawn, once per documenter for this skill, so a kiro
+user documenting a module of any size grants it (`design/harness.md` §"What a kiro install
+writes").
 
 **The documenter's grant is a value that differs per harness, so it lives on the seam**: a
 `HarnessSpec` field, `file_tools`, with a "Documenter tool grant" row in `design/harness.md`
@@ -768,9 +810,10 @@ itself, as the consolidator's does. So the documenter's kiro config carries this
 `zikaron-mcp` path and is rewritten by every install, and each kiro documenter starts a
 `zikaron-mcp` of its own, since kiro scopes a server per agent instance — a per-spawn cost the toy
 run, under Claude Code, does not measure. The kiro config carries `fs_read`, `fs_write` and `mcp`
-rules allowing the grant, and no `hooks`: no hook fires for a kiro subagent
-(`design/architecture.md` §"Subagent sessions"), so a kiro documenter is never handed the write
-policy — a row of `design/kiro-gaps.md`.
+rules allowing the grant, `effortLevel` `medium`, and no `hooks`: a subagent's own hooks never fire,
+and its tool calls fire the session's (`design/harness.md` §Subagents). kiro has no subagent trigger
+to deliver the write policy, so the documenter's prompt ends with it, fixed at install; a project's
+own policy override does not reach it there — a row of `design/kiro-gaps.md`.
 
 **So the prompt can say *read* and *write* and still name no tool**: kiro's aliases are the English
 verbs. The prompt is written in the second person — *you read*, *you write* — so no sentence opens
@@ -781,9 +824,9 @@ capitalized names as a whole word, and an `fs_` token.
 **The prose that enumerates an install moves with the build**: `design/architecture.md` §"The
 install contract" table, `README.md` §Install's two tables, `design/harness.md` §"What a Claude Code
 install writes", and the install messages that name the consolidator or its skill alone —
-`zikaron/install/targets.py`'s `fragment` caveat and the notes `writer.py`'s `plan_kiro_merge` and
-`_merged_tools_settings` add, which now name both skills and say the kiro session that runs the
-documenter skill also needs the shell tool, to run the planner; and the model flags' help and
+`zikaron/install/targets.py`'s `fragment` caveat and the notes `kiro_merge.py`'s `plan_kiro_merge` and
+`_merged_tools_settings` add, which name both skills and say the kiro session's rules need a `shell`
+allow rule, for the orchestrator to run the planner, and need not hold the shell tool; and the model flags' help and
 their refusal under `--components guards`, in `zikaron/install/models.py`, which name the agent
 each flag sets.
 
@@ -818,8 +861,9 @@ is explicit rather than hoped for.
 amended; operator, 2026-10-20), since an agent forgets the knowledge base over a session as it
 forgot the edit rules, though its `CLAUDE.md` names both. The search's own `PostToolUse` hook names
 the corpora that document what it searched, at the moment the agent is looking for what the
-documents hold — a reminder, never a deny, after a search that has already run. Kiro has none: its
-post-tool hook has no documented path to the model (`design/kiro-gaps.md`).
+documents hold — a reminder, never a deny, after a search that has already run. Kiro has none: no
+post-tool output reaches its model on any exit code (`research/kiro-v3-probe.md` §6, §35, §36;
+`design/kiro-gaps.md`).
 
 - **What counts as a search** is a `Grep` or `Glob`, its `path` or else the working directory, or
   a `Bash` command running `grep`, `egrep`, `fgrep`, `rg` or `git grep`, its operands read as the
@@ -1366,8 +1410,10 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
   reached through a symbolic link against a working directory that names its real path. Each was measured or follows from what was
   (`research/m40-4-hook-probes.md`), and none is worth a mechanism of its own.
 - **Nothing but its prompt stops a documenter writing outside the documents directory.** Claude Code
-  has no per-subagent path rule, and kiro's `allowedPaths` would have to be fixed at install while
-  the documents directory is a per-run argument. A source a documenter overwrote reads `stale` on the
+  has no per-subagent path rule. Under kiro the session's `fs_write` rule bounds every spawned
+  agent's writes (`research/kiro-v3-probe.md` §54), and the install names it scoped to
+  `./code-knowledge/**`, the planner's default, but leaves it to the user, while the documents
+  directory is a per-run argument. A source a documenter overwrote reads `stale` on the
   next run — indistinguishable from the user's own edit — so in a project whose work is uncommitted
   the damage is not recoverable from git.
 - **One item given up on costs the module its README**, since the README waits for every file and

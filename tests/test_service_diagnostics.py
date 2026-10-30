@@ -30,10 +30,24 @@ async def test_a_request_outliving_the_poll_is_logged_on_each_poll_until_it_ends
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Named by method and, before its envelope resolves, as `session=unresolved` — a request
-    wedged that early has no session to report yet."""
+    wedged that early has no session to report yet.
+
+    The test counts polls rather than sleeping for a number of them, which a stall of the process
+    would leave fewer of; a poll that stopped is a watchdog's ten seconds."""
     interval = 0.05
     monkeypatch.setattr(lifecycle, "IDLE_POLL_INTERVAL_SECONDS", interval)
     caplog.set_level(logging.INFO, logger="zikaron.service")
+    polls = 0
+    polled = asyncio.Event()
+    real_log = diagnostics.log_long_requests
+
+    def counted_log(activity: ActivityTracker, *, older_than: float) -> None:
+        nonlocal polls
+        real_log(activity, older_than=older_than)
+        polls += 1
+        polled.set()
+
+    monkeypatch.setattr(diagnostics, "log_long_requests", counted_log)
     async with open_context(tmp_path) as ctx:
         wedged = ctx.activity.begin_request("memory_plan_groups")
         wedged.started -= 10 * interval
@@ -44,7 +58,9 @@ async def test_a_request_outliving_the_poll_is_logged_on_each_poll_until_it_ends
                 ctx, running, sock_path, original_store_inode=ctx.store.opened_inode
             )
         )
-        await asyncio.sleep(6 * interval)
+        while polls < 2:
+            polled.clear()
+            await asyncio.wait_for(polled.wait(), timeout=10.0)
         ctx.activity.end_request(wedged)
         logged_while_in_flight = [
             record.getMessage()
@@ -52,7 +68,8 @@ async def test_a_request_outliving_the_poll_is_logged_on_each_poll_until_it_ends
             if record.getMessage().startswith("long request:")
         ]
         caplog.clear()
-        await asyncio.sleep(3 * interval)
+        polled.clear()
+        await asyncio.wait_for(polled.wait(), timeout=10.0)
         polling.cancel()
         await asyncio.gather(polling, return_exceptions=True)
         await running.shut_down()

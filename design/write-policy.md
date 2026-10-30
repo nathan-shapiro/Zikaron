@@ -5,18 +5,19 @@
 > point to experiment against, not a settled answer** — Open question 7 remains open, and §3 below is the
 > instrumentation that makes the experiment possible.
 >
-> **Delivery scope.** Under kiro no hook fires in a **subagent** session (`architecture.md` §"Subagent
-> sessions"), so there this text reaches top-level sessions only; under Claude Code `SubagentStart` delivers
-> its subagent variant to every subagent but the consolidator (`design/harness.md` §"Subagents"). Under kiro
-> that is the reach the design accepts: the consolidator must not receive it (its verbs
-> and its judgment are different, and D32 keeps its context narrow on purpose), and any other subagent that
-> writes should carry its own policy in its own agent config, which is where per-agent instructions belong —
-> M40's kiro documenter is the shipped case: its prompt carries the rule to record only what the code could
-> not tell a later reader and the credential rule (`design/code-knowledge.md` §5.1), and not this text, which
-> §5.4 there counts as a gap. The accepted cost is that a *general-purpose* subagent writing through MCP does
-> so without this guidance;
-> §3's signals will show it if it matters, since `client.kind` is `mcp` either way and the write attributes to
-> the top-level session.
+> **Delivery scope.** Under kiro a subagent's own hooks never fire, and its tool calls fire the session's
+> tool hooks, so no session-start hook reaches a **subagent** (`design/harness.md` §"Subagents"); there this
+> text reaches top-level sessions by hook, and under Claude Code `SubagentStart` delivers its subagent
+> variant to every subagent but the consolidator. Under kiro the install fixes the subagent variant at the
+> end of the prompts of Zikaron's two code-knowledge agents, the documenter and the orchestrator, which hold
+> the memory verbs (`design/code-knowledge.md` §5.4), and leaves the consolidator's prompt as its whole
+> instruction, since its verbs and its judgment are different, and D32 keeps its context narrow on purpose.
+> That is the reach the design accepts: any other subagent that writes should carry its own policy in its
+> own agent config, which is where per-agent instructions belong. The accepted cost is that a subagent of
+> the user's own writing through MCP does so without this guidance, and that a project's own policy
+> override reaches neither of the two, whose text was fixed at install — both rows of
+> `design/kiro-gaps.md`; §3's signals will show it if it matters, since `client.kind` is `mcp` either way
+> and the write attributes to the top-level session.
 >
 > **Harness delta (D34): the paragraph above is kiro's reach, and it is not Claude Code's.** Claude Code
 > fires `SubagentStart` carrying `agent_type`, which makes the per-agent rule expressible — so
@@ -304,18 +305,20 @@ the same string. `warmup.log` and `hook.log` do not need the same treatment: nei
 memory content, or anything beyond a fixed failure-kind label and an error code (`architecture.md` §"Paths",
 §"Degraded modes"), so neither can hold a secret by construction.
 
-**And delete this store's spill files from the runtime directory**, `$XDG_RUNTIME_DIR/zikaron/` (or its
-per-uid `/tmp` fallback — `architecture.md` §Paths). A consolidator group too large for a harness to deliver
-is written there verbatim, so a record erased from the store can survive in one of those files until the next
-reboot clears the directory. They are `0600`, and each is named for the store it came from: `<store-hash>-<method>-<pid>-<random>.json`,
-where the hash is the one that names this store's socket in the same directory — so
+**And delete this store's spill files.** Under Claude Code they lie in the runtime directory,
+`$XDG_RUNTIME_DIR/zikaron/` (or its per-uid `/tmp` fallback — `architecture.md` §Paths); under kiro in the
+store's own `.zikaron/spill/`, where `rm .zikaron/spill/*.json` reaches them, and deleting `.zikaron/` does
+too. A consolidator group too large for a harness to deliver is written there verbatim, so a record erased
+from the store can survive in one of those files. They are `0600`, and each is named for the store it came
+from: `<store-hash>-<method>-<pid>-<random>.json`, where the hash is the one that names this store's socket
+— so in the runtime directory, which every store of the user shares,
 `rm "$XDG_RUNTIME_DIR"/zikaron/<store-hash>-*.json` reaches exactly this store's files and no other's.
-A consolidator removes the previous group's files as it advances and sweeps a dead
-predecessor's when it starts, so what remains here is at most one group's files — the current group of
-a live run, or the last group a killed one was holding — until the next consolidator start sweeps them.
-The `rm` above waits for neither. This is the one copy of
-record prose that lives outside the store and outside the log rules, and it is listed here because nothing
-else in this procedure would reach it.
+A consolidator removes the previous group's files as it advances and sweeps a dead predecessor's when it
+starts, so what remains is at most one group's files — the current group of a live run, or the last group
+a killed one was holding — until the next consolidator start sweeps them, or, in the runtime directory, the
+next reboot clears it. The `rm` above waits for neither. Under Claude Code this is the one copy of record
+prose that lives outside the store and outside the log rules, and it is listed here because nothing else in
+this procedure would reach it; under kiro it is inside the store and outside the log rules.
 
 #### What this still does not guarantee
 - **A knowledge base is a separate plaintext copy, and this procedure does not touch it.** Added

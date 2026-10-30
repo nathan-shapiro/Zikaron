@@ -16,6 +16,7 @@ import pytest
 
 from tests.design_tables import table_with_columns
 from tests.knowledge_fixtures import add_base, add_request, config_for, corpus_root, open_store
+from tests.loop_lateness import loop_lateness
 from zikaron.core.knowledge import counters as counter_module
 from zikaron.core.knowledge import database, ddl, meta
 from zikaron.core.knowledge.counters import (
@@ -197,21 +198,24 @@ class TestRecordingASearch:
             await holder.execute("BEGIN IMMEDIATE")
             await holder.execute("INSERT INTO meta (key, value) VALUES ('held', '1')")
 
-            started = time.perf_counter()
-            assert not await counter_module.record_search(
-                connection, SearchTally(results=4, stale=2)
-            )
-            elapsed = time.perf_counter() - started
+            async with loop_lateness() as lateness:
+                started = time.perf_counter()
+                assert not await counter_module.record_search(
+                    connection, SearchTally(results=4, stale=2)
+                )
+                elapsed = time.perf_counter() - started
             await holder.rollback()
             raw = await database.read_meta(connection)
         finally:
             await holder.close()
             await connection.close()
         assert raw["searches"] == "0", "an abandoned write leaves the counters where they were"
-        # A fifth of the wait it must not have taken: far enough below `busy_timeout` that a loaded
-        # machine cannot reach it, and far enough above an immediate refusal that only a genuine
-        # wait crosses it.
-        assert elapsed < ddl.BUSY_TIMEOUT_MS / 5_000, f"it waited {elapsed:.3f}s for the lock"
+        # A fifth of the wait it must not have taken, and far enough above an immediate refusal
+        # that only a genuine wait crosses it.
+        assert elapsed - lateness.seconds < ddl.BUSY_TIMEOUT_MS / 5_000, (
+            f"it waited {elapsed:.3f}s for the lock, {lateness.seconds:.3f}s of it the loop's "
+            "lateness"
+        )
 
     async def test_the_timeout_is_restored_even_when_the_write_was_abandoned(
         self, tmp_path: Path

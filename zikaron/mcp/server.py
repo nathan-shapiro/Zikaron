@@ -26,6 +26,7 @@ from typing import Literal
 from fastmcp import FastMCP
 
 from zikaron.harness import detect
+from zikaron.harness.spec import SpillLocation
 from zikaron.mcp import spill
 from zikaron.mcp.connection import ServiceConnection, resolve_effective_config
 from zikaron.mcp.consolidator import register_consolidator_tools
@@ -86,10 +87,16 @@ def _spill_policy(connection: ServiceConnection) -> SpillPolicy:
     while the process lives (`schema.md`: config is read once, at startup).
     """
     config = resolve_effective_config(connection.location.store_dir)
+    spec = detect.current_spec()
+    directory = (
+        paths.spill_dir(connection.location.store_dir)
+        if spec.spill_location is SpillLocation.STORE
+        else connection.location.runtime_dir
+    )
     return SpillPolicy(
-        enabled=detect.current_spec().consolidator_can_read_files,
+        enabled=spec.consolidator_can_read_files,
         threshold_bytes=config.get_int("spill_threshold"),
-        directory=connection.location.runtime_dir,
+        directory=directory,
         # The same hash the socket is named for, so one store's spill files are findable among
         # every store's without opening any of them — which is what the erasure procedure needs.
         store_key=paths.socket_hash(connection.location.store_dir.resolve()),

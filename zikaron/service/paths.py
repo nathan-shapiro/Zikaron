@@ -38,6 +38,7 @@ _WARMUP_LOG_FILENAME = "warmup.log"
 _HOOK_LOG_FILENAME = "hook.log"
 _WRITE_POLICY_FILENAME = "write-policy.md"
 _SESSION_RELAY_DIRNAME = "sessions"
+_SPILL_DIRNAME = "spill"
 
 
 def store_dir(scope_dir: Path) -> Path:
@@ -63,6 +64,12 @@ def scope_of(store_directory: Path) -> Path:
     has no way to tell whether the coupling is deliberate.
     """
     return store_directory.parent
+
+
+def spill_dir(store_directory: Path) -> Path:
+    """Where the consolidator's MCP client writes an over-large result on a harness whose spill
+    goes under the store (`HarnessSpec.spill_location`)."""
+    return store_directory / _SPILL_DIRNAME
 
 
 def store_db_path(store_directory: Path) -> Path:

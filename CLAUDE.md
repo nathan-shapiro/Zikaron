@@ -17,10 +17,10 @@ amended; `design/knowledge-index.md` is normative for the second):
   is files, whoever wrote them — including D39's documenter, which writes per-source-file
   documentation into a corpus from outside the index (`design/code-knowledge.md`).
 
-**And, on request, the guards** (D38, `design/guards.md` is normative): deterministic Claude Code
-hooks, independent of both stores, that refuse a find-replace edit to an authored file and a
-`pgrep -f`/`pkill -f` whose pattern matches the shell running it, and remind the agent to re-read
-what it edited. They hold no knowledge, and this repository does not install them.
+**And, on request, the guards** (D38, `design/guards.md` is normative): deterministic hooks on both
+harnesses, independent of both stores, that refuse a find-replace edit to an authored file and a
+`pgrep -f`/`pkill -f` whose pattern matches the shell running it, and, under Claude Code, remind the
+agent to re-read what it edited. They hold no knowledge, and this repository does not install them.
 
 ## Project memory
 `FINDINGS.md` is this project's **living working memory** — the decision index, where the work stands, and
@@ -76,7 +76,7 @@ falsifies, in the one place nobody edits when adding one.
 | **`design/knowledge-index.md`** | **Normative.** The knowledge index: one SQLite file per knowledge base, the registry in `memory.db`, discovery and filtering, chunking, both index arms, grouped cross-KB search, the indexer process, the seven MCP tools and the CLI, linked documents, and its K-decisions and invariants. `design/schema.md` still owns `memory.db`'s tables — including the registry — and `design/overview.md` every memory-store decision |
 | **`design/distribution.md`** | **Normative for D35/D36**: supported platforms and what rules each out, acquisition (`uv` recommended, host Python supported) and why install-time only, publication by trusted publishing, **the `zikaron` front door and what `doctor` checks**, **model acquisition — the durable cache, the pinned revision and digest set, when digests are checked and why not on every start**, the version scheme (a minor bump means a schema bump), **what CI asserts and what it provably cannot** |
 | **`design/harness.md`** | **The two supported harnesses as one table (D34)**: detection, session identity and its nesting limit, trigger and output-channel mapping, injection budgets, subagent rules, where D32's gating splits, consolidation ownership, the consolidator's model, and **the installer's two targets** — the value/shape split, the flags and what each refuses |
-| **`design/guards.md`** | **Normative for D38**: the two deterministic Claude Code hooks — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge, the self-match rule for `pgrep -f`/`pkill -f` — what Claude Code was measured to deliver, installation by selection, fail-open |
+| **`design/guards.md`** | **Normative for D38**: the deterministic hooks, two under Claude Code and one under kiro — the find-replace guard, its exemptions and its `#ZIKARON-FORCE #Reason:` override, the re-read nudge (Claude Code), the self-match rule for `pgrep -f`/`pkill -f` — what each harness was measured to deliver, installation by selection, fail-open |
 | `design/prior-art.md` | `~/Memory` as built, the four divergences and how each resolved, lessons carried across |
 | `design/evaluation.md` | **Proposal, not normative.** The product claim as six links, three arms, why resolve rate is probably the wrong dependent variable, the benchmark landscape, the sample-size arithmetic |
 | `design/kiro-gaps.md` | What Zikaron does under Claude Code and not under kiro — each gap's kind (not built, or a harness limit), why, and what closing it takes |
@@ -398,8 +398,8 @@ This project was built in **kiro-cli** and is being migrated to **Claude Code**.
   it is.** It is the fallback if the migration goes badly; `.claude/` is the live crew. It holds no
   installer output (operator, 2026-10-16): the kiro fallback is restored by re-running
   `python -m zikaron.install --project . --harness kiro --agent .kiro/agents/zikaron-dogfood.json`,
-  which writes the consolidator, the documenter and their two skills — both agents' configs
-  carrying this machine's `zikaron-mcp` path — and merges into the dogfood config. kiro's V3 engine
+  which writes the consolidator, the documenter, the code orchestrator and the two skills — each
+  agent's config carrying this machine's `zikaron-mcp` path — and merges into the dogfood config. kiro's V3 engine
   reads only V3-shape profiles, so a config that comes back in V2's shape is converted first with
   `kiro-cli agent upgrade --no-backup .kiro/agents` — `--no-backup` because the originals are in git
   and `.json.bak` files would land in a tracked directory. **Four kinds of

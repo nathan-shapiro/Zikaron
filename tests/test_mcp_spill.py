@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from zikaron.harness import detect
+from zikaron.harness.spec import KIRO
 from zikaron.mcp import server, spill
 from zikaron.mcp.connection import ServiceConnection
 from zikaron.mcp.consolidator import register_consolidator_tools
@@ -68,9 +70,9 @@ def test_a_payload_that_fits_is_returned_unchanged(tmp_path: Path) -> None:
 
 
 def test_spilling_is_off_where_the_harness_cannot_read_a_file(tmp_path: Path) -> None:
-    """The kiro case. A harness whose consolidator has no file-reading tool must be handed the
-    payload inline however large it is — a path it cannot open is the same stall this exists to
-    end, reached by a different route."""
+    """A harness whose consolidator has no file-reading tool, which neither supported harness is
+    now, must be handed the payload inline however large it is — a path it cannot open is the same
+    stall this exists to end, reached by a different route."""
     big = _group(entries=20)
     assert (
         spill.apply(big, policy=_policy(tmp_path, enabled=False), tool="memory_next_group") is big
@@ -169,7 +171,8 @@ def test_multibyte_prose_within_the_bound_is_written_and_stays_readable(tmp_path
 
 
 def test_the_file_is_private_to_this_user(tmp_path: Path) -> None:
-    """It holds record prose verbatim, outside the store and outside the log rules."""
+    """It holds record prose verbatim, outside the log rules and, under Claude Code, outside the
+    store."""
     pointer = spill.apply(_group(entries=20), policy=_policy(tmp_path), tool="memory_next_group")
 
     assert isinstance(pointer, dict)
@@ -198,10 +201,11 @@ def test_the_primary_client_has_no_way_to_obtain_a_spill_policy() -> None:
 
 
 class TestTheWiringThatProducesAPolicy:
-    """`server._spill_policy` turns harness data into the gate. Tested directly because every
-    other test here builds a `SpillPolicy` by hand — which leaves the wiring itself uncovered, and
-    a wiring mistake is the one that matters: `enabled=True` under kiro hands a consolidator with
-    no file-reading tool a path it cannot open, which is the original stall rebuilt."""
+    """`server._spill_policy` turns harness data into the gate and the directory. Tested directly
+    because every other test here builds a `SpillPolicy` by hand — which leaves the wiring itself
+    uncovered, and a wiring mistake is the one that matters: `enabled=True` on a harness whose
+    consolidator has no file-reading tool hands it a path it cannot open, which is the original
+    stall rebuilt, and a file outside the directory its rules allow is refused to it."""
 
     @pytest.fixture(autouse=True)
     def _an_empty_system_config_layer(
@@ -218,10 +222,25 @@ class TestTheWiringThatProducesAPolicy:
         """
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
-    def test_kiro_gets_no_spilling(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_kiro_spills_into_the_stores_own_spill_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one directory the kiro consolidator's rules allow it to read
+        (`design/architecture.md` §"A result too large to deliver — the client spills it to a
+        file")."""
         monkeypatch.delenv("CLAUDECODE", raising=False)
-        policy = server._spill_policy(ServiceConnection(tmp_path))
-        assert policy.enabled is False
+        connection = ServiceConnection(tmp_path)
+        policy = server._spill_policy(connection)
+        assert policy.enabled is True
+        assert policy.directory == connection.location.store_dir / "spill"
+
+    def test_a_harness_whose_consolidator_cannot_read_files_gets_no_spilling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            detect, "current_spec", lambda: KIRO._replace(consolidator_can_read_files=False)
+        )
+        assert server._spill_policy(ServiceConnection(tmp_path)).enabled is False
 
     def test_claude_code_gets_spilling(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -247,10 +266,12 @@ class TestTheWiringThatProducesAPolicy:
 
         assert server._spill_policy(ServiceConnection(tmp_path)).threshold_bytes == 30_000
 
-    def test_the_file_goes_to_the_runtime_directory_not_the_project(self, tmp_path: Path) -> None:
-        """The spill holds record prose verbatim. Writing it into the project tree would put it
-        somewhere a repository can capture it, which is what the runtime directory exists to
-        avoid."""
+    def test_under_claude_code_the_file_goes_to_the_runtime_directory_not_the_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The spill holds record prose verbatim, and Claude Code's `Read` reaches any path the
+        prompt allows, so the file stays out of the project tree."""
+        monkeypatch.setenv("CLAUDECODE", "1")
         connection = ServiceConnection(tmp_path)
         policy = server._spill_policy(connection)
 

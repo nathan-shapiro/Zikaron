@@ -35,7 +35,11 @@ from typing import NamedTuple
 
 from zikaron.hook.components import Components
 from zikaron.install.assets import SKILL_NAME
-from zikaron.install.code_knowledge import DOCUMENT_SKILL_NAME, DOCUMENTER_AGENT_NAME
+from zikaron.install.code_knowledge import (
+    DOCUMENT_SKILL_NAME,
+    DOCUMENTER_AGENT_NAME,
+    ORCHESTRATOR_AGENT_NAME,
+)
 from zikaron.install.entries import CONSOLIDATOR_AGENT_NAME, Commands
 from zikaron.install.harness import InstallError
 
@@ -71,6 +75,10 @@ class Targets:
         return self.agents_dir / f"{DOCUMENTER_AGENT_NAME}.json"
 
     @property
+    def orchestrator_config(self) -> Path:
+        return self.agents_dir / f"{ORCHESTRATOR_AGENT_NAME}.json"
+
+    @property
     def document_skill_file(self) -> Path:
         return self.project / ".kiro" / "skills" / DOCUMENT_SKILL_NAME / "SKILL.md"
 
@@ -94,11 +102,6 @@ class Plan:
     an invention to satisfy an argument-count rule: these are exactly what one invocation decided,
     they travel together to every writer below, and bundling them means a new option is added in one
     place instead of in four signatures.
-
-    `orchestrator_model` is Claude Code's, kiro shipping no orchestrator, and only that target reads
-    it. It stays on the shared value rather than being pushed into a per-harness bag because the
-    alternative — a per-harness options type — would make `main.py` build its arguments differently
-    depending on a flag it has not resolved yet.
     """
 
     project: Path

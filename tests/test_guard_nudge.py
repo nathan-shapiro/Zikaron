@@ -22,7 +22,7 @@ def _nudge(tool: str, tool_input: dict[str, object], **result: object) -> str | 
     output = respond(json.dumps(payload), tmpdir=None, platform="linux")
     if output is None:
         return None
-    envelope = json.loads(output)["hookSpecificOutput"]
+    envelope = json.loads(output.stdout)["hookSpecificOutput"]
     assert envelope["hookEventName"] == "PostToolUse"
     assert set(envelope) == {"hookEventName", "additionalContext"}
     context = envelope["additionalContext"]

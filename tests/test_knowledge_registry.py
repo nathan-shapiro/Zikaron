@@ -15,6 +15,7 @@ import aiosqlite
 import pytest
 
 from tests.knowledge_fixtures import open_store
+from tests.loop_lateness import loop_lateness
 from zikaron.core.knowledge import registry
 from zikaron.core.knowledge.errors import (
     DuplicateNameError,
@@ -248,14 +249,18 @@ class TestWhatEnsuringTheTableCosts:
             try:
                 await holder.execute("BEGIN IMMEDIATE")
                 await holder.execute("INSERT INTO meta (key, value) VALUES ('held', '1')")
-                started = time.perf_counter()
-                assert await registry.lookup_all(reader) == ()
-                elapsed = time.perf_counter() - started
+                async with loop_lateness() as lateness:
+                    started = time.perf_counter()
+                    assert await registry.lookup_all(reader) == ()
+                    elapsed = time.perf_counter() - started
                 await holder.rollback()
             finally:
                 await holder.close()
                 await reader.close()
-        assert elapsed < ddl.BUSY_TIMEOUT_MS / 5_000, f"it waited {elapsed:.3f}s for the lock"
+        assert elapsed - lateness.seconds < ddl.BUSY_TIMEOUT_MS / 5_000, (
+            f"it waited {elapsed:.3f}s for the lock, {lateness.seconds:.3f}s of it the loop's "
+            "lateness"
+        )
 
     async def test_a_store_without_the_table_still_gets_one(self, tmp_path: Path) -> None:
         """The other half, and the one the read could have broken: absent still means created."""

@@ -27,6 +27,8 @@ from zikaron.hook.components import Components
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.service import paths
 
+pytestmark = pytest.mark.usefixtures("generous_hook_deadlines")
+
 _TIMEOUT_SECONDS: Final = 15.0
 
 

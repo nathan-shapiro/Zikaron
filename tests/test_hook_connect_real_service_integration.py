@@ -27,7 +27,7 @@ from zikaron.core.store.store import Store
 from zikaron.hook.connect import connect_once, default_server_command
 from zikaron.service import paths
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("generous_hook_deadlines")]
 
 
 #: Generous on purpose, and past the shipped cold-start deadline: these tests assert that cold

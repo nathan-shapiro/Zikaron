@@ -8,6 +8,7 @@ onto a file that is no longer the store.
 """
 
 import asyncio
+import contextlib
 import shutil
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ import pytest
 
 from tests.contention_fixtures import call, error_of, external_writer, patch_budget
 from tests.knowledge_fixtures import stub_spawn
+from tests.loop_lateness import loop_lateness
 from tests.service_fixtures import open_context
 from zikaron.core.knowledge import registry
 from zikaron.core.knowledge.database import KnowledgeDatabase
@@ -53,12 +55,14 @@ async def test_a_task_that_asks_again_for_a_transaction_it_holds_fails_at_once(
         async def nested(db: aiosqlite.Connection) -> None:
             await transactions.in_one_transaction(db, _noop, failure=transactions.propagate)
 
-        started = time.monotonic()
-        with pytest.raises(NestedTransactionError):
-            await transactions.in_one_transaction(
-                ctx.store.connection, nested, failure=transactions.propagate
-            )
-        assert time.monotonic() - started < 0.5
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            with pytest.raises(NestedTransactionError):
+                await transactions.in_one_transaction(
+                    ctx.store.connection, nested, failure=transactions.propagate
+                )
+            elapsed = time.monotonic() - started
+        assert elapsed - lateness.seconds < 0.5, (elapsed, lateness)
 
 
 async def _noop(_db: aiosqlite.Connection) -> None:
@@ -94,17 +98,23 @@ async def test_no_two_transactions_nest_on_the_writer_whatever_the_interleaving(
 async def test_a_writers_whole_wait_is_one_budget_whichever_side_refuses_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two writers dispatched together behind another process's lock, held for about 2.4 budgets.
-    The first polls for the write lock; the second waits for the first's hold on the connection's
-    lock. Each answers `store_busy` about one budget from its dispatch — the second whether its
-    connection-lock wait or the poll refuses it. With the two waits compounding, the second answers
-    at about two."""
+    """Two writers dispatched together behind another process's lock, held for ten budgets. The
+    first polls for the write lock; the second waits for the first's hold on the connection's lock.
+    Each answers `store_busy` about one budget from its dispatch — the second whether its
+    connection-lock wait or the poll refuses it. Were the two waits to compound, the second would
+    answer about a budget after the first.
+
+    So the gap between the two answers is what is bounded, not each answer's time: a stall of the
+    whole process, which a loaded runner gives, delays both answers alike unless it falls in the
+    milliseconds between them. A writer the budget never cut would still be waiting when the lock
+    is released, and would answer a success; the release is nine budgets past the deadline, so a
+    stall that ends after it, and lets a poll find the lock free, is one of seconds."""
     budget_ms = 500
     patch_budget(monkeypatch, budget_ms)
     async with open_context(tmp_path) as ctx:
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            writer.release_after(2.4 * budget_ms / 1000)
+            writer.release_after(10 * budget_ms / 1000)
 
             async def timed(index: int) -> tuple[float, tuple[int, dict[str, object]] | None]:
                 started = time.monotonic()
@@ -112,10 +122,12 @@ async def test_a_writers_whole_wait_is_one_budget_whichever_side_refuses_it(
                 return time.monotonic() - started, error_of(answer)
 
             answers = await asyncio.gather(timed(0), timed(1))
-        for elapsed, refused in answers:
+        for _elapsed, refused in answers:
             assert refused is not None, refused
             assert refused[0] == _STORE_BUSY, refused
-            assert 0.8 * budget_ms / 1000 <= elapsed <= 1.5 * budget_ms / 1000, answers
+        first, second = sorted(elapsed for elapsed, _refused in answers)
+        assert first >= 0.8 * budget_ms / 1000, answers
+        assert second - first <= 0.5 * budget_ms / 1000, answers
 
 
 async def test_the_wait_for_the_write_lock_ends_at_the_deadline(
@@ -127,16 +139,22 @@ async def test_the_wait_for_the_write_lock_ends_at_the_deadline(
     budget_ms = 1000
     patch_budget(monkeypatch, budget_ms)
     async with open_context(tmp_path) as ctx:
-        deadline = Deadline.budget()
-        await asyncio.sleep(0.5 * budget_ms / 1000)
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            with pytest.raises(aiosqlite.OperationalError):
-                await transactions.in_one_transaction(
-                    ctx.store.connection, _noop, failure=transactions.propagate, deadline=deadline
+            async with loop_lateness() as lateness:
+                deadline = Deadline(
+                    at=time.monotonic() + 0.5 * budget_ms / 1000, set_by_caller=False
                 )
-            overrun = time.monotonic() - deadline.at
-        assert overrun < 0.25 * budget_ms / 1000, overrun
+                with pytest.raises(aiosqlite.OperationalError):
+                    await transactions.in_one_transaction(
+                        ctx.store.connection,
+                        _noop,
+                        failure=transactions.propagate,
+                        deadline=deadline,
+                    )
+                overrun = time.monotonic() - deadline.at
+    assert overrun >= 0, overrun
+    assert overrun - lateness.seconds < 0.25 * budget_ms / 1000, (overrun, lateness)
 
 
 async def test_a_write_lock_freed_during_the_wait_is_taken(tmp_path: Path) -> None:
@@ -146,15 +164,17 @@ async def test_a_write_lock_freed_during_the_wait_is_taken(tmp_path: Path) -> No
     async with open_context(tmp_path) as ctx:
         with external_writer(ctx.store.path) as writer:
             writer.hold()
-            writer.release_after(0.3)
-            started = time.monotonic()
-            await transactions.in_one_transaction(
-                ctx.store.connection, _noop, failure=transactions.propagate
-            )
-            late = time.monotonic() - started - 0.3
+            async with loop_lateness() as lateness:
+                started = time.monotonic()
+                writer.release_after(0.3)
+                await transactions.in_one_transaction(
+                    ctx.store.connection, _noop, failure=transactions.propagate
+                )
+                late = time.monotonic() - started - 0.3
         # A fixed bound, four times the longest pause, rather than one read from the constant it
         # exists to hold down.
-        assert 0 <= late < 0.1, late
+        assert late >= 0, late
+        assert late - lateness.seconds < 0.1, (late, lateness)
 
 
 async def test_the_wait_for_the_writers_lock_ends_at_the_budget(
@@ -162,13 +182,19 @@ async def test_the_wait_for_the_writers_lock_ends_at_the_budget(
 ) -> None:
     """The connection-lock half: a writer queued behind another request's long transaction on the
     writer — a plan fallback, say — is refused `store_busy` at its budget rather than waiting for
-    that transaction however long it lasts, which would be a wedge by construction."""
+    that transaction however long it lasts, which would be a wedge by construction.
+
+    The transaction holds the writer until the request has answered, not for a fixed time a stall
+    of the process could let expire first; a request that waits it out costs a watchdog's ten
+    seconds."""
     budget_ms = 400
     patch_budget(monkeypatch, budget_ms)
     async with open_context(tmp_path) as ctx:
+        answered = asyncio.Event()
 
         async def long_transaction(_db: aiosqlite.Connection) -> None:
-            await asyncio.sleep(2.5 * budget_ms / 1000)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(answered.wait(), timeout=10.0)
 
         holding = asyncio.create_task(
             transactions.in_one_transaction(
@@ -176,12 +202,15 @@ async def test_the_wait_for_the_writers_lock_ends_at_the_budget(
             )
         )
         await asyncio.sleep(0.05)
-        started = time.monotonic()
-        refused = error_of(await call(ctx, "memory_remember", {"gist": "g", "content": "c"}))
-        elapsed = time.monotonic() - started
+        async with loop_lateness() as lateness:
+            started = time.monotonic()
+            refused = error_of(await call(ctx, "memory_remember", {"gist": "g", "content": "c"}))
+            elapsed = time.monotonic() - started
+        answered.set()
         await holding
         assert refused == (_STORE_BUSY, {"verb": "memory_remember"}), refused
-        assert 0.8 * budget_ms / 1000 <= elapsed <= 1.4 * budget_ms / 1000, elapsed
+        assert elapsed >= 0.8 * budget_ms / 1000, elapsed
+        assert elapsed - lateness.seconds <= 1.4 * budget_ms / 1000, (elapsed, lateness)
 
 
 async def _close_the_writer_on_the_next_failed_commit(

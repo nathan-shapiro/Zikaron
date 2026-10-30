@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from tests.loop_lateness import thread_lateness
 from zikaron.hook.envelope import HookEnvelope
 from zikaron.hook.rpc import (
     HookDeadline,
@@ -262,17 +263,19 @@ def test_an_answer_arriving_in_pieces_cannot_outrun_the_deadline() -> None:
 
     thread = threading.Thread(target=_dribble)
     thread.start()
-    started = time.monotonic()
     try:
-        with pytest.raises(TimeoutError):
-            surface_once(
-                client,
-                prompt="p",
-                limit=5,
-                envelope=_ENVELOPE,
-                deadline=HookDeadline(at_ms=_DEADLINE, by=started + 0.3),
-            )
-        assert time.monotonic() - started < 2.0
+        with thread_lateness() as lateness:
+            started = time.monotonic()
+            with pytest.raises(TimeoutError):
+                surface_once(
+                    client,
+                    prompt="p",
+                    limit=5,
+                    envelope=_ENVELOPE,
+                    deadline=HookDeadline(at_ms=_DEADLINE, by=started + 0.3),
+                )
+            elapsed = time.monotonic() - started
+        assert elapsed - lateness.seconds < 2.0, (elapsed, lateness)
     finally:
         stop.set()
         thread.join(timeout=5.0)

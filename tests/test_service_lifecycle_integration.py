@@ -399,7 +399,7 @@ with open({str(pid_file)!r}, "w") as pid_out:
 
 def _handle(conn):
     global attempt
-    conn.settimeout(2.0)
+    conn.settimeout(10.0)
     while True:
         buf = b""
         while not buf.endswith(b"\\n"):

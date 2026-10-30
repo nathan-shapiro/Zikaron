@@ -66,7 +66,14 @@ discovers a future model whose separator does tokenize.
    `chunk_max_tokens = 450` is *usually* the binding constraint and the gist ceiling is what keeps it so.
 3. Split `content` on blank lines into paragraphs.
 4. Greedily merge adjacent paragraphs while the running total stays within `effective_budget`.
-5. Hard-split, **on token boundaries**, only a single paragraph that alone exceeds the budget.
+5. Hard-split only a single paragraph that alone exceeds the budget, **cutting before a word**: each
+   piece ends at the last word start its budget reaches, where whitespace precedes a token. A cut
+   between two tokens of one word leaves the next piece opening on a fragment WordPiece re-reads as a
+   word, which can count more than its window held: one token over the budget, and the recount every
+   emitted chunk gets refuses the write (`research/hard-split-word-cut.md`). Only a run with no word
+   start inside the budget is cut on a token boundary; a piece whose own count still exceeds the
+   budget — such a run, or the piece opening on the fragment its cut left — shrinks a token at a
+   time until it fits.
 6. **No overlap.**
 7. **Prepend the gist** (plus one `\n` separator) to every chunk, then assert the assembled sequence
    tokenizes to ≤ 512 including specials. A failed assertion is a bug, not a truncation: it raises

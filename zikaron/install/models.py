@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import Final
 
 from zikaron.hook.components import Components
-from zikaron.install.code_knowledge import ORCHESTRATOR_MODEL
 from zikaron.install.harness import InstallError
 from zikaron.install.targets import HarnessTarget
 from zikaron.install.writer import Plan
@@ -33,9 +32,7 @@ def add_model_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(_CONSOLIDATOR, default=None, help="the consolidator's model, over --model")
     parser.add_argument(_DOCUMENTER, default=None, help="the code documenter's model, over --model")
     parser.add_argument(
-        _ORCHESTRATOR,
-        default=None,
-        help="Claude Code only: the code orchestrator's model, over --model",
+        _ORCHESTRATOR, default=None, help="the code orchestrator's model, over --model"
     )
 
 
@@ -63,8 +60,8 @@ class ModelFlags:
     def documenter_model(self, target: HarnessTarget) -> str:
         return self._chosen(self.documenter, target.spec.documenter_model)
 
-    def orchestrator_model(self) -> str:
-        return self._chosen(self.orchestrator, ORCHESTRATOR_MODEL)
+    def orchestrator_model(self, target: HarnessTarget) -> str:
+        return self._chosen(self.orchestrator, target.spec.orchestrator_model)
 
     def given(self) -> tuple[str, ...]:
         """The options given, as spelled on the command line."""
@@ -86,14 +83,11 @@ class ModelFlags:
         return default
 
 
-def refuse_unusable_model_flags(
-    flags: ModelFlags, *, components: Components, target: HarnessTarget
-) -> None:
+def refuse_unusable_model_flags(flags: ModelFlags, *, components: Components) -> None:
     """Refuse a model flag that would set nothing, rather than ignore it.
 
     Raises:
-        InstallError: a model flag under a selection that ships no agent, or `--orchestrator-model`
-            for a target that ships no orchestrator.
+        InstallError: a model flag under a selection that ships no agent.
     """
     given = flags.given()
     if given and not components.memory:
@@ -101,22 +95,17 @@ def refuse_unusable_model_flags(
             f"--components {components.value} ships no agent, so nothing would use "
             f"{', '.join(given)}. Drop the model flags, or install --components both."
         )
-    if flags.orchestrator is not None and not target.ships_orchestrator:
-        raise InstallError(
-            f"{_ORCHESTRATOR} has no meaning under --harness {target.name}, which ships no code "
-            "orchestrator: there the session that invokes the documentation skill runs its loop "
-            f"itself. Drop the flag; {_DOCUMENTER} sets the documenter."
-        )
 
 
 def refuse_unknown_models(target: HarnessTarget, plan: Plan) -> None:
-    """Check each distinct model the install writes once against its harness.
+    """Check each distinct model the install writes once against its harness; a selection that
+    ships no agent writes none.
 
     Raises:
         InstallError: a model the harness would not serve as asked.
     """
-    shipped = [plan.consolidator_model, plan.documenter_model]
-    if target.ships_orchestrator:
-        shipped.append(plan.orchestrator_model)
+    if not plan.components.memory:
+        return
+    shipped = (plan.consolidator_model, plan.documenter_model, plan.orchestrator_model)
     for model in dict.fromkeys(shipped):
         target.refuse_unknown_model(model)

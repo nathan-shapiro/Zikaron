@@ -2,10 +2,13 @@
 
 The wording is not this module's to choose: `design/guards.md` §5 assigns it to
 memory-reviewer, whose final text is `reviews/m37-edit-guards-review.md` §"Prompt texts" and, for
-the self-match rule's, `reviews/m38-selfmatch-guard-review.md` §"Prompt texts", and a test holds
-these constants to those files. The design states what each text must contain — the deny message
-§3.5, the invalid-marker message and the acknowledgement §3.4, the nudge §4, the self-match
-deny §9.3.
+the self-match rule's, `reviews/m38-selfmatch-guard-review.md` §"Prompt texts", with kiro's in
+`reviews/m41-2-review.md` §"Prompt texts — kiro", and a test holds these constants to those files.
+The design states what each text must contain — the deny message §3.5, the invalid-marker message
+and the acknowledgement §3.4, the nudge §4, the self-match deny §9.3. A template names the tools
+and the harness through fields `with_harness` fills from the spec; where a harness delivers no
+acknowledgement, the find-replace guard's two denies end with the re-read ask the acknowledgement
+makes elsewhere.
 
 >>> from zikaron.guard.forms import Form, FormMatch, Target
 >>> match = FormMatch(Form.LITERAL_TEXT, "tee", (Target("/home/u/proj/f", False),))
@@ -21,15 +24,22 @@ from typing import Final
 
 from zikaron.guard.forms import Form, FormMatch
 from zikaron.guard.selfmatch import Platform, SelfMatch
+from zikaron.harness.spec import CLAUDE_CODE, DenyChannel, HarnessSpec
 
 DENY_TEMPLATE: Final = (
     "Zikaron's find-replace guard refused this command: `{word}` {form}; it names {targets}. "
     "That is an edit made to text you have not read in its current state. Authored files are "
-    "edited with Read then Edit, or with Write for a new file; a target under /tmp, /var/tmp or "
-    "$TMPDIR is scratch and exempt. If this command is nonetheless the right tool here (a file "
-    "whose bytes a program owns, a bulk mechanical change, or a deny that is mistaken), run it "
-    "again with a shell comment of exactly this form, giving your own reason in at least two "
-    "words on that line: #ZIKARON-FORCE #Reason: regenerate golden file."
+    "edited with {read} then {edit}, or with {write} for a new file; a target under /tmp, "
+    "/var/tmp or $TMPDIR is scratch and exempt. If this command is nonetheless the right tool "
+    "here (a file whose bytes a program owns, a bulk mechanical change, or a deny that is "
+    "mistaken), run it again with a shell comment of exactly this form, giving your own reason "
+    "in at least two words on that line: #ZIKARON-FORCE #Reason: regenerate golden file."
+)
+
+#: What the find-replace guard's denies end with where an accepted override is not acknowledged.
+UNACKNOWLEDGED_CLAUSE: Final = (
+    "An accepted override is not acknowledged: the command runs, and no reminder follows it, so "
+    "once it has run, the next step is to re-read all the changed material and its surroundings."
 )
 
 #: What both rules' invalid-marker messages say about the marker (§3.4, §9.2).
@@ -48,7 +58,7 @@ INVALID_MARKER_TEMPLATE: Final = (
 
 SELF_MATCH_TEMPLATE: Final = (
     "Zikaron's self-match rule refused this command: the `{word}` pattern also matches the shell "
-    "running this command, because Claude Code runs each command inside a shell whose command "
+    "running this command, because {harness} runs each command inside a shell whose command "
     "line contains the command's text. The matched text, with a little of its line around it: "
     "`{excerpt}`. So pkill kills this command's own shell, and pgrep always finds it: a check for "
     "a running process always finds one, a wait for it to exit never ends, and a count is one "
@@ -88,8 +98,8 @@ ACKNOWLEDGEMENT_TEMPLATE: Final = (
     "#ZIKARON-FORCE accepted by Zikaron's find-replace guard, reason: {reason}. The guard's deny "
     "is withdrawn for this command only; the usual permission flow applies to it, and the "
     "override and its reason are recorded in the transcript. This command changes {targets}. "
-    "No re-read reminder follows a Bash call, so once it has run, the next step is to re-read all "
-    "the changed material and its surroundings."
+    "No re-read reminder follows a {shell} call, so once it has run, the next step is to re-read "
+    "all the changed material and its surroundings."
 )
 
 NUDGE_WITH_RANGES_TEMPLATE: Final = (
@@ -115,25 +125,46 @@ FORM_LABELS: Final[dict[Form, str]] = {
 }
 
 
+def with_harness(template: str, spec: HarnessSpec) -> str:
+    """`template` with the tools it names spelled as `spec`'s model sees them and the harness named
+    as its prose names it, its own fields left to fill."""
+    ids = spec.tool_ids
+    return (
+        template.replace("{read}", ids.read)
+        .replace("{edit}", ids.edit)
+        .replace("{write}", ids.write)
+        .replace("{shell}", ids.shell)
+        .replace("{harness}", spec.prose_name)
+    )
+
+
 def deny_message(
-    match: FormMatch | SelfMatch, *, invalid_marker: bool, marker_in_content: bool
+    match: FormMatch | SelfMatch,
+    *,
+    invalid_marker: bool,
+    marker_in_content: bool,
+    spec: HarnessSpec = CLAUDE_CODE,
 ) -> str:
-    """The `permissionDecisionReason` for a deny of `match`."""
+    """The reason a deny of `match` gives, in `spec`'s names."""
     if isinstance(match, SelfMatch):
         fix = SELF_MATCH_FIXES[match.platform]
-        message = SELF_MATCH_TEMPLATE.format(word=match.word, excerpt=match.excerpt, fix=fix)
+        template = with_harness(SELF_MATCH_TEMPLATE, spec)
+        message = template.format(word=match.word, excerpt=match.excerpt, fix=fix)
         if invalid_marker:
             message = f"{message} {MARKER_CLAUSE}"
     else:
-        template = INVALID_MARKER_TEMPLATE if invalid_marker else DENY_TEMPLATE
+        template = with_harness(INVALID_MARKER_TEMPLATE if invalid_marker else DENY_TEMPLATE, spec)
         targets = _targets(match.authored_paths)
         message = template.format(word=match.word, form=FORM_LABELS[match.form], targets=targets)
+        if spec.guards is not None and spec.guards.deny is DenyChannel.STDERR:
+            message = f"{message} {UNACKNOWLEDGED_CLAUSE}"
     return f"{message} {PLACEMENT_CLAUSE}" if marker_in_content else message
 
 
-def acknowledgement(reason: str, targets: Sequence[str]) -> str:
+def acknowledgement(reason: str, targets: Sequence[str], *, spec: HarnessSpec = CLAUDE_CODE) -> str:
     """The `additionalContext` for a valid override: its reason, and what the command changes."""
-    return ACKNOWLEDGEMENT_TEMPLATE.format(reason=reason, targets=_targets(targets))
+    template = with_harness(ACKNOWLEDGEMENT_TEMPLATE, spec)
+    return template.format(reason=reason, targets=_targets(targets))
 
 
 def _targets(paths: Sequence[str]) -> str:

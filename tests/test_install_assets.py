@@ -9,19 +9,22 @@ import json
 import re
 import shlex
 from pathlib import Path
+from typing import Final
 
 import pytest
 from fastmcp import Client
 
 from tests.design_tables import literal, table_with_columns
 from zikaron.core.retrieval.block import PREAMBLE
-from zikaron.harness.spec import CLAUDE_CODE, KIRO
+from zikaron.harness.spec import CLAUDE_CODE, KIRO, HarnessSpec
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.hook.write_policy import WRITE_POLICY_PROMPT
 from zikaron.install import entries
 from zikaron.install.assets import (
+    CLAUDE_CODE_FILE_READING,
     CONSOLIDATOR_PROMPT,
+    KIRO_FILE_READING,
     KIRO_SPAWN_INSTRUCTION,
     SKILL_NAME,
     consolidator_prompt,
@@ -40,6 +43,7 @@ from zikaron.install.entries import (
     mcp_servers_value,
 )
 from zikaron.mcp.server import build_server
+from zikaron.service import paths
 
 _DISTRIBUTION_HEADING = "### The consolidator's model is a shipped config field, not a `meta` key"
 _MODEL_TABLE_COLUMNS = ("Setting", "Location", "Type", "v0 default", "Rule")
@@ -93,21 +97,36 @@ class TestTheConsolidatorConfigMatchesTheToolSurfaceInCode:
         derives, under which the consolidator's `next_group` call succeeded headless
         (`research/kiro-v3-probe.md` §2, §17)."""
         config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
-        assert config["tools"] == [f"@{MCP_SERVER_NAME}"]
-        assert config["permissions"] == {
-            "rules": [
-                {"capability": "mcp", "match": [f"{MCP_SERVER_NAME}/*"], "effect": "allow"},
-            ]
+        assert config["tools"] == [f"@{MCP_SERVER_NAME}", "read"]
+        permissions = config["permissions"]
+        assert isinstance(permissions, dict)
+        assert permissions["rules"][0] == {
+            "capability": "mcp",
+            "match": [f"{MCP_SERVER_NAME}/*"],
+            "effect": "allow",
         }
 
-    def test_it_grants_no_filesystem_or_shell_tool(self) -> None:
+    def test_it_grants_no_write_or_shell_tool(self) -> None:
         config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
         tools = config["tools"]
         permissions = config["permissions"]
         assert isinstance(tools, list)
         assert isinstance(permissions, dict)
-        assert set(tools).isdisjoint({"read", "write", "shell", "grep", "glob", "code", "*"})
-        assert {rule["capability"] for rule in permissions["rules"]} == {"mcp"}
+        assert set(tools).isdisjoint({"write", "shell", "grep", "glob", "code", "*"})
+        assert {rule["capability"] for rule in permissions["rules"]} == {"mcp", "fs_read"}
+
+    def test_its_read_is_allowed_in_the_spill_directory_and_denied_everywhere_else(self) -> None:
+        """A subagent's own allow rule confines nothing — the session's broader allow governs — and
+        a deny with `exclude` does, for `read_file` and for the search and listing tools
+        (`research/kiro-v3-probe.md` §52, §53, §55)."""
+        config = consolidator_agent_config(_COMMANDS, model=KIRO.consolidator_model)
+        permissions = config["permissions"]
+        assert isinstance(permissions, dict)
+        spill = "./.zikaron/spill/**"
+        assert permissions["rules"][1:] == [
+            {"capability": "fs_read", "match": [spill], "effect": "allow"},
+            {"capability": "fs_read", "exclude": [spill], "effect": "deny"},
+        ]
 
     def test_it_declares_no_hooks(self) -> None:
         """Its session must not fire the push hook — it has no `search` to spend a result on — and
@@ -490,53 +509,111 @@ class TestTheWholeConfigIsSerializable:
 
 
 class TestTheConsolidatorPromptsSpillGuidance:
-    """The two fills are supplied together or not at all, and only where the harness can read a
-    file. A prompt naming a tool the agent lacks sends it looking for something that is not there;
-    a granted tool the prose never mentions is one the agent will not use."""
+    """The file-reading texts are supplied together or not at all, and only where the harness can
+    read a file. A prompt naming a tool the agent lacks sends it looking for something that is not
+    there; a granted tool the prose never mentions is one the agent will not use. Each harness's
+    texts are its own, memory-reviewer's wording, and name the read tool from the spec."""
+
+    _CLAUDE_CODE: Final = consolidator_prompt(
+        identity_vocabulary(),
+        file_reading=CLAUDE_CODE_FILE_READING.naming(CLAUDE_CODE.tool_ids.read),
+    )
+    _KIRO: Final = consolidator_prompt(
+        identity_vocabulary(), file_reading=KIRO_FILE_READING.naming(KIRO.tool_ids.read)
+    )
 
     def test_a_harness_that_cannot_read_files_gets_no_mention_of_reading_them(self) -> None:
-        prompt = consolidator_prompt(identity_vocabulary(), can_read_files=False)
+        prompt = consolidator_prompt(identity_vocabulary())
 
         # The backticked form, not the bare word: "Read the records in `current`" is ordinary
         # prose elsewhere in this prompt, and asserting on that would fail for the wrong reason.
         assert "`Read`" not in prompt
         assert "spilled" not in prompt
-        assert "four tools and no" in prompt, "the four-tool claim must stay true there"
+        assert "four tools and no" in _flat(prompt), "the four-tool claim must stay true there"
 
-    def test_a_harness_that_can_read_files_gets_both_halves(self) -> None:
-        prompt = consolidator_prompt(identity_vocabulary(), can_read_files=True)
-
-        assert "You also have `Read`" in prompt, "the opening clause admitting the fifth tool"
+    @pytest.mark.parametrize(("spec", "harness"), [(CLAUDE_CODE, "claude-code"), (KIRO, "kiro")])
+    def test_a_harness_that_can_read_files_gets_both_halves(
+        self, spec: HarnessSpec, harness: str
+    ) -> None:
+        prompt = self._CLAUDE_CODE if harness == "claude-code" else self._KIRO
+        assert f"You also have `{spec.tool_ids.read}`" in prompt, "the clause admitting it"
         assert "## When a group is too large to deliver" in prompt, "the section it points at"
 
-    def test_the_guidance_names_the_pointer_as_this_systems_own(self) -> None:
+    @pytest.mark.parametrize("harness", ["claude-code", "kiro"])
+    def test_the_guidance_names_the_pointer_as_this_systems_own(self, harness: str) -> None:
         """Measured, not decorative: shown an over-large result, models correctly treat tool
         output telling them to act as untrusted and decline. That reflex is right and this pointer
         is the same shape, so a consolidator behaving correctly would refuse it unless the prompt
         says whose it is."""
-        prompt = consolidator_prompt(identity_vocabulary(), can_read_files=True)
-
+        prompt = self._CLAUDE_CODE if harness == "claude-code" else self._KIRO
         assert "This pointer is Zikaron's own, and acting on it is correct." in prompt
 
-    def test_the_guidance_keeps_read_scoped_to_the_spilled_file(self) -> None:
-        """The widening of D32 is bounded by prose alone, because this harness has no per-subagent
-        path rule — so the prose has to actually be there, **and has to say that it is prose**.
+    def test_claude_codes_guidance_keeps_read_scoped_to_the_spilled_file(self) -> None:
+        """The widening of D32 is bounded by prose alone under Claude Code, because it has no
+        per-subagent path rule — so the prose has to actually be there, **and has to say that it is
+        prose**.
 
         *This asserted the phrase "reaches that file and nothing else", which claims a mechanical
         scope the harness cannot provide — the exact thing the docstring above already knew. A test
         pinning the reassuring phrasing over the true one is how a false absolute survives in
         shipped text: the guard was holding it in place.*
         """
-        prompt = consolidator_prompt(identity_vocabulary(), can_read_files=True)
-
+        prompt = self._CLAUDE_CODE
         assert "the only thing `Read` is for here" in prompt
         assert "It is not scoped to it" in prompt, (
             "the prompt must say the bound is a convention, not a mechanism"
         )
         assert "not a legal target" in prompt
 
+    def test_kiros_guidance_says_its_rules_hold_it_to_the_spill_directory(self) -> None:
+        """Under kiro the consolidator's own deny rule confines its reads and searches
+        (`research/kiro-v3-probe.md` §53, §55), and the prompt still asks it to read nothing else,
+        since `read` also grants tools that rule was not measured against."""
+        flat = _flat(self._KIRO)
+        assert "the only thing `read_file` is for here" in flat
+        assert "**Your rules hold you to its directory**" in flat
+        assert "you are asked not to read anything else" in flat
+        assert "It is not scoped to it" not in flat
+        assert "four verbs and no search" in flat
+        assert "naming the offset to continue from" in flat
+        assert f"`{paths.spill_dir(paths.store_dir(Path())).as_posix()}/`" in flat
+
+    @pytest.mark.parametrize("harness", ["claude-code", "kiro"])
+    def test_the_texts_match_what_the_reviewer_wrote(self, harness: str) -> None:
+        """Claude Code's are the texts shipped before kiro read files; kiro's are
+        `reviews/m41-2-review.md` §"Prompt texts — kiro" 5 to 7, the note's leading newline and the
+        guidance's trailing blank line being the constants' own."""
+        if harness == "claude-code":
+            texts = CLAUDE_CODE_FILE_READING.naming(CLAUDE_CODE.tool_ids.read)
+            assert texts.read_note.startswith("\nYou also have `Read`. It is not a fifth way")
+            return
+        review = (Path(__file__).resolve().parent.parent / "reviews" / "m41-2-review.md").read_text(
+            encoding="utf-8"
+        )
+
+        def first_block(number: int) -> str:
+            subsection = review.split(f"\n### {number}. ", 1)[1].split("\n### ", 1)[0]
+            return str(re.findall(r"\n```\n(.*?)\n```", subsection, re.DOTALL)[0])
+
+        texts = KIRO_FILE_READING.naming(KIRO.tool_ids.read)
+        assert (texts.opening, texts.read_note, texts.spill_guidance) == (
+            first_block(5),
+            f"\n{first_block(6)}",
+            f"{first_block(7)}\n\n",
+        )
+
+    def test_no_kiro_or_claude_code_tool_name_is_written_into_the_texts(self) -> None:
+        """Named under a tool no harness has, neither harness's read tool may appear."""
+        for texts in (CLAUDE_CODE_FILE_READING, KIRO_FILE_READING):
+            rendered = "".join(texts.naming("open_it"))
+            assert "`Read`" not in rendered
+            assert "read_file" not in rendered
+
     def test_no_placeholder_survives_either_way(self) -> None:
         """A surviving `@@...@@` would ship as literal prose to the model."""
-        for can_read in (False, True):
-            prompt = consolidator_prompt(identity_vocabulary(), can_read_files=can_read)
+        for prompt in (consolidator_prompt(identity_vocabulary()), self._CLAUDE_CODE, self._KIRO):
             assert "@@" not in prompt
+
+    def test_an_unnamed_read_tool_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="@@READ_TOOL@@ survived substitution"):
+            consolidator_prompt(identity_vocabulary(), file_reading=KIRO_FILE_READING)

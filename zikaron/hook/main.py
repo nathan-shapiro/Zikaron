@@ -8,7 +8,7 @@ dispatches on `hook_event_name` from the payload itself rather than on an argv f
 Both harnesses would accept a per-trigger flag, so this is a choice rather than a constraint: the
 payload's own `hook_event_name` cannot disagree with the event that fired it, while a flag copied
 into several config entries can be copied wrong exactly once and then mis-dispatch every invocation
-of that trigger, silently. The one argument a command carries, `--components` on the two start
+of that trigger, silently. The one argument a command carries, `--components` on the start
 triggers, selects what is said rather than which event is served, and reads as the memory hook
 whenever it does not read cleanly.
 
@@ -37,7 +37,7 @@ import os
 import sys
 from pathlib import Path
 
-from zikaron.guard.start_text import GUARD_START_TEXT
+from zikaron.guard.start_text import guard_start_text
 from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
 from zikaron.hook import push, reminder, session_relay, spawn_warm, subagent_policy
@@ -78,7 +78,8 @@ def _dispatch(event: HookEvent, payload: dict[str, object], components: Componen
     """Whatever this event's own module wants emitted, or `None` for nothing at all.
 
     A start trigger emits the write policy for the memory store and the guard start text for the
-    guards, in that order; a guards-only start makes no service connection at all.
+    guards, in that order, the start text in the tool names of the harness detected; a guards-only
+    start makes no service connection at all.
     """
     if components.memory and event in _RELAYED:
         session_relay.record(
@@ -90,7 +91,7 @@ def _dispatch(event: HookEvent, payload: dict[str, object], components: Componen
         return _remind(payload) if components.memory else None
     parts = [_start_policy(event, payload) if components.memory else None]
     if components.guards and not _is_consolidator(event, payload):
-        parts.append(GUARD_START_TEXT)
+        parts.append(guard_start_text(detect.current_spec()))
     text = "\n\n".join(part for part in parts if part is not None)
     return text or None
 
