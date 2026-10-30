@@ -88,9 +88,9 @@ def declared_from_columns(
     return MalformedLink()
 
 
-def _lines(text: str) -> Iterator[tuple[str, bool]]:
-    """Every line starting within the prefix, with one trailing `\\r` removed, and whether it ends
-    there.
+def _lines(text: str) -> Iterator[tuple[str, bool, int]]:
+    """Every line starting within the prefix, with one trailing `\\r` removed, whether it ends
+    there, and where the text after it begins.
 
     Split on `\\n` alone, as the chunker splits. A line ends within the prefix when its terminator
     does, or when it is the text's last line and the text ends there.
@@ -101,9 +101,9 @@ def _lines(text: str) -> Iterator[tuple[str, bool]]:
         if newline == -1:
             ends = len(text) <= LINK_PREFIX_CHARS
             line = text[start:] if ends else text[start:LINK_PREFIX_CHARS]
-            yield line.removesuffix("\r"), ends
+            yield line.removesuffix("\r"), ends, len(text)
             return
-        yield text[start:newline].removesuffix("\r"), True
+        yield text[start:newline].removesuffix("\r"), True, newline + 1
         start = newline + 1
 
 
@@ -142,17 +142,32 @@ def read_link(text: str) -> DeclaredLink | None:
         text: a file's decoded text, any byte-order mark already removed — or its stored chunks'
             concatenation, which is the same characters.
     """
+    return _scan(text)[0]
+
+
+def front_matter_end(text: str) -> int:
+    """Where `text` continues past a front-matter block that declares a link, or 0.
+
+    The block is skipped when `read_link` answers anything but `None` for it, a malformed
+    declaration included, and it closes within the prefix. A block that declares nothing, or never
+    closes there, is the file's own text.
+    """
+    return _scan(text)[1]
+
+
+def _scan(text: str) -> tuple[DeclaredLink | None, int]:
+    """What the front matter declares, and where the text after its closing delimiter begins."""
     lines = _lines(text)
     first = next(lines, None)
-    if first is None or first != (_DELIMITER, True):
-        return None
+    if first is None or first[:2] != (_DELIMITER, True):
+        return None, 0
     paths: list[str] = []
     blobs: list[str] = []
-    for line, ends in lines:
+    for line, ends, after in lines:
         if line == _DELIMITER and ends:
             if not paths and not blobs:
-                return None
-            return _well_formed(paths, blobs)
+                return None, 0
+            return _well_formed(paths, blobs), after
         parsed = key_and_value(line)
         if parsed is None:
             continue
@@ -162,4 +177,4 @@ def read_link(text: str) -> DeclaredLink | None:
         elif key == SOURCE_BLOB_KEY:
             blobs.append(value)
     # The block never closed within the prefix: whatever it carried is a declaration gone wrong.
-    return MalformedLink() if paths or blobs else None
+    return (MalformedLink() if paths or blobs else None), 0

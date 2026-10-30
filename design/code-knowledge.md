@@ -735,9 +735,10 @@ and `knowledge_list` describes each documented module in a line of its own. One 
 module would leave a search no way to keep to one, since `knowledge_search` filters by corpus and
 by nothing else (`design/knowledge-index.md` §8.3). The cost is a search that names no corpus:
 it returns a group per knowledge base — every documented module and every hand-written corpus
-alike — each up to `limit_per_kb` results, and with snippets at their 1,200-character cap a group
-of five is about 7,000 bytes, so past about three groups §8.7's
-24,000-byte cap there sheds the lowest-ranked groups whole (§8). **Rejected
+alike — each up to `limit_per_kb` results, the first `knowledge_whole_results` with snippets at
+their 1,200-character cap and the rest named by an opening of at most 400, so at the defaults a
+group of five is about 5,300 bytes and past about four groups §8.7's 24,000-byte cap there sheds
+the lowest-ranked groups whole (§8). **Rejected
 for now: one corpus and a path filter on search**, which keeps one ranking across modules but is a
 knowledge-index change and gives no list of modules; it is the next thing to try if the evaluation
 finds that questions spanning modules suffer. A module nested in or containing a documented one is
@@ -1414,11 +1415,13 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
 - **A document wrong from the day it was written reads `fresh`.** Only the reader's check against
   the code finds it (§2).
 - **A document that describes its source in part says so where a search seldom lands.** A
-  search result is the matching lines with the document's path and `source.state`, never its title
-  or role line, so a hit on the Declarations of a partly read file does not say the list is
-  partial; only a hit on the role line or Purpose does. **The fix is K14's**: a front-matter field
-  the documenter sets, reported with every result beside `source.state` — a change to K14's format
-  this milestone's fence excludes, proposed in `FINDINGS.md` §"Owed work".
+  whole search result is the matching lines with the document's path and `source.state`, never its
+  title or role line, so a whole hit on the Declarations of a partly read file does not say the
+  list is partial; a hit on the role line or Purpose does, and so does a named result, whose
+  opening begins with the title and the role line as far as its limit reaches
+  (`design/knowledge-index.md` §8.3). A K14
+  front-matter field reporting partial coverage with every result was declined on its measurement
+  (`research/owed-measurements-2026-10-30.md` §3).
 - **Search samples dependents** of a widely used file (§2).
 - **The search reminder (§6) misses some searches**: one whose paths come from elsewhere — a `{}`,
   `+`, `;` or `-` among its operands, as `find … -exec grep … {} +` and `xargs -I{} grep … {}`
@@ -1477,7 +1480,7 @@ too. No published benchmark is large, unmemorized, feature-shaped and localizati
   measurement.
 - **A search naming no corpus is cut short across many modules**: each knowledge base's group —
   every module's, and every hand-written corpus's — carries up to `limit_per_kb` results, and past
-  about three groups at the default the response cap sheds the lowest-ranked groups whole (§5.3). The remedy at the call is naming the modules or a smaller
+  about four groups at the defaults the response cap sheds the lowest-ranked groups whole (§5.3). The remedy at the call is naming the modules or a smaller
   `limit_per_kb`; one corpus with a path filter is the design change, if the evaluation asks for it.
 - **Two modules whose paths differ only in case cannot both have a corpus**: a corpus name is
   lower-cased (`design/knowledge-index.md` §3.1), so the second module's run finds the first's

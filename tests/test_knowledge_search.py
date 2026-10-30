@@ -25,13 +25,29 @@ from tests.knowledge_fixtures import (
 )
 from zikaron.core.knowledge import arms, pending, search
 from zikaron.core.knowledge.chunking import plan_file_chunks
+from zikaron.core.knowledge.excerpts import cut_to_snippet
 from zikaron.core.knowledge.meta import GitMode
-from zikaron.core.knowledge.search import Result, SearchSettings, cut_to_snippet
+from zikaron.core.knowledge.search import NamedResult, Result, SearchSettings
 from zikaron.core.knowledge.source_hash import HashBudget
 
-_DEFAULT_SETTINGS: Final = SearchSettings(
-    limit_per_kb=5, max_chunks_per_file=2, snippet_max_chars=1200
-)
+
+def _settings(
+    *,
+    limit_per_kb: int = 5,
+    max_chunks_per_file: int = 2,
+    snippet_max_chars: int = 1200,
+    whole_results: int = 20,
+) -> SearchSettings:
+    """Search settings with every result whole unless a test names some."""
+    return SearchSettings(
+        limit_per_kb=limit_per_kb,
+        max_chunks_per_file=max_chunks_per_file,
+        snippet_max_chars=snippet_max_chars,
+        whole_results=whole_results,
+    )
+
+
+_DEFAULT_SETTINGS: Final = _settings()
 
 
 def read_lines(path: Path, start_line: int, end_line: int) -> str:
@@ -53,13 +69,13 @@ def read_lines(path: Path, start_line: int, end_line: int) -> str:
     return "".join(kept[start_line - 1 : end_line])
 
 
-async def _search(
+async def _results(
     corpus: Corpus,
     query: str,
     *,
     encoder: FakeEncoder | None = None,
     settings_used: SearchSettings = _DEFAULT_SETTINGS,
-) -> tuple[Result, ...]:
+) -> tuple[Result | NamedResult, ...]:
     """Run one query against one built corpus, the way the service does."""
     using = encoder if encoder is not None else FakeEncoder()
     config = config_for(corpus.store_dir.parent)
@@ -77,6 +93,20 @@ async def _search(
             settings=settings_used,
             links=search.Links(root=corpus.store_dir.parent, budget=HashBudget()),
         )
+
+
+async def _search(
+    corpus: Corpus,
+    query: str,
+    *,
+    encoder: FakeEncoder | None = None,
+    settings_used: SearchSettings = _DEFAULT_SETTINGS,
+) -> tuple[Result, ...]:
+    """`_results` under settings that keep every one whole."""
+    results = await _results(corpus, query, encoder=encoder, settings_used=settings_used)
+    whole = tuple(result for result in results if isinstance(result, Result))
+    assert len(whole) == len(results)
+    return whole
 
 
 #: Files whose shape a chunker that normalizes anything would get wrong, each by a different
@@ -164,7 +194,7 @@ class TestTheRoundTripProperty:
                 results = await _search(
                     corpus,
                     query,
-                    settings_used=SearchSettings(
+                    settings_used=_settings(
                         limit_per_kb=20, max_chunks_per_file=20, snippet_max_chars=120
                     ),
                 )
@@ -190,9 +220,7 @@ class TestTheSnippetCap:
             (result,) = await _search(
                 corpus,
                 "protobuf",
-                settings_used=SearchSettings(
-                    limit_per_kb=5, max_chunks_per_file=2, snippet_max_chars=60
-                ),
+                settings_used=_settings(snippet_max_chars=60),
             )
             assert result.truncated is True
             assert result.snippet.endswith("\n")
@@ -248,9 +276,7 @@ class TestWhatOneFileMayFill:
             results = await _search(
                 corpus,
                 "protobuf",
-                settings_used=SearchSettings(
-                    limit_per_kb=5, max_chunks_per_file=2, snippet_max_chars=1200
-                ),
+                settings_used=_settings(),
             )
             assert sum(1 for result in results if result.path == "big.md") == 2
             assert "small.md" in {result.path for result in results}
@@ -262,9 +288,7 @@ class TestWhatOneFileMayFill:
             results = await _search(
                 corpus,
                 "protobuf",
-                settings_used=SearchSettings(
-                    limit_per_kb=3, max_chunks_per_file=2, snippet_max_chars=1200
-                ),
+                settings_used=_settings(limit_per_kb=3),
             )
             assert len(results) == 3
 
@@ -462,3 +486,140 @@ class TestDeterminism:
             first = await _search(corpus, "protobuf step")
             second = await _search(corpus, "protobuf step")
             assert first == second
+
+    async def test_named_entries_twice_are_identical(self, tmp_path: Path) -> None:
+        async with _corpus(tmp_path, _NAMED_LAYOUT) as corpus:
+            await build_index(corpus)
+            settings_used = _settings(limit_per_kb=10, whole_results=3)
+            first = await _results(corpus, "protobuf", settings_used=settings_used)
+            second = await _results(corpus, "protobuf", settings_used=settings_used)
+            assert any(isinstance(result, NamedResult) for result in first)
+            assert first == second
+
+
+_SHA1: Final = "0123456789abcdef0123456789abcdef01234567"
+
+#: Enough files that a search asking for twenty gets more than ten, so the limits the invariant is
+#: checked at mostly end in named entries; files whose chunk is longer than the snippet
+#: cap one test sets, one whose only line is cut inside it and the rest cut at a line boundary; one
+#: that spans two chunks, so an opening is seen to come from the first; and two linked documents.
+_NAMED_LAYOUT: Final[dict[str, bytes]] = {
+    **{f"doc{index:02}.md": f"protobuf topic {index}\n".encode() for index in range(10)},
+    **{
+        f"linked{index}.md": (
+            f"---\nzikaron-source: src/gone{index}.py\nzikaron-source-blob: {_SHA1}\n---\n"
+            f"# linked {index}\n\nprotobuf linked document\n"
+        ).encode()
+        for index in range(2)
+    },
+    "long.md": "".join(f"protobuf long line {index}\n" for index in range(130)).encode(),
+    "minified.md": b"protobuf " + b"x" * 100 + b"\n",
+}
+
+
+class TestNamedEntries:
+    """Each corpus's first results whole and the rest named, at the ranks they hold
+    (`knowledge-index.md` §8.3, K15)."""
+
+    async def test_the_cutoff_changes_what_is_shown_never_what_is_ranked(
+        self, tmp_path: Path
+    ) -> None:
+        async with _corpus(tmp_path, _NAMED_LAYOUT) as corpus:
+            await build_index(corpus)
+            for limit in range(1, 21):
+                every_one_whole = await _results(
+                    corpus, "protobuf", settings_used=_settings(limit_per_kb=limit)
+                )
+                for cutoff in (1, 3):
+                    results = await _results(
+                        corpus,
+                        "protobuf",
+                        settings_used=_settings(limit_per_kb=limit, whole_results=cutoff),
+                    )
+                    assert [(r.path, r.start_line) for r in results] == [
+                        (r.path, r.start_line) for r in every_one_whole
+                    ]
+                    assert [isinstance(r, Result) for r in results] == [
+                        position < cutoff for position in range(len(results))
+                    ]
+                    for got, want in zip(results, every_one_whole, strict=True):
+                        if isinstance(got, Result):
+                            assert got == want
+            assert len(every_one_whole) > 10
+
+    async def test_a_named_entry_reports_its_chunk_s_own_lines_and_its_source(
+        self, tmp_path: Path
+    ) -> None:
+        async with _corpus(tmp_path, _NAMED_LAYOUT) as corpus:
+            await build_index(corpus)
+            whole = await _results(
+                corpus,
+                "protobuf",
+                settings_used=_settings(limit_per_kb=20, snippet_max_chars=60, whole_results=20),
+            )
+            named = await _results(
+                corpus,
+                "protobuf",
+                settings_used=_settings(limit_per_kb=20, snippet_max_chars=60, whole_results=1),
+            )
+            pairs = list(zip(whole[1:], named[1:], strict=True))
+            assert any(isinstance(full, Result) and full.truncated for full, _ in pairs)
+            assert any(entry.source is not None for _, entry in pairs)
+            for full, entry in pairs:
+                assert isinstance(full, Result)
+                assert isinstance(entry, NamedResult)
+                assert (entry.path, entry.start_line, entry.stale) == (
+                    full.path,
+                    full.start_line,
+                    full.stale,
+                )
+                assert entry.source == full.source
+                assert entry.end_line >= full.end_line
+                if not full.truncated:
+                    assert entry.end_line == full.end_line
+                elif full.snippet.endswith("\n"):
+                    assert entry.end_line > full.end_line
+                else:
+                    assert entry.end_line == full.end_line
+            cut_inside_a_line = [
+                full
+                for full, _ in pairs
+                if isinstance(full, Result) and full.truncated and not full.snippet.endswith("\n")
+            ]
+            assert cut_inside_a_line
+
+    async def test_a_named_entry_opens_with_its_file_s_first_chunk(self, tmp_path: Path) -> None:
+        async with _corpus(tmp_path, _NAMED_LAYOUT) as corpus:
+            await build_index(corpus)
+            results = await _results(
+                corpus, "linked document", settings_used=_settings(limit_per_kb=20, whole_results=1)
+            )
+            openings = {
+                entry.path: entry.opening for entry in results if isinstance(entry, NamedResult)
+            }
+            linked = {path: text for path, text in openings.items() if path.startswith("linked")}
+            assert linked
+            for path, opening in linked.items():
+                index = path.removeprefix("linked").removesuffix(".md")
+                assert opening == f"# linked {index} protobuf linked document"
+            assert any(
+                entry.path == "long.md" and entry.start_line > 1
+                for entry in results
+                if isinstance(entry, NamedResult)
+            )
+            assert openings["long.md"].startswith("protobuf long line 0 protobuf long line 1")
+
+    async def test_a_named_entry_s_stale_is_its_file_s_own(self, tmp_path: Path) -> None:
+        async with _corpus(tmp_path, _NAMED_LAYOUT) as corpus:
+            await build_index(corpus)
+            for index in range(10):
+                (corpus.root / f"doc{index:02}.md").write_bytes(
+                    b"protobuf topic, grown since the build\n"
+                )
+            results = await _results(
+                corpus, "protobuf", settings_used=_settings(limit_per_kb=20, whole_results=1)
+            )
+            named = [result for result in results if isinstance(result, NamedResult)]
+            assert {entry.stale for entry in named} == {True, False}
+            for entry in named:
+                assert entry.stale is entry.path.startswith("doc")

@@ -71,18 +71,35 @@ M40-6 scoped a documenter's test absences to the files it read and corrected the
 headless `--allowedTools` (`research/m40-toy-run.md` §18).
 
 **Release.** `0.4.1` is released (tag `v0.4.1` on `f6a0a34`, 2026-10-30), a patch carrying M41
-and M40-6; the tree carries `0.4.2.dev0`. A minor bump means a `meta.schema_version` bump and
+and M40-6; the tree carries `0.4.2`, set in M42's pull request for the operator to tag (operator,
+2026-11-01) — a patch, since M42 moves no schema. A minor bump means a `meta.schema_version` bump and
 nothing else (D36, `design/distribution.md` §3).
 
-**The owed measurements were taken on 2026-10-30, on an idle host** (operator's request):
-Q22's marker rate, the push block against kiro's cut, K14's partial coverage, Q17's cold `init`,
-and the hooks' cost per call and share of a session — all five in
-`research/owed-measurements-2026-10-30.md`, each owed entry below carrying its number and the
-operator's decision on it. The two transcript measurements followed —
-turns that end on a promise, and readers checking a code-knowledge result's source — in
-`research/transcript-measurements-2026-10-30.md`. **Next: the next milestone, chosen from
-§"Owed work" with the operator.** **Each milestone is brainstormed with the operator before its
-brief is written** (operator, 2026-10-13).
+**The owed measurements of 2026-10-30 landed through PR #33 as `aa1ecf8`**
+(`research/owed-measurements-2026-10-30.md`, `research/transcript-measurements-2026-10-30.md`);
+each owed entry below carries its number and the operator's decision on it.
+
+**Each milestone is brainstormed with the operator before its brief is written** (operator,
+2026-10-13), and chosen from §"Owed work".
+
+**In progress: M42, each corpus's first results whole and the rest named, with no further page.**
+The design is the brief, `design/build-plan.md` §M42, amended 2026-10-31 to drop `offset` on the
+live measurements (no reader paged; `research/paged-search-replay.md`). Committed locally as
+`f9750c6` on `m42-paged-knowledge-search` with `offset`, not pushed — the eval harness refuses an
+uncommitted package — and the amendment is uncommitted on top, so the PR amends `f9750c6`.
+Experimental variants run from scratch copies of the package via `PYTHONPATH`, never this tree,
+since four real projects run this `.venv`. Steps (operator, 2026-10-31: *"let's ship it without
+offset and used freed up budget for clearer wording (ask reviewer to provide it to you). Let's
+amend the brief, make code changes and then have additional review rounds till approval."*):
+1. **Done**: the brief amended; `offset`, its invariant, the past-the-end counting and §7.4's
+   mention removed from code, tests and design text.
+2. **Done**: memory-reviewer's clearer description (`reviews/m42-paged-search-review.md`
+   §"Wording, second"), verbatim in `zikaron/mcp/primary.py` and `knowledge-index.md` §8.3, 1,880
+   of 1,900 code points; the cold read rerun on it closes both weak spots
+   (`research/paged-search-replay.md`, done-when 4); five mutations of the changed code caught.
+3. **Done**: gate green, no new line uncovered; the brief and build together APPROVED
+   (`reviews/m42-paged-search-review.md`). **Next**: the PR (operator, 2026-11-01), amending
+   `f9750c6`, carrying the hook's `sqlite3` guard and the `0.4.2` version.
 
 **Guards (D38, `design/guards.md`).** Installed with the memory store (`--components both`) in
 `~/Trading/LeibaTrader`, `~/Dividends`, `~/Memory` and `~/PythonPlayground`; a project that
@@ -147,18 +164,15 @@ An owed item goes here the moment it is identified. The detail behind each is in
   on new writes (26% marked since `0.3.0` against 56% before,
   `research/owed-measurements-2026-10-30.md` §1), and what remains is the old corpus, 79 of
   LeibaTrader's 150 pre-release live long-term rows marked.
-- **A prompt-only arm for the Warp evaluation's medium issues** — proposed, not approved: the
-  treatment's prompt with no documents, about $65–90, to separate the prompt's checking paragraph
-  from the documents as the cause of the extra cost (`research/m40-evaluation.md` §6). It needs
+- **A prompt-only arm for the Warp evaluation's medium issues** — approved (operator, 2026-10-30)
+  and not yet run; M42's paged-against-unpaged check ran without it, both of its arms reading the
+  documents. The treatment's prompt with no documents, about $65–90, to separate the prompt's
+  checking paragraph from the documents as the cause of the extra cost
+  (`research/m40-evaluation.md` §6). It needs
   `prepare` again, since the rebase replaced the commit `state.json` records. The earlier
   documents and slice are in `~/Zikaron-m40-archive/`.
 - **The closed-issue stage of the evaluation** — a milestone of its own: closed issues at the
   commits their fixes merged onto, the documents rebuilt there by the planner.
-- **Paged knowledge search** (operator, 2026-10-22): the first three snippets whole, the rest
-  named by path, line range and role line, with an `offset`; it changes
-  `design/knowledge-index.md` §8.3, so it is brainstormed first. Readers already ask for 10
-  results in 57 of 194 searches, yet only 1 of 48 runs opened a document file after a search;
-  measure page fetches in a live arm first.
 - **A dependency that moves while its users' bytes do not** leaves `Depends on:` naming a gone
   path under a `fresh` document. Proposed, once one is seen to mislead: the planner rewrites the
   path on a move it detects and lists a document naming a missing path as stale
@@ -181,6 +195,15 @@ An owed item goes here the moment it is identified. The detail behind each is in
   `workspaceTrusted: true` after a trusted interactive session (2026-10-29). Measure first whether
   kiro honors a rule written there, and whether an installer writing kiro's own trust record is
   acceptable at all.
+- **Clients that open `memory.db`**: `zikaron-mcp` and the typed commands `Store.open` an
+  existing store on every connect to read `meta.store_id`
+  (`mcp/connection.py:_read_store_identity`). That open checks identity, which the service's own
+  inode poll already covers, and refuses a broken store with its reason before a service starts
+  (`design/knowledge-index.md` §11). It also refuses an
+  open session's older `zikaron-mcp` `schema_incompatible` once an upgrade migrates the store
+  (`reviews/m39-linked-knowledge-brief-review.md`). Proposed, once that refusal costs a session
+  again: path-only identity for every client, as the hook has, with `StartFailedError` carrying
+  the spawned service's own startup error, so only the service and the indexer open `memory.db`.
 - **More files per documenter** — not now (operator, 2026-10-21: *"I don't want context of
   documenters to overfill"*); if taken up, measure *k* = 5 against *k* = 1 on forty files
   (`research/m40-toy-run.md` §16).
@@ -191,8 +214,9 @@ An owed item goes here the moment it is identified. The detail behind each is in
   source; if it decays, a `PostToolUse` line on `zikaron_knowledge_search` to verify before
   editing. **Waits on reader traffic**: readers searched code knowledge 27 times in all the
   transcripts, in five sessions, 4 followed by a read of the top source
-  (`research/transcript-measurements-2026-10-30.md` §2). Proposed: measure it in the transcripts
-  of paged search's live arm or the closed-issue stage, whichever runs first.
+  (`research/transcript-measurements-2026-10-30.md` §2). Proposed: measure it first in the
+  transcripts M42's live runs left under `~/Zikaron-m42/` — both arms of the paged check read the
+  documents — and in the closed-issue stage's when it runs.
 - **Cheap and never run**: trademark clearance on `Zikaron`.
 - **Refused, so not re-proposed**: a relevance floor on push, and degrading the re-shown gist
   (archive §"The read path is barely used"); retrieval-quality tuning has no non-proxy dependent

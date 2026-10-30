@@ -168,6 +168,17 @@ def test_logging_specifically_is_not_among_the_critical_path_modules_imports() -
         assert "logging" not in added, module_name
 
 
+def test_sqlite3_is_not_among_the_critical_path_modules_imports() -> None:
+    """The hook is never a reader of the store (`architecture.md` §"Degraded modes"), and a reader
+    built on `sqlite3` passes the sweep above, since `sqlite3` is stdlib — so it is named, as
+    `logging` is. `warm_helper` stays outside this too: it imports the service's lifecycle, which
+    brings `aiosqlite` and so `sqlite3`, and opens no store.
+    """
+    for module_name in sorted(_CRITICAL_PATH_MODULES):
+        added = _sys_modules_after_import(module_name)
+        assert not {"sqlite3", "_sqlite3"} & added, module_name
+
+
 def test_a_hypothetical_third_party_import_would_be_caught(tmp_path: Path) -> None:
     """The enforcement claim this whole file exists to make, proven rather than assumed: a
     genuinely arbitrary, previously-unlisted third-party-shaped import must fail
