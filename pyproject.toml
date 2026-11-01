@@ -109,7 +109,7 @@ dev = [
     # Tests only. `test_distribution.py` builds the sdist and the wheel and asserts that no
     # evidence directory reached either — the one place the publication sweep's conclusions could
     # be quietly undone, since setuptools' defaults are what exclude them and nothing states that.
-    "build==1.3.0",
+    "build==1.6.1",
     # **The backend, in the venv, because that test builds with `--no-isolation`.** `build` checks
     # `[build-system] requires` against the running environment and errors *Missing dependencies*
     # when it is not there, and neither `uv venv --seed` nor `python -m venv` seeds setuptools on
