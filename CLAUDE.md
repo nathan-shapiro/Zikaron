@@ -211,10 +211,13 @@ parse `README.md`, `CLAUDE.md`, `FINDINGS.md`, `FINDINGS-archive.md` and the des
 the six files that parse the prose run in **~39 s**, an order of magnitude cheaper:
 
 ```bash
-.venv/bin/pytest -q --no-cov tests/test_design_pointers_resolve.py tests/test_distribution.py \
+.venv/bin/pytest --no-cov tests/test_design_pointers_resolve.py tests/test_distribution.py \
   tests/test_publication_hygiene.py tests/test_markdown_renders_as_written.py \
   tests/test_definition_of_done_sites.py tests/test_quoted_design_prose_is_verbatim.py
 ```
+
+`addopts` already carries `-q`, so a `-q` added on the command line makes it `-qq`, which drops the
+`N passed` summary line.
 
 **Iterate against that subset; run `./check.sh` once, when the editing is done.** Nothing here
 relaxes the gate as the definition of done — what it forbids is spending a full suite per paragraph,

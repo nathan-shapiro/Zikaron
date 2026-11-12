@@ -36,6 +36,7 @@ _CONFIG_FILENAME = "config.toml"
 _SERVICE_LOG_FILENAME = "service.log"
 _WARMUP_LOG_FILENAME = "warmup.log"
 _HOOK_LOG_FILENAME = "hook.log"
+_INSTRUCTION_PENDING_DIRNAME = "instruction-pending"
 _WRITE_POLICY_FILENAME = "write-policy.md"
 _SESSION_RELAY_DIRNAME = "sessions"
 _SPILL_DIRNAME = "spill"
@@ -191,6 +192,11 @@ def warmup_log_path(store_directory: Path) -> Path:
 def hook_log_path(store_directory: Path) -> Path:
     """The `UserPromptSubmit` hook's own failure record."""
     return store_directory / _HOOK_LOG_FILENAME
+
+
+def instruction_pending_dir(store_directory: Path) -> Path:
+    """Where the hook marks an agent whose latest instruction may not have been pushed yet."""
+    return store_directory / _INSTRUCTION_PENDING_DIRNAME
 
 
 def write_policy_override_path(store_directory: Path) -> Path:

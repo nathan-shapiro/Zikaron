@@ -434,10 +434,5 @@ def test_the_tools_it_reads_are_the_spec_field_s(
     assert service.remind_params["paths"] == [str(project / "lib")]
 
 
-def test_the_silent_agent_types_are_the_installer_s_names() -> None:
-    assert reminder.DOCUMENTER_AGENT_TYPE == DOCUMENTER_AGENT_NAME
-    assert reminder.ORCHESTRATOR_AGENT_TYPE == ORCHESTRATOR_AGENT_NAME
-
-
 def test_the_hook_s_bound_is_the_service_s() -> None:
     assert reminder.PATHS_AT_MOST == PATHS_MAX

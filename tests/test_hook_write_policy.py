@@ -19,6 +19,7 @@ from zikaron.hook.write_policy import (
     OVERRIDE_OVERSIZE,
     OVERRIDE_REFUSED,
     OVERRIDE_UNREADABLE,
+    PUSHED_AGENT_WRITE_POLICY_PROMPT,
     SUBAGENT_WRITE_POLICY_PROMPT,
     WRITE_POLICY_PROMPT,
     read_policy,
@@ -27,6 +28,7 @@ from zikaron.hook.write_policy import (
 DOCUMENT = "write-policy.md"
 HEADING = "### Main agent"
 SUBAGENT_HEADING = "### Subagent"
+PUSHED_HEADING = "### Pushed agent"
 
 
 def test_prompt_matches_the_design_document_exactly() -> None:
@@ -37,16 +39,24 @@ def test_subagent_prompt_matches_the_design_document_exactly() -> None:
     assert fenced_code(DOCUMENT, SUBAGENT_HEADING, "") == SUBAGENT_WRITE_POLICY_PROMPT
 
 
-def test_the_two_variants_differ_only_in_how_memory_reaches_the_reader() -> None:
-    """The split exists for one paragraph, and everything after it is one text with two deliveries.
+def test_pushed_agent_prompt_matches_the_design_document_exactly() -> None:
+    assert fenced_code(DOCUMENT, PUSHED_HEADING, "") == PUSHED_AGENT_WRITE_POLICY_PROMPT
+
+
+def test_the_variants_differ_only_in_how_memory_reaches_the_reader() -> None:
+    """The split exists for one paragraph, and everything after it is one text with three
+    deliveries.
 
     Asserted as a property rather than by quoting the shared part, so a rule added to one variant
-    and forgotten in the other reddens here instead of reaching only half the agents.
+    and forgotten in another reddens here instead of reaching only some of the agents.
     """
     marker = "Search with zikaron_memory_search"
-    assert WRITE_POLICY_PROMPT.split(marker)[1] == SUBAGENT_WRITE_POLICY_PROMPT.split(marker)[1]
+    shared = WRITE_POLICY_PROMPT.split(marker)[1]
+    assert SUBAGENT_WRITE_POLICY_PROMPT.split(marker)[1] == shared
+    assert PUSHED_AGENT_WRITE_POLICY_PROMPT.split(marker)[1] == shared
     assert "A block of headlines is injected" in WRITE_POLICY_PROMPT
     assert "Nothing is pushed to you" in SUBAGENT_WRITE_POLICY_PROMPT
+    assert "arrives with your first tool call" in PUSHED_AGENT_WRITE_POLICY_PROMPT
 
 
 def test_prompt_is_a_single_line_recall_instruction_present() -> None:
@@ -360,8 +370,8 @@ class TestReadPolicyOverride:
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     @pytest.mark.parametrize(
         "policy",
-        [WRITE_POLICY_PROMPT, SUBAGENT_WRITE_POLICY_PROMPT],
-        ids=["primary", "subagent"],
+        [WRITE_POLICY_PROMPT, SUBAGENT_WRITE_POLICY_PROMPT, PUSHED_AGENT_WRITE_POLICY_PROMPT],
+        ids=["primary", "subagent", "pushed"],
     )
     def test_every_shipped_policy_fits_every_harness(self, spec: HarnessSpec, policy: str) -> None:
         """A shipped policy is the one text guaranteed to be injected, so it must fit under every

@@ -212,7 +212,7 @@ async def _invoke(
     ctx: ServiceContext, request: RpcRequest, envelope: ResolvedEnvelope, method: Method
 ) -> RpcResult:
     """Note the request's receipt, read its deadline, obtain its connection, and run its handler."""
-    method.on_receipt(ctx, envelope)
+    method.on_receipt(ctx, envelope, request.params)
     deadline = method.deadline(request.params)
     try:
         async with _connection(ctx, method.access, deadline) as db:

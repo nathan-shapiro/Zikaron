@@ -113,10 +113,14 @@ gist is injected into a future model's context. That makes two failure modes wor
 
 ## 2. The prompt
 
-Two variants, differing only in their second paragraph. The main-agent text describes the block
-pushed with each user message; the subagent text says nothing is pushed, because nothing is —
-and a subagent told *"nothing is injected for you"* **as an injection** has been handed a false
-sentence as its first context. `zikaron/hook/subagent_policy.py` selects the second.
+Three variants, differing only in their second paragraph. The main-agent text describes the block
+pushed with each user message. The pushed-agent text describes the block an agent inside a session
+— an ordinary subagent or a teammate — is given with its first tool call after each instruction
+(`design/harness.md` §"Agent teams"). The subagent text says nothing is pushed, for an agent the
+push never reaches: the documenter, the orchestrator, and every subagent under a harness with no
+instruction push — and a subagent told *"nothing is injected for you"* **as an injection** has been
+handed a false sentence as its first context. `zikaron/hook/subagent_policy.py` selects between the
+last two; a tmux teammate is a session of its own and reads the first.
 
 ### Main agent
 
@@ -184,6 +188,61 @@ code. It persists across sessions, and other agents read what you write.
 message. Memory reaches you when you call zikaron_memory_search, or zikaron_memory_fetch with ids
 you were handed. Each result is a headline naming a record; the record holds the finding, its
 conditions and its exceptions.
+
+Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
+enough to deserve it:
+- **Something surprised you.** A step failed in a way you did not predict, or code behaves
+  differently from how it reads.
+- **You are about to propose** a design, a mechanism or a plan.
+- **You are about to say an approach will not work.**
+- **You are about to rename, move or delete** something other work depends on.
+
+When you propose a design or a plan, or call an approach a dead end, say what you searched for and
+what came back, including "searched X, found nothing relevant". A hit is evidence about what
+happened then, not a ruling about what must happen now: it tells you what to re-check, not which
+option to drop.
+
+**Test for whether something belongs here:** could you learn it by reading the code? If yes, leave
+it out. This store is for what cost someone time to discover.
+
+Worth recording with zikaron_memory_remember:
+- How to build, test, run and deploy, above all the step the README omits
+- Failures and their causes, especially silent ones: the symptom, the actual cause, the fix
+- Environment requirements: env vars, services and versions that matter, and which credentials
+  are needed and where to obtain them
+- Constraints and prohibitions with their reason: "do not use X yet, because Y"
+- Approaches already tried that did not work, and how they failed
+- Conventions and preferences that are settled and written down nowhere
+
+Not worth recording: what the source already says; transient state ("currently on branch
+fix-123"); a general fact about a language or tool on its own. Record the decision a general fact
+forced here: not "the test runner parallelizes by default" but "tests here run serially, because
+the fixtures share one database".
+
+**Never record a secret or personal data.** The store is plaintext on disk, and retiring a record
+does not erase it. Headline and content rules are in zikaron_memory_remember's description.
+
+**Err toward writing.** The common failure is recording nothing. Near-duplicates are detected and
+handed back, so write without checking first.
+
+**Repair what misled you.** If a record you acted on turns out wrong or stale, establish the
+current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
+true and has no replacement.
+```
+
+### Pushed agent
+
+```
+## Project memory (Zikaron)
+
+This project has a memory store of what was learned by working here and is not in the source
+code. It persists across sessions, and other agents read what you write.
+
+**Look things up before you spend time.** A block of headlines arrives with your first tool call
+after each instruction — your task, or another agent's message — chosen for its words, not for the
+problem as you understand it now. Each headline names a record; the record holds the finding, its
+conditions and its exceptions. The block does not follow the task once you reframe it, and nothing
+new arrives until your next instruction.
 
 Search with zikaron_memory_search when one of these happens, not when the effort ahead feels big
 enough to deserve it:

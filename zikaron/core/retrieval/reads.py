@@ -32,6 +32,7 @@ import aiosqlite
 from zikaron.core.errors import ErrorCode, RowState, ZikaronError
 from zikaron.core.events import (
     ArmTermination,
+    Occasion,
     QueryShape,
     SearchDetail,
     SurfaceCallDetail,
@@ -294,9 +295,15 @@ async def _log_surface(
 
 
 async def surface(
-    db: aiosqlite.Connection, *, prompt: str, call: ReadCall, limit: int = LIMIT_DEFAULT
+    db: aiosqlite.Connection,
+    *,
+    prompt: str,
+    call: ReadCall,
+    limit: int = LIMIT_DEFAULT,
+    occasion: Occasion = Occasion.PROMPT,
 ) -> str:
-    """The push path: the block to inject for one user message, or the empty string.
+    """The push path: the block to inject for one user message or one agent's instruction, or the
+    empty string; `occasion` says which, and is recorded on the `surface_call`.
 
     Takes no `include_retired`: `schema.md` gives it to `search` alone, so push's predicate is the
     base one — under which superseded rows are eligible and demoted, which is what D25's measurement
@@ -343,6 +350,7 @@ async def surface(
                 n_returned=len(returned),
                 n_demoted=sum(1 for ranked in returned if ranked.demoted),
                 preamble_digest=block.PREAMBLE_DIGEST,
+                occasion=occasion,
             ),
             memory_uuid=None,
         )

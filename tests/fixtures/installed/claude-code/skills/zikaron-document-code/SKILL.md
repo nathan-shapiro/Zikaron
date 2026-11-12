@@ -19,9 +19,11 @@ receive its report when it is done.
 
 You run nothing of it yourself: no planner, no documenter. Spawn the
 **zikaron-code-orchestrator** subagent — whichever tool this harness gives you for delegating to a
-subagent, with `subagent_type: zikaron-code-orchestrator`; **if the tool offers
-`run_in_background`, pass `true`**, and if it offers no such parameter, every spawn runs in the
-background, which is expected — and give it this prompt, exactly as written:
+subagent, with `subagent_type: zikaron-code-orchestrator` and no `name`, since a named spawn
+becomes a teammate when agent teams are on, and a teammate idles when its work is done instead of
+ending and reporting; **if the tool offers `run_in_background`, pass `true`**, and if it offers no
+such parameter, every spawn runs in the background, which is expected — and give it this prompt,
+exactly as written:
 
 ```
 Run one documentation run with exactly these arguments, as written, and no others:

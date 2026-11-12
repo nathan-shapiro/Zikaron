@@ -13,6 +13,7 @@ import pytest
 from zikaron.hook import subagent_policy
 from zikaron.hook.write_policy import (
     OVERRIDE_EMPTY,
+    PUSHED_AGENT_WRITE_POLICY_PROMPT,
     SUBAGENT_WRITE_POLICY_PROMPT,
 )
 from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
@@ -25,10 +26,10 @@ class TestTheConsolidatorIsExcluded:
         """Its policy is its own system prompt. Handing it the primary agent's write instructions
         on top would be a second, conflicting set of directions for the same turn.
         """
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type=CONSOLIDATOR_AGENT_NAME) is None
+        assert subagent_policy.run(scope_dir=tmp_path, known_as=CONSOLIDATOR_AGENT_NAME) is None
 
     def test_every_other_agent_type_receives_the_policy(self, tmp_path: Path) -> None:
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type="some-other-agent") is not None
+        assert subagent_policy.run(scope_dir=tmp_path, known_as="some-other-agent") is not None
 
     def test_the_guarded_copy_of_the_agent_type_matches_the_installers_own_declaration(
         self,
@@ -46,23 +47,57 @@ class TestTheConsolidatorIsExcluded:
     ) -> None:
         """Both hold the memory verbs (`design/code-knowledge.md` §5.4), so the policy is what
         tells them what is worth recording."""
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type) is not None
+        assert subagent_policy.run(scope_dir=tmp_path, known_as=agent_type) is not None
 
 
 class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
-    """The payload is untrusted JSON, and the safe direction to be wrong in is delivering a policy
-    that was not needed rather than withholding one that was: an agent holding Zikaron's tools and
-    never told the write policy is the exact failure this path exists to prevent.
+    """The safe direction to be wrong in is delivering a policy that was not needed rather than
+    withholding one that was: an agent holding Zikaron's tools and never told the write policy is
+    the exact failure this path exists to prevent.
     """
 
-    @pytest.mark.parametrize("agent_type", [None, 42, [], {}, "", "unknown-future-agent"])
+    @pytest.mark.parametrize("known_as", [None, "", "unknown-future-agent"])
     def test_anything_that_is_not_exactly_the_consolidator_gets_the_policy(
-        self, tmp_path: Path, agent_type: object
+        self, tmp_path: Path, known_as: str | None
     ) -> None:
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type=agent_type)
+            subagent_policy.run(scope_dir=tmp_path, known_as=known_as)
             == SUBAGENT_WRITE_POLICY_PROMPT
         )
+
+
+class TestWhichTextAnAgentIsGiven:
+    """Under a harness with the instruction push, an agent it reaches is told headlines arrive with
+    a tool call; the documenter and the orchestrator, which it never reaches, are told nothing is
+    pushed, as is every subagent under a harness without it."""
+
+    @pytest.fixture
+    def claude_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CLAUDECODE", "1")
+
+    @pytest.mark.usefixtures("claude_code")
+    @pytest.mark.parametrize("known_as", [None, "general-purpose", "probe-mate"])
+    def test_an_agent_the_push_reaches_is_told_so(
+        self, tmp_path: Path, known_as: str | None
+    ) -> None:
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, known_as=known_as)
+            == PUSHED_AGENT_WRITE_POLICY_PROMPT
+        )
+
+    @pytest.mark.usefixtures("claude_code")
+    @pytest.mark.parametrize("known_as", [DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME])
+    def test_an_agent_the_push_never_reaches_is_told_nothing_is_pushed(
+        self, tmp_path: Path, known_as: str
+    ) -> None:
+        assert (
+            subagent_policy.run(scope_dir=tmp_path, known_as=known_as)
+            == SUBAGENT_WRITE_POLICY_PROMPT
+        )
+
+    @pytest.mark.usefixtures("claude_code")
+    def test_the_consolidator_still_receives_nothing(self, tmp_path: Path) -> None:
+        assert subagent_policy.run(scope_dir=tmp_path, known_as=CONSOLIDATOR_AGENT_NAME) is None
 
     def test_a_near_miss_on_the_consolidators_name_is_not_the_consolidator(
         self, tmp_path: Path
@@ -72,7 +107,7 @@ class TestAnUnrecognisableAgentTypeStillReceivesThePolicy:
         """
         near = f"{CONSOLIDATOR_AGENT_NAME}-experimental"
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type=near) == SUBAGENT_WRITE_POLICY_PROMPT
+            subagent_policy.run(scope_dir=tmp_path, known_as=near) == SUBAGENT_WRITE_POLICY_PROMPT
         )
 
 
@@ -87,7 +122,7 @@ class TestTheOverrideIsHonouredHereToo:
         store.mkdir(mode=0o700)
         store.chmod(0o700)
         (store / "write-policy.md").write_text("## Mine\n\nRecord less.\n", encoding="utf-8")
-        assert subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent") == (
+        assert subagent_policy.run(scope_dir=tmp_path, known_as="some-agent") == (
             "## Mine\n\nRecord less.\n"
         )
 
@@ -97,7 +132,7 @@ class TestTheOverrideIsHonouredHereToo:
         store.chmod(0o700)
         (store / "write-policy.md").write_text("   \n", encoding="utf-8")
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent")
+            subagent_policy.run(scope_dir=tmp_path, known_as="some-agent")
             == SUBAGENT_WRITE_POLICY_PROMPT
         )
         log = paths.hook_log_path(store).read_text(encoding="utf-8")
@@ -111,7 +146,7 @@ class TestItNeverRaises:
         """The caller's contract is to emit a policy; no failure beneath may cost it that."""
         missing = tmp_path / "nowhere" / "deeper"
         assert (
-            subagent_policy.run(scope_dir=missing, agent_type="some-agent")
+            subagent_policy.run(scope_dir=missing, known_as="some-agent")
             == SUBAGENT_WRITE_POLICY_PROMPT
         )
 
@@ -120,6 +155,6 @@ class TestItNeverRaises:
     ) -> None:
         (tmp_path / ".zikaron").write_text("not a directory")
         assert (
-            subagent_policy.run(scope_dir=tmp_path, agent_type="some-agent")
+            subagent_policy.run(scope_dir=tmp_path, known_as="some-agent")
             == SUBAGENT_WRITE_POLICY_PROMPT
         )

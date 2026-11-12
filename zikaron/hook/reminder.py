@@ -22,14 +22,12 @@ from zikaron.core.errors import ZikaronError
 from zikaron.core.knowledge.paths import orphan_candidates
 from zikaron.harness import detect
 from zikaron.harness.spec import HarnessSpec, SearchReminder
-from zikaron.hook import connect, envelope, failure, rpc, session_relay
+from zikaron.hook import agents, connect, envelope, failure, rpc, session_relay
+from zikaron.hook.agents import DOCUMENTER_AGENT_TYPE, ORCHESTRATOR_AGENT_TYPE
 from zikaron.service import paths
 
-#: The agent types this path is silent for. Copies of the installer's names, which a test holds
-#: equal, since importing the installer would put it on every search's path. The documenter takes
-#: nothing from a code-knowledge base, and the orchestrator searches no source.
-DOCUMENTER_AGENT_TYPE: Final = "zikaron-documenter"
-ORCHESTRATOR_AGENT_TYPE: Final = "zikaron-code-orchestrator"
+#: The agents this path is silent for: the documenter takes nothing from a code-knowledge base,
+#: and the orchestrator searches no source.
 _SILENT_FOR: Final = frozenset({DOCUMENTER_AGENT_TYPE, ORCHESTRATOR_AGENT_TYPE})
 
 #: The most paths one request names: `knowledge_remind`'s bound, a copy a test holds equal to the
@@ -50,7 +48,15 @@ def run(payload: dict[str, object], *, scope_dir: Path, spec: HarnessSpec, pid: 
     Raises nothing it anticipates; `main` suppresses the rest, so the exit is 0 either way.
     """
     reminder = spec.search_reminder
-    if reminder is None or payload.get("agent_type") in _SILENT_FOR:
+    if reminder is None:
+        return None
+    known_as = agents.known_as(
+        spec.instruction_push,
+        session_transcript=payload.get("transcript_path"),
+        agent_id=payload.get("agent_id"),
+        agent_type=payload.get("agent_type"),
+    )
+    if known_as in _SILENT_FOR:
         return None
     searched = _searched(payload, reminder, scope_dir=scope_dir)
     if not searched:

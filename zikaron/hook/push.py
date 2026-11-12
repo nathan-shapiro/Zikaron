@@ -65,7 +65,7 @@ _START_WAITS = frozenset({"lock", "poll"})
 #: What `hook.log` records for a push that ran out of time while the service was starting, kept
 #: apart from every fault and followed by what it was waiting on — one of `_START_WAITS`, or the
 #: lateness it would otherwise have been — so where a slow start spends its time stays readable.
-_STARTING = "starting"
+STARTING = "starting"
 
 _STARTING_RELAY = (
     "The Zikaron memory service was still starting, so no project memories were surfaced for "
@@ -75,7 +75,7 @@ _STARTING_RELAY = (
 )
 
 #: `architecture.md` §"MCP tool surface": `surface`'s own documented default limit.
-_SURFACE_LIMIT = 5
+SURFACE_LIMIT = 5
 
 
 def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -> str | None:
@@ -135,7 +135,7 @@ def run(*, scope_dir: Path, payload_session_id: object, prompt: str, pid: int) -
             block = rpc.surface_once(
                 sock,
                 prompt=prompt,
-                limit=_SURFACE_LIMIT,
+                limit=SURFACE_LIMIT,
                 envelope=client_envelope,
                 deadline=rpc.HookDeadline.after(remaining, now=now),
             )
@@ -184,7 +184,7 @@ def _degrade(
     while the instruction is prose a model will paraphrase, so its job is to point at `hook.log`.
     """
     if kind in _START_WAITS or (cold_start and kind in _LATENESS_KINDS):
-        failure.record_failure(hook_log_path, _STARTING, detail=kind, code=code)
+        failure.record_failure(hook_log_path, STARTING, detail=kind, code=code)
         return _STARTING_RELAY
     failure.record_failure(hook_log_path, kind, code=code)
     detail = f"{kind} ({code})" if code is not None else kind
