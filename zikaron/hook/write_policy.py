@@ -1,4 +1,4 @@
-"""The `agentSpawn` prompt text, transcribed from `design/write-policy.md` §2's two fences.
+"""The `agentSpawn` prompt text, transcribed from `design/write-policy.md` §2's three fences.
 
 `architecture.md` §"Warming": the hook process "prints the write policy — static text, no RPC, so
 it can never fail." The shipped texts below are those strings, and `read_policy` is the one
@@ -7,9 +7,9 @@ deliberate extension to them: an operator-authored `.zikaron/write-policy.md` is
 named — so the never-fail property holds because the fallback is in-process, not because nothing is
 attempted (`architecture.md` §"The install contract").
 
-**Two constants, differing in one paragraph**, because the main-agent text describes a block the
-subagent is never sent. One override replaces either: an operator writing a policy is stating what
-this project's agents should do, not maintaining our split.
+**Three constants, differing in one paragraph**, because each describes how a different reader is
+pushed memory, or that it is not. One override replaces every one: an operator writing a policy is
+stating what this project's agents should do, not maintaining our split.
 
 Why an override exists at all: the design ships this text as a *draft to be experimented against*,
 and an experiment that requires editing installed Python is an experiment nobody runs.
@@ -149,6 +149,24 @@ handed back, so write without checking first.
 current truth and amend it with zikaron_memory_amend. Retire a record only when it is no longer
 true and has no replacement."""
 
+_SUBAGENT_PARAGRAPHS = SUBAGENT_WRITE_POLICY_PROMPT.split("\n\n")
+
+#: The same policy for an agent inside a session that the instruction push reaches: its block
+#: arrives with a tool call after each instruction rather than with a user message, so only the
+#: second paragraph differs from the subagent text, which it is built from.
+PUSHED_AGENT_WRITE_POLICY_PROMPT = "\n\n".join(
+    (
+        *_SUBAGENT_PARAGRAPHS[:2],
+        "**Look things up before you spend time.** A block of headlines arrives with your first "
+        "tool call\nafter each instruction — your task, or another agent's message — chosen for "
+        "its words, not for the\nproblem as you understand it now. Each headline names a record; "
+        "the record holds the finding, its\nconditions and its exceptions. The block does not "
+        "follow the task once you reframe it, and nothing\nnew arrives until your next "
+        "instruction.",
+        *_SUBAGENT_PARAGRAPHS[3:],
+    )
+)
+
 
 class _RefusedError(Exception):
     """The override, or the directory it would have come from, is not something to print."""
@@ -261,9 +279,10 @@ class Policy(NamedTuple):
 def read_policy(store_directory: Path, *, spec: HarnessSpec, default: str) -> Policy:
     """The policy text to print: the override at `<store>/write-policy.md`, or `default`.
 
-    `default` is the shipped constant for this reader — the main-agent text, or the subagent one
-    for an agent the push never reaches. A single override replaces both, because an operator who
-    writes a policy is stating what this project's agents should do, not maintaining our split.
+    `default` is the shipped constant for this reader — the main-agent text, the pushed-agent text,
+    or the subagent one for an agent the push never reaches. A single override replaces all three,
+    because an operator who writes a policy is stating what this project's agents should do, not
+    maintaining our split.
 
     Six conditions, and only the first is silent, because only the first is normal:
 
@@ -318,9 +337,10 @@ def resolved_policy_text(
     """The policy text to inject: the override when it reads cleanly, else `default` — plus one
     `hook.log` line naming why, whenever the answer was something other than "no override is there".
 
-    `default` is the main-agent text unless the caller says otherwise; `subagent_policy` passes the
-    subagent one. It defaults rather than being required because the main agent is every trigger but
-    that one, and a required argument here would be answered identically at every other call site.
+    `default` is the main-agent text unless the caller says otherwise; `subagent_policy` passes one
+    of the other two. It defaults rather than being required because the main agent is every
+    trigger but that one, and a required argument here would be answered identically at every other
+    call site.
 
     The impure companion to `read_policy`, which stays a pure function of the directory it is
     pointed at so it can be tested with no log path and no directory creation. Every caller that

@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Self
 
 from zikaron.hook.components import Components
-from zikaron.install.entries import CLAUDE_START_TRIGGERS, Commands, claude_hooks_value
+from zikaron.install.entries import (
+    CLAUDE_START_TRIGGERS,
+    GATE_EXEC,
+    GATE_OPENING,
+    Commands,
+    claude_hooks_value,
+)
 from zikaron.install.harness import InstallError
 from zikaron.install.ownership import ANOTHER_INSTALL
 from zikaron.install.writer import Plan
@@ -156,16 +162,25 @@ def _words(command: str) -> list[str]:
 
 
 def _program(command: str, commands: Commands) -> str:
-    """What a hook command's ownership is decided by: a Zikaron command's program path, its first
-    shell word — the arguments are the selection, not the owner — and any other command whole.
+    """What a hook command's ownership is decided by: a Zikaron command's program path — its first
+    shell word, or the instruction gate's `exec` target (`entries.instruction_gate_command`) — and
+    any other command whole. The arguments are the selection, not the owner.
 
     A command naming an unquoted path with a space in it, as an install wrote before commands were
     shell-quoted, does not split to a Zikaron program and is taken whole, so it still matches the
-    quoted path that replaces it.
+    quoted path that replaces it. A user's own command that runs `zikaron-hook` anywhere but those
+    two places stays the user's.
     """
+    names = (commands.hook.name, commands.guard.name)
     words = _words(command)
     first = words[0] if words else ""
-    return first if Path(first).name in (commands.hook.name, commands.guard.name) else command
+    if Path(first).name in names:
+        return first
+    if first == GATE_OPENING and GATE_EXEC in words[:-1]:
+        target = words[words.index(GATE_EXEC) + 1]
+        if Path(target).name in names:
+            return target
+    return command
 
 
 def _zikaron_script(command: str, commands: Commands) -> str | None:

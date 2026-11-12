@@ -3250,6 +3250,18 @@ Plan:
 
 
 ## References
+- **M43, push for an agent given an instruction (2026-11-09)** — `research/teammate-hook-probe.md`
+  (which hooks fire for an in-process and a tmux teammate and what their payloads carry, measured on
+  Claude Code 2.1.311 with `experiments/teammate_hook_probe.py`), `research/teammate-hook-feedback.md`
+  (the feedback drafted for the operator to send Anthropic), and the review trails,
+  `reviews/m43-instruction-push-brief-review.md` for the brief and
+  `reviews/m43-instruction-push-review.md` for the brief and build together.
+- **Agent-team teammates and hooks, the docs (2026-11-09)** —
+  `research/claude-code-agent-teams-hooks-docs.md`, read at Claude Code 2.1.321 against 2.1.311
+  here: `SubagentStart` runs "each time an in-process agent team teammate handles a new message"
+  (code.claude.com/docs/en/hooks#subagentstart) with no message text in its input, and a re-run
+  injects only when the context lacks the earlier copy; no event fires `UserPromptSubmit` for a
+  teammate; `--teammate-mode` / `teammateMode` select the backend.
 - **Two transcript measurements (2026-10-30)** — `research/transcript-measurements-2026-10-30.md`:
   turns that end on a promise not kept, for the stop guard, and readers checking a code-knowledge
   result's source, which waits on reader traffic.
@@ -4118,8 +4130,8 @@ of this file) and it is worth re-running whenever either directory grows.
 | `research/m40-5-spawned-orchestrator-probe.md` | for M40-5 on Claude Code 2.1.304: a field run's second `/zikaron-document-code`, invoked while the first ran, recorded as a foreground fork that ended at its first wait, as the docs' §Q8(c) rule says, with 18 of its 19 spawns refused at the session's limit; interactive probes in `tmux` — a second fork of one skill backgrounded as `-2`, and two overlapping session-spawned agents each waiting out its own spawn and handing back |
 | `reviews/m40-5-spawned-orchestrator-review.md` | the M40-5 brief, reviewed to APPROVED |
 | `reviews/m42-paged-search-brief-review.md` | the M42 brief, reviewed to APPROVED: the opening made structure-free under §1.1, the invariant bounded by the clamp, the counters under paging |
-| `reviews/m42-paged-search-review.md` | the M42 build's trail: memory-reviewer's wording of the search description, then the build review rounds to APPROVED |
-| `research/paged-search-replay.md` | paged knowledge search: stage 1's offline replay of the Warp runs, and the build's replay through `groups.search_all` that set `OPENING_MAX_CHARS` at 400 |
+| `reviews/m42-paged-search-review.md` | the M42 build's trail: memory-reviewer's two wordings of the search description, the first with `offset` and the second without, and the build review rounds to APPROVED on each |
+| `research/paged-search-replay.md` | paged knowledge search: stage 1's offline replay of the Warp runs; the build's replay that set `OPENING_MAX_CHARS` at 400; the live probes, the paged-against-unpaged check and the page-2 interviews and wording arms, in which no reader used `offset` to any effect; and the cold reads of both descriptions |
 | `research/m37-guard-field-counts.md` | `design/guards.md` §7's counts (a)–(e), first read 2026-10-21 over the three guarded projects' transcripts, only LeibaTrader with sessions since the install: find-replace forms from 13.1% of `Bash` calls to 0.19%, 3 true and 4 false denies, 3 of those fixed since; 8 overrides, every reason substantive; no true deny overridden or routed around; re-reads after the last edit 81% to 90% on a small post-install count; 8 of 11 self-match denies a deliberate probe |
 | `research/claude-code-agent-tools-pattern-probe.md` | on Claude Code 2.1.304, three haiku subagents in `bypassPermissions`, `default` and `auto`: a `Bash(ls:*)` or `Bash(ls *)` on a `tools:` line grants the whole `Bash` tool, silently, behaving exactly as a plain-`Bash` control; every refusal is the permission mode's |
 | `research/m40-eval-sonnet5-issue-sets.md` | for the evaluation's larger stage as an issue-triage test: Opus 4.5/4.6, Sonnet 4.6/5/5.5 cutoffs and retirement floors (Sonnet 4.6's sources disagree), the five candidates screened against each, Warp's ~230 qualifying issue→PR pairs and why no 150–500-file module catches most fixes, and the confounds — bot diagnoses, cause-stating bodies, flag-promotion fixes |
@@ -7719,6 +7731,31 @@ documents in a scratch copy — done, 1 bare absence in 53 under the scoped word
 (`research/m40-toy-run.md` §18); (4) `./check.sh`, the sweep and the review — APPROVED
 (`reviews/m40-6-review.md`); (5) the pull request when the operator asks, carrying the 2026-10-30
 archival pass of this file and the `0.4.1` version (operator, 2026-10-30).
+
+## M42 as built (moved out of FINDINGS 2026-11-01, once it landed through PR #34 as `567b4dd`)
+
+Moved byte-for-byte; "this file" inside it means `FINDINGS.md`. `f9750c6`, the build with `offset`
+the live measurements ran against, was amended away before the merge; it is kept reachable here by
+the local tag `m42-offset-build`.
+
+**In progress: M42, each corpus's first results whole and the rest named, with no further page.**
+The design is the brief, `design/build-plan.md` §M42, amended 2026-10-31 to drop `offset` on the
+live measurements (no reader paged; `research/paged-search-replay.md`). Committed locally as
+`f9750c6` on `m42-paged-knowledge-search` with `offset`, not pushed — the eval harness refuses an
+uncommitted package — and the amendment is uncommitted on top, so the PR amends `f9750c6`.
+Experimental variants run from scratch copies of the package via `PYTHONPATH`, never this tree,
+since four real projects run this `.venv`. Steps (operator, 2026-10-31: *"let's ship it without
+offset and used freed up budget for clearer wording (ask reviewer to provide it to you). Let's
+amend the brief, make code changes and then have additional review rounds till approval."*):
+1. **Done**: the brief amended; `offset`, its invariant, the past-the-end counting and §7.4's
+   mention removed from code, tests and design text.
+2. **Done**: memory-reviewer's clearer description (`reviews/m42-paged-search-review.md`
+   §"Wording, second"), verbatim in `zikaron/mcp/primary.py` and `knowledge-index.md` §8.3, 1,880
+   of 1,900 code points; the cold read rerun on it closes both weak spots
+   (`research/paged-search-replay.md`, done-when 4); five mutations of the changed code caught.
+3. **Done**: gate green, no new line uncovered; the brief and build together APPROVED
+   (`reviews/m42-paged-search-review.md`). **Next**: the PR (operator, 2026-11-01), amending
+   `f9750c6`, carrying the hook's `sqlite3` guard and the `0.4.2` version.
 
 ## FINDINGS as it stood before the 2026-10-22 trim (moved verbatim)
 

@@ -398,7 +398,8 @@ zikaron_memory_next_group answers {"done": true}, then report what you did.
 #: choose its own spawn tool.
 CLAUDE_CODE_SPAWN_INSTRUCTION: Final = """Spawn the **zikaron-consolidator** subagent — whichever
 tool this harness gives you for delegating to a subagent, with `subagent_type: zikaron-consolidator`
-— and give it this prompt:
+and no `name`, since a named spawn becomes a teammate when agent teams are on, and a teammate idles
+when its work is done instead of ending — and give it this prompt:
 
 ```
 Consolidate this project's memory journal. Work through every group until

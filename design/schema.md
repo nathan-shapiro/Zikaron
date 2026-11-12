@@ -690,7 +690,7 @@ function of `session_id` (`^zk-` ⇒ `minted`, else `harness`), computed by whoe
 
 | `kind` | Cardinality | `memory_uuid` | `detail` |
 |---|---|---|---|
-| `surface_call` | **exactly one per `surface` call answered within its deadline — including when nothing was returned**; none for a call answered `deadline_passed`, which commits nothing (`architecture.md` §"A push the agent never saw is never recorded as shown") | NULL | `{prompt_chars, limit, fusion_depth, dense_depth_reached, dense_stop_reason, lexical_depth_reached, lexical_stop_reason, query_tokens, query_truncated, lexical_skipped, n_returned, n_demoted, preamble_digest}` — `preamble_digest` names the framing this build renders, so a row says which text its push carried and a period can be bounded without dating a deployment. Derived from the block's own constants, never written beside them; `research/injected-prose-log.md` maps it to the bytes |
+| `surface_call` | **exactly one per `surface` call answered within its deadline — including when nothing was returned**; none for a call answered `deadline_passed`, which commits nothing (`architecture.md` §"A push the agent never saw is never recorded as shown") | NULL | `{prompt_chars, limit, fusion_depth, dense_depth_reached, dense_stop_reason, lexical_depth_reached, lexical_stop_reason, query_tokens, query_truncated, lexical_skipped, n_returned, n_demoted, preamble_digest, occasion:'prompt'\|'instruction'}` — `preamble_digest` names the framing this build renders, so a row says which text its push carried and a period can be bounded without dating a deployment. Derived from the block's own constants, never written beside them; `research/injected-prose-log.md` maps it to the bytes. `occasion` is `prompt` for the main session's push and `instruction` for an agent's inside a session (`design/harness.md` §"Agent teams"); a row written before it holds none and reads as `prompt` |
 | `surface` | one row per surfaced memory — five rows for a five-gist push, sharing the `surface_call`'s `op_id`; **zero rows when nothing was eligible** | the surfaced uuid | `{rank, fused_score, demoted, demotion:'superseded'\|'retired'\|null}` |
 | `search` | one per call | NULL | `{query_chars, limit, fusion_depth, dense_depth_reached, dense_stop_reason, lexical_depth_reached, lexical_stop_reason, query_tokens, query_truncated, lexical_skipped, include_retired, n_returned, uuids:[...]}` |
 | `fetch` | one per requested uuid | that uuid | `{version, found}` |
@@ -1316,13 +1316,18 @@ zero-write rate is conditional on the service having been reachable, **healthy, 
 hook's deadline**. That is a stated limitation, not a fixed one — making the hook write would mean giving it
 a writable store handle, which is a worse trade.
 
-**Subagent sessions are absent from both sides, and that is why they create no artifact.** No spawn or
-prompt hook fires in a subagent session under either harness (`architecture.md` §"Subagent sessions"), so a subagent
-contributes no `surface_call` and never enters the denominator. An MCP client *inside* a subagent sends the
-**top-level** label, so any write it makes lands on the parent session's row — where the work was actually
-requested. The denominator and the numerator therefore move together, which is the property rounds 9–11 kept
-finding missing elsewhere: the alternative, suppressing the hook while letting subagent writes carry a subagent
-label, would have manufactured both a zero-write hook session *and* a write with no session, in the same run.
+**An agent inside a session moves both sides of the session's own row, and that is why it creates no
+artifact.** No spawn or prompt hook fires in a subagent session under either harness (`architecture.md`
+§"Subagent sessions"). Under Claude Code an instruction push reaches a subagent or an in-process teammate
+on a tool call (`design/harness.md` §"Agent teams"), and its `surface_call` carries the **top-level**
+label, as an MCP client *inside* a subagent does for every write it makes — so both land on the parent
+session's row, where the work was actually requested, and a session's signals count both occasions with no
+filter. A tmux teammate is a session of its own: its push and its writes both carry its own label, so it
+counts as a session like any other, where before the instruction push it was a writer with no
+`surface_call`. The denominator and the numerator therefore move together, which is the property rounds
+9–11 kept finding missing elsewhere: the alternative, letting subagent writes carry a label of their own
+while their pushes did not, would have manufactured both a zero-write hook session *and* a write with no
+session, in the same run. `occasion` slices any signal where the two kinds of push are wanted apart.
 
 `dedup_offered` correlates to its `remember` two ways — the shared `op_id`, and `detail.created_uuid`.
 Ordering within one `op_id` is `event.id`, which is monotonic under SQLite's single-writer rule; across

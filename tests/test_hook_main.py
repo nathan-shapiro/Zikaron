@@ -398,8 +398,8 @@ class TestTriggerNamesNormalizeAcrossBothHarnesses:
     def test_the_subagent_trigger_calls_only_the_policy_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Policy-only: no warm helper spawn, no push. A second warm spawn per subagent would be
-        pure cost, and no retrieval belongs in a subagent's context by this route.
+        """Policy and marker only: no warm helper spawn, no push. A second warm spawn per subagent
+        would be pure cost, and a subagent's push waits for its first tool call.
         """
         policy_called: list[object] = []
         spawn_called: list[object] = []
@@ -419,19 +419,15 @@ class TestTriggerNamesNormalizeAcrossBothHarnesses:
         assert spawn_called == []
         assert push_called == []
 
-    def test_subagent_stop_reaches_nothing_at_all(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("trigger", ["SubagentStop", "TeammateIdle"])
+    def test_the_marker_only_triggers_reach_no_other_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: str
     ) -> None:
-        """A real trigger one harness sends and this hook has no work for. The hook having no write
-        path at all depends on it staying unrecognised rather than merely unhandled downstream.
-        """
+        """Their whole work is an instruction marker: no policy, no warm-up, no push."""
         called: list[object] = []
         for module in (spawn_warm, push, subagent_policy):
             monkeypatch.setattr(module, "run", lambda **kwargs: called.append(kwargs))
-        _run_with_payload(
-            {"hook_event_name": "SubagentStop", "cwd": str(tmp_path)},
-            monkeypatch,
-        )
+        _run_with_payload({"hook_event_name": trigger, "cwd": str(tmp_path)}, monkeypatch)
         assert called == []
 
 

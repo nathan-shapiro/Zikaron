@@ -642,8 +642,9 @@ draft of this document gave only to the socket.
 |---|---|---|
 | `<scope>/.zikaron/` | **0700** | created with an explicit `mkdir(0o700)`; if it exists with a wider mode, the service tightens it ~~and logs~~ **silently — `permissions.py` imports no logger, and on the service's own path it could not: `ensure_store_dir` runs in `service/main.py` as the argument to `configure_service_log`, so the correction happens before any handler is attached** |
 | `memory.db`, `-wal`, `-shm` | **0600** | created under an explicit umask (`os.umask(0o077)`) around store creation, because SQLite creates the WAL/SHM itself and will otherwise inherit a permissive umask |
-| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on, and a search reminder's line the word `remind` after its kind, which tells it from a push's (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
+| `service.log`, `warmup.log`, `hook.log` | **0600** | `service.log` quotes prompts and error text; `warmup.log` and `hook.log` log only a fixed failure-kind label and an error code, never prompt or memory content, so neither can hold a leaked secret (`design/write-policy.md` §"The emergency erasure procedure, exactly"). `hook.log`'s `starting` line adds one fixed word after its label, naming what the start was waited on, a search reminder's line the word `remind` after its kind, and an instruction push's line the word `instruction`, which tell them from a prompt push's (§"Degraded modes"). Each is written by one resident process; `service.log` also takes the one line a start that found its store held leaves there (§Paths) |
 | `config.toml` | **0600** | operator-written; no secrets by design, but it sits in the same private directory |
+| `instruction-pending/` | **0700**, its files **0600** | the hook's markers for agents whose latest instruction may not have been pushed (`design/harness.md` §"Agent teams"): created by the first hook that marks one, where the store exists; each file empty, its name a session id and, for an agent inside the session, an agent id; its files created through `os.open` with the mode supplied, since a hook runs under the user's umask and not the store's |
 | `knowledge/` | **0700** | created with the store; absent until the first knowledge base exists |
 | `code-knowledge/<module>/roles.md` | **0600**, its directories **0700** | the role list `zikaron code-knowledge plan --apply` writes while a module's README is owed, under the store's umask, and removes with its emptied directories once an `--apply` run lists no README (`design/code-knowledge.md` §3.6); each line is a document's own role line, already in the project tree |
 | `knowledge/<uuid4>.log` | **0600** | the last spawned build's output (`knowledge-index.md` §8.4): counts, paths, refusals and tracebacks, never a memory's prose. Created through `os.open` with the mode supplied and then set on the open descriptor, because a log emptied for the next build keeps whatever mode it was found at |
@@ -1141,8 +1142,10 @@ second job — a `register_session` call feeding the ladder's derived rung — a
 ## Subagent sessions — the push hook suppresses itself
 
 > **Harness delta (D34).** `design/harness.md` §"Subagents" is normative. Neither harness fires its spawn or
-> prompt hook for a subagent session, so under both the door this section is about is closed by the harness
-> itself, and the check below guards against a misdetected harness rather than against a subagent.
+> prompt hook for a subagent session, so the prompt path cannot open the door this section is about, and the
+> check below guards against a misdetected harness rather than against a subagent. **Under Claude Code the
+> instruction push does reach subagents and teammates** (`design/harness.md` §"Agent teams"), and there the
+> door is shut by the agent's definition: it never reaches the consolidator.
 
 **Why a push into a subagent would matter: it reopens a hole D32 closes on purpose.** D32 withholds `search` and
 `fetch` from the consolidator so that code, not the model, picks what it sees — the enforcement mechanism behind
@@ -1171,8 +1174,9 @@ noise, not a push into the consolidator.
 
 **What is *not* suppressed, and should not be.** An MCP client running inside a subagent takes the **parent**
 session's label (§"Both clients resolve the same label"), so its writes attribute to the top-level session — the
-unit every D30 signal is defined over — with `client.kind` distinguishing who wrote. A subagent that needs memory
-pulls it through MCP, the D12 arm that depends on no hook.
+unit every D30 signal is defined over — with `client.kind` distinguishing who wrote. An instruction push to an
+agent inside the session carries the same label, its `surface_call` marked `occasion: instruction`. A subagent
+that needs memory beyond that pulls it through MCP, the D12 arm that depends on no hook.
 
 ### What the shared label affects, since the consolidator now holds the session's own
 
@@ -1241,7 +1245,8 @@ So `zikaron-hook` for the prompt trigger, in order:
    equal in every hook either harness fires, so a divergence means the harness was misdetected, and the
    branch writes one `session_env_mismatch` line to `hook.log` via `tripwire.record_misdetection`. This
    is unrelated to the failure path below; it is not a failure of the store.
-2. RPC `memory_surface(prompt, limit=5, deadline_at_ms)`. On success, print what the service returned,
+2. RPC `memory_surface(prompt, limit=5, deadline_at_ms)`, with no `occasion`, which the service reads as
+   a prompt's. On success, print what the service returned,
    whole — and if it is longer than the harness's injection budget, also append one `push_oversize` line
    to `hook.log`, since the harness cuts it and marks the cut to the model alone (`design/harness.md`
    §"Injection budgets"). `deadline_at_ms` is the hook's own deadline — the internal deadline below — as an absolute wall-clock
@@ -1282,6 +1287,19 @@ intermittently missing injection.
 absent-server signature, and `hook/push.py` degrades every unreachable-service case to the fixed word
 `transport`, which is what keeps the file to the closed vocabulary this section's error table names
 rather than arbitrary exception text.
+
+**The instruction push's chain** (`hook/instruction_push.py`; `design/harness.md` §"Agent teams") is the
+prompt path's with three differences, each because a tool call waits on it and an agent inside a
+session cannot relay a notice to the operator. It runs only after its gate finds a marker, claims the
+marker by unlinking it before anything else, checks the session as the prompt path does, and then
+reads the instruction from the transcript: an
+agent with an `agent_id` and no readable record of its definition, or a transcript not shaped as
+measured, writes one `instruction_unread` line and stops. It then **connects only to a service already
+serving and never starts one**, under a 2-second deadline: no service listening writes `not_serving`, and
+one still loading its model writes `starting`. It sends `memory_surface(prompt, limit=5, deadline_at_ms,
+occasion="instruction")`, and every failure is a `hook.log` line and nothing the model sees. Every line
+it writes carries the detail word `instruction` after its kind; since its marker is already claimed, a
+line is all a lost push leaves.
 
 **Failure reporting went through three shapes before landing here, and the final one is measured
 rather than reasoned about.** The first shape was total silence on every channel, with the theory
@@ -2403,7 +2421,10 @@ because their bare verbs collide with the memory store's.
 The five verbs above, as `memory_search`, `memory_fetch`, `memory_remember`, `memory_amend` and
 `memory_retire`, plus:
 
-- `memory_surface(prompt, limit, client, deadline_at_ms?)` — the push path. `deadline_at_ms` is the caller's
+- `memory_surface(prompt, limit, client, deadline_at_ms?, occasion?)` — the push path. `occasion` is
+  `prompt` for the prompt hook's push, which opens the session's turn (`design/code-knowledge.md` §6), and
+  `instruction` for an agent's inside a session, which opens none; absent reads as `prompt`, so an older
+  hook and a newer service keep pushing, and either is recorded on the `surface_call`. `deadline_at_ms` is the caller's
   own deadline as a wall-clock instant in milliseconds since the epoch, no more than `ddl.BUSY_TIMEOUT_MS`
   ahead; past it, less a margin, the call answers `deadline_passed` and commits nothing (§"A push the agent
   never saw is never recorded as shown"). Returns **formatted, ready-to-print text** so the hook
@@ -2557,7 +2578,8 @@ Three rules go with it, and each closes a way the measurement could be lost:
 > the refuse-on-difference rule: both targets refuse only on ownership** (`zikaron/install/ownership.py`)
 > — `entries.MCP_OWNERSHIP_FIELDS` (the interpreter path and the mode) for a server entry, whether
 > `.mcp.json`'s or kiro's `mcpServers`; a kiro hook entry's command; and under Claude Code a settings
-> hook group's **programs** — each command's first shell word — judged by membership: a group of this
+> hook group's **programs** — each command's first shell word, or the instruction gate's `exec` target
+> (`design/harness.md` §"Agent teams") — judged by membership: a group of this
 > selection's is ours when every one of its commands runs a program this install writes on that
 > trigger, and a group running only the other selection's script is copied verbatim
 > (`zikaron/install/settings_hooks.py`). So a field this

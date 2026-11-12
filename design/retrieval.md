@@ -15,8 +15,8 @@
 
 | | **Push** | **Pull** |
 |---|---|---|
-| Trigger | `UserPromptSubmit` hook, once per user message | agent calls `search` or `fetch` |
-| Query text | the user's whole prompt — head-truncated to the dense budget if over-length, split into quoted terms for the lexical arm (§"Query construction") | whatever the agent chooses, same two rules |
+| Trigger | `UserPromptSubmit` hook, once per user message; under Claude Code, also an agent inside a session's first tool call after each instruction it is given — a teammate's message, a subagent's task (`design/harness.md` §"Agent teams") | agent calls `search` or `fetch` |
+| Query text | the user's whole prompt, or the agent's instruction — head-truncated to the dense budget if over-length, split into quoted terms for the lexical arm (§"Query construction") | whatever the agent chooses, same two rules |
 | Budget | **5 gists**, latency-critical | generous; a deliberate act |
 | Returns | formatted gist block injected into context | structured tool results |
 | Reranker | **no** (D23) | open |
@@ -31,8 +31,9 @@ recall must therefore come from pull, which means the agent has to remember to p
 fires per tool call and receives `tool_response`, but its exit-0 stdout was measured not to reach the model
 (`design/harness.md` §"The table"); under Claude Code
 `PostToolUse`'s `additionalContext` does reach it — the channel D38's nudge and the search reminder use
-(`design/code-knowledge.md` §6) — and the push does not ride it, so this is open as a design question rather
-than closed by the harness; see `FINDINGS.md` open question 1.
+(`design/code-knowledge.md` §6) — and the push rides a tool event only for an instruction's first tool
+call, once per instruction, not later in its work, so this is open as a design question rather than
+closed by the harness; see `FINDINGS.md` open question 1.
 
 ## Fusion
 
