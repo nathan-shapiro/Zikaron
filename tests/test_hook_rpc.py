@@ -61,6 +61,25 @@ def test_sends_a_well_formed_surface_request() -> None:
             "pid": 1234,
             "op_id": None,
         }
+        assert "occasion" not in request["params"]
+    finally:
+        client.close()
+        server.close()
+
+
+def test_an_occasion_is_sent_when_named() -> None:
+    client, server = socket.socketpair()
+    try:
+        _respond(server, {"jsonrpc": "2.0", "id": 1, "result": {"text": "irrelevant"}})
+        surface_once(
+            client,
+            prompt="p",
+            limit=5,
+            envelope=_ENVELOPE,
+            deadline=_soon(),
+            occasion="instruction",
+        )
+        assert json.loads(server.recv(65536))["params"]["occasion"] == "instruction"
     finally:
         client.close()
         server.close()

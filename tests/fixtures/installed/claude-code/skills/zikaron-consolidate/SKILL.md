@@ -23,7 +23,8 @@ nothing from this session's reasoning leaks into judgments that will outlive it.
 
 Spawn the **zikaron-consolidator** subagent — whichever
 tool this harness gives you for delegating to a subagent, with `subagent_type: zikaron-consolidator`
-— and give it this prompt:
+and no `name`, since a named spawn becomes a teammate when agent teams are on, and a teammate idles
+when its work is done instead of ending — and give it this prompt:
 
 ```
 Consolidate this project's memory journal. Work through every group until

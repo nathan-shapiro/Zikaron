@@ -18,11 +18,18 @@ from typing import Any
 import pytest
 
 from zikaron.guard.limits import TIMEOUT_SECONDS
-from zikaron.harness.spec import CLAUDE_CODE, KIRO, GuardHook, Guards, SearchReminder
+from zikaron.harness.spec import (
+    CLAUDE_CODE,
+    KIRO,
+    GuardHook,
+    Guards,
+    InstructionPush,
+    SearchReminder,
+)
 from zikaron.hook.components import Components
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
 from zikaron.install import harness
-from zikaron.install.entries import Commands, claude_hooks_value
+from zikaron.install.entries import Commands, claude_hooks_value, instruction_gate_command
 from zikaron.install.main import main
 from zikaron.install.targets import KiroTarget
 
@@ -39,6 +46,12 @@ def _reminder() -> SearchReminder:
     return reminder
 
 
+def _instruction() -> InstructionPush:
+    instruction = CLAUDE_CODE.instruction_push
+    assert instruction is not None
+    return instruction
+
+
 def _reread(guards: Guards) -> GuardHook:
     assert guards.reread is not None
     return guards.reread
@@ -48,6 +61,12 @@ GUARDS = _guards()
 REREAD = _reread(GUARDS)
 GUARD_HOOKS = (GUARDS.command, REREAD)
 REMINDER = _reminder()
+INSTRUCTION = _instruction()
+INSTRUCTION_TRIGGERS = (
+    INSTRUCTION.tool_trigger,
+    INSTRUCTION.stop_trigger,
+    INSTRUCTION.idle_trigger,
+)
 START_TRIGGERS = ("SessionStart", "SubagentStart")
 USER_PRE_TOOL_USE = {"matcher": "Bash", "hooks": [{"type": "command", "command": "/u/lint.sh"}]}
 USER_POST_TOOL_USE = {"hooks": [{"type": "command", "command": "/u/format.sh"}]}
@@ -96,9 +115,16 @@ def _commands_of(groups: list[Any]) -> list[str]:
     return [entry["command"] for group in groups for entry in group["hooks"]]
 
 
+def _script_of(group: dict[str, Any]) -> str:
+    """A group's one Zikaron script, by name: its first word, or a gate's `exec` target."""
+    words = shlex.split(group["hooks"][0]["command"])
+    program = words[words.index("exec") + 1] if words[0] == "set" else words[0]
+    return Path(program).name
+
+
 def _scripts_of(groups: list[Any]) -> list[str]:
     """Each group's one Zikaron script, by name, in the order the groups stand."""
-    return [Path(shlex.split(group["hooks"][0]["command"])[0]).name for group in groups]
+    return [_script_of(group) for group in groups]
 
 
 def _tree(project: Path) -> dict[str, bytes]:
@@ -124,7 +150,11 @@ def test_the_result_is_the_union_of_what_was_there_and_what_is_installed(
     hooks = _hooks(project)
     expected_triggers = {
         *START_TRIGGERS,
-        *(["UserPromptSubmit", REMINDER.trigger] if installed.memory else []),
+        *(
+            ["UserPromptSubmit", REMINDER.trigger, *INSTRUCTION_TRIGGERS]
+            if installed.memory
+            else []
+        ),
         *([GUARDS.command.trigger, REREAD.trigger] if installed.guards else []),
     }
     assert set(hooks) == expected_triggers
@@ -175,11 +205,23 @@ def test_a_memory_start_entry_is_the_command_alone() -> None:
             for condition in ("Grep", "Glob", "Bash(*grep *)", "Bash(rg *)")
         ],
     }
+    gated = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": instruction_gate_command(commands.hook, CLAUDE_CODE),
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+        ]
+    }
     assert claude_hooks_value(commands) == {
         "SessionStart": [entry],
         "UserPromptSubmit": [entry],
         "SubagentStart": [entry],
         "PostToolUse": [reminder],
+        "PreToolUse": [gated],
+        "SubagentStop": [gated],
+        "TeammateIdle": [entry],
     }
 
 
@@ -247,7 +289,7 @@ def test_a_users_own_tool_hooks_survive_with_or_without_our_matcher(
     installed = Components(selection)
     assert hooks["PreToolUse"][0] == USER_PRE_TOOL_USE
     assert hooks["PostToolUse"][0] == USER_POST_TOOL_USE
-    assert len(hooks["PreToolUse"]) == 1 + installed.guards
+    assert len(hooks["PreToolUse"]) == 1 + installed.memory + installed.guards
     assert len(hooks["PostToolUse"]) == 1 + installed.memory + installed.guards
 
 
@@ -282,9 +324,63 @@ def test_an_older_bash_only_guard_group_is_replaced_by_the_widened_matcher(
     path = project / ".claude" / "settings.local.json"
     path.write_text(json.dumps({"hooks": {"PreToolUse": [older]}}))
     assert _install(project, "--components", selection) == 0
-    (group,) = _hooks(project)[GUARDS.command.trigger]
+    groups = _hooks(project)[GUARDS.command.trigger]
+    (group,) = [group for group in groups if _script_of(group) == "zikaron-guard"]
     assert group == {**older, "matcher": GUARDS.command.matcher}
     assert GUARDS.command.tools == frozenset({"Bash", "Monitor"})
+
+
+@pytest.mark.parametrize("selection", ["memory", "both"])
+def test_a_reinstall_rewrites_the_gated_entries_rather_than_doubling_them(
+    project: Path, selection: str
+) -> None:
+    assert _install(project, "--components", selection) == 0
+    before = _hooks(project)
+    assert _install(project, "--components", selection) == 0
+    assert _hooks(project) == before
+    for trigger in (INSTRUCTION.tool_trigger, INSTRUCTION.stop_trigger):
+        assert _scripts_of(before[trigger]).count("zikaron-hook") == 1
+
+
+def test_a_gated_entry_of_another_install_is_that_installs(project: Path) -> None:
+    foreign = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": instruction_gate_command(
+                    Path("/elsewhere/bin/zikaron-hook"), CLAUDE_CODE
+                ),
+                "timeout": HOOK_TIMEOUT_SECONDS,
+            }
+        ]
+    }
+    path = project / ".claude" / "settings.local.json"
+    path.write_text(json.dumps({"hooks": {INSTRUCTION.tool_trigger: [foreign]}}))
+    assert _install(project) != 0
+    assert json.loads(path.read_text(encoding="utf-8"))["hooks"] == {
+        INSTRUCTION.tool_trigger: [foreign]
+    }
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "/u/wrap.sh && {hook}",
+        'set -- /u/x; [ -e "$1" ] && exec /u/other.sh {hook} || exit 0',
+    ],
+    ids=["after-another-program", "a-gate-whose-exec-is-not-ours"],
+)
+def test_a_users_command_that_merely_runs_zikaron_hook_stays_theirs(
+    project: Path, commands: Commands, shape: str
+) -> None:
+    command = shape.format(hook=shlex.quote(str(commands.hook)))
+    wrapper = {"hooks": [{"type": "command", "command": command}]}
+    path = project / ".claude" / "settings.local.json"
+    path.write_text(json.dumps({"hooks": {INSTRUCTION.tool_trigger: [wrapper]}}))
+    assert _install(project) == 0
+    groups = _hooks(project)[INSTRUCTION.tool_trigger]
+    assert groups[0] == wrapper
+    assert len(groups) == 2
 
 
 def test_an_unquoted_path_from_before_quoting_is_replaced_not_duplicated(

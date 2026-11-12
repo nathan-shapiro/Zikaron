@@ -19,7 +19,11 @@ from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook import main as main_module
 from zikaron.hook import push, spawn_warm, subagent_policy
 from zikaron.hook.components import Components
-from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT, WRITE_POLICY_PROMPT
+from zikaron.hook.write_policy import (
+    PUSHED_AGENT_WRITE_POLICY_PROMPT,
+    SUBAGENT_WRITE_POLICY_PROMPT,
+    WRITE_POLICY_PROMPT,
+)
 from zikaron.install.code_knowledge import DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME
 
 GUARD_START_TEXT: Final = guard_start_text(CLAUDE_CODE)
@@ -94,11 +98,11 @@ def test_no_flag_emits_exactly_the_write_policy_on_session_start(
     assert _emit(SPAWN, [], capsys, monkeypatch) == WRITE_POLICY_PROMPT
 
 
-def test_no_flag_emits_exactly_the_subagent_policy_on_subagent_start(
+def test_no_flag_emits_exactly_the_pushed_agent_policy_on_subagent_start(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = _emit(SUBAGENT, [], capsys, monkeypatch)
-    assert _subagent_context(output) == SUBAGENT_WRITE_POLICY_PROMPT
+    assert _subagent_context(output) == PUSHED_AGENT_WRITE_POLICY_PROMPT
 
 
 def test_guards_emit_only_the_guard_start_text_and_reach_no_service(
@@ -131,7 +135,7 @@ def test_both_emit_the_policy_then_the_guard_start_text(
     spawn = _emit(SPAWN, flag, capsys, monkeypatch)
     assert spawn == f"{WRITE_POLICY_PROMPT}\n\n{GUARD_START_TEXT}"
     subagent = _subagent_context(_emit(SUBAGENT, flag, capsys, monkeypatch))
-    assert subagent == f"{SUBAGENT_WRITE_POLICY_PROMPT}\n\n{GUARD_START_TEXT}"
+    assert subagent == f"{PUSHED_AGENT_WRITE_POLICY_PROMPT}\n\n{GUARD_START_TEXT}"
     assert _emit(PROMPT, flag, capsys, monkeypatch) == "PUSHED"
 
 
@@ -140,6 +144,21 @@ def test_the_consolidator_gets_no_start_text_under_any_selection(
     flag: list[str], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert _emit(CONSOLIDATOR, flag, capsys, monkeypatch) == ""
+
+
+@pytest.mark.parametrize("flag", [[], ["--components", "both"]])
+def test_a_consolidator_running_as_its_own_session_gets_no_start_text_but_is_warmed(
+    flag: list[str],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    service_calls: list[str],
+) -> None:
+    """Spawned by name under tmux, it is a teammate session of its own whose `SessionStart`
+    carries its definition as `agent_type`; its system prompt is its whole instruction, while its
+    first `next_group` still wants the service the warm-up starts."""
+    session = {**SPAWN, "agent_type": subagent_policy.CONSOLIDATOR_AGENT_TYPE}
+    assert _emit(session, flag, capsys, monkeypatch) == ""
+    assert service_calls == ["spawn_warm"]
 
 
 @pytest.mark.parametrize("agent_type", [DOCUMENTER_AGENT_NAME, ORCHESTRATOR_AGENT_NAME])

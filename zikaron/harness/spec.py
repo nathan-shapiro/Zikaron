@@ -29,14 +29,8 @@ class HookEvent(enum.Enum):
     """What a hook invocation *means*, independent of which harness's trigger name delivered it.
 
     Trigger names normalize onto the members below, each name to the one member it means. `SPAWN`
-    and `PROMPT` exist under both harnesses; `SUBAGENT_START` and `SEARCH` arrive only under Claude
-    Code, whose payload carries the `agent_type` that makes a per-agent rule expressible at all.
-
-    `SubagentStop` is deliberately absent. It has no work to do: the only path that wanted it
-    existed to record which concrete model a consolidation run used, and that is unnecessary
-    because the harness refuses an unknown model id at spawn, so the configured id can simply be
-    trusted. Its absence is what keeps the `event` log's own rule — pushes come from the hook,
-    writes from the MCP client — true, since the hook has no write path at all.
+    and `PROMPT` exist under both harnesses; the rest arrive only under Claude Code, whose payload
+    carries the `agent_type` and `agent_id` that make a per-agent rule expressible at all.
     """
 
     SPAWN = "spawn"
@@ -44,6 +38,13 @@ class HookEvent(enum.Enum):
     SUBAGENT_START = "subagent_start"
     #: A search of the project's files has run (`design/code-knowledge.md` §6).
     SEARCH = "search"
+    #: An agent is about to call a tool, where an instruction it was given may be unserved
+    #: (`design/harness.md` §"Agent teams").
+    TOOL_CALL = "tool_call"
+    #: A teammate's turn has ended, so its next message is a new instruction.
+    TEAMMATE_IDLE = "teammate_idle"
+    #: A subagent's turn has ended, so a marker it never claimed is stale.
+    SUBAGENT_STOP = "subagent_stop"
 
 
 class OutputChannel(enum.Enum):
@@ -147,6 +148,37 @@ class SearchReminder(NamedTuple):
         return f"{self.files.matcher}|{self.shell.matcher}"
 
 
+class InstructionPush(NamedTuple):
+    """Push on an agent's first tool call after an instruction (`design/harness.md` §"Agent
+    teams"): the triggers that set, claim and clear its markers beside the two start triggers, and
+    where the harness keeps an agent's transcript and the record naming its definition."""
+
+    tool_trigger: str
+    idle_trigger: str
+    stop_trigger: str
+    #: The directory, beside a session's transcript under that transcript's stem, holding one
+    #: transcript and one record per agent the session ran.
+    agents_dir: str
+    #: An agent's two files are this prefix, its `agent_id`, then one of the two suffixes.
+    agent_file_prefix: str
+    transcript_suffix: str
+    record_suffix: str
+    #: The record's keys that may name the agent's definition, in the order they are tried.
+    definition_keys: tuple[str, ...]
+    #: What opens a message one agent sent another, as a transcript records it.
+    message_opening: str
+    #: A resumed subagent's next prompt is a record the harness flags as its own, told by this
+    #: `origin` kind, its body between these two lines.
+    resume_origin: str
+    resume_opening: str
+    resume_closing: str
+
+    def agent_file(self, session_transcript: Path, agent_id: str, suffix: str) -> Path:
+        """One of an agent's files, beside the transcript of the session that ran it."""
+        name = f"{self.agent_file_prefix}{agent_id}{suffix}"
+        return session_transcript.with_suffix("") / self.agents_dir / name
+
+
 class HarnessSpec(NamedTuple):
     """Everything that varies between harnesses, for one harness.
 
@@ -197,6 +229,10 @@ class HarnessSpec(NamedTuple):
     #: The search reminder's hook, or `None` where a tool event's output has no documented path to
     #: the model, in which case a memory install writes no such hook.
     search_reminder: SearchReminder | None
+    #: Push on an agent's first tool call after an instruction, or `None` where no hook can tell
+    #: which agent a tool call is for or reach it, in which case a memory install writes no such
+    #: hook.
+    instruction_push: InstructionPush | None
     #: The documenter's whole grant: reading, searching and writing files, spelled as this harness
     #: names its own tools. The only place either harness's file tools are named, so the
     #: documenter's prompt can say *read* and *write* and stay true on both
@@ -336,6 +372,9 @@ KIRO: Final = HarnessSpec(
         deny=DenyChannel.STDERR,
     ),
     search_reminder=None,
+    # A subagent's tool calls fire the session's hooks under the session's id, naming no agent, and
+    # nothing a pre-tool hook prints on exit 0 reaches the model.
+    instruction_push=None,
     file_tools=("read", "grep", "glob", "write"),
     # Read, edit, write, shell: positional, since a `shell=` string reads to the linter as a
     # subprocess flag.
@@ -383,6 +422,22 @@ CLAUDE_CODE: Final = HarnessSpec(
         files=SearchArm(matcher="Grep|Glob", filters=("Grep", "Glob")),
         shell=SearchArm(matcher="Bash", filters=("Bash(*grep *)", "Bash(rg *)")),
     ),
+    # A teammate's record names its definition in the first two keys and its own name in the
+    # third, where an ordinary subagent's names its definition in the third alone.
+    instruction_push=InstructionPush(
+        tool_trigger="PreToolUse",
+        idle_trigger="TeammateIdle",
+        stop_trigger="SubagentStop",
+        agents_dir="subagents",
+        agent_file_prefix="agent-",
+        transcript_suffix=".jsonl",
+        record_suffix=".meta.json",
+        definition_keys=("spawnedAgentType", "customAgentType", "agentType"),
+        message_opening="<teammate-message",
+        resume_origin="coordinator",
+        resume_opening="The coordinator sent a message while you were working:",
+        resume_closing="Address this before completing your current task.",
+    ),
     file_tools=("Read", "Grep", "Glob", "Write", "Edit"),
     tool_ids=ToolIds("Read", "Edit", "Write", "Bash"),
 )
@@ -403,11 +458,15 @@ def _trigger_vocabulary() -> dict[str, HookEvent]:
     vocabulary: dict[str, HookEvent] = {}
     for spec in SPECS.values():
         reminder = spec.search_reminder
+        instruction = spec.instruction_push
         named = (
             (spec.spawn_trigger, HookEvent.SPAWN),
             (spec.prompt_trigger, HookEvent.PROMPT),
             (spec.subagent_start_trigger, HookEvent.SUBAGENT_START),
             (None if reminder is None else reminder.trigger, HookEvent.SEARCH),
+            (None if instruction is None else instruction.tool_trigger, HookEvent.TOOL_CALL),
+            (None if instruction is None else instruction.idle_trigger, HookEvent.TEAMMATE_IDLE),
+            (None if instruction is None else instruction.stop_trigger, HookEvent.SUBAGENT_STOP),
         )
         for trigger, event in named:
             if trigger is None:
@@ -429,6 +488,10 @@ CHANNELS: Final[dict[HookEvent, OutputChannel]] = {
     HookEvent.PROMPT: OutputChannel.STDOUT,
     HookEvent.SUBAGENT_START: OutputChannel.ADDITIONAL_CONTEXT,
     HookEvent.SEARCH: OutputChannel.ADDITIONAL_CONTEXT,
+    HookEvent.TOOL_CALL: OutputChannel.ADDITIONAL_CONTEXT,
+    # Neither prints anything; the map is total so that `channel_for` is.
+    HookEvent.TEAMMATE_IDLE: OutputChannel.ADDITIONAL_CONTEXT,
+    HookEvent.SUBAGENT_STOP: OutputChannel.ADDITIONAL_CONTEXT,
 }
 
 

@@ -25,7 +25,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D9 | Delivered as an MCP server plus a distributed skill and hooks |
 | D10 | Consolidation trigger = a manually-invoked skill spawning a subagent (no compaction hook exists) |
 | D11 | Staleness is repaired in-band by the agent the memory misled |
-| D12 | Read = push **and** pull; a `userPromptSubmit` hook injects the top 5 gists |
+| D12 | Read = push **and** pull; a `userPromptSubmit` hook injects the top 5 gists — **amended 2026-11-09 (M43)**: under Claude Code a subagent or teammate is pushed on its first tool call after each instruction, never the consolidator, documenter or orchestrator |
 | D13 | The gist's job is relevance triage |
 | D14 | End-to-end task-benefit evaluation stoved until an implementation exists (component benchmarks are not) |
 | D15 | Write-time dedup, agent-resolved: `remember` writes, then hands back near-duplicates for the agent to resolve |
@@ -45,7 +45,7 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 | D29 | Consolidation groups topically using retrieval as the adjacency function, mutual-K plus a cohesion pass; session grouping rejected |
 | D30 | Write policy v0 drafted, to be experimented against; six signals instrumented |
 | D31 | ~~Four~~ **Five** components: core / service / mcp / hook, plus the detached knowledge indexer (D1's amendment), over a Unix-socket JSON-RPC — **amended at M31**: the typed `zikaron` commands are clients, not store-openers, and `init` alone creates a store — **amended 2026-10-13 (M39)**: `health()` reports the service's package version, and a typed command refuses a service of any other version |
-| D32 | Two tool sets: ~~five for the primary agent~~ — **five memory verbs plus the knowledge index's seven, twelve in all** (D1's amendment) — and four for the consolidator |
+| D32 | Two tool sets: ~~five for the primary agent~~ — **five memory verbs plus the knowledge index's seven, twelve in all** (D1's amendment) — and four for the consolidator — **amended 2026-11-09 (M43)**: the push's door into the consolidator is shut by its definition, read from the harness's record of it |
 | D33 | Config = two TOML layers (system-wide + `.zikaron` override, per-key amend); `meta` keeps only store-coupled values |
 | D34 | Two harnesses, one implementation: kiro-cli and Claude Code, differences carried as data behind one seam — **amended 2026-10-28 (M41-1)**: kiro-cli means its V3 engine at 2.35.1 or later; V2 is dropped |
 | D35 | Supported platforms = Linux + macOS arm64; Windows out by transport, Intel Macs out on `onnxruntime` |
@@ -56,8 +56,8 @@ One line each. **Rationale, measurements and rejected alternatives are in `desig
 
 ## Current state — resume here
 
-**M0–M40, M40-6, M41-1 and M41-2 are built, reviewed and landed**, the last through PR #32 as
-`f6a0a34`. Each milestone's record is in `FINDINGS-archive.md` (M40-6's in §"M40-6 as built"), its
+**M0–M42, M40-6, M41-1 and M41-2 are built, reviewed and landed**, the last through PR #34 as
+`567b4dd`. Each milestone's record is in `FINDINGS-archive.md` (M42's in §"M42 as built"), its
 brief in `design/build-plan.md`. M40 is code knowledge: the planner, documenter, orchestrator and
 skill (D39, `design/code-knowledge.md`), K14 links, the follow-ups M40-1 to M40-6, and the Warp
 evaluation — results in `research/m40-evaluation.md` §4–§6, written up for readers outside the
@@ -68,45 +68,39 @@ spawned subagent needs (`design/harness.md`; `research/kiro-v3-probe.md`). M41-2
 subagent the session waits for, one model per agent on both harnesses, per-agent effort, the
 write policy in the code-knowledge prompts, and the spill — and that file states what stays open.
 M40-6 scoped a documenter's test absences to the files it read and corrected the documented
-headless `--allowedTools` (`research/m40-toy-run.md` §18).
+headless `--allowedTools` (`research/m40-toy-run.md` §18). M42 returns each knowledge base's first
+`knowledge_whole_results` results whole and the rest as named entries, with no further page: an
+`offset` was built, measured unused, and withdrawn (`design/knowledge-index.md` §8.3, K15;
+`research/paged-search-replay.md`).
 
-**Release.** `0.4.1` is released (tag `v0.4.1` on `f6a0a34`, 2026-10-30), a patch carrying M41
-and M40-6; the tree carries `0.4.2`, set in M42's pull request for the operator to tag (operator,
-2026-11-01) — a patch, since M42 moves no schema. A minor bump means a `meta.schema_version` bump and
-nothing else (D36, `design/distribution.md` §3).
-
-**The owed measurements of 2026-10-30 landed through PR #33 as `aa1ecf8`**
-(`research/owed-measurements-2026-10-30.md`, `research/transcript-measurements-2026-10-30.md`);
-each owed entry below carries its number and the operator's decision on it.
+**Release.** `0.4.2` is released (tag `v0.4.2` on `567b4dd`, 2026-11-01), a patch carrying M42.
+M43's commit sets `0.4.3`, a patch, for the operator to tag (operator, 2026-11-12); after the tag,
+the tree moves to `0.4.4.dev0`. A minor bump means a `meta.schema_version` bump and nothing else
+(D36, `design/distribution.md` §3).
 
 **Each milestone is brainstormed with the operator before its brief is written** (operator,
-2026-10-13), and chosen from §"Owed work".
+2026-10-13), and chosen from §"Owed work". **Next: finish M43 (below); then the next milestone,
+chosen from there with the operator.**
 
-**In progress: M42, each corpus's first results whole and the rest named, with no further page.**
-The design is the brief, `design/build-plan.md` §M42, amended 2026-10-31 to drop `offset` on the
-live measurements (no reader paged; `research/paged-search-replay.md`). Committed locally as
-`f9750c6` on `m42-paged-knowledge-search` with `offset`, not pushed — the eval harness refuses an
-uncommitted package — and the amendment is uncommitted on top, so the PR amends `f9750c6`.
-Experimental variants run from scratch copies of the package via `PYTHONPATH`, never this tree,
-since four real projects run this `.venv`. Steps (operator, 2026-10-31: *"let's ship it without
-offset and used freed up budget for clearer wording (ask reviewer to provide it to you). Let's
-amend the brief, make code changes and then have additional review rounds till approval."*):
-1. **Done**: the brief amended; `offset`, its invariant, the past-the-end counting and §7.4's
-   mention removed from code, tests and design text.
-2. **Done**: memory-reviewer's clearer description (`reviews/m42-paged-search-review.md`
-   §"Wording, second"), verbatim in `zikaron/mcp/primary.py` and `knowledge-index.md` §8.3, 1,880
-   of 1,900 code points; the cold read rerun on it closes both weak spots
-   (`research/paged-search-replay.md`, done-when 4); five mutations of the changed code caught.
-3. **Done**: gate green, no new line uncovered; the brief and build together APPROVED
-   (`reviews/m42-paged-search-review.md`). **Next**: the PR (operator, 2026-11-01), amending
-   `f9750c6`, carrying the hook's `sqlite3` guard and the `0.4.2` version.
+**In progress: M43, push for an agent given an instruction** — a subagent's or an agent-team
+teammate's first tool call after each instruction is pushed, never the consolidator's, documenter's
+or orchestrator's (`design/build-plan.md` §M43; `design/harness.md` §"Agent teams"). **Built in the
+worktree `~/Zikaron-m43`** (branch `m43-instruction-push`, its own `.venv`), the brief and build
+reviewed together to APPROVED (`reviews/m43-instruction-push-review.md`). Done-when 2's four live
+runs are done, their results in `research/teammate-hook-probe.md` §"M43 live run, in-process" and
+the three sections after it; the resumed subagent's prompt shape they found is served. Done-when 3
+is measured (`research/teammate-hook-probe.md` §"The gate's cost per tool call" and §"Processes
+per tool call and turn"). Lands through its pull request, as `0.4.3`. Owed:
+- **After the merge, re-install the four projects** that run this tree's `.venv`
+  (`python -m zikaron.install --project . --harness claude-code --components both` in each, §"Where
+  the stores are"): until then their subagents are told of a block nothing delivers.
 
 **Guards (D38, `design/guards.md`).** Installed with the memory store (`--components both`) in
 `~/Trading/LeibaTrader`, `~/Dividends`, `~/Memory` and `~/PythonPlayground`; a project that
 installs them instructs agents about edits not at all. This repository installs nothing (its
 `.venv` runs the code under development). §3's rules and §9's self-match rule move only on an
 observed command, never on a conceived edge, and never toward evaluating the shell; after any §3
-or §8 edit run `.venv/bin/pytest -q --no-cov tests/test_guard_rule_table.py`. The replay's
+or §8 edit run `.venv/bin/pytest --no-cov tests/test_guard_rule_table.py`. The replay's
 verbatim deny list stays out of the repository (`experiments/m37_guard_replay.py --dump`
 re-derives it here).
 
@@ -114,11 +108,15 @@ re-derives it here).
 
 - **A schema change is one commit with its design**: `test_ddl.py` and `test_event_kinds.py`
   read `schema.md`'s DDL and per-kind table verbatim.
+- **The pushed-agent write policy is at 2,976 of the 3,000 units** kiro's budget allows, which
+  `tests/test_hook_write_policy.py` holds every shipped policy to, so a sentence added to the
+  shared paragraphs must be paid for.
 - **The knowledge status tool's description is at 1,896 of the 1,900 characters**
-  `tests/test_mcp_tool_descriptions.py` allows, so a sentence added to it must be paid for.
+  `tests/test_mcp_tool_descriptions.py` allows, and the search tool's at 1,880, so a sentence
+  added to either must be paid for.
 - **`sun_path` is tighter on macOS**; `design/architecture.md` §Paths holds every figure. A long
   `TMPDIR` reproduces macOS's path geometry on Linux:
-  `d=/tmp/mac/$(printf 'x%.0s' {1..39}); mkdir -p "$d" && TMPDIR="$d" .venv/bin/pytest -q`.
+  `d=/tmp/mac/$(printf 'x%.0s' {1..39}); mkdir -p "$d" && TMPDIR="$d" .venv/bin/pytest`.
 - **`design/harness.md` is normative for every harness-coupled fact**; read it before touching
   the hook, the MCP client or the installer.
 - **`research/`, `experiments/` and `spikes/` are out of scope for any sweep** (operator,
@@ -141,9 +139,11 @@ re-derives it here).
 `<project>/.zikaron/`, one per directory, no global tier. **`~/Trading/LeibaTrader`,
 `~/Dividends`, `~/Memory` and `~/PythonPlayground` run this repository's `.venv`**, an editable
 install, deliberately (operator, 2026-09-30): an uncommitted edit here is live there at their next
-service or MCP start. Ask a venv which code it runs from outside any checkout, or with `-P`: run
-inside one, `python -c` imports that checkout's `zikaron` from the current directory instead. LeibaTrader is the primary real-work store and documents its code with code
-knowledge; its memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` has been false since M40-1, and
+service or MCP start. **So code is changed in a git worktree with a `.venv` of its own, never in
+this tree** (operator, 2026-11-09: *"make code changes in a worktree as ~/Memory is actively
+working and it will be distractive if zikaron breaks"*); prose may be edited here. Ask a venv which code it runs from outside any checkout, or with `-P`: run
+inside one, `python -c` imports that checkout's `zikaron` from the current directory instead.
+LeibaTrader is the primary real-work store and documents its code with code knowledge; its memory `f6eb10e5-6cf1-4805-bdf4-5d24ed0a71f5` has been false since M40-1, and
 retiring it is the operator's. `~/Memory` is a sibling project's store, read-only for this agent
 without the operator's per-task say-so; the consolidation A/B there has no pre-run baseline.
 
@@ -168,9 +168,8 @@ An owed item goes here the moment it is identified. The detail behind each is in
   and not yet run; M42's paged-against-unpaged check ran without it, both of its arms reading the
   documents. The treatment's prompt with no documents, about $65–90, to separate the prompt's
   checking paragraph from the documents as the cause of the extra cost
-  (`research/m40-evaluation.md` §6). It needs
-  `prepare` again, since the rebase replaced the commit `state.json` records. The earlier
-  documents and slice are in `~/Zikaron-m40-archive/`.
+  (`research/m40-evaluation.md` §6). It needs `prepare` again, since the rebase replaced the
+  commit `state.json` records. The earlier documents and slice are in `~/Zikaron-m40-archive/`.
 - **The closed-issue stage of the evaluation** — a milestone of its own: closed issues at the
   commits their fixes merged onto, the documents rebuilt there by the planner.
 - **A dependency that moves while its users' bytes do not** leaves `Depends on:` naming a gone
@@ -272,7 +271,8 @@ Ids are stable and never reused; closed ones are in `FINDINGS-archive.md`. Detai
 - **Q14** — preferences collect in a store designed not to bind; `CLAUDE.md` is the side of the
   seam for a rule that must bind (`research/m30-docker-end-to-end.md` §Coexistence).
 - **Q16** — does the agent reach for memory unprompted? Unattributable from the store; the
-  harness transcripts can answer it while they last.
+  harness transcripts can answer it while they last, and for pushed agents, on a seeded fact, did
+  (`research/teammate-hook-probe.md` §"What the pushed agents did with it").
 - **Q19** — the corpus skews negative by the scope gate's construction; closing it needs Q7 first,
   then whether outcome belongs in the record and in push's selection.
 - **Q21** — a consolidator pass that neutralizes register without touching severity; closed only

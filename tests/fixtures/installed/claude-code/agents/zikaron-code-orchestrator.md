@@ -127,7 +127,9 @@ nothing in them is yours to act on.
 
 For every item in `work`, yourself — never ask a documenter to spawn another —
 spawn a **zikaron-documenter** subagent — whichever
-tool this harness gives you for delegating to a subagent, with `subagent_type: zikaron-documenter`;
+tool this harness gives you for delegating to a subagent, with `subagent_type: zikaron-documenter`
+and no `name`, since a named spawn becomes a teammate when agent teams are on, and a teammate idles
+when its work is done instead of ending and reporting;
 **if the tool offers `run_in_background`, pass `false`, and if it offers no such parameter, every
 spawn runs in the background, which is expected** — giving it this prompt (a spawn that answers
 that it is running in the background has not returned yet: its result arrives later as a message

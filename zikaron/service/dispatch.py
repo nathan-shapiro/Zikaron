@@ -43,6 +43,7 @@ from typing import Final
 import aiosqlite
 
 from zikaron.core.errors import ErrorCode, ZikaronError
+from zikaron.core.events import Occasion
 from zikaron.core.records import memory as records
 from zikaron.core.records.memory import Rewrite
 from zikaron.core.retrieval.reads import ReadCall
@@ -338,7 +339,8 @@ async def surface(
     envelope: ResolvedEnvelope,
     params: dict[str, object],
 ) -> SurfaceResult:
-    """`memory_surface(prompt, limit?, deadline_at_ms?) -> {text}` — the push path's block.
+    """`memory_surface(prompt, limit?, deadline_at_ms?, occasion?) -> {text}` — the push path's
+    block. `occasion` absent is a prompt's, so a hook older than it pushes as it always did.
 
     `deadline_at_ms` is read by the dispatcher, through `caller_deadline`, before this runs.
     """
@@ -347,15 +349,31 @@ async def surface(
         prompt=require_str(params, "prompt"),
         call=_read_call(db, ctx, envelope),
         limit=require_int(params, "limit", default=5),
+        occasion=_occasion(params),
     )
     return SurfaceResult(text=text)
 
 
-def _open_the_turn(ctx: ServiceContext, envelope: ResolvedEnvelope) -> None:
-    """A push is one per user prompt, so its arrival opens the session's turn, and the turn's first
-    search of a documented module reminds (`design/code-knowledge.md` §6) — whatever the push then
-    answers, since a refused push opened the turn all the same."""
-    ctx.reminders.clear(envelope.session_id)
+def _occasion(params: dict[str, object]) -> Occasion:
+    named = optional_str(params, "occasion")
+    if named is None:
+        return Occasion.PROMPT
+    try:
+        return Occasion(named)
+    except ValueError:
+        limit = " or ".join(occasion.value for occasion in Occasion)
+        raise ZikaronError(ErrorCode.BOUNDS, field="occasion", limit=limit, actual=named) from None
+
+
+def _open_the_turn(
+    ctx: ServiceContext, envelope: ResolvedEnvelope, params: dict[str, object]
+) -> None:
+    """A prompt's push is one per user prompt, so its arrival opens the session's turn, and the
+    turn's first search of a documented module reminds (`design/code-knowledge.md` §6) — whatever
+    the push then answers, since a refused push opened the turn all the same. An instruction's push
+    carries the label of the session holding its agent, and opens no turn of that session's."""
+    if params.get("occasion", Occasion.PROMPT.value) == Occasion.PROMPT.value:
+        ctx.reminders.clear(envelope.session_id)
 
 
 @dataclass(frozen=True, slots=True)

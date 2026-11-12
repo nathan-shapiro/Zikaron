@@ -249,6 +249,31 @@ class TestTheCodeTableMatchesTheDesignTable:
         assert tuple(_BACKTICKED.findall(cell))[: len(expected)] == expected
 
     @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
+    def test_instruction_push(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
+        """Every field in its declared order, or that the harness has none — which is what a memory
+        install's absent entries read."""
+        cell = _cell(rows, "Instruction push (`instruction_push`)", spec)
+        instruction = spec.instruction_push
+        if instruction is None:
+            assert _identifier(cell) is None
+            return
+        expected = (
+            instruction.tool_trigger,
+            instruction.idle_trigger,
+            instruction.stop_trigger,
+            instruction.agents_dir,
+            instruction.agent_file_prefix,
+            instruction.transcript_suffix,
+            instruction.record_suffix,
+            *instruction.definition_keys,
+            instruction.message_opening,
+            instruction.resume_origin,
+            instruction.resume_opening,
+            instruction.resume_closing,
+        )
+        assert tuple(_BACKTICKED.findall(cell)) == expected
+
+    @pytest.mark.parametrize("spec", [KIRO, CLAUDE_CODE], ids=lambda spec: spec.harness.value)
     def test_harness_binary(self, rows: dict[str, dict[str, str]], spec: HarnessSpec) -> None:
         """What the installer looks for on `PATH` before writing anything.
 
@@ -366,6 +391,11 @@ class TestTheTableIsInternallyConsistent:
         }
         assert CLAUDE_CODE.search_reminder is not None
         expected[CLAUDE_CODE.search_reminder.trigger] = HookEvent.SEARCH
+        instruction = CLAUDE_CODE.instruction_push
+        assert instruction is not None
+        expected[instruction.tool_trigger] = HookEvent.TOOL_CALL
+        expected[instruction.idle_trigger] = HookEvent.TEAMMATE_IDLE
+        expected[instruction.stop_trigger] = HookEvent.SUBAGENT_STOP
         assert expected == TRIGGERS
 
     def test_each_harnesss_own_trigger_names_resolve_to_the_events_they_mean(self) -> None:
@@ -376,6 +406,10 @@ class TestTheTableIsInternallyConsistent:
                 assert event_for(spec.subagent_start_trigger) is HookEvent.SUBAGENT_START
             if spec.search_reminder is not None:
                 assert event_for(spec.search_reminder.trigger) is HookEvent.SEARCH
+            if spec.instruction_push is not None:
+                assert event_for(spec.instruction_push.tool_trigger) is HookEvent.TOOL_CALL
+                assert event_for(spec.instruction_push.idle_trigger) is HookEvent.TEAMMATE_IDLE
+                assert event_for(spec.instruction_push.stop_trigger) is HookEvent.SUBAGENT_STOP
 
     def test_every_event_has_a_channel(self) -> None:
         """A new event with no channel would emit nothing at all, silently, which is the failure
@@ -386,16 +420,12 @@ class TestTheTableIsInternallyConsistent:
 
     @pytest.mark.parametrize(
         "unknown",
-        ["", "postToolUse", "SessionEnd", "SubagentStop", "agentSpawn", "userPromptSubmit"],
+        ["", "postToolUse", "SessionEnd", "PostToolUseFailure", "agentSpawn", "userPromptSubmit"],
     )
     def test_an_unrecognised_trigger_name_resolves_to_nothing(self, unknown: str) -> None:
         """kiro's camelCase names among them: its V3 payload names the event in PascalCase even for
         an entry configured with one (`research/kiro-v3-probe.md` §3), so the hook needs no
-        synonyms.
-
-        `SubagentStop` among them, deliberately: it is a real trigger one harness sends and this
-        hook has no work for, and the hook having no write path at all depends on it staying out of
-        the vocabulary rather than merely being unhandled downstream.
+        synonyms. `SessionEnd` and `PostToolUseFailure` are real triggers this hook has no work for.
         """
         assert event_for(unknown) is None
 

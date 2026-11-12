@@ -51,6 +51,7 @@ from zikaron.core.events import (
     MergeDetail,
     MergeRole,
     NoReceiptDetail,
+    Occasion,
     PromoteDetail,
     PromoteForm,
     PromoteRole,
@@ -223,6 +224,7 @@ def test_the_closed_sets_are_enums_carrying_exactly_the_designs_values(
     }
     codes = tuple(code.wire_name for code in ErrorCode)
     assert stated == {
+        "surface_call.occasion": tuple(Occasion),
         "surface.demotion": tuple(Demotion),
         "merge.role": tuple(MergeRole),
         "promote.role": tuple(PromoteRole),
@@ -319,6 +321,7 @@ def test_an_enum_member_and_its_plain_value_are_interchangeable() -> None:
                 "n_returned": 3,
                 "n_demoted": 0,
                 "preamble_digest": "0123456789ab",
+                "occasion": "prompt",
             }
         )
 
@@ -344,6 +347,7 @@ def test_a_typed_detail_serializes_to_the_contracts_flat_key_order() -> None:
         n_returned=3,
         n_demoted=1,
         preamble_digest="0123456789ab",
+        occasion=Occasion.INSTRUCTION,
     )
     payload = detail.as_detail()
     assert tuple(payload) == EVENT_SPECS[EventKind.SURFACE_CALL].field_names

@@ -45,11 +45,13 @@ def _unnamed(_method: str, _error: OSError) -> None:
 
 #: What a method changes in the service's own state the moment its request arrives, before its
 #: deadline is read or its connection obtained — so it holds whatever the request then answers.
-#: It must not raise: it runs ahead of the parameters' validation.
-type Receipt = Callable[["ServiceContext", ResolvedEnvelope], None]
+#: It must not raise: it runs ahead of the parameters' validation, so it reads them raw.
+type Receipt = Callable[["ServiceContext", ResolvedEnvelope, dict[str, object]], None]
 
 
-def _nothing(_ctx: "ServiceContext", _envelope: ResolvedEnvelope) -> None:
+def _nothing(
+    _ctx: "ServiceContext", _envelope: ResolvedEnvelope, _params: dict[str, object]
+) -> None:
     return None
 
 

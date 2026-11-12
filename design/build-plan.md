@@ -9027,6 +9027,381 @@ lines for its source's.
 - **Not** an amendment of §1.1: `opening` parses no markdown.
 - **Not** the memory store's search.
 
+## M43 — Push for an agent given an instruction: a teammate's message and a subagent's prompt
+
+Normative, written by the build: **`design/overview.md`'s D12 and D32 rows**, amended, with
+`FINDINGS.md`'s index lines; **`design/harness.md`** — the table's trigger, output-channel and
+subagent rows, §"Subagents", and a new §"Agent teams" holding item 1's measurements;
+**`design/architecture.md` §"Subagent sessions — the push hook suppresses itself"**, its content
+and not its heading, which other documents cite; **`design/retrieval.md`**'s account of when push
+fires; **`design/architecture.md`** §"Paths" (the marker directory and `hook.log`'s detail word,
+items 2 and 6), §"Degraded modes" (this path's chain, `hook.log` kinds and step 2's request, items
+4, 6 and 9), the RPC list (item 9) and §"The install contract" (item 10);
+**`design/write-policy.md`**'s variants (item 8); **`design/schema.md`**'s `surface_call` row,
+§"D30's six signals, as queries" and its paragraph on how a subagent moves both sides of a
+session's row (item 9); **`design/overview.md` §2**'s sentence that no push hook fires in a
+subagent session,
+which closed D32's door by construction — after this milestone it is closed by definition, item
+5; **`design/code-knowledge.md` §5.2**, the orchestrator's spawn parameters and its loop's step 2,
+the documenters', which gain item 13's rule and its reason; **`design/guards.md` §2**'s row for
+`PreToolUse` with no `permissionDecision` (done-when 2); a **`design/kiro-gaps.md`** row (item
+11); and `README.md`'s sentence on push, its hook row and its `.claude/settings.local.json` row.
+§"Agent teams" dates and versions every claim it makes, as `design/harness.md`'s own rule asks:
+measured on Claude Code 2.1.311. Decisions (operator, 2026-11-09): *"the user prompt hook does
+not popup for teammmates. I think this needs to be fixed by us"*; the four proposals of that
+conversation accepted — teammates and not the lead, the undocumented transcript format with a
+fall to no push, this milestone, a kiro-gaps row and feedback to Anthropic — except that
+ordinary subagents are pushed too: *"Wouldn't
+it be cheap to support pushes in them as well using same mechanism?"* Evidence:
+`research/teammate-hook-probe.md`, `research/claude-code-agent-teams-hooks-docs.md`.
+
+**What was found.** Under Claude Code 2.1.311 with agent teams on, no hook a teammate fires per
+message can carry a push. In-process, a teammate is a subagent to the harness: `SubagentStart`
+fires once per message it receives, and its `additionalContext` reaches it only at spawn — a later
+run's text, new each time, is recorded as run and neither attached nor sent (3 of 3). Under tmux a
+teammate is a session of its own, and nothing fires between its `SessionStart` and its first tool
+call. `UserPromptSubmit` fires for neither, nor for an ordinary subagent. **`PreToolUse` and
+`PostToolUse` deliver `additionalContext` on every tool call of every one of them**, and by a
+teammate's first tool call after a message, that message is the last `user` record of the
+transcript its payload names. No payload carries the message: `SubagentStart` has `agent_id`,
+`agent_type` and the common fields, and `prompt_id` is the lead's on every event of a team run.
+**In-process, `agent_type` is the teammate's name**, not its definition — the definition is in
+`subagents/agent-<agent_id>.meta.json` — and a named subagent becomes a teammate whenever teams are
+on (`~/Memory/design/agent-team-workflow.md` §4), so `agent_type` alone cannot be trusted to name
+the consolidator. D32 suppressed push for every subagent because kiro's V2 payload named no agent
+(`design/overview.md` D32); that is no reason on Claude Code, whose tool payloads name one.
+
+### What ships
+
+1. **Push on the first tool call after an instruction**, under Claude Code only. An *instruction*
+   is what an agent other than the main session is given to act on: an ordinary subagent's prompt,
+   a message delivered to a teammate, and a message resuming a subagent. A new `HookEvent`,
+   `TOOL_CALL`, is `PreToolUse` with no matcher, on `ADDITIONAL_CONTEXT`; `TEAMMATE_IDLE` and
+   `SUBAGENT_STOP` join it, each with no output, and each with a `CHANNELS` entry all the same,
+   since `channel_for` reads a total map. The seam carries all of it as data on
+   `HarnessSpec` (`CLAUDE_CODE` names the triggers and the two transcript locations of item 4;
+   `KIRO` has `None`), so no path downstream branches on a harness. `HookEvent`'s docstring loses
+   its account of why `SubagentStop` is absent, which item 2 falsifies.
+2. **A pending marker says an instruction may be unserved**, one empty file per agent under
+   `<store>/instruction-pending/`, a directory of mode 0700 whose files are created `0o600` by an
+   explicit `os.open`, since a hook runs under the user's umask and not the store's, entered in
+   `architecture.md` §"Paths"'s table. A marker is named `<session_id>` for a session's
+   own main agent and `<session_id>.<agent_id>` for an agent inside it, and is written only where
+   the store already exists; the setter creates the directory where it is missing (0700, existing
+   accepted), since every live store predates it. Set by `SubagentStart` (every spawn, every
+   in-process teammate message, and a resume, which done-when 2 measures), by `SessionStart`
+   whose `source` is `startup` (a tmux teammate's spawn, and every main session's, whose marker
+   its first tool call clears), and by `TeammateIdle` when its payload carries no `agent_id` (a
+   tmux teammate's next message — all four of the tmux probe's `TeammateIdle`s fired in the
+   teammate's own session and none in the lead's; the docs give in-process `TeammateIdle` its
+   `agent_id` from 2.1.290, below which an in-process idle sets a needless `<session_id>` marker
+   that costs its lead one hook run). Cleared by the first `TOOL_CALL` that claims it (item 6),
+   whatever it then does, and by `SubagentStop` for its agent, so an in-process marker lives one
+   turn at most — on 2.1.311 or later, since below it the docs note a running subagent's
+   `SubagentStop` firing about twice a minute, which would clear its marker before any tool call.
+   Several markers for one session are the ordinary case — two in-process teammates spawned in
+   one batch — and each is its own agent's. Any `TOOL_CALL` run that lists the directory, after
+   its own claim, and every `SessionStart` that marks, deletes an in-process marker older than
+   `PENDING_TTL_SECONDS`, a module constant of 1,800, and a session's own marker older than
+   `PENDING_SESSION_TTL_SECONDS`, 86,400: a tmux teammate's waits on a message that may come hours
+   later and opens no other session's gate (item 3), but a main session that ends without a tool
+   call, or a tmux teammate's last idle, leaves one that nothing else would ever claim — and a
+   settings file from before the gate, whose sessions run the new hook through an upgraded
+   package, has no tool-call hook to sweep at all.
+3. **The gate**: the `PreToolUse` entry's command is a shell line that runs `zikaron-hook` only
+   when a file `instruction-pending/$CLAUDE_CODE_SESSION_ID*` exists in the store, and otherwise
+   exits 0. The store is found as every hook finds it, from `CLAUDE_PROJECT_DIR` (D17), not from a
+   path the installer writes, so a project moved or renamed keeps its gate. Its form tolerates any
+   number of matches, since a `[ -e … ]` given two fails with `too many arguments` and runs
+   nothing, and keeps `exec`'s operand a shell word of its own for item 10's predicate:
+   `set -- "${CLAUDE_PROJECT_DIR:-.}"/.zikaron/instruction-pending/"$CLAUDE_CODE_SESSION_ID"*;
+   [ -e "$1" ] && exec '<zikaron-hook>' || exit 0`, on one line, or another the build measures
+   equal on those cases. `SubagentStop`'s entry is gated by the same line, since it only ever
+   deletes a marker; `TeammateIdle`'s cannot be, since it sets one where none exists. Recent
+   sessions make 11.5–33 tool calls per prompt, main session and subagents together
+   (`research/teammate-hook-probe.md`), and the hook costs 57–81 ms a call
+   (`research/owed-measurements-2026-10-30.md` §5), so an ungated hook would multiply the hooks'
+   cost. A tmux teammate's marker opens its own session's gate only, since its hooks carry its
+   own session id; an in-process marker opens its lead's session for at most a turn. An unset
+   `CLAUDE_CODE_SESSION_ID` makes the glob match every marker, which costs runs and never
+   a push: the gate only ever skips work, and every decision is item 4's.
+4. **Who is served, and with what.** With an `agent_id`, the transcript is
+   `<transcript_path without .jsonl>/subagents/agent-<agent_id>.jsonl`; without one,
+   `transcript_path` itself, served only when its first `user` record whose content is a string
+   begins `<teammate-message` — a tmux teammate. **The main session is never served here**: its
+   prompts are D12's. A `user` record the harness flags `isMeta` or `isCompactSummary` — a local
+   command's caveat, a compaction's summary, both string-content and both measured in LeibaTrader's
+   transcripts, and a skill's expansion, list-content — is no instruction and is skipped
+   throughout, but for one: a resumed subagent's next prompt is an `isMeta` record of `origin:
+   {kind: coordinator}`, its body between two lines of the harness's, measured in done-when 2's
+   in-process run and read as its body (`InstructionPush`'s three `resume_` fields). The
+   transcript is read backward from its end in blocks, since a teammate's grows
+   for the whole session and the instruction is always at its end. The instruction is the
+   transcript's last `user` record whose content is a string, with every such record before it
+   back to the `assistant` record, or the list-content `user` record, preceding them — so a turn
+   that ended on a `SendMessage` result does not reach into the instruction before it — the
+   current turn's own `assistant` records, one
+   per content block (thinking, text, and the `tool_use` of this call), come after them and do not
+   end the run. Each `<teammate-message …>` wrapper is reduced to its body, a body that parses as
+   a JSON object carrying `type` (the shutdown and idle protocol) is dropped, and the rest are
+   joined by a blank line. A nested agent — a documenter its orchestrator spawned — is read as
+   carrying the root session's `transcript_path`, measured at depth 1 and assumed deeper; its
+   transcript and meta file sit flat under the root's `subagents/`, as LeibaTrader's do, and a
+   wrong assumption costs `instruction_unread` lines, never a push.
+   **Two records after that last string record end the search unread.** One carrying a `text`
+   block and no `tool_result` would be an instruction of an unmeasured shape, and pushing for the
+   older string record before it would push the wrong instruction silently. One carrying a
+   `tool_result` means the instruction's turn is past its first tool call, so this `TOOL_CALL` is
+   not the one the marker was set for — a marker set when a message reached a busy teammate, or a
+   transcript lagging the conversation, as the docs warn it may. A response's records are written
+   after its hooks run (done-when 2), so a call the harness refuses before any hook leaves no
+   result on disk for the next call of its response; one alone in its response does, and its
+   instruction is then lost with a line.
+   Nothing left, a transcript missing or unreadable, a record not shaped as measured, or either of
+   those two records: no push, the marker already claimed (item 6), and for every cause but the
+   first one `hook.log` line of a new kind, `instruction_unread`. A transcript this path does not
+   serve — every main session's first tool call — logs nothing.
+5. **Never to the consolidator, the documenter or the orchestrator**, by **definition**: where an
+   agent has an `agent_id`, its definition is its `agent-<agent_id>.meta.json`'s
+   `spawnedAgentType`, else its `customAgentType`, else its `agentType`: a teammate's file carries
+   the first two, equal in every one measured, beside its name in `agentType`, and an ordinary
+   subagent's carries its definition in `agentType` and neither teammate key — measured over the
+   two teams' meta files and LeibaTrader's 400 most recent. Where an agent has no `agent_id`, its definition
+   is its `agent_type` (a typed tmux teammate's is its definition, measured), and one with no
+   `agent_type` — a tmux teammate spawned with no type runs no `--agent`, and the docs give the
+   field only for one that does — is decided by item 4's transcript test alone, which serves it
+   and never the main session; the consolidator, spawned typed by its skill, is never that cell.
+   An agent with an `agent_id` whose
+   meta file is missing or names no definition is not pushed — the consolidator is the one wrong
+   answer D7 cannot absorb — and writes `instruction_unread`, since its marker is already claimed.
+   **The no-`agent_id` cell is the one dependency that fails toward a push**: `agent_type` is the
+   name in-process and the definition under tmux, both measured on 2.1.311, so a later build
+   putting the name there under tmux too would let a tmux consolidator through. Harness.md's new
+   §"Agent teams" says so, and done-when 2 records the consolidator's `agent_type` on its tool
+   events under each backend. Naming the consolidator `zikaron-consolidator` in its skill would
+   close it, and is not done: a named spawn becomes a teammate whenever teams are on, and the
+   consolidator is meant to be a subagent. The documenter's documents must derive from source,
+   not from memory, and the orchestrator's loop runs the planner and spawns documenters, which no
+   memory changes — the two `hook/reminder.py` is already silent for. **The same resolution serves
+   every path that names the consolidator** — `subagent_policy.is_consolidator` and the guard
+   start text's exclusion in `hook/main.py` — and the reminder's silent set, wherever the meta
+   file exists when the hook runs. **`SessionStart` joins them**: a consolidator spawned by name
+   under tmux is a session of its own whose `SessionStart` carries `agent_type:
+   zikaron-consolidator`, and before this milestone the consolidator check ran on `SubagentStart`
+   alone, so such a session was given the main policy and the guard start text; it now emits
+   neither, while its warm-up
+   and its session relay still run. Done-when 2 measures whether the meta file exists at a spawn's
+   `SubagentStart`, and where it does not, the `SubagentStart` paths keep `agent_type` and
+   `design/harness.md` states the gap.
+6. **The push is D12's block, on another occasion**: one `memory_surface` with the instruction as
+   `prompt` and `occasion: "instruction"` (item 9), on `ADDITIONAL_CONTEXT`. **The unlink is the
+   claim**, made before the transcript is read: a `TOOL_CALL` whose `os.unlink` of its agent's
+   marker raises `FileNotFoundError` does nothing more, so the hooks of a parallel tool batch —
+   an agent's usual first move after an instruction, each call its own `PreToolUse` process —
+   push once between them. It connects only to a service already serving and never starts one,
+   under a 2-second deadline — a tool call waits on it, and a push lost is recoverable by pull.
+   A failure writes its `hook.log` line and nothing the model sees: the main session's failure
+   notice asks the agent to tell the operator, which a subagent cannot. **No service listening, or
+   one still loading, writes a line too** — unlike the reminder's silence there, since the marker
+   is already claimed and the loss would otherwise leave no trace — and every line this path
+   writes carries the detail word `instruction` after its kind, as a reminder's carries `remind`,
+   so its `transport` and `unanswered` lines are told from a prompt push's; `architecture.md`
+   §"Paths"'s `hook.log` row lists the word. The session tripwire (`hook/tripwire.py`) applies
+   unchanged; payload and environment agree on every event measured under both backends.
+   `push_oversize` applies as on the prompt path; the docs cap `additionalContext` at 10,000
+   characters on every event, the prompt hook's measured budget, unmeasured on a tool event.
+   **An instruction whose turn makes no tool call gets no push**, by construction, and one whose
+   first call is its `SendMessage` reply gets it after the reply it might have informed. The probe
+   cannot say how often either happens: its tool hooks matched
+   `Bash` alone, so its 1 of 3 reply-only messages per run was a turn with no tool call for the
+   tmux teammate, which had no `SendMessage`, and for the in-process one a `SendMessage` call the
+   probe could not see. Done-when 2 counts both, and harness.md's new §"Agent teams" records
+   them.
+7. **Agent teams are not Zikaron's to switch on.** Nothing is installed for them; the hooks above
+   serve a teammate when the operator has teams on, and an ordinary subagent always.
+8. **A third policy variant**, for an agent this path serves: the subagent text with its second
+   paragraph saying that a block of headlines arrives with the first tool call after each
+   instruction, chosen for that instruction's words. `SubagentStart` gives it to every agent item 5
+   does not exclude; the documenter and the orchestrator keep `SUBAGENT_WRITE_POLICY_PROMPT`, whose
+   "nothing is pushed" stays true of them, and so does every prompt the install fixes it into, so
+   no policy text in an install snapshot moves. The main text is unchanged: a tmux teammate reads
+   it at `SessionStart`, and its claim that headlines arrive with each message holds, a tool call
+   late. One operator override still replaces every variant.
+9. **`surface_call` gains `occasion`**, `"prompt"` or `"instruction"`, in `schema.md`'s per-kind
+   table — named so because a *trigger* is the seam's word for a harness's event name, which
+   neither value is — sent by the hook as
+   `memory_surface(prompt, limit, client, deadline_at_ms?, occasion?)` and validated by the
+   service; `occasion` absent reads as `"prompt"`, on the wire as in a row
+   written before it, so an older hook and a newer service, or the reverse, keep pushing across
+   an upgrade. `architecture.md`'s RPC list and §"Degraded modes" step 2 carry the parameter.
+   **The service opens the session's turn for `"prompt"` alone**: `memory_surface`'s
+   `on_receipt`, `dispatch._open_the_turn`, clears the main agent's reminder time
+   (`code-knowledge.md` §6), and an in-process instruction push carries its lead's label, so as it
+   stands every one would reset the lead's `knowledge_reminder_interval`. An instruction push
+   opens no turn, and the dispatcher passes `on_receipt` the request's parameters if it does not
+   already. An instruction push is attributed to the session that holds the agent, as every
+   subagent's writes are, so **D30's signals count both occasions and need no filter**: their unit is
+   the session, and both sides move together — an in-process agent's push and its writes land
+   under its lead's label, and a tmux teammate is a session of its own whose push and writes land
+   under its own, which makes it a session the zero-write signal can count where before it was a
+   writer with no `surface_call`. `schema.md`'s paragraph on how a subagent moves both sides of a
+   session's row is rewritten to say so, and `occasion` slices the signals where a reader wants the
+   two kinds apart. **Within one session the agents cannot be told apart**: in-process agents share
+   their lead's label and its one MCP server, so whether the agent pushed a memory is the one that
+   later fetched it is unknowable from the store, and §"Agent teams" says so. A key added to a
+   kind's JSON moves no DDL and leaves every store an older build can open openable, so
+   `meta.schema_version` does not move and the next release stays a patch.
+10. **The installer writes the three new entries** — `PreToolUse` and `SubagentStop` gated,
+    `TeammateIdle` plain, beside `SessionStart` and `SubagentStart` unchanged in shape — for
+    `--components memory` and `both`, through `zikaron/install/entries.py`'s Claude Code groups,
+    and an install over an older one replaces them as it replaces the rest. An install made
+    before this one is refreshed by re-running the installer, which this release's note says
+    (`design/distribution.md` §3): until then its sessions run the new hook through the upgraded
+    package with no gate, so its subagents are told of a block nothing delivers, and the sweep at
+    `SessionStart` (item 2) is what keeps its markers bounded. **That needs the
+    ownership rule widened**: `settings_hooks._program` takes a command's first shell word as its
+    owner, and a gated command's is `set`, so as it stands every re-install would class the gated
+    entry a user's own and append another beside it — two hook runs per call and, on a marker, a
+    race item 6 then decides. A command is Zikaron's when its first word names a Zikaron program,
+    or when it is the gate form and the word after its `exec` names one — the token after `exec`
+    in `settings_hooks._words`' split, which item 3's form keeps whole, since `shlex.split` does
+    not end a word at `;`; nothing else changes, so a
+    user's own wrapper around `zikaron-hook` stays theirs. `design/harness.md` §"The installer's two
+    targets" and `architecture.md` §"The install contract" say so.
+11. **`design/kiro-gaps.md` gains a row**, a harness limit: a kiro subagent's tool calls fire the
+    session's hooks under the session's id with no agent identity, and nothing a pre-tool hook
+    prints on exit 0 reaches the model (`research/kiro-v3-probe.md` §34, §38), so no kiro hook can
+    tell which agent a call is for or reach it. Whether kiro has agent teams of its own is
+    unmeasured, and the row says so.
+12. **Feedback to Anthropic** is drafted for the operator to send, since it leaves the session, in
+    `research/teammate-hook-feedback.md`: a hook that fires on a teammate's message with its text,
+    the docs' silence on a later `SubagentStart`'s context reaching nobody, and a tmux teammate
+    losing `SendMessage` to a `tools:` allowlist that an in-process one keeps.
+13. **Zikaron's own spawns pass no `name`.** With agent teams on, a named spawn becomes a teammate
+    every time (`~/Memory/design/agent-team-workflow.md` §4), and a teammate idles when its work is
+    done instead of ending, costing tokens on every resume — wrong for the consolidator, the
+    orchestrator and the documenters, each meant to run once and end, and for the document-code
+    skill, whose session receives the orchestrator's report when it ends, as a background
+    subagent's, where a teammate never ends. The shipped texts already pass `subagent_type` and no
+    `name`, yet every orchestrator spawn in LeibaTrader's transcripts carried `name:
+    "zikaron-document-code"`, the skill's own name, chosen by the model — nine of 936 recorded
+    subagents, and no other carried a `name` — so with teams on every documentation run would
+    start a teammate today. The consolidate skill, the document-code
+    skill and the orchestrator's documenter spawn each say to pass no `name`, and why, in their
+    Claude Code text — kiro's spawn instructions are separate, and kiro has no agent teams to
+    turn a name into a teammate — and the Claude Code install snapshots are re-rendered.
+    Operator (2026-11-09): *"If you give consolidator a name, it will run as teammate rather than
+    subagent. Which I think is undesireable since then it will stay idle while it should be
+    ephemeral subagent."*
+
+### Invariants and properties to cover
+
+- At most one push per marker, and none without one: two `TOOL_CALL`s after one instruction push
+  once, run one after the other and run concurrently; a `TOOL_CALL` with no marker for its agent
+  pushes nothing, starts no service and makes no request.
+- Several agents in one session: two in-process teammates and a subagent with markers at once are
+  each pushed on its own instruction, read from its own transcript, and one's claim leaves the
+  others' markers in place.
+- No push to an agent whose definition is excluded — including one whose `agent_type` is a
+  teammate's name while its meta file names `zikaron-consolidator` — nor to one with an `agent_id`
+  and no readable definition, nor to the main session, whatever its last `user` record says.
+- The instruction, on fixtures copied from the probe runs' transcripts with their content replaced
+  by placeholders: an ordinary subagent's prompt; an in-process teammate's first and later
+  messages; a tmux teammate's; an instruction followed by the request records a response's first
+  call reads, and by the current turn's text and `tool_use` records a later call does; two
+  messages delivered in one turn, as two records and as one; a shutdown request, which yields
+  nothing; an `isMeta` caveat and an `isCompactSummary` summary, which are skipped; a resumed
+  subagent's next prompt, which yields its body; a `user` record with a `text` block after the
+  last string record, a `tool_result` record after it, a resume record of another wording, and a
+  transcript cut mid-record, each of which yields `instruction_unread`.
+- Each gated entry as the shell runs it: no matching file, `zikaron-hook` never starts and the
+  exit is 0; one matching file, and two, it starts with the payload on stdin;
+  `CLAUDE_CODE_SESSION_ID` unset with any marker present, it starts, and with none, it does not;
+  `CLAUDE_PROJECT_DIR` naming the store's project, it finds the marker.
+- Ownership: a settings file carrying the gated entry at this install's path is rewritten by a
+  re-install, not doubled; at another install's path it is that install's, as a first-word command
+  there is; a user's command that merely contains `zikaron-hook` stays the user's.
+- Markers: each setter writes its key, creating the directory where it is missing; `SubagentStop`
+  and a claiming `TOOL_CALL` clear it; the TTLs remove an in-process marker past 1,800 s and a
+  session's own past 86,400 s, and spare each younger.
+- `surface_call.occasion` matches the request's on both paths, and a row without the key reads as
+  `"prompt"`. A prompt push clears the session's reminder time; an instruction push leaves every
+  reminder time in place.
+- A `SessionStart` whose `agent_type` is the consolidator's emits no policy and no start text.
+- `KIRO` resolves none of the new events, and a kiro install writes no new entry.
+- The three spawn texts item 13 names each say to pass no `name`, through the re-rendered
+  Claude Code snapshots.
+- The same instruction and store push byte-identical blocks (`coding-standards.md` §4).
+
+### Done when
+
+1. `./check.sh` is green, and `experiments/new_line_coverage.py` names no uncovered line.
+2. **Live, operator-driven** (teams run interactively only), in a scratch project with Zikaron
+   installed from the build's worktree and its own `.venv` — never this tree's, which four real
+   projects run (`FINDINGS.md` §"Where the stores are") — and a seeded store: one in-process team
+   and one tmux team of **two teammates each, spawned together and messaged concurrently**, one
+   teammate given a spawn message and two later messages, one sent while it is mid-task, the other
+   a spawn message and one reply-only message;
+   the session's own ordinary subagent, resumed once with a second prompt; then the consolidator
+   run through its skill as shipped with teams on, the path users take, and once more under each
+   backend told to spawn it by name, against item 13's instruction, as the model does for the
+   orchestrator. Each session's permission mode is recorded, and one teammate runs under `default`
+   with a first call after an instruction that asks for approval, the cell `design/guards.md` §2
+   left unrecorded, whose row the result fills.
+   The transcripts show an instruction push attached and sent on the first tool call after every
+   message an idle teammate handled whose turn made one, and after the subagent's prompt; none to
+   the consolidator; the lead's pushes only at its typed prompts; and no `instruction_unread` line
+   but those the two measurements below account for. The lead also pushed on each report a
+   subagent made back to it — a `user` record of origin `peer`, which fires the prompt hook (seven
+   typed prompts and three reports in each in-process run, eight and two under tmux) — D12's path
+   and not this one's, recorded in `design/harness.md` §"Subagents".
+   **The message sent mid-task**: whether `SubagentStart` fired at delivery or when the teammate
+   handled it (`~/Memory/design/agent-team-workflow.md` §4 saw such a message wait for the turn to
+   end, n=2). If at delivery, that message's push is the mechanism's loss — claimed by the running
+   turn's next call with an `instruction_unread` line; cleared by its `SubagentStop` with none; or,
+   where the message's record is already in the transcript, pushed by that call ahead of the turn
+   that handles it, told by a push with no `instruction_unread` line whose `surface_call` precedes
+   the turn's end — and §"Agent teams" records it as such; no change follows. It waited for the
+   turn's end under both backends, one case each, and was pushed on the next turn's first call.
+   **The resume**: whether `SubagentStart` fired and its prompt's record shape. In-process it
+   fired, and the prompt was the `isMeta` record item 4 now serves, its record the fixture; any
+   other shape fails closed under item 4.
+   Recorded beside them: how many instructions' turns made no tool call, and how many made
+   `SendMessage` their first; the consolidator's `agent_type` on its tool events under each
+   backend, and that of a tmux teammate spawned with no type, which item 5 serves by its
+   transcript alone; whether the meta file exists at a spawn's `SubagentStart` and at its first tool
+   call, which decide item 5's last sentence and whether item 5's no-definition line ever fires;
+   and, for each instruction push, whether the transcript's trailing `assistant` records already
+   held the call's `tool_use` block when `PreToolUse` ran, and whether the payload's `tool_use_id`
+   names it. Always, and a tail with no `tool_use` block becomes `Unread` in a later change, the
+   fixture specifying it; not always, and §"Agent teams" states that a transcript can lag the
+   call, which makes a reply-only turn followed by a message a stated loss rather than a guarded
+   one. At a response's first call it never had, and the instruction itself was on disk every time:
+   what lags is the response's own records, not the instruction, so neither branch's consequence
+   follows — the reply-only cell was pushed all three times it ran — and §"Agent teams" states the
+   lag.
+   Results join `research/teammate-hook-probe.md`.
+3. **The gate's cost**, measured as `CLAUDE.md` requires: the gate line with no marker, against
+   `sh -c true`, the floor any entry pays, and against the ungated hook, each through
+   `subprocess.run` as `research/owed-measurements-2026-10-30.md` §5 timed the existing hooks, on
+   the same machine at the same load, many calls each — the harness's own cost of running an entry
+   at all, which this entry pays on every tool call where the guards' pays it on `Bash` and
+   `Monitor` alone, is outside that and read from the next part; from done-when 2's sessions, how
+   many processes each new entry started against how
+   many tool calls and turns the sessions made; and a `TOOL_CALL`'s wall time on the largest
+   transcript those sessions leave. Results: `research/teammate-hook-probe.md` §"The gate's cost
+   per tool call" and §"Processes per tool call and turn".
+4. memory-reviewer reaches APPROVED on the brief and the build together.
+
+### Scope fence
+
+- **Not** the lead: a teammate's message to the main session is not pushed on.
+- **Not** a push later in an instruction's work than its first tool call — Q1's mid-task push.
+- **Not** kiro, whose limit item 11 records.
+- **Not** enabling teams, editing a user's agent definitions, or working around a tmux teammate's
+  missing `SendMessage`.
+- **Not** a change to the push block, its ranking or the main policy text.
+
 ## Standing notes for whoever picks this up
 
 - **`shard_count` is flagged as possibly unnecessary** — a persisted count an invariant then polices, derivable

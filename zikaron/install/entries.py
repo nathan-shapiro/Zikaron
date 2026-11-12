@@ -180,6 +180,11 @@ _CLAUDE_REMINDERS: Final = tuple(
     reminder for reminder in (CLAUDE_CODE.search_reminder,) if reminder is not None
 )
 
+#: What opens the instruction gate's command, and so what `settings_hooks` reads as a gate whose
+#: `exec` target is the program that owns it.
+GATE_OPENING: Final = "set"
+GATE_EXEC: Final = "exec"
+
 
 class Commands(NamedTuple):
     """The absolute command paths the shipped entries name.
@@ -301,6 +306,26 @@ def hook_command_string(hook_command: Path, spec: HarnessSpec) -> str:
     return spec.hook_command_prefix + shlex.quote(str(hook_command))
 
 
+def instruction_gate_command(hook_command: Path, spec: HarnessSpec) -> str:
+    """The command of an entry that runs on every tool call, which starts `zikaron-hook` only where
+    an instruction marker of this session's is pending, and otherwise exits 0
+    (`design/harness.md` §"Agent teams").
+
+    The store is found from the project variable, as every hook finds it (D17), so a project moved
+    or renamed keeps its gate. `set --` takes any number of matches where a `[ -e … ]` given two
+    fails and runs nothing, and `exec`'s operand stays a shell word of its own, which is what
+    `settings_hooks` reads to own the entry. An unset session variable matches every marker, which
+    costs runs and never a push.
+    """
+    if spec.project_dir_variable is None:
+        message = f"{spec.prose_name} names no project directory for the gate to find the store by"
+        raise ValueError(message)
+    pending = paths.instruction_pending_dir(paths.store_dir(Path())).as_posix()
+    markers = f'"${{{spec.project_dir_variable}:-.}}"/{pending}/"${spec.session_variable}"*'
+    target = hook_command_string(hook_command, spec)
+    return f'{GATE_OPENING} -- {markers}; [ -e "$1" ] && {GATE_EXEC} {target} || exit 0'
+
+
 #: The `.mcp.json` key that exempts one server from Claude Code's deferred tool loading.
 #:
 #: **Without it a description arrives late, per verb, or not at all.** Claude Code defers MCP tools
@@ -383,6 +408,13 @@ def claude_hooks_value(
             groups[trigger] = [_claude_group(commands.hook, (), HOOK_TIMEOUT_SECONDS)]
     for reminder in _CLAUDE_REMINDERS if components.memory else ():
         groups.setdefault(reminder.trigger, []).append(_reminder_group(commands.hook, reminder))
+    instruction = CLAUDE_CODE.instruction_push
+    if components.memory and instruction is not None:
+        gated = _gated_group(commands.hook)
+        groups.setdefault(instruction.tool_trigger, []).append(gated)
+        groups.setdefault(instruction.stop_trigger, []).append(gated)
+        # Not gated: it sets a marker where none exists.
+        groups[instruction.idle_trigger] = [_claude_group(commands.hook, (), HOOK_TIMEOUT_SECONDS)]
     for hook in _CLAUDE_GUARD_HOOKS if components.guards else ():
         guard = _claude_group(commands.guard, (), GUARD_TIMEOUT_SECONDS)
         groups.setdefault(hook.trigger, []).append({"matcher": hook.matcher, **guard})
@@ -392,6 +424,12 @@ def claude_hooks_value(
 def _claude_group(script: Path, arguments: tuple[str, ...], timeout: int) -> dict[str, object]:
     command = " ".join((hook_command_string(script, CLAUDE_CODE), *arguments))
     return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
+
+
+def _gated_group(script: Path) -> dict[str, object]:
+    """No matcher, since the instruction may be followed by any tool."""
+    command = instruction_gate_command(script, CLAUDE_CODE)
+    return {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}]}
 
 
 def _reminder_group(script: Path, reminder: SearchReminder) -> dict[str, object]:

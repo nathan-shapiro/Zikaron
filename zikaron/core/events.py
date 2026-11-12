@@ -64,6 +64,14 @@ class Demotion(StrEnum):
     RETIRED = "retired"
 
 
+class Occasion(StrEnum):
+    """What a push answers: the main session's prompt, or an instruction given an agent inside a
+    session — a teammate's message or a subagent's task (`design/harness.md` §"Agent teams")."""
+
+    PROMPT = "prompt"
+    INSTRUCTION = "instruction"
+
+
 class ClientKind(StrEnum):
     """Who emitted the event, as `event.client_kind` and `read_receipt.client_kind` record it.
 
@@ -338,6 +346,7 @@ EVENT_SPECS: Final[Mapping[EventKind, EventSpec]] = MappingProxyType(
                 DetailField("n_returned"),
                 DetailField("n_demoted"),
                 DetailField("preamble_digest"),
+                DetailField("occasion", values=tuple(Occasion)),
             ),
         ),
         EventKind.SURFACE: EventSpec(
@@ -609,6 +618,7 @@ class SurfaceCallDetail(EventDetail):
     n_returned: int
     n_demoted: int
     preamble_digest: str
+    occasion: Occasion
 
 
 @dataclass(frozen=True, slots=True)

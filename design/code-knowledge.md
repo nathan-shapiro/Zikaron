@@ -506,7 +506,10 @@ spawns; how it runs beside the session is the harness's difference:**
   forked skill). The skill's text tells the session to run nothing of the loop and to spawn
   `zikaron-code-orchestrator` — `run_in_background: true` where the spawn tool offers it, and
   interactively every spawn is in the background, while the definition's `background: true` keeps
-  it there whatever is asked — with a fenced prompt carrying `$ARGUMENTS`, which Claude Code
+  it there whatever is asked; and **no `name`**, since with agent teams on a named spawn becomes a
+  teammate, which idles when its work is done instead of ending and reporting, and the model names
+  this spawn unprompted (`design/harness.md` §"Agent teams") — with a fenced prompt carrying
+  `$ARGUMENTS`, which Claude Code
   replaces with the invocation's arguments as typed, so a glob reaches the planner as the user
   wrote it. The orchestrator's definition carries the loop after its own prompt (§5.4), and its
   last answer, step 3's report, reaches the session through the handback tool the harness gives a
@@ -605,7 +608,8 @@ The loop tells whoever runs it:
 2. Spawn one `zikaron-documenter` per `work` item, giving it the `root`, the item's source and
    document as absolute paths joined from it, and its front-matter block — **spawned by whoever runs
    the loop, never by a documenter** — and **wait for every one to return** before going on. Under
-   Claude Code the spawn asks for the foreground by its parameter, `run_in_background: false`
+   Claude Code the spawn passes no `name`, for the orchestrator's own reason above, and asks for the
+   foreground by its parameter, `run_in_background: false`
    wherever the tool offers it: under `-p` a subagent does not wait for its own background
    subagents — a headless orchestrator that once left the parameter out sent twenty documenters to
    the background, ended its turn to wait for them, and never resumed

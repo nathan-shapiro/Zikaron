@@ -16,6 +16,7 @@ they are not interchangeable:
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,7 +26,7 @@ import yaml
 
 from zikaron.harness.spec import CLAUDE_CODE, KIRO
 from zikaron.hook.limits import HOOK_TIMEOUT_SECONDS
-from zikaron.hook.write_policy import SUBAGENT_WRITE_POLICY_PROMPT
+from zikaron.hook.write_policy import PUSHED_AGENT_WRITE_POLICY_PROMPT
 from zikaron.install import agent_scan, harness
 from zikaron.install.assets import (
     CLAUDE_CODE_SPAWN_INSTRUCTION,
@@ -111,6 +112,12 @@ def _project(tmp_path: Path, *, dotdirs: tuple[str, ...] = ()) -> Path:
     for name in dotdirs:
         (project / name).mkdir(exist_ok=True)
     return project
+
+
+def _program_of(command: str) -> str:
+    """The program a hook command runs: its first word, or the instruction gate's `exec` target."""
+    words = shlex.split(command)
+    return words[words.index("exec") + 1] if words[0] == "set" else words[0]
 
 
 def _claude_paths(project: Path) -> dict[str, Path]:
@@ -314,16 +321,21 @@ class TestACleanClaudeCodeInstall:
     def test_the_settings_file_is_json_and_carries_every_memory_trigger(
         self, installed: Path
     ) -> None:
-        """`SubagentStart` and the search reminder's trigger have no kiro counterpart and neither
-        is optional: the first carries the write-policy-per-subagent path, the second the reminder,
-        and leaving either out would leave its path dead with nothing anywhere failing."""
+        """`SubagentStart`, the search reminder's trigger and the instruction push's three have no
+        kiro counterpart and none is optional: each carries a path that would otherwise be dead
+        with nothing anywhere failing."""
         document = json.loads(_claude_paths(installed)["settings"].read_text(encoding="utf-8"))
         assert CLAUDE_CODE.search_reminder is not None
+        instruction = CLAUDE_CODE.instruction_push
+        assert instruction is not None
         assert set(document["hooks"]) == {
             "SessionStart",
             "UserPromptSubmit",
             "SubagentStart",
             CLAUDE_CODE.search_reminder.trigger,
+            instruction.tool_trigger,
+            instruction.stop_trigger,
+            instruction.idle_trigger,
         }
 
     def test_the_mcp_file_is_json_and_registers_both_modes(self, installed: Path) -> None:
@@ -1425,7 +1437,7 @@ class TestAgainstTheRealShippedCommands:
         commanded = [Path(server["command"]) for server in servers.values()]
         document = json.loads(paths["settings"].read_text(encoding="utf-8"))
         commanded += [
-            Path(str(entry["command"]))
+            Path(_program_of(str(entry["command"])))
             for groups in document["hooks"].values()
             for group in groups
             for entry in group["hooks"]
@@ -1555,9 +1567,11 @@ class TestTheInstalledConfigDrivesTheRealHook:
 
         envelope = json.loads(stdout)
         assert envelope["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
-        # The subagent variant, not the main-agent one: the text that reaches an agent the push
-        # never serves must not open by describing a block it will never be sent.
-        assert envelope["hookSpecificOutput"]["additionalContext"] == SUBAGENT_WRITE_POLICY_PROMPT
+        # The pushed-agent variant: an agent inside a session reads about the block its tool call
+        # will be given, not the main session's.
+        assert (
+            envelope["hookSpecificOutput"]["additionalContext"] == PUSHED_AGENT_WRITE_POLICY_PROMPT
+        )
 
     def test_the_installed_subagent_hook_says_nothing_to_the_consolidator(
         self, tmp_path: Path

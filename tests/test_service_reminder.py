@@ -159,6 +159,17 @@ class TestTheThrottle:
             assert _text(await _remind(ctx, str(tmp_path))) is not None
             assert _text(await _remind(ctx, str(tmp_path))) is None
 
+    async def test_an_instruction_push_opens_no_turn(self, tmp_path: Path) -> None:
+        """It carries the label of the session holding its agent; opening that session's turn
+        would reset the lead's reminder for every teammate message."""
+        async with open_context(tmp_path) as ctx:
+            await _register(ctx, tmp_path, _MODULE)
+            await _remind(ctx, str(tmp_path))
+            await _surface(ctx, occasion="instruction")
+            assert _text(await _remind(ctx, str(tmp_path))) is None
+            await _surface(ctx, occasion="prompt")
+            assert _text(await _remind(ctx, str(tmp_path))) is not None
+
     async def test_a_user_prompt_opens_a_new_turn(self, tmp_path: Path) -> None:
         async with open_context(tmp_path) as ctx:
             await _register(ctx, tmp_path, _MODULE)

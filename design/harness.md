@@ -60,10 +60,10 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Prompt trigger | `UserPromptSubmit` (kiro-probe §3) | `UserPromptSubmit` (§2) |
 | Prompt field | `prompt`, the whole prompt; the documented `USER_PROMPT` variable is empty (kiro-probe §3) | `prompt` (§2) |
 | Tool event payload | `hook_event_name`, `session_id`, `cwd`, `tool_name` — the tool id, `execute_bash` for the shell — and `tool_input` as a JSON object, the shell's carrying `command`, `description`, `cwd` (`null` in every call), `run_in_background` and `timeout`; a matcher naming the tool id selects that tool alone (kiro-probe §32, §48) | `hook_event_name`, `cwd`, `tool_name`, `tool_input` as an object, `scratchpad_dir` since 2.1.304, and `tool_response` after a call (`design/guards.md` §2) |
-| Subagent triggers | none — a subagent's own hooks never fire, so it gets neither a session-start nor a prompt hook, and its tool calls fire the root session's tool hooks, under the root's session id (kiro-probe §12, §38) | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3) |
+| Subagent triggers | none — a subagent's own hooks never fire, so it gets neither a session-start nor a prompt hook, and its tool calls fire the root session's tool hooks, under the root's session id (kiro-probe §12, §38) | `SubagentStart`, `SubagentStop`, carrying `agent_id` + `agent_type` (§3); with agent teams on, `SubagentStart` also fires per message an in-process teammate receives, and `TeammateIdle` as a teammate's turn ends (§"Agent teams") |
 | Output channel, spawn/prompt | exit-0 stdout, reaching the model in a `HOOK_INSTRUCTION` block (kiro-probe §6) | exit-0 stdout (§5) |
 | Output channel, subagent | n/a | **`hookSpecificOutput.additionalContext` only** — plain stdout reaches nobody (§7b) |
-| Output channel, tool event | none after a call: no post-tool output reaches the model on any exit code — `PostToolUse` after a shell, write, search or MCP call, nor `PostFileCreate` or `PostFileSave` (kiro-probe §6, §35, §36). Before a call, a `PreToolUse` hook's exit 2 blocks it and its stderr reaches the model framed as a hook instruction, a 5,000-character stderr whole; exit 0 stdout and exit 1 stderr reach nobody, and exit 1 lets the call run (kiro-probe §33, §34) | **`hookSpecificOutput.additionalContext`** — plain stdout goes to the debug log alone (`tool-hook-probe`), measured reaching the main session and a subagent alike (`m40-4-hook-probes`) |
+| Output channel, tool event | none after a call: no post-tool output reaches the model on any exit code — `PostToolUse` after a shell, write, search or MCP call, nor `PostFileCreate` or `PostFileSave` (kiro-probe §6, §35, §36). Before a call, a `PreToolUse` hook's exit 2 blocks it and its stderr reaches the model framed as a hook instruction, a 5,000-character stderr whole; exit 0 stdout and exit 1 stderr reach nobody, and exit 1 lets the call run (kiro-probe §33, §34) | **`hookSpecificOutput.additionalContext`** — plain stdout goes to the debug log alone (`tool-hook-probe`), measured reaching the main session and a subagent alike (`m40-4-hook-probes`), and a teammate under both backends on every call (`teammate-hook-probe`) |
 | Injection budget | fixed **3,000 characters** per hook, on the spawn and prompt hooks alike, no field to raise it: neither spelling of an entry's size field moved it, it counts characters rather than bytes — *which* kind is unmeasured, see §"Injection budgets" — and two entries on one trigger each arrived whole just under it (kiro-probe §21, §49) | fixed **10,000 characters**, no field to raise it — and *which* kind of character is now measured rather than inferred: see §"Injection budgets" (§5, §7a) |
 | Overrun behaviour | cut, and marked `...[truncated]` to the model and to no one else (kiro-probe §21) | loud: notice + 2 KB preview + path to full text (§5) |
 | Subagent budget | n/a | `additionalContext` ≥12,000 characters, ceiling unmeasured (§7f) |
@@ -79,6 +79,7 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 | Guard hooks (`guards`) | `PreToolUse` matcher `execute_bash`, the shell tool's id, which selects it and nothing else (kiro-probe §32, §48); no re-read hook, since no post-tool output reaches the model (kiro-probe §35, §36) | `PreToolUse` matcher `Bash\|Monitor`; `PostToolUse` matcher `Edit\|MultiEdit\|NotebookEdit\|Write` — each matcher a `\|`-joined list of bare tool names, which the guard splits to get the tools it judges (`design/guards.md` §5) |
 | Guard deny (`guards.deny`) | **stderr** — exit 2, the reason on stderr and nothing on stdout, which blocks the call and reaches the model framed as a hook instruction; an accepted override prints nothing, since exit-0 output reaches nobody (kiro-probe §33, §34) | **envelope** — exit 0 with `hookSpecificOutput.permissionDecision: "deny"`, whose reason becomes the tool result, and `additionalContext` acknowledging an accepted override (`design/guards.md` §2) |
 | Search reminder (`search_reminder`) | none — a post-tool hook's output was measured not to reach the model (kiro-probe §6), so a memory install writes no reminder (kiro-gaps) | `PostToolUse`; files matcher `Grep\|Glob`, a handler for each of `Grep` and `Glob`; shell matcher `Bash`, a handler for each of `Bash(*grep *)` and `Bash(rg *)` — installed as one group whose matcher joins the two, each handler's filter a string, since a list is never matched (`m40-4-hook-probes`) |
+| Instruction push (`instruction_push`) | none — a subagent's tool calls fire the session's hooks under the session's id, naming no agent, and nothing a pre-tool hook prints on exit 0 reaches the model (kiro-probe §34, §38), so a memory install writes no such hook (kiro-gaps) | `PreToolUse` claims, `TeammateIdle` and `SubagentStop` set and clear, beside the two start triggers; an agent's files sit in `subagents` under its session transcript's stem, `agent-` then its agent id then `.jsonl` for its transcript and `.meta.json` for its record, whose definition is read from `spawnedAgentType`, `customAgentType` and `agentType` in that order; a message from another agent opens `<teammate-message`; a resumed subagent's next prompt is a record flagged as the harness's own whose origin kind is `coordinator`, its body between `The coordinator sent a message while you were working:` and `Address this before completing your current task.` (§"Agent teams") |
 | MCP tool-call duration | a 330 s call **completed** under V3, with no `requestTimeout` on the server entry: the call returned `slept 330.0s` (kiro-probe §9) | a 330 s call **completed**, headless `-p`, 2.1.280: the model's reply carried `slept 330.1s` (same probe) — so the consolidator's 300 s planning wait fits under both |
 | Consolidator tool grant | `tools: ["@zikaron", "read"]`, an `mcp` rule over `zikaron/*`, an `fs_read` allow rule matching `./.zikaron/spill/**` and an `fs_read` deny rule excluding it, in the agent config, server registered in that same config; its `next_group` call succeeded headless under the `mcp` rule alone (kiro-probe §17), and the deny refused reads and searches outside the directory (kiro-probe §53, §55) | frontmatter `tools:` as a YAML block list with the single entry `mcp__zikaron-consolidator` — a **whole-server wildcard**, in the spelling that was measured, and measured to exclude the other server's tools (`installer-probe` §7) — and `Read` |
 | Over-large MCP tool result | at **30,000 characters** or more, replaced by a notice, the first and last 500 characters, and the path of a file under `~/.kiro/sessions/<hash>/<session id>/tool-outputs/` holding the whole; counted on the text block alone, so a result `zikaron-mcp` sends as text and again as structured content arrived intact at 29,500 (kiro-probe §40, §51) | replaced wholesale by `Error: result (N characters) exceeds maximum allowed tokens.`, with the full result written to `…/tool-results/mcp-<server>-<tool>-<ms>.txt` — **one line of JSON**, which `Read` cannot paginate; delivered at 44,000 characters of dense filler and refused at 50,012 (`mcp-result-truncation`) |
@@ -100,8 +101,9 @@ So the closed sets `coding-standards.md` §2 asks for are affordable here. A fro
 
 Trigger names normalize internally onto `HookEvent`'s members, each name to the one member it
 means: spawn and prompt under both harnesses, and under Claude Code alone the subagent start,
-which carries the policy and nothing else, and the search reminder's `PostToolUse`
-(`design/code-knowledge.md` §6). Under V3 both harnesses name the spawn and prompt triggers alike,
+which carries the policy and sets an instruction marker, the search reminder's `PostToolUse`
+(`design/code-knowledge.md` §6), and the instruction push's `PreToolUse`, `TeammateIdle` and
+`SubagentStop` (§"Agent teams"). Under V3 both harnesses name the spawn and prompt triggers alike,
 so the vocabulary is one set of names.
 
 ## Detection, session identity, and the nesting limit
@@ -270,9 +272,18 @@ Separate sessions in separate terminals each get their own variable and never me
 
 ## Subagents
 
-**`UserPromptSubmit` does not fire for subagents** (§3). This closes, by the harness's own construction, the
-door D32's push-suppression rule was built to guard: no push can inject retrieval into a consolidator's
-context, because no push fires there at all.
+**`UserPromptSubmit` does not fire for subagents** (§3), so the prompt path never reaches one. Under Claude
+Code the instruction push does, on a subagent's first tool call after each instruction (§"Agent teams"),
+and the door D32's push-suppression rule was built to guard — broad retrieval in a consolidator's context
+— is shut there by **definition** rather than by construction: the push never reaches an agent whose
+definition is the consolidator's, read from the harness's record of the agent wherever the payload carries
+an `agent_id`. Under kiro no hook reaches a subagent at all.
+
+**A subagent's report back fires its session's `UserPromptSubmit` under Claude Code**: the report is
+a `user` record of origin `peer`, and the prompt hook pushes on it and opens the session's turn — three
+times in each of M43's in-process live runs, twice under tmux (2.1.311). The payload carries no
+`origin`, so the hook cannot tell a report from a typed prompt without reading the transcript. A
+teammate's message to the lead fires nothing.
 
 - **Under kiro a subagent's own hooks never fire, and its tool calls fire the root session's tool
   hooks, under the root's session id** (kiro-probe §12, §38). A child agent got no `SessionStart` and no
@@ -287,7 +298,8 @@ context, because no push fires there at all.
   subagents' shell calls**, and its exit 2 blocks a subagent's call, the stderr reaching the subagent as
   its tool result (kiro-probe §57), so Zikaron's subagent profiles carry no `hooks` of their own.
 - **Per-agent rules are exact here**, because `SubagentStart` and `SubagentStop` carry `agent_id` **and
-  `agent_type`**. kiro has no subagent trigger at all, so under kiro the write policy reaches a subagent
+  `agent_type`** — though an in-process teammate's `agent_type` is its name, so its definition is read
+  from the harness's record of it (§"Agent teams"). kiro has no subagent trigger at all, so under kiro the write policy reaches a subagent
   only in its prompt: the install ends the documenter's and the orchestrator's prompts with
   `SUBAGENT_WRITE_POLICY_PROMPT`, fixed at install, and a subagent of the user's own that holds the memory
   verbs meets no policy — a row of `design/kiro-gaps.md`.
@@ -311,10 +323,13 @@ context, because no push fires there at all.
 
 **The write policy is delivered to subagents, precisely.** `SessionStart` fires once per session, so a
 subagent would otherwise inherit Zikaron's tools having never seen D30's policy. The rule is: inject the
-policy — its subagent variant, `SUBAGENT_WRITE_POLICY_PROMPT`, which says nothing is pushed because nothing
-is — on `SubagentStart` for every `agent_type` **except `zikaron-consolidator`**, whose policy is its own
-system prompt. M40's documenter and orchestrator receive it like any other subagent, since both hold the
-memory verbs (`design/code-knowledge.md` §5.4).
+policy on `SubagentStart` for every agent **except `zikaron-consolidator`**, whose policy is its own system
+prompt — the agent named by its definition where the harness's record of it has one, and by its
+`agent_type` until that record exists (`hook/agents.py::known_as`). An agent the instruction push reaches
+gets the pushed-agent variant, `PUSHED_AGENT_WRITE_POLICY_PROMPT`, which says its block arrives with a tool
+call; the documenter and the orchestrator, which it never reaches, get `SUBAGENT_WRITE_POLICY_PROMPT`,
+which says nothing is pushed because nothing is. Both hold the memory verbs (`design/code-knowledge.md`
+§5.4). `design/write-policy.md` §2 holds the three texts.
 
 **The channel is not the one the rest of the design uses**, and this was measured only after a draft asserted
 otherwise: plain exit-0 stdout from `SubagentStart` reaches **nobody** — not the subagent, not the parent.
@@ -325,7 +340,8 @@ continue to.~~ **— stale as written: `harness/spec.py`'s `CHANNELS` maps the s
 `ADDITIONAL_CONTEXT` and `hook/main.py` branches on `channel_for(event)`, wrapping the envelope for
 anything that is not `STDOUT`.**
 
-The `SubagentStart` path is **policy-only**: it does *not* spawn the warm helper (the session's own
+The `SubagentStart` path is **policy and marker only** (the marker is §"Agent teams"'s): it does *not*
+spawn the warm helper (the session's own
 `SessionStart` already did, and a second spawn per subagent is pure cost), and it *does* honour the
 `.zikaron/write-policy.md` override through the same best-effort reader, so an operator experimenting with
 the policy text sees it in both places.
@@ -339,6 +355,105 @@ stays in context through both**: `--resume` kept the session id and fired only t
 of its own, though the compaction summary does not carry it; and an interactive resume of the compacted
 session quoted the policy's first sentence (kiro-probe §42, §45, §46). Compaction did drop the loaded
 MCP tools, which the agent loaded again — kiro's behavior, not Zikaron's.
+
+## Agent teams
+
+**Measured 2026-11-09 on Claude Code 2.1.311** with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, one
+operator-driven session per teammate backend (`research/teammate-hook-probe.md`), beside the docs read
+at 2.1.321 (`research/claude-code-agent-teams-hooks-docs.md`). Spec: `design/build-plan.md` §M43. Agent
+teams are the operator's to switch on; Zikaron installs nothing for them.
+
+**No hook an agent fires as an instruction reaches it can carry a push.** In-process, a teammate is a
+subagent to the harness: `SubagentStart` fires once per message it receives, and its
+`additionalContext` reaches it at spawn only — a later run's text, new each time, is recorded as run
+and neither attached to the teammate's context nor sent (3 of 3). Under tmux, a teammate is a session of
+its own, with its own `session_id` and transcript; `SessionStart` (`source: startup`) fires at its spawn
+and delivers, and nothing fires between a later message and its first tool call. `UserPromptSubmit` fires
+for neither, nor for an ordinary subagent. A message reaches either backend's teammate as a `user`
+record opening `<teammate-message`, and the lead receives its teammates' messages the same way.
+**`PreToolUse` and `PostToolUse` deliver `additionalContext` on every tool call of every one of them**,
+and no payload carries the message: `SubagentStart` has `agent_id`, `agent_type` and the common fields,
+`prompt_id` is the lead's on every event of a team run, and `TeammateIdle` adds `team_name` and
+`teammate_name`.
+
+**So the push rides the first tool call after an instruction** (`hook/instruction_push.py`), an
+instruction being an ordinary subagent's prompt, a message delivered to a teammate, or a resume:
+
+- **A marker** — an empty `0600` file under the store's `instruction-pending/`, named for the session and,
+  for an agent inside it, the agent — is set by `SubagentStart` (every spawn and in-process message), by
+  `SessionStart` with `source: startup` — a tmux teammate's spawn, and every main session's, whose first
+  tool call claims it at the cost of one hook run — and by `TeammateIdle` when its payload carries no
+  `agent_id` (a tmux teammate's: all four of the probe's fired in the teammate's own session, none in
+  the lead's). The docs give in-process `TeammateIdle` its `agent_id` from 2.1.290. **A message sent
+  to a busy teammate waits for its turn to end**, under both backends, and is then marked —
+  in-process by the `SubagentStart` that fires as it is delivered, 0.1 s after the turn's
+  `SubagentStop` in the one case seen (the reverse order would clear the new marker silently), under
+  tmux by the `TeammateIdle` before it — so it is pushed on the next turn's first call (M43's live
+  runs). A marker is cleared by the
+  tool call that claims it and by its agent's `SubagentStop` — which needs 2.1.311 or later, since
+  below it the docs note a running subagent's `SubagentStop` firing about twice a minute, which would
+  clear a marker before any tool call. A tmux teammate ended while idle leaves its own marker behind,
+  as all three of the tmux live run's did. Markers older than their kind's limit are swept by every
+  tool call that passes the gate and by every `SessionStart` that marks
+  (`hook/instruction_markers.py`), the second because an install from before the gate, running the
+  new hook through an upgraded package, has no tool-call hook to sweep; until such an install is
+  refreshed, its subagents are also told of a block nothing delivers.
+- **The gate** is the `PreToolUse` and `SubagentStop` entries' shell line, which starts `zikaron-hook`
+  only where a marker of this session's is pending (`install/entries.py::instruction_gate_command`), since
+  a hook on every tool call would otherwise multiply the hooks' cost. A tmux teammate's hooks carry its own
+  session id, so its marker opens its own gate alone.
+- **Claiming is unlinking**, so a parallel tool batch, each call its own hook process, pushes once.
+- **The instruction is read backward from the end of the transcript the payload names** — beside the
+  session's for an agent with an `agent_id`, the session's own otherwise, served only where its first
+  instruction is a message, which is a tmux teammate's and never the lead's (`hook/instruction.py`). The
+  main session is never served here; its prompts are the prompt hook's. Records the harness flags as its
+  own are passed over, except a resumed subagent's next prompt, which is one: `SubagentStart` fires for
+  the resume, and the prompt is such a record of origin `coordinator`, its body between two lines of the
+  harness's (§"The table"). A record after the instruction carrying a tool result or text ends the read
+  unread rather than push the instruction before it. **At a response's first call, the transcript ends
+  at the `api-request` record before that response** (every such hook in M43's two in-process live
+  runs; 51 of their 53 agent `PreToolUse` hooks found it so): the instruction is on disk, and the
+  response's own records, the call's `tool_use` among them, are not. A later call of the same response
+  runs its hook once the calls before it finish, and the other two, 1.3 s and 30 s after the call
+  before, found the response's records written. So a call the harness refuses before any hook —
+  Claude Code refuses a bare `sleep` so — leaves the marker to the next call of its response, which
+  pushes the instruction if the refusal's result is not yet on disk, as in the one case seen, about
+  100 ms later, and otherwise loses it with an `instruction_unread` line.
+- **The consolidator, the documenter and the orchestrator are never pushed, by definition**: with an
+  `agent_id`, the record `subagents/agent-<agent_id>.meta.json` names it — `spawnedAgentType` and
+  `customAgentType` for a teammate, whose `agentType` is its name, `agentType` alone for an ordinary
+  subagent — and an agent with an `agent_id` and no readable record is not pushed. The record is
+  written after a spawn's `SubagentStart` and before its first tool call (10 of 10 spawns), so the
+  push reads it and the start text cannot: **a consolidator spawned by name receives the subagent
+  policy at its spawn**, its `agent_type` there being its name, as both live runs' did. The skill
+  spawns it with no name, and nothing at that hook names its definition. Without an `agent_id`, a typed
+  tmux teammate's `agent_type` is its definition, measured, and one spawned with no type, which runs
+  no `--agent` and so may carry no `agent_type`, is decided by its transcript alone — served, as the
+  main session is not; the consolidator is spawned typed by its skill. **The no-`agent_id` cell is the
+  one that fails toward a push**: a build putting a tmux teammate's name in `agent_type`, as
+  in-process does, or sending none for a `--agent` session, would let a consolidator spawned by name
+  under tmux through, and nothing would say so.
+- **The push is the prompt hook's block** with `occasion: "instruction"`, which the service records on
+  its `surface_call` and opens no turn for, and which never starts a service or tells the agent of a
+  failure: every failure is a `hook.log` line carrying the detail word `instruction`.
+
+**What it misses, by construction.** An instruction whose turn makes no tool call is not pushed, and one
+whose first call is its `SendMessage` reply is pushed after the reply. Of the 23 instructions M43's
+four live runs gave agents this path serves, none made no tool call and three, each a reply-only
+message, made `SendMessage` their first. In-process agents share their
+lead's session label and its MCP server, so which agent of a session used a pushed memory is unknowable
+from the store; a tmux teammate is a session of its own and is told apart.
+
+**Zikaron's own spawns pass no `name`**: with teams on, a named spawn becomes a teammate every time
+(`~/Memory/design/agent-team-workflow.md` §4), and a teammate idles when its work is done instead of
+ending. The model names a spawn unprompted — every orchestrator spawn in LeibaTrader's transcripts carried
+`name: "zikaron-document-code"` — so the consolidate skill, the document-code skill and the orchestrator's
+documenter spawn each say not to.
+
+**A tmux teammate whose definition has a `tools:` allowlist has no `SendMessage`**, where an in-process one
+from the same definition gets it added: every reply and its shutdown approval failed. A definition meant
+for tmux teammates lists `SendMessage` itself. Reported to Anthropic with the rest
+(`research/teammate-hook-feedback.md`).
 
 ## Tool gating — D32 splits, and only one half ports
 
@@ -729,7 +844,9 @@ table" and a drift-guard test; a *shape* that differs (which files exist, how th
 installer changes is an upgrade: `MCP_OWNERSHIP_FIELDS` for a server entry — `.mcp.json`'s or kiro's
 `mcpServers` — and a hook's command. Under Claude Code that is a settings hook group's **programs** —
 each command's first shell word, since a start entry's `--components` is a selection the install
-unions with rather than a sign of another install — judged by membership: a group of this
+unions with rather than a sign of another install, or for the instruction gate (§"Agent teams"), whose
+first word is `set`, the word after its `exec`; a user's own command that runs `zikaron-hook`
+anywhere else stays the user's — judged by membership: a group of this
 selection's is this install's when every one of its commands runs a program this install writes
 on that trigger, whatever their number and their `if` filters, so a group carrying our command
 beside one of the user's is refused, not rewritten. Anything else is rewritten and reported. A
@@ -830,6 +947,7 @@ or both:
 | Prompt entry | `.claude/settings.local.json`, merged, under `UserPromptSubmit` | memory | `zikaron-hook`, the per-message push; with the start entries, a memory install's hooks — see below |
 | Start entries | the same file's `SessionStart` and `SubagentStart` | every selection | `zikaron-hook`, carrying `--components guards\|both` beside the guards — the union of what is installed |
 | Search reminder entry | the same file's `PostToolUse`, beside the guards' group there | memory | `zikaron-hook`, one group, the seam's matcher and a handler per `if` filter (§"The table", `design/code-knowledge.md` §6) |
+| Instruction push entries | the same file's `PreToolUse`, beside the guards' group there, and `SubagentStop`, each the gate line; `TeammateIdle`, plain | memory | `zikaron-hook` behind a shell test for a pending marker (`install/entries.py::instruction_gate_command`, §"Agent teams"); `TeammateIdle` is ungated, since it sets a marker where none exists |
 | Guard entries | the same file's `PreToolUse` and `PostToolUse` | guards | `zikaron-guard`, each group with its matcher and its own `timeout` |
 | Tool approval | the same `settings.local.json` | memory | **two keys, not one**: `enabledMcpjsonServers` and `permissions.allow` — see below |
 | MCP servers | `.mcp.json` | memory | two: `zikaron` (`--mode primary`), `zikaron-consolidator` (`--mode consolidator`), each with `alwaysLoad: true` |
@@ -840,9 +958,9 @@ or both:
 | Code documentation skill | `.claude/skills/zikaron-document-code/SKILL.md` | memory | YAML frontmatter, body telling the session to spawn `zikaron-code-orchestrator` |
 
 **An install touches only its own selection.** Triggers it does not write are copied verbatim, and
-so is the other selection's group on `PostToolUse`, which both write, so the guards over a memory
-install keep every memory hook and both approval keys byte-identical, and the reverse; nothing
-removes a selection.
+so are the other selection's groups on `PreToolUse` and `PostToolUse`, which both write, so the
+guards over a memory install keep every memory hook and both approval keys byte-identical, and the
+reverse; nothing removes a selection.
 
 **`settings.local.json`, never `settings.json`.** The installer writes absolute venv paths — machine-local by
 construction, for the reason §"The install contract" gives about console scripts — and `settings.json` is the
@@ -860,10 +978,11 @@ differing `command` rather than merging over it, and the README tells them to ig
 the installer.
 
 **A memory install's hook entries are a trigger each for the start, the prompt, the subagent start
-and the search reminder.** `hook/main.py`'s dispatch falls through to `subagent_policy.run` for
-`SubagentStart`, routed to the `additionalContext` channel, as the reminder's `PostToolUse` is.
-Registering only the triggers kiro has would leave both paths dead with nothing anywhere failing: no
-error, no log line, just subagents that never receive the write policy and searches never reminded.
+and the search reminder, and the instruction push's three.** `hook/main.py`'s dispatch falls
+through to `subagent_policy.run` for `SubagentStart`, routed to the `additionalContext` channel, as
+the reminder's `PostToolUse` is. Registering only the triggers kiro has would leave those paths dead
+with nothing anywhere failing: no error, no log line, just subagents that never receive the write
+policy, searches never reminded and instructions never pushed.
 kiro has no subagent trigger, and a subagent's own hooks never fire (kiro-probe §12, §38), so it has no
 analogue of the first: Zikaron's two code-knowledge agents carry the policy in their prompts, and a
 subagent of the user's own gets none — a row of `design/kiro-gaps.md`.

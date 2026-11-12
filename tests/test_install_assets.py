@@ -33,6 +33,7 @@ from zikaron.install.assets import (
 )
 from zikaron.install.entries import (
     CONSOLIDATOR_AGENT_NAME,
+    GATE_OPENING,
     MCP_SERVER_NAME,
     TOOL_SELECTOR,
     Commands,
@@ -422,7 +423,8 @@ class TestTheShippedHookEntries:
     def test_a_kiro_hook_command_opens_with_exec_and_a_claude_code_one_does_not(self) -> None:
         """Under kiro `exec` makes the agent server the hook's parent rather than `sh`, which is
         the process the session relay is keyed by (`research/kiro-v3-probe.md` §13). Claude Code's
-        command has no such use for it."""
+        command has no such use for it; the instruction gate's `exec` ends the gate's own shell
+        line, and the path after it carries no prefix either."""
         for entry in hooks_array(_COMMANDS):
             assert shlex.split(_action_command(entry)) == ["exec", str(_COMMANDS.hook)]
         claude_commands: list[object] = []
@@ -434,7 +436,9 @@ class TestTheShippedHookEntries:
         assert claude_commands
         for command in claude_commands:
             assert isinstance(command, str)
-            assert shlex.split(command)[0] == str(_COMMANDS.hook)
+            words = shlex.split(command)
+            program = words[words.index("exec") + 1] if words[0] == GATE_OPENING else words[0]
+            assert program == str(_COMMANDS.hook)
 
     def test_the_hook_command_prefix_is_read_from_the_spec(
         self, monkeypatch: pytest.MonkeyPatch

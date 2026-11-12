@@ -40,11 +40,28 @@ from pathlib import Path
 from zikaron.guard.start_text import guard_start_text
 from zikaron.harness import detect
 from zikaron.harness.spec import HookEvent, OutputChannel, channel_for, event_for
-from zikaron.hook import push, reminder, session_relay, spawn_warm, subagent_policy
+from zikaron.hook import (
+    agents,
+    instruction_push,
+    push,
+    reminder,
+    session_relay,
+    spawn_warm,
+    subagent_policy,
+)
+from zikaron.hook.agents import CONSOLIDATOR_AGENT_TYPE
 from zikaron.hook.components import Components
 
 #: The events that leave the session's label for the MCP client, before anything else they do.
 _RELAYED = frozenset({HookEvent.SPAWN, HookEvent.PROMPT})
+
+#: The events that set or clear an instruction marker (`instruction_push.mark`).
+_MARKED = frozenset(
+    {HookEvent.SPAWN, HookEvent.SUBAGENT_START, HookEvent.TEAMMATE_IDLE, HookEvent.SUBAGENT_STOP}
+)
+
+#: The events whose whole work is their marker.
+_MARK_ONLY = frozenset({HookEvent.TEAMMATE_IDLE, HookEvent.SUBAGENT_STOP})
 
 
 def main() -> None:
@@ -85,12 +102,25 @@ def _dispatch(event: HookEvent, payload: dict[str, object], components: Componen
         session_relay.record(
             detect.current_spec(), payload.get("session_id"), sweep=event is HookEvent.SPAWN
         )
+    if components.memory and event in _MARKED:
+        instruction_push.mark(
+            event, payload, scope_dir=_scope_dir(payload), spec=detect.current_spec()
+        )
     if event is HookEvent.PROMPT:
         return _push(payload) if components.memory else None
     if event is HookEvent.SEARCH:
         return _remind(payload) if components.memory else None
-    parts = [_start_policy(event, payload) if components.memory else None]
-    if components.guards and not _is_consolidator(event, payload):
+    if event is HookEvent.TOOL_CALL:
+        return _push_instruction(payload) if components.memory else None
+    if event in _MARK_ONLY:
+        return None
+    known_as = _known_as(payload)
+    consolidator = known_as == CONSOLIDATOR_AGENT_TYPE
+    # The warm-up and the relay run for a consolidator's own session as for any other; only the
+    # text, which its system prompt replaces, is withheld.
+    policy = _start_policy(event, payload, known_as) if components.memory else None
+    parts = [None if consolidator else policy]
+    if components.guards and not consolidator:
         parts.append(guard_start_text(detect.current_spec()))
     text = "\n\n".join(part for part in parts if part is not None)
     return text or None
@@ -122,18 +152,29 @@ def _remind(payload: dict[str, object]) -> str | None:
     )
 
 
-def _start_policy(event: HookEvent, payload: dict[str, object]) -> str | None:
+def _push_instruction(payload: dict[str, object]) -> str | None:
+    return instruction_push.run(
+        payload, scope_dir=_scope_dir(payload), spec=detect.current_spec(), pid=os.getpid()
+    )
+
+
+def _start_policy(event: HookEvent, payload: dict[str, object], known_as: str | None) -> str | None:
     if event is HookEvent.SPAWN:
         return spawn_warm.run(
             scope_dir=_scope_dir(payload), payload_session_id=payload.get("session_id")
         )
-    return subagent_policy.run(scope_dir=_scope_dir(payload), agent_type=payload.get("agent_type"))
+    return subagent_policy.run(scope_dir=_scope_dir(payload), known_as=known_as)
 
 
-def _is_consolidator(event: HookEvent, payload: dict[str, object]) -> bool:
-    """The consolidator's system prompt is its whole instruction, so it is given no start text."""
-    return event is HookEvent.SUBAGENT_START and subagent_policy.is_consolidator(
-        payload.get("agent_type")
+def _known_as(payload: dict[str, object]) -> str | None:
+    """Which agent a start trigger is for. The consolidator's system prompt is its whole
+    instruction, so it is given no start text — whether it runs as a subagent, whose record names
+    it where its type is a teammate's name, or as a tmux teammate's session of its own."""
+    return agents.known_as(
+        detect.current_spec().instruction_push,
+        session_transcript=payload.get("transcript_path"),
+        agent_id=payload.get("agent_id"),
+        agent_type=payload.get("agent_type"),
     )
 
 

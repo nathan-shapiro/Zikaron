@@ -62,15 +62,24 @@ class HookDeadline:
         return cls(at_ms=int((time.time() + seconds) * _MS_PER_SECOND), by=now + seconds)
 
 
-def surface_once(
-    sock: socket.socket, *, prompt: str, limit: int, envelope: HookEnvelope, deadline: HookDeadline
+def surface_once(  # noqa: PLR0913 — `occasion` is the request's, as `prompt` and `limit` are.
+    sock: socket.socket,
+    *,
+    prompt: str,
+    limit: int,
+    envelope: HookEnvelope,
+    deadline: HookDeadline,
+    occasion: str | None = None,
 ) -> str:
-    """Send one `memory_surface(prompt, limit, deadline_at_ms)` request and return its text.
+    """Send one `memory_surface(prompt, limit, deadline_at_ms, occasion?)` request and return its
+    text. No `occasion` sends none, which the service reads as a prompt's.
 
     Raises:
         As `_exchange`; and `ConnectionError` for a result that carries no `text` string.
     """
     params: dict[str, object] = {"prompt": prompt, "limit": limit}
+    if occasion is not None:
+        params["occasion"] = occasion
     text = _text_of(_exchange(sock, "memory_surface", params, envelope, deadline))
     if text is None:
         raise ConnectionError("memory_surface answered with no text")

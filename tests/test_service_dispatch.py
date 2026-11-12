@@ -271,6 +271,38 @@ async def test_surface_on_an_empty_store_returns_empty_text(tmp_path: Path) -> N
         assert result.text == ""
 
 
+@pytest.mark.parametrize(
+    ("params", "recorded"),
+    [
+        ({}, "prompt"),
+        ({"occasion": "prompt"}, "prompt"),
+        ({"occasion": "instruction"}, "instruction"),
+    ],
+)
+async def test_surface_records_its_occasion(
+    tmp_path: Path, params: dict[str, object], recorded: str
+) -> None:
+    """A hook older than the parameter sends none, and is read as a prompt's push."""
+    async with open_context(tmp_path) as ctx:
+        await dispatch.surface(ctx.store.connection, ctx, envelope(), {"prompt": "hi", **params})
+        cursor = await ctx.store.connection.execute(
+            "SELECT json_extract(detail, '$.occasion') FROM event WHERE kind = 'surface_call'"
+        )
+        assert [tuple(row) for row in await cursor.fetchall()] == [(recorded,)]
+
+
+@pytest.mark.parametrize("occasion", ["tool", 7, ""])
+async def test_surface_refuses_an_occasion_it_does_not_know(
+    tmp_path: Path, occasion: object
+) -> None:
+    async with open_context(tmp_path) as ctx:
+        with pytest.raises(ZikaronError) as excinfo:
+            await dispatch.surface(
+                ctx.store.connection, ctx, envelope(), {"prompt": "hi", "occasion": occasion}
+            )
+        assert excinfo.value.code is ErrorCode.BOUNDS
+
+
 async def test_surface_returns_a_rendered_block_for_a_matching_prompt(tmp_path: Path) -> None:
     async with open_context(tmp_path) as ctx:
         written = await dispatch.remember(

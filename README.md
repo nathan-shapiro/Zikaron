@@ -64,7 +64,9 @@ tiers: new ones land in a **journal**, and consolidation later folds the journal
 records, merging what belongs together and retiring what does not.
 
 **Reading happens two ways.** Before every message you send, a hook injects the few most relevant
-gists into the agent's context, so recall costs no tool call and no decision. When the agent wants
+gists into the agent's context, so recall costs no tool call and no decision; under Claude Code a
+subagent or an agent-team teammate is given the same with its first tool call after each task or
+message it receives. When the agent wants
 more, it calls `zikaron_memory_search` for a wider look or `zikaron_memory_fetch` for a full record. Retrieval is
 hybrid: a vector search over a local embedding model and a full-text search over the same corpus,
 their rankings fused, so an exact identifier and a vague description both find their record.
@@ -102,7 +104,7 @@ reads which one it is addressing before it reads a description. Consolidation ne
 | **core** | The library: the store, retrieval, chunking, consolidation, and the knowledge index. No process concerns, no transport. |
 | **service** | A long-running process per project. Holds the embedding model in memory and the databases open, and answers requests over a Unix socket. Starts itself when needed and stops itself when idle. |
 | **MCP server** | Translates the agent's tool calls into requests to the service. One process per agent instance; loads no model. |
-| **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent. Deliberately tiny; loads no model and never touches the databases directly. |
+| **hook** | A single-shot executable your agent runs on start, before each message, and — under Claude Code — when it spawns a subagent and before an agent's first tool call after a task or message. Deliberately tiny; loads no model and never touches the databases directly. |
 | **guard** | Installed on request: a single-shot executable the harness runs before each shell call — `Bash` or `Monitor` under Claude Code, `execute_bash` under kiro — and, under Claude Code, after each edit. Regular expressions over the call, plus one bounded read of a script the call runs from a scratch directory — no model, no service, no store. |
 | **indexer** | A detached process started per knowledge-base build — by the service on every `add`/`refresh`, whether an agent asked or you did, or by you running it by hand. One the service started writes what it prints to the build log `zikaron knowledge status` names. It outlives the call that started it, loads a model, saturates a core for a minute or more, and exits when the build finishes. If you see one in `ps`, that is a corpus building, not a runaway. |
 
@@ -386,7 +388,7 @@ and under **Claude Code**:
 | `.claude/agents/zikaron-documenter.md` | the documentation subagent, as frontmatter plus its prompt |
 | `.claude/agents/zikaron-code-orchestrator.md` | the subagent your session spawns, in the background, to run a code-documentation run |
 | `.claude/skills/zikaron-document-code/SKILL.md` | how to document a module of your code ([Code knowledge](#code-knowledge)) |
-| `.claude/settings.local.json` | hooks for session start, each message, each subagent start and each search ([Code knowledge](#code-knowledge)), plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
+| `.claude/settings.local.json` | hooks for session start, each message, each subagent start and stop, each teammate's idle, each tool call behind a shell check that starts the hook only while a task or message is waiting to be pushed, and each search ([Code knowledge](#code-knowledge)), plus both approval keys, `enabledMcpjsonServers` and `permissions.allow` |
 | `.mcp.json` | both servers: `zikaron` for your own tools, `zikaron-consolidator` for the consolidation verbs — each marked `alwaysLoad` so their descriptions are in context from the start rather than fetched per tool |
 
 With `--components guards` the install writes `.claude/settings.local.json` alone, and in it only
@@ -397,9 +399,10 @@ the start hooks carry the write policy and the guards' note.
 
 **`settings.local.json`, not `settings.json`**, and it matters if you commit your settings: the hook
 entries name absolute paths inside *your* virtualenv, so they are meaningless in anyone else's clone.
-The third hook is the one with no kiro counterpart — it hands the write policy to each subagent you
-spawn. kiro has no hook for a subagent's start, so there Zikaron's documenter and orchestrator carry
-the policy at the end of their prompts, and a subagent of your own does not get it.
+The subagent hooks have no kiro counterpart — they hand the write policy to each subagent you spawn
+and push it memories on its first tool call after each task. kiro has no hook for a subagent's
+start, so there Zikaron's documenter and orchestrator carry the policy at the end of their prompts,
+and a subagent of your own gets neither.
 
 It backs up any file it merges into (`<file>.bak`, and the first backup wins), leaving one that
 already carries every entry untouched, backup included, and **refreshes a shipped file whose
